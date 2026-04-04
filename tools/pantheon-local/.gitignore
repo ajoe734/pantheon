@@ -1,0 +1,5 @@
+.watcher-state.json
+__pycache__/
+*.pyc
+review-jobs/*
+!review-jobs/.gitkeep

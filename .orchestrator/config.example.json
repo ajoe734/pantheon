@@ -1,0 +1,204 @@
+{
+  "paths": {
+    "status_file": "ai-status.json",
+    "activity_log": "ai-activity-log.jsonl",
+    "current_work": "current-work.md",
+    "dashboard": "docs-site/index.html",
+    "state_file": ".orchestrator/state.json",
+    "event_queue": ".orchestrator/event-queue.jsonl",
+    "approval_queue": ".orchestrator/approval-queue.json",
+    "provider_capabilities": ".orchestrator/provider_capabilities.json",
+    "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
+  },
+  "watcher": {
+    "poll_interval_seconds": 2.0,
+    "replay_on_start": false,
+    "max_seen_events": 2000
+  },
+  "supervisor": {
+    "poll_interval_seconds": 2.0,
+    "stall_after_seconds": 300,
+    "max_worker_history": 200,
+    "auto_refresh_provider_capabilities": true
+  },
+  "schema": {
+    "tasks_path": "tasks",
+    "handoffs_path": "handoffs",
+    "task_id_field": "id",
+    "status_field": "status",
+    "assignee_field": "owner",
+    "reviewer_field": "reviewer",
+    "artifacts_field": "artifacts",
+    "next_field": "next",
+    "last_update_field": "last_update"
+  },
+  "events": {
+    "review_statuses": [
+      "review"
+    ],
+    "status_targets": {
+      "review": "reviewer",
+      "needs_reply": "owner",
+      "needs_input": "owner",
+      "handoff": "owner"
+    },
+    "waiting_status_patterns": [
+      "^waiting_on_(?P<agent>[A-Za-z0-9_-]+)$"
+    ],
+    "watch_assignee_changes": true,
+    "watch_reviewer_changes": false,
+    "watch_handoffs": true,
+    "pending_handoff_statuses": [
+      "pending"
+    ]
+  },
+  "agents": {
+    "claude": {
+      "display_name": "Claude",
+      "provider": "claude",
+      "adapter": "claude_cli",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/claude.md"
+    },
+    "gemini": {
+      "display_name": "Gemini",
+      "provider": "gemini",
+      "adapter": "gemini",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/gemini.md"
+    },
+    "codex": {
+      "display_name": "Codex",
+      "provider": "codex",
+      "adapter": "codex",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "copilot": {
+      "display_name": "Copilot",
+      "provider": "copilot",
+      "adapter": "copilot_local",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/copilot.md"
+    },
+    "grok": {
+      "display_name": "Grok",
+      "provider": "copilot",
+      "adapter": "copilot_local",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/grok.md",
+      "model_preference": "grok-code-fast-1"
+    }
+  },
+  "providers": {
+    "claude": {
+      "delivery_mode": "claude_cli",
+      "file_inbox": {
+        "path": ".llm-inbox/claude.md",
+        "open_in_vscode": true
+      },
+      "runtime": {
+        "cli": "claude",
+        "output_format": "stream-json",
+        "include_hook_events": true,
+        "permission_mode": "acceptEdits",
+        "resume_permission_mode_after_approval": "acceptEdits",
+        "resume_use_allowed_tools_from_approval": true,
+        "enable_auto_mode_if_supported": true,
+        "auto_permission_mode": "auto",
+        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt"
+      },
+      "broker": {
+        "approval_wait_seconds": 3600,
+        "http_host": "127.0.0.1",
+        "http_port": 8765,
+        "persist_allow_by_default": false
+      },
+      "approval": {
+        "workspace_permission_mode": "acceptEdits",
+        "allow_dangerous_skip": false,
+        "copilot_allow_dangerous_skip": false,
+        "rule_default_mode": "acceptEdits",
+        "disable_bypass_permissions": true
+      }
+    },
+    "gemini": {
+      "delivery_mode": "gemini",
+      "file_inbox": {
+        "path": ".llm-inbox/gemini.md",
+        "open_in_vscode": true
+      },
+      "gemini": {
+        "cli": "gemini",
+        "include_directories": true
+      },
+      "approval": {
+        "default_approval_mode": "auto_edit",
+        "workspace_agent_yolo_mode": false,
+        "enable_permanent_tool_approval": true,
+        "auto_add_to_policy_by_default": true,
+        "disable_yolo_mode": false,
+        "disable_always_allow": false
+      }
+    },
+    "codex": {
+      "delivery_mode": "codex",
+      "file_inbox": {
+        "path": ".llm-inbox/codex.md",
+        "open_in_vscode": true
+      },
+      "codex": {
+        "cli": "codex",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": false
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": false
+      }
+    },
+    "copilot": {
+      "delivery_mode": "copilot_local",
+      "file_inbox": {
+        "path": ".llm-inbox/copilot.md",
+        "open_in_vscode": true,
+        "agent_paths": {
+          "grok": ".llm-inbox/grok.md",
+          "copilot": ".llm-inbox/copilot.md"
+        }
+      },
+      "local": {
+        "cli": "copilot",
+        "autopilot": true,
+        "max_autopilot_continues": 12,
+        "allow_all_tools": true,
+        "add_workspace_dir": true,
+        "no_ask_user": true,
+        "allow_tools": [],
+        "deny_tools": [],
+        "extra_args": []
+      },
+      "cloud": {
+        "cli": "gh",
+        "enabled": true,
+        "min_version": "2.80.0",
+        "follow": false,
+        "base_branch": "main",
+        "repo": null,
+        "extra_args": []
+      },
+      "model_preference": {
+        "default": "claude",
+        "grok": "grok-code-fast-1",
+        "supported": [
+          "claude",
+          "grok-code-fast-1"
+        ]
+      }
+    }
+  }
+}

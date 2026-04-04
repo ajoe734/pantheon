@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "orchestrator_approval_broker": {
+      "command": "python3",
+      "args": [
+        ".orchestrator/claude_permission_prompt_mcp.py",
+        "--config",
+        ".orchestrator/config.json"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}

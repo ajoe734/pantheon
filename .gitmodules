@@ -1,0 +1,3 @@
+[submodule "lean"]
+	path = lean
+	url = https://github.com/ajoe734/pantheon-lean.git

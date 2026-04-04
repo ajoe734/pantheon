@@ -1,0 +1,862 @@
+{
+  "version": 2,
+  "initialized_at": "2026-04-03T05:09:35Z",
+  "last_scan_at": "2026-04-04T15:28:27Z",
+  "tasks": {
+    "OPS-001": {
+      "id": "OPS-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "AI_COLLABORATION_GUIDE.md",
+        "current-work.md"
+      ],
+      "next": "Keep guide stable while downstream work starts",
+      "last_update": "2026-04-01T04:20:00Z"
+    },
+    "OPS-002": {
+      "id": "OPS-002",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "ai-status.json",
+        "ai-activity-log.jsonl",
+        "scripts/ai-status.sh"
+      ],
+      "next": "Use script-driven updates only",
+      "last_update": "2026-04-01T04:24:00Z"
+    },
+    "OPS-003": {
+      "id": "OPS-003",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "docs-site/index.html",
+        "docs-site/script.js",
+        "docs-site/style.css"
+      ],
+      "next": "Collect visual feedback and adjust layout if needed",
+      "last_update": "2026-04-01T04:28:00Z"
+    },
+    "P1-001": {
+      "id": "P1-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "services/signal-store/client.py",
+        "services/signal-store/README.md"
+      ],
+      "next": "Interface locked and accepted by Gemini",
+      "last_update": "2026-04-01T16:10:00Z"
+    },
+    "P2-001": {
+      "id": "P2-001",
+      "status": "done",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/research/schema.json",
+        "services/research/signal_example.json",
+        "services/research/signal_schema_v1.md"
+      ],
+      "next": "Canonical machine schema approved. Final contract alignment is tracked in P2-002 so schema.json, examples, and human-facing docs describe the same execution semantics.",
+      "last_update": "2026-04-01T14:12:24Z"
+    },
+    "P2-002": {
+      "id": "P2-002",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "services/research/signal_schema_v1.md",
+        "services/research/example_payload.json",
+        "services/research/signal_example.json"
+      ],
+      "next": "Human-facing schema docs, machine schema, and both example payload sets are aligned and validated against schema.json v1.",
+      "last_update": "2026-04-01T15:09:46Z"
+    },
+    "P3-001": {
+      "id": "P3-001",
+      "status": "review",
+      "owner": "Claude",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "services/execution/lean-runtime/"
+      ],
+      "next": "Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
+      "last_update": "2026-04-02T03:36:14Z"
+    },
+    "P4-001": {
+      "id": "P4-001",
+      "status": "done",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "artifacts": [
+        "services/control-plane/router/"
+      ],
+      "next": "Review approved: router contract is locked for v1. Remaining items are follow-up infrastructure tasks, not blockers for the contract.",
+      "last_update": "2026-04-02T03:43:02Z"
+    },
+    "OPS-010": {
+      "id": "OPS-010",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [],
+      "next": "Validated assign/start/progress/blocker/handoff/done flow end-to-end",
+      "last_update": "2026-04-01T04:30:43Z"
+    },
+    "OPS-011": {
+      "id": "OPS-011",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [],
+      "next": "Updated collaboration guidance so every LLM now works in this order: finish assigned reviews first, then own unblocked work, then claim other safe tasks and hand them back to the original owner for review.",
+      "last_update": "2026-04-02T00:58:18Z"
+    },
+    "ARC-001": {
+      "id": "ARC-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "TARGET_ARCHITECTURE.md"
+      ],
+      "next": "Use the target architecture as the north star for product planning",
+      "last_update": "2026-04-01T16:25:00Z"
+    },
+    "ARC-002": {
+      "id": "ARC-002",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "ROADMAP.md"
+      ],
+      "next": "Published epic roadmap that turns the target architecture into sequenced delivery slices and ownership lanes",
+      "last_update": "2026-04-01T06:26:52Z"
+    },
+    "EX-001": {
+      "id": "EX-001",
+      "status": "in_progress",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/execution/artifact-loader/contract.md",
+        "services/execution/artifact-loader/artifact_metadata_schema.json"
+      ],
+      "next": "Resetting status per AUD-CLAUDE-001: contract is done but implementation is missing. Re-evaluating LEAN native bridge.",
+      "last_update": "2026-04-02T18:00:00Z"
+    },
+    "OC-001": {
+      "id": "OC-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/control-plane/permissions/"
+      ],
+      "next": "OC-001 APPROVED for v1 lock. Review written at services/control-plane/permissions/review_oc001_claude.md. Key: deny-first model + 6 mandatory deny rules + approval hooks all aligned with router v1. Two minor open items (allow_with_approval not in schema effect enum; promotion-state not checked at router layer) documented but do not block v1.",
+      "last_update": "2026-04-02T04:20:37Z"
+    },
+    "OC-002": {
+      "id": "OC-002",
+      "status": "in_progress",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/control-plane/cron/"
+      ],
+      "next": "Defining workflow entrypoints and mapping StrategySpec to OpenClaw workflow parameters.",
+      "last_update": "2026-04-02T17:30:00Z"
+    },
+    "OC-003": {
+      "id": "OC-003",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/control-plane/specs/"
+      ],
+      "next": "OC-003 APPROVED for v1 lock. Review at services/control-plane/specs/review_oc003_claude.md. StrategySpec boundary correct (no execution detail leak), governance_context aligned with OC-001/P4-001, registry_hints not over-coupled to storage. Two minor open items: oneOf discriminator clarity in workflow_handoff schema, and from_stage/to_stage should eventually be enum-constrained.",
+      "last_update": "2026-04-02T05:37:22Z"
+    },
+    "REG-001": {
+      "id": "REG-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "services/registry/contract.md"
+      ],
+      "next": "Started aligning REG-001 with EX-001 Object Store metadata so registry projection and loader rejection rules share one governed contract.",
+      "last_update": "2026-04-02T00:55:01Z"
+    },
+    "REG-002": {
+      "id": "REG-002",
+      "status": "review",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/registry/promotion/gate.py",
+        "services/registry/promotion/cli.py",
+        "services/registry/promotion/README.md",
+        "services/registry/promotion/smoke_test_gate.py"
+      ],
+      "next": "Logic, CLI, and smoke test complete. Relocated to services/. Ready for review.",
+      "last_update": "2026-04-02T18:00:00Z"
+    },
+    "AUD-GEMINI-001": {
+      "id": "AUD-GEMINI-001",
+      "status": "done",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "artifacts": [
+        "audits/oss-alignment/gemini_audit.md"
+      ],
+      "next": "Audit complete. Handed off to Codex.",
+      "last_update": "2026-04-02T16:00:00Z"
+    },
+    "REG-003": {
+      "id": "REG-003",
+      "status": "review",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/registry/lineage/contract.md",
+        "services/registry/lineage/promoted_artifact_metadata.schema.json",
+        "artifact_metadata_schema.json"
+      ],
+      "next": "Drafted REG-003 promoted artifact lineage contract, canonical schema, and compatibility alias at artifact_metadata_schema.json. Please review rollback strictness, loader-side sufficiency, and experiment-backend compatibility.",
+      "last_update": "2026-04-02T13:50:25Z"
+    },
+    "FB-001": {
+      "id": "FB-001",
+      "status": "review",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/feedback/schema/"
+      ],
+      "next": "Drafted trajectory and preference store contract plus machine-readable trader feedback and execution telemetry schemas with registry linkage fields. Ready for governance review.",
+      "last_update": "2026-04-02T03:44:32Z"
+    },
+    "FB-002": {
+      "id": "FB-002",
+      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/control-plane/feedback/"
+      ],
+      "next": "Capture explicit human feedback as governed learning input",
+      "last_update": null
+    },
+    "FB-003": {
+      "id": "FB-003",
+      "status": "todo",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/telemetry/"
+      ],
+      "next": "Turn execution outputs into structured telemetry for the evolution plane",
+      "last_update": null
+    },
+    "EV-001": {
+      "id": "EV-001",
+      "status": "todo",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "artifacts": [
+        "services/evaluation/contracts/"
+      ],
+      "next": "Define evaluator and critic contracts once telemetry and registry skeletons are in view",
+      "last_update": "2026-04-01T14:21:26Z"
+    },
+    "EV-002": {
+      "id": "EV-002",
+      "status": "todo",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "artifacts": [
+        "services/evaluation/optimizers/"
+      ],
+      "next": "Define optimizer outputs as governed artifacts instead of direct live mutations",
+      "last_update": null
+    },
+    "RS-001": {
+      "id": "RS-001",
+      "status": "todo",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/research/ingest/"
+      ],
+      "next": "Define governed ingestion so OpenClaw can discover research without free-roaming live changes",
+      "last_update": null
+    },
+    "RS-002": {
+      "id": "RS-002",
+      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "services/research/strategy-spec/"
+      ],
+      "next": "Turn discovered research into normalized StrategySpec objects before replication",
+      "last_update": null
+    },
+    "RS-003": {
+      "id": "RS-003",
+      "status": "todo",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/research/replication/"
+      ],
+      "next": "Create the replication gate that sits between discovered research and registry entry",
+      "last_update": null
+    },
+    "LP-001": {
+      "id": "LP-001",
+      "status": "review",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/learning/dspy/"
+      ],
+      "next": "LP-001 updated with concrete DSPy decisions and prompt_bundle.schema.json. Please re-review the contract under the new upstream-integration model.",
+      "last_update": "2026-04-02T13:42:42Z"
+    },
+    "LP-002": {
+      "id": "LP-002",
+      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "services/learning/imitation/"
+      ],
+      "next": "[CODEX NOTE] moved to v1.5 from v2 — imitation (BC from trader trajectories) is more foundational than TRL; DSPy + imitation + MLflow should ship together in v1.5",
+      "last_update": null
+    },
+    "LP-003": {
+      "id": "LP-003",
+      "status": "in_progress",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "artifacts": [
+        "services/registry/experiments/"
+      ],
+      "next": "Selected MLflow as primary backend. Defining adapter to map REG-001 metadata to MLflow experiments.",
+      "last_update": "2026-04-02T17:30:00Z"
+    },
+    "LP-004": {
+      "id": "LP-004",
+      "status": "todo",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "artifacts": [
+        "services/learning/trl/"
+      ],
+      "next": "Limit TRL usage to approved preference-learning loops tied to governed feedback",
+      "last_update": null
+    },
+    "LP-005": {
+      "id": "LP-005",
+      "status": "todo",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "artifacts": [
+        "services/learning/rl/"
+      ],
+      "next": "Only add RL infrastructure once the governed research and registry path is stable",
+      "last_update": null
+    },
+    "ARC-003": {
+      "id": "ARC-003",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [],
+      "next": "Rebalanced roadmap ownership so Codex and Gemini carry the larger share and Claude stays focused on review plus critical execution work",
+      "last_update": "2026-04-01T10:14:44Z"
+    },
+    "ARC-004": {
+      "id": "ARC-004",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "ROADMAP.md",
+        "ai-status.json",
+        "current-work.md"
+      ],
+      "next": "Planning layers are aligned again; execution can move on a single contract path",
+      "last_update": "2026-04-01T14:21:28Z"
+    },
+    "TOOL-001": {
+      "id": "TOOL-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "tools/openclaw-local/README.md",
+        "tools/openclaw-local/watcher/watch_review.py",
+        "tools/openclaw-local/windows/OpenClawAgent.ps1",
+        "tools/openclaw-local/windows/profiles.example.json",
+        "tools/openclaw-local/queue-schema/review-job.schema.json"
+      ],
+      "next": "Completed shared local automation starter kit inside tools/openclaw-local so future projects can reuse the same watcher plus Windows-agent runtime without coupling it to repo business logic.",
+      "last_update": "2026-04-02T03:24:58Z"
+    },
+    "RS-000": {
+      "id": "RS-000",
+      "status": "todo",
+      "owner": "Grok",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "services/research/grok_research_intake_spec.md",
+        "services/research/grok_source_catalog.md"
+      ],
+      "next": "Define which structured sources Grok may use, how it should normalize findings into governed handoff notes, and how Gemini can consume that output for RS-001 and RS-002.",
+      "last_update": "2026-04-02T05:36:51Z"
+    },
+    "AUD-CLAUDE-001": {
+      "id": "AUD-CLAUDE-001",
+      "status": "done",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "artifacts": [
+        "audits/oss-alignment/claude_audit.md"
+      ],
+      "next": "Audit accepted as a valid corrective checkpoint. Confirmed: EX-001 is already reset to in_progress, upstream OpenClaw source selection is already captured in SPIKE-OC-001, and router contract now documents the persona stub as a temporary local surrogate. Remaining value: keep the audit as sequencing guidance for LEAN-native smoke coverage and upstream adapter follow-up.",
+      "last_update": "2026-04-04T13:54:39Z"
+    },
+    "AUD-GROK-001": {
+      "id": "AUD-GROK-001",
+      "status": "todo",
+      "owner": "Grok",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "audits/oss-alignment/grok_audit.md"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-02T08:13:57Z"
+    },
+    "AUD-CODEX-001": {
+      "id": "AUD-CODEX-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [],
+      "next": "Completed Codex-side audit note. REG-001 and FB-001 remain valid local governance contracts; LP-001 and LP-002 still need explicit upstream package selection, version pinning, adapter work, and smoke-test plans.",
+      "last_update": "2026-04-02T08:14:20Z"
+    },
+    "SPIKE-OC-001": {
+      "id": "SPIKE-OC-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "spikes/openclaw_upstream_selection.md"
+      ],
+      "next": "Selected upstream OpenClaw source, integration mode, pinning strategy, adapter points, and first smoke-test path.",
+      "last_update": "2026-04-02T13:50:24Z"
+    },
+    "SPIKE-DSPY-001": {
+      "id": "SPIKE-DSPY-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "artifacts": [
+        "spikes/dspy_integration_spike.md",
+        "services/control-plane/persona/lp001/prompt_bundle.schema.json"
+      ],
+      "next": "Selected DSPy upstream source, first version pin, optimizer, governed prompt_bundle boundary, and smoke-test plan.",
+      "last_update": "2026-04-02T13:50:24Z"
+    },
+    "SPIKE-QLIB-001": {
+      "id": "SPIKE-QLIB-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "spikes/qlib_integration_spike.md"
+      ],
+      "next": "Selected upstream Qlib source, first package pin, worker packaging approach, governed adapter seam, and supervised smoke-test path.",
+      "last_update": "2026-04-02T13:50:24Z"
+    },
+    "SPIKE-IMIT-001": {
+      "id": "SPIKE-IMIT-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "spikes/imitation_integration_spike.md"
+      ],
+      "next": "Selected upstream imitation source, first package pin, BC-first scope, governed trajectory adapter boundary, and smoke-test plan.",
+      "last_update": "2026-04-02T13:50:24Z"
+    },
+    "SPIKE-EXP-001": {
+      "id": "SPIKE-EXP-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "spikes/experiment_backend_selection.md",
+        "artifact_metadata_schema.json"
+      ],
+      "next": "Selected MLflow as the first backend, pinned the first version, defined registry-mapping rules, and documented the first smoke-test path.",
+      "last_update": "2026-04-02T13:50:25Z"
+    },
+    "AUD-GROK-002": {
+      "id": "AUD-GROK-002",
+      "status": "in_progress",
+      "owner": "Grok",
+      "reviewer": "Gemini",
+      "artifacts": [],
+      "next": "Started adapter spike for RS-001 upstream integration",
+      "last_update": "2026-04-02T14:28:20Z"
+    },
+    "ARC-007": {
+      "id": "ARC-007",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "artifacts": [
+        "AI_COLLABORATION_GUIDE.md",
+        "docker-compose.yml",
+        "Algorithm.Python/pantheon_algo/",
+        "docs/repo-split-runbook.md"
+      ],
+      "next": "Preparatory migration work is in place in the mixed repo, and docs/repo-split-runbook.md now records the manual cutover path. Remaining work is external: create pantheon + pantheon-lean repos, move Pantheon paths, and add lean/ as a submodule.",
+      "last_update": "2026-04-04T13:54:37Z"
+    }
+  },
+  "pending_handoff_keys": [
+    "P3-001|Claude|Gemini|2026-04-02T03:36:14Z|Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
+    "FB-001|Codex|Claude|2026-04-02T03:44:32Z|Drafted trajectory and preference store contract plus machine-readable trader feedback and execution telemetry schemas with registry linkage fields. Ready for governance review.",
+    "LP-001|Codex|Claude|2026-04-02T13:42:42Z|LP-001 updated with concrete DSPy decisions and prompt_bundle.schema.json. Please re-review the contract under the new upstream-integration model.",
+    "REG-003|Codex|Claude|2026-04-02T13:50:25Z|Drafted REG-003 promoted artifact lineage contract, canonical schema, and compatibility alias at artifact_metadata_schema.json. Please review rollback strictness, loader-side sufficiency, and experiment-backend compatibility.",
+    "REG-002|Gemini|Claude|2026-04-02T18:00:00Z|Logic, CLI, and smoke test complete. Ready for governance review."
+  ],
+  "seen_event_keys": {
+    "REG-002:status:review:Claude": "2026-04-04T03:20:18Z",
+    "handoff:REG-002|Gemini|Claude|2026-04-02T18:00:00Z|Logic, CLI, and smoke test complete. Ready for governance review.": "2026-04-04T03:20:19Z"
+  },
+  "queue": {
+    "events": {
+      "evt-20260403T154552Z-claude-TEST-QUEUE-001": {
+        "attempt_count": 1,
+        "status": "manual_pending",
+        "last_attempt_at": "2026-04-03T15:46:09Z",
+        "run_id": "inbox-20260403T154609Z-7eea8ee9",
+        "processed_at": "2026-04-03T15:46:09Z"
+      },
+      "evt-20260403T154817Z-6d5de749": {
+        "attempt_count": 1,
+        "status": "manual_pending",
+        "last_attempt_at": "2026-04-03T15:48:17Z",
+        "run_id": "inbox-20260403T154817Z-a03def9d",
+        "processed_at": "2026-04-03T15:48:17Z"
+      },
+      "evt-20260404T032018Z-7f09eb52": {
+        "attempt_count": 1,
+        "status": "manual_pending",
+        "last_attempt_at": "2026-04-04T03:20:19Z",
+        "run_id": "inbox-20260404T032019Z-028c8e0f",
+        "processed_at": "2026-04-04T03:20:19Z"
+      },
+      "evt-20260404T032018Z-7915ff26": {
+        "attempt_count": 1,
+        "status": "manual_pending",
+        "last_attempt_at": "2026-04-04T03:20:19Z",
+        "run_id": "inbox-20260404T032019Z-193932d4",
+        "processed_at": "2026-04-04T03:20:19Z"
+      },
+      "evt-20260404T133815Z-dd241d90": {
+        "attempt_count": 1,
+        "status": "started",
+        "last_attempt_at": "2026-04-04T13:38:22Z",
+        "run_id": "copilot-20260404T133822Z-6ebc8eaf",
+        "processed_at": "2026-04-04T13:38:22Z"
+      },
+      "evt-20260404T133815Z-5b2973aa": {
+        "attempt_count": 1,
+        "status": "started",
+        "last_attempt_at": "2026-04-04T13:38:22Z",
+        "run_id": "copilot-20260404T133822Z-308cad97",
+        "processed_at": "2026-04-04T13:38:22Z"
+      },
+      "evt-20260404T134956Z-a987763e": {
+        "attempt_count": 1,
+        "status": "started",
+        "last_attempt_at": "2026-04-04T13:50:01Z",
+        "run_id": "codex-20260404T135001Z-e7545b8e",
+        "processed_at": "2026-04-04T13:50:01Z"
+      },
+      "evt-20260404T135038Z-e8236a59": {
+        "attempt_count": 1,
+        "status": "started",
+        "last_attempt_at": "2026-04-04T13:50:42Z",
+        "run_id": "codex-20260404T135042Z-2c604985",
+        "processed_at": "2026-04-04T13:50:42Z"
+      }
+    }
+  },
+  "workers": {
+    "inbox-20260403T154609Z-7eea8ee9": {
+      "run_id": "inbox-20260403T154609Z-7eea8ee9",
+      "provider": "claude",
+      "agent_id": "claude",
+      "task_id": "TEST-QUEUE-001",
+      "session_id": null,
+      "mode": "file_inbox",
+      "status": "manual_pending",
+      "last_event_at": "2026-04-03T15:46:09Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260403T154552Z-claude-TEST-QUEUE-001",
+      "command": [
+        "code",
+        "-r",
+        "/home/ajoe734/code/Lean/.llm-inbox/claude.md"
+      ],
+      "log_path": null,
+      "payload_path": "/home/ajoe734/code/Lean/.llm-inbox/claude.md",
+      "pid": null,
+      "notes": "Inbox written to .llm-inbox/claude.md. Claude will read shared-state files after you resume the workspace conversation.. Claude CLI is unavailable, so inbox fallback was used.",
+      "metadata": {}
+    },
+    "inbox-20260403T154817Z-a03def9d": {
+      "run_id": "inbox-20260403T154817Z-a03def9d",
+      "provider": "copilot",
+      "agent_id": "grok",
+      "task_id": "TEST-GROK-001",
+      "session_id": null,
+      "mode": "file_inbox",
+      "status": "manual_pending",
+      "last_event_at": "2026-04-03T15:48:17Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260403T154817Z-6d5de749",
+      "command": [
+        "code",
+        "-r",
+        "/home/ajoe734/code/Lean/.llm-inbox/grok.md"
+      ],
+      "log_path": null,
+      "payload_path": "/home/ajoe734/code/Lean/.llm-inbox/grok.md",
+      "pid": null,
+      "notes": "Inbox written to .llm-inbox/grok.md. Copilot CLI is unavailable, so inbox fallback was used.",
+      "metadata": {}
+    },
+    "inbox-20260404T032019Z-028c8e0f": {
+      "run_id": "inbox-20260404T032019Z-028c8e0f",
+      "provider": "claude",
+      "agent_id": "claude",
+      "task_id": "REG-002",
+      "session_id": null,
+      "mode": "file_inbox",
+      "status": "manual_pending",
+      "last_event_at": "2026-04-04T03:20:19Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260404T032018Z-7f09eb52",
+      "command": [
+        "code",
+        "-r",
+        "/home/ajoe734/code/Lean/.llm-inbox/claude.md"
+      ],
+      "log_path": null,
+      "payload_path": "/home/ajoe734/code/Lean/.llm-inbox/claude.md",
+      "pid": null,
+      "notes": "Inbox written to .llm-inbox/claude.md. Claude will read shared-state files after you resume the workspace conversation.. Claude CLI is unavailable, so inbox fallback was used.",
+      "metadata": {}
+    },
+    "inbox-20260404T032019Z-193932d4": {
+      "run_id": "inbox-20260404T032019Z-193932d4",
+      "provider": "claude",
+      "agent_id": "claude",
+      "task_id": "REG-002",
+      "session_id": null,
+      "mode": "file_inbox",
+      "status": "manual_pending",
+      "last_event_at": "2026-04-04T03:20:19Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260404T032018Z-7915ff26",
+      "command": [
+        "code",
+        "-r",
+        "/home/ajoe734/code/Lean/.llm-inbox/claude.md"
+      ],
+      "log_path": null,
+      "payload_path": "/home/ajoe734/code/Lean/.llm-inbox/claude.md",
+      "pid": null,
+      "notes": "Inbox written to .llm-inbox/claude.md. Claude will read shared-state files after you resume the workspace conversation.. Claude CLI is unavailable, so inbox fallback was used.",
+      "metadata": {}
+    },
+    "copilot-20260404T133822Z-6ebc8eaf": {
+      "run_id": "copilot-20260404T133822Z-6ebc8eaf",
+      "provider": "copilot",
+      "agent_id": "copilot",
+      "task_id": "TEST-COPILOT-001",
+      "session_id": null,
+      "mode": "copilot_local",
+      "status": "completed",
+      "last_event_at": "2026-04-04T13:40:04Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260404T133815Z-dd241d90",
+      "command": [
+        "copilot",
+        "--autopilot",
+        "-p",
+        "你被喚醒了。\n\n請閱讀 ai-status.json、current-work.md、ai-activity-log.jsonl，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\nTask ID: TEST-COPILOT-001\n原因: manual_test\n標題: Copilot wake-up smoke test\n",
+        "--max-autopilot-continues",
+        "12",
+        "--allow-all-tools",
+        "--add-dir",
+        "/home/ajoe734/code/Lean",
+        "--no-ask-user"
+      ],
+      "log_path": "/home/ajoe734/code/Lean/.orchestrator/logs/20260404T133822Z-copilot-copilot.log",
+      "payload_path": null,
+      "pid": 421236,
+      "notes": "Copilot CLI autopilot wake-up started in the background.",
+      "metadata": {
+        "shell_command": "copilot --autopilot -p '你被喚醒了。\n\n請閱讀 ai-status.json、current-work.md、ai-activity-log.jsonl，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\nTask ID: TEST-COPILOT-001\n原因: manual_test\n標題: Copilot wake-up smoke test\n' --max-autopilot-continues 12 --allow-all-tools --add-dir /home/ajoe734/code/Lean --no-ask-user",
+        "model_preference": null
+      }
+    },
+    "copilot-20260404T133822Z-308cad97": {
+      "run_id": "copilot-20260404T133822Z-308cad97",
+      "provider": "copilot",
+      "agent_id": "grok",
+      "task_id": "TEST-GROK-001",
+      "session_id": null,
+      "mode": "copilot_local",
+      "status": "failed",
+      "last_event_at": "2026-04-04T13:42:13Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260404T133815Z-5b2973aa",
+      "command": [
+        "copilot",
+        "--autopilot",
+        "-p",
+        "你被喚醒了。\n\n請閱讀 ai-status.json、current-work.md、ai-activity-log.jsonl，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\nTask ID: TEST-GROK-001\n原因: manual_test\n標題: Copilot Grok wake-up smoke test\n",
+        "--max-autopilot-continues",
+        "12",
+        "--allow-all-tools",
+        "--add-dir",
+        "/home/ajoe734/code/Lean",
+        "--no-ask-user",
+        "--model",
+        "grok-code-fast-1"
+      ],
+      "log_path": "/home/ajoe734/code/Lean/.orchestrator/logs/20260404T133822Z-copilot-grok.log",
+      "payload_path": null,
+      "pid": 421278,
+      "notes": "Copilot CLI autopilot wake-up started in the background.",
+      "metadata": {
+        "shell_command": "copilot --autopilot -p '你被喚醒了。\n\n請閱讀 ai-status.json、current-work.md、ai-activity-log.jsonl，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\nTask ID: TEST-GROK-001\n原因: manual_test\n標題: Copilot Grok wake-up smoke test\n' --max-autopilot-continues 12 --allow-all-tools --add-dir /home/ajoe734/code/Lean --no-ask-user --model grok-code-fast-1",
+        "model_preference": "grok-code-fast-1"
+      }
+    },
+    "codex-20260404T135001Z-e7545b8e": {
+      "run_id": "codex-20260404T135001Z-e7545b8e",
+      "provider": "codex",
+      "agent_id": "codex",
+      "task_id": "TEST-CODEX-001",
+      "session_id": null,
+      "mode": "codex",
+      "status": "failed",
+      "last_event_at": "2026-04-04T13:50:38Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260404T134956Z-a987763e",
+      "command": [
+        "codex",
+        "exec",
+        "-C",
+        "/home/ajoe734/code/Lean",
+        "-a",
+        "never",
+        "-s",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "你被喚醒了。\n\n請閱讀 ai-status.json、current-work.md、ai-activity-log.jsonl，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\nTask ID: TEST-CODEX-001\n原因: manual_test\n標題: Codex wake-up smoke test\n"
+      ],
+      "log_path": "/home/ajoe734/code/Lean/.orchestrator/logs/20260404T135001Z-codex-codex.log",
+      "payload_path": null,
+      "pid": 446200,
+      "notes": "Codex CLI wake-up started in the background.",
+      "metadata": {}
+    },
+    "codex-20260404T135042Z-2c604985": {
+      "run_id": "codex-20260404T135042Z-2c604985",
+      "provider": "codex",
+      "agent_id": "codex",
+      "task_id": "TEST-CODEX-002",
+      "session_id": "cd416913-4d27-403a-a8e2-205266a59a42",
+      "mode": "codex",
+      "status": "completed",
+      "last_event_at": "2026-04-04T13:57:23Z",
+      "deferred_action": null,
+      "resume_token": null,
+      "pr_url": null,
+      "session_url": null,
+      "attempt_count": 1,
+      "queue_event_id": "evt-20260404T135038Z-e8236a59",
+      "command": [
+        "codex",
+        "exec",
+        "-C",
+        "/home/ajoe734/code/Lean",
+        "-c",
+        "ask_for_approval=\"never\"",
+        "-s",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "你被喚醒了。\n\n請閱讀 ai-status.json、current-work.md、ai-activity-log.jsonl，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\nTask ID: TEST-CODEX-002\n原因: manual_test\n標題: Codex wake-up smoke test v2\n"
+      ],
+      "log_path": "/home/ajoe734/code/Lean/.orchestrator/logs/20260404T135042Z-codex-codex.log",
+      "payload_path": null,
+      "pid": 448039,
+      "notes": "Codex CLI wake-up started in the background.",
+      "metadata": {}
+    }
+  },
+  "approvals": {
+    "last_reconciled_at": null
+  }
+}
