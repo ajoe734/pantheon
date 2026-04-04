@@ -1,6 +1,7 @@
 # FOR_GROK.md
 
-> **Naming (2026-04-03):** The system we are building is called **Pantheon**. **OpenClaw** is an upstream OSS framework we integrate (like DSPy, Qlib). See `AI_COLLABORATION_GUIDE.md` §0 for the full boundary table.
+> **Repo (2026-04-04):** You are in `ajoe734/pantheon`. LEAN is at `lean/` (submodule → `ajoe734/pantheon-lean`). Run `git submodule update --init` after cloning.
+> **Naming:** System = **Pantheon**. **OpenClaw** = upstream OSS framework (like DSPy, Qlib). See `AI_COLLABORATION_GUIDE.md` §0.
 
 Read these files first:
 

@@ -1,5 +1,8 @@
 # FOR_CLAUDE.md
 
+> **Repo (2026-04-04):** You are in `ajoe734/pantheon`. LEAN is at `lean/` (submodule → `ajoe734/pantheon-lean`). Run `git submodule update --init` after cloning.
+> **Naming:** System = **Pantheon**. **OpenClaw** = upstream OSS framework (like DSPy, Qlib). See `AI_COLLABORATION_GUIDE.md` §0.
+
 Read these files first:
 
 1. `AI_COLLABORATION_GUIDE.md`
