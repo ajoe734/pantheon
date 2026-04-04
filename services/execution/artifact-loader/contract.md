@@ -1,0 +1,118 @@
+# Artifact Loader Contract
+
+**Task:** EX-001  
+**Owner:** Gemini  
+**Reviewer:** Claude  
+**Status:** DRAFT — contract path materialized in repo; LEAN-native implementation still deferred
+
+---
+
+## 1. Purpose
+
+The artifact loader is the execution-side gate between governed registry artifacts and LEAN runtime.
+
+Its job is not to decide promotion. Its job is to:
+
+- read governed metadata from a LEAN-compatible transport path
+- reject artifacts whose promotion state is not allowed for the current execution mode
+- verify checksum and metadata shape before artifact body load proceeds
+- hand approved artifact payloads into the execution runtime
+
+This contract defines the loader-facing metadata and behavior.
+
+Machine-readable metadata schema:
+
+- `services/execution/artifact-loader/artifact_metadata_schema.json`
+
+Canonical lineage/rollback schema source:
+
+- `services/registry/lineage/promoted_artifact_metadata.schema.json`
+
+---
+
+## 2. Transport Rule
+
+For v1, loader transport must use a LEAN-native Object Store path.
+
+The loader must not depend on:
+
+- direct local file injection into the algorithm container
+- direct GCS reads that bypass LEAN runtime
+- ad hoc side channels that skip governance metadata
+
+Allowed transport assumption for this contract:
+
+- registry or promotion tooling materializes metadata and artifact payloads into Object Store
+- LEAN reads them through `ObjectStore` semantics
+
+This matches QuantConnect's documented Object Store workflow for sharing data between research,
+backtest, and live contexts.
+
+---
+
+## 3. Execution Modes
+
+The loader must behave differently by mode:
+
+| Mode | Allowed promotion states |
+|---|---|
+| `paper` | `paper` |
+| `live` | `live` |
+
+Rejected states in both modes:
+
+- `draft`
+- `candidate`
+- `retired`
+
+This is a governance rule, not an optimization.
+
+---
+
+## 4. Required Metadata Checks
+
+Before artifact body load proceeds, the loader must validate:
+
+1. metadata validates against the promoted-artifact metadata schema
+2. `promotion_state` is allowed for the current execution mode
+3. `checksum` is present
+4. `strategy_id` and `version` are present
+5. for `live`, rollback metadata exists
+
+If any check fails, artifact load must stop before execution uses the payload.
+
+---
+
+## 5. Object Store Projection
+
+The first expected Object Store keys are:
+
+- `openclaw/registry/{strategy_id}/{version}/metadata.json`
+- `openclaw/registry/{strategy_id}/{version}/artifact.bin`
+
+The loader may later accept additional indirection or aliasing, but the first contract path
+should assume those canonical keys.
+
+---
+
+## 6. Deferred Implementation Work
+
+This task is still contract-first.
+
+Not yet guaranteed by this file alone:
+
+- actual C# `ObjectStore.Read` integration
+- LEAN algorithm smoke test
+- artifact body deserialization into strategy-specific runtime objects
+
+Those belong to later implementation work after the contract path is locked.
+
+---
+
+## 7. Review Focus
+
+Review should confirm:
+
+- paper/live rejection rules are explicit
+- the metadata schema path is canonical and not duplicated
+- transport assumptions remain LEAN-native and governance-safe

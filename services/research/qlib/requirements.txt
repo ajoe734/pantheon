@@ -1,0 +1,3 @@
+pyqlib==0.9.1
+pydantic>=2.6.3
+redis>=5.0.0

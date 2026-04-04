@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon Signal Schema",
+  "description": "Standard signal format for exchange between Research, Control, and Execution planes.",
+  "type": "object",
+  "required": [
+    "version",
+    "signal_id",
+    "strategy_id",
+    "timestamp",
+    "symbol",
+    "action",
+    "direction",
+    "quantity",
+    "quantity_type"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version (e.g., 1.0)"
+    },
+    "signal_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique ID for idempotency"
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "ID of the alpha strategy generating this signal"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Optional ID to group signals into a single execution run or rebalance batch (e.g., FinRL)."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Signal generation time (UTC ISO8601)"
+    },
+    "symbol": {
+      "type": "string",
+      "description": "Normalized symbol (e.g., AAPL.US, BTCUSDT, 2330.TW)"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "SELL",
+        "HOLD",
+        "EXIT"
+      ],
+      "description": "Intended action for the execution plane. Use EXIT to close all positions for the symbol."
+    },
+    "direction": {
+      "type": "string",
+      "enum": [
+        "LONG",
+        "SHORT"
+      ],
+      "description": "The direction of the position the action applies to. Helps resolve SELL ambiguity (sell to close long vs sell to open short)."
+    },
+    "order_type": {
+      "type": "string",
+      "enum": [
+        "MARKET",
+        "LIMIT"
+      ],
+      "default": "MARKET"
+    },
+    "limit_price": {
+      "type": "number",
+      "description": "Required if order_type is LIMIT"
+    },
+    "quantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "quantity_type": {
+      "type": "string",
+      "enum": [
+        "SHARES",
+        "PERCENT_PORTFOLIO",
+        "CASH_VALUE"
+      ],
+      "description": "Discriminator for the quantity field. Essential for LEAN order construction."
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "confidence_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.0
+        },
+        "risk_parameters": {
+          "type": "object",
+          "properties": {
+            "stop_loss_pct": {
+              "type": "number"
+            },
+            "take_profit_pct": {
+              "type": "number"
+            }
+          }
+        },
+        "insight_type": {
+          "type": "string",
+          "enum": [
+            "Price",
+            "Volatility"
+          ]
+        },
+        "insight_direction": {
+          "type": "string",
+          "enum": [
+            "Up",
+            "Down",
+            "Flat"
+          ]
+        }
+      }
+    }
+  }
+}

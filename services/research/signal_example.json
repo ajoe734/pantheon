@@ -1,0 +1,22 @@
+{
+    "version": "1.0",
+    "signal_id": "550e8400-e29b-41d4-a716-446655440000",
+    "strategy_id": "alpha-trend-follower-001",
+    "run_id": "run-2026-04-01-001",
+    "timestamp": "2026-04-01T15:30:00Z",
+    "symbol": "AAPL.US",
+    "action": "BUY",
+    "direction": "LONG",
+    "order_type": "LIMIT",
+    "limit_price": 175.50,
+    "quantity": 10,
+    "quantity_type": "SHARES",
+    "metadata": {
+        "confidence_score": 0.85,
+        "insight_type": "Price",
+        "insight_direction": "Up",
+        "risk_parameters": {
+            "stop_loss_pct": 0.02
+        }
+    }
+}

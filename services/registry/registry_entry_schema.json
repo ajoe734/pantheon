@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon Registry Entry",
+  "type": "object",
+  "required": [
+    "registry_id",
+    "artifact_type",
+    "strategy_id",
+    "version",
+    "lifecycle_state",
+    "lineage",
+    "storage_ref",
+    "checksum"
+  ],
+  "properties": {
+    "registry_id": {
+      "type": "string"
+    },
+    "artifact_type": {
+      "type": "string",
+      "enum": [
+        "strategy_spec",
+        "model_artifact",
+        "feature_set",
+        "prompt_bundle",
+        "signal_snapshot",
+        "execution_bundle"
+      ]
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "candidate",
+        "paper",
+        "live",
+        "retired"
+      ]
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "parent_registry_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_dataset_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_strategy_spec_id": {
+          "type": "string"
+        }
+      }
+    },
+    "storage_ref": {
+      "type": "object",
+      "required": [
+        "backend",
+        "path"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "object_store",
+            "gcs",
+            "db",
+            "inline"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "checksum": {
+      "type": "string"
+    },
+    "producer_run_id": {
+      "type": "string"
+    },
+    "evaluation_summary": {
+      "type": "object"
+    },
+    "approver": {
+      "type": "string"
+    },
+    "promoted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rollback_target": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

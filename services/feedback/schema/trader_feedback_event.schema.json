@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/trader-feedback-event/v1",
+  "title": "TraderFeedbackEvent",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "created_at",
+    "actor_id",
+    "actor_role",
+    "channel",
+    "target"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique event id. Idempotency key for feedback ingestion."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "edit",
+        "reject",
+        "rationale"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor_id": {
+      "type": "string"
+    },
+    "actor_role": {
+      "type": "string",
+      "enum": [
+        "operator",
+        "approver",
+        "reviewer",
+        "system"
+      ]
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "console",
+        "web",
+        "telegram",
+        "discord",
+        "api"
+      ]
+    },
+    "task_ref": {
+      "type": "string"
+    },
+    "decision_ref": {
+      "type": "string"
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "edits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "operation"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "append",
+              "remove",
+              "annotate"
+            ]
+          },
+          "value": {}
+        },
+        "additionalProperties": false
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "strategy_id"
+      ],
+      "properties": {
+        "registry_id": {
+          "type": "string"
+        },
+        "strategy_id": {
+          "type": "string"
+        },
+        "artifact_version": {
+          "type": "string"
+        },
+        "artifact_type": {
+          "type": "string",
+          "enum": [
+            "strategy_spec",
+            "model_artifact",
+            "feature_set",
+            "prompt_bundle",
+            "signal_snapshot",
+            "execution_bundle"
+          ]
+        },
+        "promotion_state": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "candidate",
+            "paper",
+            "live",
+            "retired"
+          ]
+        },
+        "lineage_ref": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

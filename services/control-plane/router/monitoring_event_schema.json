@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/monitoring-event/v1",
+  "title": "Pantheon Monitoring Event",
+  "description": "Emitted by the execution plane and control plane router. Consumed by Operator Console, Persona Agent, and the Evolution Plane feedback store (FB-003).",
+  "type": "object",
+  "required": ["event_id", "event_type", "ts", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique event identifier. Idempotency key for downstream consumers."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "execution.filled",
+        "execution.rejected",
+        "execution.partial_fill",
+        "signal.received",
+        "signal.stale_discarded",
+        "signal.duplicate_discarded",
+        "signal.validation_failed",
+        "rebalance.batch_started",
+        "rebalance.batch_complete",
+        "rebalance.batch_timeout",
+        "risk.drawdown_breach",
+        "risk.position_cap_clipped",
+        "system.signal_consumer_error",
+        "system.store_unavailable"
+      ],
+      "description": "Type of monitoring event. Controls routing to Operator Console, alerts, and FB-003 telemetry."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO 8601 timestamp when the event occurred."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["lean-runtime", "signal-consumer", "router", "persona-agent", "governance"],
+      "description": "Component that emitted this event."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "error", "critical"],
+      "description": "Optional severity. Defaults to info. critical events are forwarded to all channels immediately."
+    },
+    "signal_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Optional. The signal_id from schema.json that triggered this event. Enables signal→event traceability."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Optional. Strategy that produced the signal or order."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Optional. FinRL rebalance batch identifier."
+    },
+    "symbol": {
+      "type": "string",
+      "description": "Optional. Instrument symbol involved in the event."
+    },
+    "execution": {
+      "type": "object",
+      "description": "Present for execution.* event types.",
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {"type": "string"},
+        "action": {"type": "string", "enum": ["BUY", "SELL", "HOLD", "EXIT"]},
+        "direction": {"type": "string", "enum": ["LONG", "SHORT"]},
+        "quantity_requested": {"type": "number"},
+        "quantity_filled": {"type": "number"},
+        "fill_price": {"type": "number"},
+        "order_type": {"type": "string", "enum": ["MARKET", "LIMIT"]},
+        "commission": {"type": "number"},
+        "slippage_pct": {"type": "number"},
+        "reject_reason": {"type": "string"}
+      }
+    },
+    "pnl": {
+      "type": "object",
+      "description": "Present for execution.filled and risk.* events. Used by FB-003 telemetry capture and Operator Console.",
+      "additionalProperties": false,
+      "properties": {
+        "realized_pnl": {"type": "number"},
+        "unrealized_pnl": {"type": "number"},
+        "portfolio_value": {"type": "number"},
+        "drawdown_pct": {"type": "number"},
+        "daily_return_pct": {"type": "number"}
+      }
+    },
+    "risk": {
+      "type": "object",
+      "description": "Present for risk.* events.",
+      "additionalProperties": false,
+      "properties": {
+        "metric": {"type": "string"},
+        "threshold": {"type": "number"},
+        "actual": {"type": "number"},
+        "action_taken": {"type": "string"}
+      }
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable event description for Operator Console and Persona Agent."
+    }
+  }
+}
