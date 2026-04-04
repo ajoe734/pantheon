@@ -1,27 +1,36 @@
 # AI Collaboration Guide
 
-Last updated: 2026-04-03
-Status: canonical collaboration rules for the Pantheon / LEAN repo
+Last updated: 2026-04-04
+Status: canonical collaboration rules for the Pantheon project
 
-## 0. Repository Architecture Decision (2026-04-03)
+## 0. Repository Architecture (2026-04-04 — migration complete)
 
-This repo is currently QuantConnect LEAN + Pantheon services in the same directory.
-Note: **OpenClaw** is one of the upstream OSS frameworks Pantheon integrates (like DSPy, Qlib).
-**Decision:** migrate to two separate repos:
+**You are in the `pantheon` repo.** Migration from the LEAN monorepo is complete.
 
-- `pantheon` — new repo; all of `services/`, `scripts/`, `audits/`, plan docs go here
-- `pantheon-lean` — LEAN fork; referenced as a git submodule from `pantheon`
+- **System name:** `Pantheon` — the multi-persona automated trading system we are building
+- **OpenClaw** is an upstream OSS framework we integrate (like DSPy, Qlib) — it is NOT the system name
 
-**Until migration completes, the working boundary is:**
+Two repos exist:
+- `ajoe734/pantheon` — this repo; all services, scripts, audits, plan docs
+- `ajoe734/pantheon-lean` — LEAN fork; mounted as `lean/` submodule here
+
+**Working boundary:**
 
 | Path | Belongs to | Rule |
 |---|---|---|
-| Root C# dirs (`Engine/`, `Algorithm/`, `Brokerages/`, etc.) | LEAN upstream | Do not modify unless intentional LEAN fork change |
-| `Algorithm.Python/pantheon_algo/` | Pantheon ↔ LEAN bridge | Only place Pantheon Python runs inside LEAN |
+| `lean/` (submodule) | LEAN fork | `git submodule update --init` to populate. C# changes go directly to `ajoe734/pantheon-lean`. |
+| `lean/Algorithm.Python/pantheon_algo/` | Pantheon ↔ LEAN bridge | Only place Pantheon Python runs inside LEAN |
 | `services/` | Pantheon | All agent work happens here |
-| `scripts/`, `audits/`, `*.md` plan files | Pantheon | Move to pantheon repo when ready |
+| `scripts/`, `audits/`, `*.md` plan files | Pantheon | Work here directly |
 
-**OSS framework rule:** each named framework (DSPy, Qlib, FinRL, imitation, MLflow) runs in its own Docker container with its own `services/research/<framework>/requirements.txt`. Never merge them into a shared requirements file.
+**OSS framework rule:** Each framework (DSPy, Qlib, FinRL, imitation, MLflow, OpenClaw) runs in its own Docker container with its own `services/research/<framework>/requirements.txt`. Never merge into a shared requirements file. Fork a framework only if you need to modify its core — otherwise `pip install` the pinned version.
+
+**To initialize after cloning:**
+```bash
+git clone git@github.com:ajoe734/pantheon.git
+cd pantheon
+git submodule update --init --recursive
+```
 
 ## 1. Canonical Truth
 
