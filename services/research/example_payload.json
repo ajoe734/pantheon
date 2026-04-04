@@ -1,0 +1,146 @@
+{
+  "_comment": "Richer example signal payloads. Each payload under examples[*].payload is aligned to services/research/schema.json.",
+  "examples": [
+    {
+      "label": "Standard equity BUY",
+      "notes": "Most common case. Portfolio sizing with audit metadata and risk suggestions.",
+      "payload": {
+        "version": "1.0",
+        "signal_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "strategy_id": "momentum-us-eq-v1",
+        "run_id": "rebalance-2026-04-01-open",
+        "timestamp": "2026-04-01T14:30:00Z",
+        "symbol": "AAPL.US",
+        "action": "BUY",
+        "direction": "LONG",
+        "order_type": "MARKET",
+        "quantity": 0.05,
+        "quantity_type": "PERCENT_PORTFOLIO",
+        "metadata": {
+          "confidence_score": 0.82,
+          "risk_parameters": {
+            "stop_loss_pct": 0.02,
+            "take_profit_pct": 0.06
+          },
+          "insight_type": "Price",
+          "insight_direction": "Up"
+        }
+      }
+    },
+    {
+      "label": "Short-entry SELL",
+      "notes": "SELL plus SHORT means open or add to a short, not close a long.",
+      "payload": {
+        "version": "1.0",
+        "signal_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "strategy_id": "mean-rev-spy-v2",
+        "run_id": "vectorbt-2026-04-01-01",
+        "timestamp": "2026-04-01T14:31:00Z",
+        "symbol": "SPY.US",
+        "action": "SELL",
+        "direction": "SHORT",
+        "order_type": "MARKET",
+        "quantity": 100,
+        "quantity_type": "SHARES",
+        "metadata": {
+          "confidence_score": 0.71,
+          "insight_type": "Price",
+          "insight_direction": "Down"
+        }
+      }
+    },
+    {
+      "label": "EXIT long position",
+      "notes": "EXIT plus LONG means close long exposure. It is not an unspecified flatten command.",
+      "payload": {
+        "version": "1.0",
+        "signal_id": "c3d4e5f6-a7b8-9012-cdef-012345678902",
+        "strategy_id": "rl-portfolio-us-v1",
+        "run_id": "finrl-rebalance-2026-04-01-01",
+        "timestamp": "2026-04-01T15:00:00Z",
+        "symbol": "TSLA.US",
+        "action": "EXIT",
+        "direction": "LONG",
+        "order_type": "MARKET",
+        "quantity": 1.0,
+        "quantity_type": "PERCENT_PORTFOLIO",
+        "metadata": {
+          "confidence_score": 0.9,
+          "insight_type": "Price",
+          "insight_direction": "Flat"
+        }
+      }
+    },
+    {
+      "label": "EXIT short position",
+      "notes": "EXIT plus SHORT means buy to cover short exposure.",
+      "payload": {
+        "version": "1.0",
+        "signal_id": "d4e5f6a7-b8c9-0123-defa-123456789003",
+        "strategy_id": "intraday-short-cover-v1",
+        "run_id": "short-cover-2026-04-01-01",
+        "timestamp": "2026-04-01T15:02:00Z",
+        "symbol": "QQQ.US",
+        "action": "EXIT",
+        "direction": "SHORT",
+        "order_type": "MARKET",
+        "quantity": 50,
+        "quantity_type": "SHARES",
+        "metadata": {
+          "confidence_score": 0.76,
+          "insight_type": "Price",
+          "insight_direction": "Flat"
+        }
+      }
+    },
+    {
+      "label": "HOLD informational signal",
+      "notes": "HOLD carries posture context but should not create an order.",
+      "payload": {
+        "version": "1.0",
+        "signal_id": "e5f6a7b8-c9d0-1234-efab-234567890104",
+        "strategy_id": "momentum-us-eq-v1",
+        "run_id": "hold-2026-04-01-01",
+        "timestamp": "2026-04-01T14:35:00Z",
+        "symbol": "MSFT.US",
+        "action": "HOLD",
+        "direction": "LONG",
+        "order_type": "MARKET",
+        "quantity": 0.03,
+        "quantity_type": "PERCENT_PORTFOLIO",
+        "metadata": {
+          "confidence_score": 0.58,
+          "insight_type": "Price",
+          "insight_direction": "Flat"
+        }
+      }
+    },
+    {
+      "label": "Crypto LIMIT BUY",
+      "notes": "Shows cash-value sizing and limit order behavior.",
+      "payload": {
+        "version": "1.0",
+        "signal_id": "f6a7b8c9-d0e1-2345-fabc-345678901205",
+        "strategy_id": "crypto-trend-btc-v1",
+        "run_id": "crypto-2026-04-01-01",
+        "timestamp": "2026-04-01T12:00:00Z",
+        "symbol": "BTCUSDT",
+        "action": "BUY",
+        "direction": "LONG",
+        "order_type": "LIMIT",
+        "limit_price": 67250.5,
+        "quantity": 500.0,
+        "quantity_type": "CASH_VALUE",
+        "metadata": {
+          "confidence_score": 0.67,
+          "risk_parameters": {
+            "stop_loss_pct": 0.03,
+            "take_profit_pct": 0.09
+          },
+          "insight_type": "Price",
+          "insight_direction": "Up"
+        }
+      }
+    }
+  ]
+}

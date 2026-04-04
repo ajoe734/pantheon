@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon Promoted Artifact Metadata",
+  "type": "object",
+  "required": [
+    "registry_id",
+    "strategy_id",
+    "version",
+    "artifact_type",
+    "promotion_state",
+    "checksum",
+    "lineage",
+    "created_at"
+  ],
+  "properties": {
+    "registry_id": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "artifact_type": {
+      "type": "string",
+      "enum": [
+        "strategy_spec",
+        "model_artifact",
+        "feature_set",
+        "prompt_bundle",
+        "signal_snapshot",
+        "execution_bundle"
+      ]
+    },
+    "promotion_state": {
+      "type": "string",
+      "enum": [
+        "candidate",
+        "paper",
+        "live",
+        "retired"
+      ]
+    },
+    "checksum": {
+      "type": "string",
+      "minLength": 8
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approver": {
+      "type": "string"
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "parent_registry_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_dataset_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_strategy_spec_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "rollback": {
+      "type": "object",
+      "required": [
+        "target_registry_id",
+        "target_version"
+      ],
+      "properties": {
+        "target_registry_id": {
+          "type": "string"
+        },
+        "target_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "verified_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    },
+    "experiment_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "backend",
+          "run_id"
+        ],
+        "properties": {
+          "backend": {
+            "type": "string",
+            "enum": [
+              "mlflow",
+              "wandb"
+            ]
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "artifact_uri": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "promotion_state": {
+            "const": "live"
+          }
+        },
+        "required": [
+          "promotion_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at",
+          "approver",
+          "rollback"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": true
+}

@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/workflow-handoff/v1",
+  "title": "WorkflowHandoff",
+  "type": "object",
+  "required": [
+    "handoff_version",
+    "handoff_id",
+    "handoff_type",
+    "from_stage",
+    "to_stage",
+    "created_at",
+    "strategy_spec",
+    "registry_hints",
+    "governance_context",
+    "provenance"
+  ],
+  "properties": {
+    "handoff_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "handoff_id": {
+      "type": "string"
+    },
+    "handoff_type": {
+      "type": "string",
+      "enum": [
+        "strategy_spec",
+        "research_package",
+        "registry_submission",
+        "approval_request"
+      ]
+    },
+    "from_stage": {
+      "type": "string"
+    },
+    "to_stage": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "strategy_spec": {
+      "oneOf": [
+        {
+          "$ref": "strategy_spec.schema.json"
+        },
+        {
+          "type": "object",
+          "required": [
+            "strategy_id",
+            "spec_ref"
+          ],
+          "properties": {
+            "strategy_id": {
+              "type": "string"
+            },
+            "spec_ref": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "registry_hints": {
+      "type": "object",
+      "required": [
+        "artifact_type",
+        "initial_lifecycle_state"
+      ],
+      "properties": {
+        "artifact_type": {
+          "type": "string",
+          "enum": [
+            "strategy_spec",
+            "model_artifact",
+            "feature_set",
+            "prompt_bundle",
+            "signal_snapshot",
+            "execution_bundle"
+          ]
+        },
+        "initial_lifecycle_state": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "candidate"
+          ]
+        },
+        "lineage_ref": {
+          "type": "string"
+        },
+        "producer_run_id": {
+          "type": "string"
+        },
+        "source_dataset_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "governance_context": {
+      "type": "object",
+      "required": [
+        "approval_required",
+        "execution_context"
+      ],
+      "properties": {
+        "approval_required": {
+          "type": "boolean"
+        },
+        "execution_context": {
+          "type": "string",
+          "enum": [
+            "research",
+            "paper",
+            "live"
+          ]
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "risk_profile": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "created_by",
+        "created_at"
+      ],
+      "properties": {
+        "created_by": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_task_id": {
+          "type": "string"
+        },
+        "source_channel": {
+          "type": "string"
+        },
+        "source_persona": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

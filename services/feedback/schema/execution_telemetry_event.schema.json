@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/execution-telemetry-event/v1",
+  "title": "ExecutionTelemetryEvent",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "created_at",
+    "execution_mode",
+    "target",
+    "metrics"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique event id. Idempotency key for telemetry ingestion."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "pnl_snapshot",
+        "drawdown_snapshot",
+        "slippage_observation",
+        "fill_observation",
+        "order_rejection"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "live"
+      ]
+    },
+    "broker": {
+      "type": "string"
+    },
+    "account_ref": {
+      "type": "string"
+    },
+    "signal_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "strategy_id"
+      ],
+      "properties": {
+        "registry_id": {
+          "type": "string"
+        },
+        "strategy_id": {
+          "type": "string"
+        },
+        "artifact_version": {
+          "type": "string"
+        },
+        "artifact_type": {
+          "type": "string",
+          "enum": [
+            "strategy_spec",
+            "model_artifact",
+            "feature_set",
+            "prompt_bundle",
+            "signal_snapshot",
+            "execution_bundle"
+          ]
+        },
+        "promotion_state": {
+          "type": "string",
+          "enum": [
+            "candidate",
+            "paper",
+            "live",
+            "retired"
+          ]
+        },
+        "lineage_ref": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "pnl": {
+          "type": "number"
+        },
+        "drawdown_pct": {
+          "type": "number"
+        },
+        "slippage_bps": {
+          "type": "number"
+        },
+        "fill_quantity": {
+          "type": "number"
+        },
+        "fill_price": {
+          "type": "number"
+        },
+        "reject_reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

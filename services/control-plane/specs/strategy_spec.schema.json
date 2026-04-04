@@ -1,0 +1,207 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/strategy-spec/v1",
+  "title": "StrategySpec",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "strategy_id",
+    "title",
+    "hypothesis",
+    "objective",
+    "market_scope",
+    "data_dependencies",
+    "execution_profile",
+    "evaluation_plan",
+    "governance",
+    "provenance"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "hypothesis": {
+      "type": "string"
+    },
+    "objective": {
+      "type": "string"
+    },
+    "market_scope": {
+      "type": "object",
+      "required": [
+        "symbols",
+        "frequency"
+      ],
+      "properties": {
+        "symbols": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "asset_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "venues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "frequency": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "data_dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "kind"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dataset",
+              "feature_set",
+              "paper",
+              "repo",
+              "note"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "execution_profile": {
+      "type": "object",
+      "required": [
+        "signal_schema_version",
+        "quantity_type"
+      ],
+      "properties": {
+        "signal_schema_version": {
+          "type": "string"
+        },
+        "quantity_type": {
+          "type": "string",
+          "enum": [
+            "SHARES",
+            "CASH_VALUE",
+            "PERCENT_PORTFOLIO"
+          ]
+        },
+        "rebalance_cadence": {
+          "type": "string"
+        },
+        "execution_mode_hint": {
+          "type": "string",
+          "enum": [
+            "research",
+            "paper",
+            "live"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "evaluation_plan": {
+      "type": "object",
+      "required": [
+        "metrics"
+      ],
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "candidate_gate": {
+          "type": "string"
+        },
+        "paper_gate": {
+          "type": "string"
+        },
+        "live_gate": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "governance": {
+      "type": "object",
+      "required": [
+        "approval_required"
+      ],
+      "properties": {
+        "approval_required": {
+          "type": "boolean"
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "risk_profile": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "source_kind",
+        "created_at"
+      ],
+      "properties": {
+        "source_kind": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "paper",
+            "repo",
+            "note",
+            "workflow"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "created_by": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

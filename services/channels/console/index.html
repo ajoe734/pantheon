@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw Operator Console</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: #0d1117; color: #c9d1d9; min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: #161b22; padding: 12px 24px; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 1rem; color: #58a6ff; }
+    #pnl-banner { background: #0d1117; border: 1px solid #30363d; padding: 8px 24px; font-size: 0.85rem; color: #8b949e; }
+    #pnl-banner span { color: #3fb950; font-weight: bold; }
+    main { display: flex; flex: 1; }
+    #chat { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 8px; }
+    #messages { flex: 1; overflow-y: auto; border: 1px solid #30363d; border-radius: 6px; padding: 12px; background: #161b22; display: flex; flex-direction: column; gap: 6px; }
+    .msg { padding: 6px 10px; border-radius: 4px; max-width: 80%; font-size: 0.85rem; }
+    .msg.user { background: #1f6feb; align-self: flex-end; }
+    .msg.agent { background: #21262d; align-self: flex-start; }
+    #input-row { display: flex; gap: 8px; }
+    #msg-input { flex: 1; background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 12px; border-radius: 6px; font-family: monospace; }
+    #send-btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    #send-btn:hover { background: #2ea043; }
+    #status { font-size: 0.75rem; color: #8b949e; padding: 4px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenClaw Operator Console</h1>
+    <span style="color:#8b949e;font-size:0.8rem">Phase 3/4 Skeleton — system not ready</span>
+  </header>
+
+  <div id="pnl-banner">
+    Live PnL: <span id="pnl">—</span>
+    &nbsp;|&nbsp; Open Positions: <span id="positions">—</span>
+    &nbsp;|&nbsp; Status: <span id="sys-status" style="color:#f85149">not connected</span>
+    <!-- TODO: populate from Monitoring Event Schema once Gemini's schema is LOCKED -->
+  </div>
+
+  <main>
+    <div id="chat">
+      <div id="messages">
+        <div class="msg agent">System not ready. Waiting for upstream schemas to be locked (P1-001, P2-001).</div>
+      </div>
+      <div id="status"></div>
+      <div id="input-row">
+        <input id="msg-input" type="text" placeholder="Type a command…" />
+        <button id="send-btn">Send</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const WEB_API = 'http://localhost:8000';
+    const userId = 'operator-console';
+    let sessionId = null;
+
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('msg-input');
+    const statusEl = document.getElementById('status');
+
+    function addMsg(text, role) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function send() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      inputEl.value = '';
+      addMsg(text, 'user');
+      statusEl.textContent = 'sending…';
+
+      try {
+        const resp = await fetch(`${WEB_API}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, message: text, session_id: sessionId }),
+        });
+        const data = await resp.json();
+        sessionId = data.session_id;
+        addMsg(data.response, 'agent');
+        statusEl.textContent = `session: ${sessionId}`;
+      } catch (err) {
+        addMsg(`[error: ${err.message}]`, 'agent');
+        statusEl.textContent = 'error';
+      }
+    }
+
+    document.getElementById('send-btn').addEventListener('click', send);
+    inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  </script>
+</body>
+</html>

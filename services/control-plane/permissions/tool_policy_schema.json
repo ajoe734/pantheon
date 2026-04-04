@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon Tool Policy",
+  "type": "object",
+  "required": [
+    "policy_version",
+    "policy_id",
+    "subject_scope",
+    "default_effect",
+    "global_deny_rules",
+    "tool_rules"
+  ],
+  "properties": {
+    "policy_version": {
+      "type": "string"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "subject_scope": {
+      "type": "object",
+      "required": [
+        "subject_type",
+        "channel_tiers",
+        "roles"
+      ],
+      "properties": {
+        "subject_type": {
+          "type": "string",
+          "enum": [
+            "persona",
+            "operator",
+            "cron"
+          ]
+        },
+        "persona_id": {
+          "type": "string"
+        },
+        "channel_tiers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "web",
+              "operator",
+              "system"
+            ]
+          }
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "persona",
+              "operator",
+              "approver",
+              "system"
+            ]
+          }
+        }
+      }
+    },
+    "default_effect": {
+      "type": "string",
+      "enum": [
+        "deny"
+      ]
+    },
+    "global_deny_rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/policyRule"
+      }
+    },
+    "tool_rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/policyRule"
+      }
+    }
+  },
+  "definitions": {
+    "policyRule": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "effect",
+        "tool_id",
+        "tool_class"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string"
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny"
+          ]
+        },
+        "tool_id": {
+          "type": "string"
+        },
+        "tool_class": {
+          "type": "string",
+          "enum": [
+            "research",
+            "status",
+            "monitoring",
+            "execution_signal",
+            "governance",
+            "deployment",
+            "lean_direct"
+          ]
+        },
+        "intent_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "channel_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "telegram",
+              "discord",
+              "web",
+              "console",
+              "cron"
+            ]
+          }
+        },
+        "role_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "persona",
+              "operator",
+              "approver",
+              "system"
+            ]
+          }
+        },
+        "execution_context_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "research",
+              "status",
+              "monitor",
+              "paper",
+              "live"
+            ]
+          }
+        },
+        "promotion_state_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "candidate",
+              "paper",
+              "live",
+              "retired"
+            ]
+          }
+        },
+        "requires_approval": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

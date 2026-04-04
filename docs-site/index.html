@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenClaw 協作看板</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">OpenClaw x LEAN</p>
+          <h1>協作看板</h1>
+          <p id="objective" class="hero-copy">正在載入本期目標...</p>
+        </div>
+        <div class="hero-actions">
+          <button id="refresh-button" class="primary-button" type="button">重新整理</button>
+          <div class="meta-card">
+            <span class="meta-label">最後更新</span>
+            <strong id="updated-at">-</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel span-3">
+          <div class="section-head">
+            <h2>工作量分配</h2>
+            <span class="section-copy">每位代理的目標比例與即時任務數</span>
+          </div>
+          <div id="workload-grid" class="workload-grid"></div>
+        </section>
+
+        <section class="panel span-3">
+          <div class="section-head">
+            <h2>代理分工</h2>
+            <span class="section-copy">目前分支、進行中任務與下一步</span>
+          </div>
+          <div id="agent-lanes" class="agent-lanes"></div>
+        </section>
+
+        <section class="panel span-6">
+          <div class="section-head">
+            <h2>任務看板</h2>
+            <span class="section-copy">統一查看 owner、依賴關係與狀態</span>
+          </div>
+          <div id="task-board" class="board"></div>
+        </section>
+
+        <section class="panel span-6">
+          <div class="section-head">
+            <h2>審查備註</h2>
+            <span class="section-copy">集中顯示 reviewer 已寫好的修正意見與參考檔案</span>
+          </div>
+          <div id="review-note-list" class="stack"></div>
+        </section>
+
+        <section class="panel span-6">
+          <div class="section-head">
+            <h2>Audit 狀態區</h2>
+            <span class="section-copy">追蹤每個 LLM 的對齊檢查進度、範圍與產出檔案</span>
+          </div>
+          <div id="audit-summary" class="dependency-summary"></div>
+          <div id="audit-list" class="stack"></div>
+        </section>
+
+        <section class="panel span-6">
+          <div class="section-head">
+            <h2>依賴排程</h2>
+            <span class="section-copy">按照任務相依關係推算目前可開工、下一波與後續波次</span>
+          </div>
+          <div id="dependency-summary" class="dependency-summary"></div>
+          <div id="dependency-schedule" class="dependency-schedule"></div>
+        </section>
+
+        <section class="panel span-3">
+          <div class="section-head">
+            <h2>交接佇列</h2>
+            <span class="section-copy">目前誰在等誰接手</span>
+          </div>
+          <div id="handoff-list" class="stack"></div>
+        </section>
+
+        <section class="panel span-3">
+          <div class="section-head">
+            <h2>阻塞項目</h2>
+            <span class="section-copy">只顯示目前仍未解決的阻塞</span>
+          </div>
+          <div id="blocker-list" class="stack"></div>
+        </section>
+
+        <section class="panel span-3">
+          <div class="section-head">
+            <h2>Sprint 摘要</h2>
+            <span class="section-copy">從 current-work.md 擷取的摘要</span>
+          </div>
+          <div id="snapshot" class="snapshot"></div>
+        </section>
+
+        <section class="panel span-3">
+          <div class="section-head">
+            <h2>最近活動</h2>
+            <span class="section-copy">最新 append-only 歷史紀錄</span>
+          </div>
+          <div id="activity-list" class="activity"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./script.js" type="module"></script>
+  </body>
+</html>

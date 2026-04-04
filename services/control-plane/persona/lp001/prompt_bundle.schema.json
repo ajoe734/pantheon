@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon DSPy Prompt Bundle",
+  "type": "object",
+  "required": [
+    "bundle_id",
+    "strategy_id",
+    "version",
+    "dspy_version",
+    "optimizer",
+    "program_refs",
+    "training_run_id",
+    "evaluation_summary",
+    "registry_hints"
+  ],
+  "properties": {
+    "bundle_id": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "dspy_version": {
+      "type": "string"
+    },
+    "optimizer": {
+      "type": "string",
+      "enum": [
+        "BootstrapFewShot",
+        "MIPROv2",
+        "GEPA",
+        "custom"
+      ]
+    },
+    "program_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "program_name",
+          "storage_ref"
+        ],
+        "properties": {
+          "program_name": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "string"
+          },
+          "signature_ref": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "training_run_id": {
+      "type": "string"
+    },
+    "evaluation_summary": {
+      "type": "object",
+      "required": [
+        "intent_accuracy",
+        "tool_selection_precision",
+        "deny_coverage_delta",
+        "mandatory_deny_violation_count"
+      ],
+      "properties": {
+        "intent_accuracy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "tool_selection_precision": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "deny_coverage_delta": {
+          "type": "number"
+        },
+        "mandatory_deny_violation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "registry_hints": {
+      "type": "object",
+      "required": [
+        "artifact_type",
+        "initial_lifecycle_state"
+      ],
+      "properties": {
+        "artifact_type": {
+          "type": "string",
+          "const": "prompt_bundle"
+        },
+        "initial_lifecycle_state": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "candidate",
+            "paper"
+          ]
+        },
+        "lineage_ref": {
+          "type": "string"
+        },
+        "base_bundle_ref": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

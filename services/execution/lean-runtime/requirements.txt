@@ -1,0 +1,19 @@
+jsonschema>=4.21.0
+
+# LEAN runtime dependency — not a PyPI package.
+# QuantConnect is injected into the Python environment by the LEAN engine at runtime.
+# When running inside a LEAN algorithm (QCAlgorithm), the following are available:
+#   from QuantConnect import Symbol, SecurityType, Market
+#   from QuantConnect.Algorithm import QCAlgorithm
+#
+# For local unit testing outside LEAN, QuantConnect is absent and executor.py
+# falls back to string-based symbol representation (see _resolve_symbol()).
+#
+# Integration path options (pick one before P3-001 can be called fully integrated):
+#   (a) lean-cli docker image: run backtests via `lean backtest` in the LEAN container
+#   (b) QuantConnect Python stub package (community): install for type checking only
+#   (c) Direct LEAN engine embedding: advanced, requires .NET + Python interop setup
+#
+# Reference: https://www.lean.io/docs/v2/lean-cli/getting-started/installation
+# Smoke test plan: create a minimal QCAlgorithm that calls SignalConsumer.drain()
+# in OnData() and run one backtest bar to confirm Symbol.Create() resolves correctly.

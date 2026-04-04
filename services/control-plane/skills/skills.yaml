@@ -1,0 +1,46 @@
+# Skills Registry
+# Each skill maps a name to a description and trigger conditions.
+# The SkillLoader picks the best matching skill from user intent.
+#
+# Status: DRAFT — business logic in loader.py is TODO until P2-001 schema is LOCKED.
+
+skills:
+  - name: run_backtest
+    description: Run a historical backtest for a given strategy
+    triggers:
+      - backtest
+      - test strategy
+      - simulate
+    worker: qlib          # maps to QlibTool
+
+  - name: run_portfolio_sim
+    description: Run a portfolio simulation / vectorized backtest
+    triggers:
+      - portfolio simulation
+      - vectorbt
+      - optimize weights
+    worker: vectorbt      # maps to VectorbtTool
+
+  - name: run_rl_train
+    description: Train a reinforcement-learning trading agent
+    triggers:
+      - train agent
+      - reinforcement learning
+      - RL strategy
+    worker: finrl         # maps to FinRLTool
+
+  - name: run_pricing
+    description: Price a derivative or fixed-income instrument
+    triggers:
+      - price option
+      - quantlib
+      - derivatives pricing
+    worker: quantlib      # maps to QuantLibTool
+
+  - name: get_status
+    description: Get current system or task status
+    triggers:
+      - status
+      - what is running
+      - show tasks
+    worker: null          # handled internally, no research worker needed
