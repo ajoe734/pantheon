@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon Local Review Job",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "job_id",
+    "created_at",
+    "project_id",
+    "task_id",
+    "task_title",
+    "reviewer",
+    "target_profile",
+    "prompt_text"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "job_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "project_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "task_title": { "type": "string" },
+    "reviewer": { "type": "string" },
+    "target_profile": { "type": "string" },
+    "target_app": { "type": ["string", "null"] },
+    "prompt_text": { "type": "string" },
+    "prompt_path": { "type": ["string", "null"] },
+    "auto_send": { "type": "boolean" },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": true
+}

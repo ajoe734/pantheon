@@ -1,0 +1,102 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pantheon + LEAN docker-compose
+#
+# Architecture:
+#   lean                  → QuantConnect LEAN execution engine (C# / .NET)
+#   signal-store          → Redis signal bus (decouples control-plane from LEAN)
+#   control-plane-router  → Permission-enforcing request router (FastAPI)
+#   control-plane-persona → Persona agent stub; will integrate upstream OpenClaw
+#   dspy-worker           → DSPy persona policy optimization (isolated Python env)
+#   qlib-worker           → Qlib alpha research worker (isolated Python env)
+#   finrl-worker          → FinRL RL policy worker (isolated Python env)
+#   imitation-worker      → imitation behavior cloning worker (isolated Python env)
+#   mlflow-server         → MLflow experiment tracking backend
+#
+# Each OSS learning framework runs in its own container with its own
+# requirements.txt to avoid dependency conflicts.
+#
+# Future: when pantheon repo is extracted, `lean:` will build from
+# ./lean (git submodule) instead of `.` (repo root).
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Execution Plane ──────────────────────────────────────────────────────
+  lean:
+    build: .
+    volumes:
+      - ./Data:/Lean/Data
+      - ./Launcher/config.json:/app/config.json
+    depends_on:
+      - signal-store
+    environment:
+      - SIGNAL_STORE_URL=redis://signal-store:6379
+
+  # ── Signal Bus ───────────────────────────────────────────────────────────
+  signal-store:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  # ── Control Plane ────────────────────────────────────────────────────────
+  control-plane-router:
+    build: ./services/control-plane/router
+    ports:
+      - "8001:8001"
+    environment:
+      - PERSONA_URL=http://control-plane-persona:8002
+    depends_on:
+      - control-plane-persona
+      - signal-store
+
+  control-plane-persona:
+    build: ./services/control-plane/persona
+    ports:
+      - "8002:8002"
+    environment:
+      - REDIS_URL=redis://signal-store:6379
+
+  # ── OSS Learning Workers (each isolated Python environment) ───────────────
+  dspy-worker:
+    build: ./services/research/dspy
+    environment:
+      - REDIS_URL=redis://signal-store:6379
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    depends_on:
+      - signal-store
+      - mlflow-server
+
+  qlib-worker:
+    build: ./services/research/qlib
+    environment:
+      - REDIS_URL=redis://signal-store:6379
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    depends_on:
+      - signal-store
+      - mlflow-server
+
+  finrl-worker:
+    build: ./services/research/finrl
+    environment:
+      - REDIS_URL=redis://signal-store:6379
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    depends_on:
+      - signal-store
+      - mlflow-server
+
+  imitation-worker:
+    build: ./services/research/imitation
+    environment:
+      - REDIS_URL=redis://signal-store:6379
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    depends_on:
+      - signal-store
+      - mlflow-server
+
+  # ── Experiment Tracking ──────────────────────────────────────────────────
+  mlflow-server:
+    build: ./services/research/mlflow
+    ports:
+      - "5000:5000"

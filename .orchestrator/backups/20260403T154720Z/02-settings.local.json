@@ -1,0 +1,86 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py blocker EX-001 \"Artifact loader files still not present in repo. ai-status.json notes Gemini moved files to services/ folder but services/execution/artifact-loader/ does not exist. Cannot review until files are committed.\" Gemini)",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py done FB-001 \"FB-001 APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. Governance boundary clear \\(feedback cannot mutate live directly\\), event families properly separated, linkage object sufficient for evaluator/optimizer work. Three minor items noted: actor_role 'reviewer' not in OC-001 role enum, telemetry promotion_state drops 'draft' without explicit doc note, 'annotate' edit operation needs comment.\")",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py done FB-002 \"FB-002 APPROVED for v1 lock \\(reviewed together with FB-001\\). trader_feedback_event schema covers approve/edit/reject/rationale correctly. Critical boundary confirmed: 'edit' is an event record, not a silent artifact overwrite — updated artifact must still flow through registry and promotion gate. See review_fb001_fb002_claude.md.\")",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py assign LP-001 Claude Codex \"Claiming LP-001 as helper work. DSPy persona policy integration is in Claude governance/control-plane lane. Will draft contract defining DSPy optimization scope, training signal from FB-001, prompt_bundle artifact output through REG-001. Handoff to Codex once draft is ready.\")",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py progress LP-001 \"Drafted LP-001 contract at services/control-plane/persona/lp001/contract.md. Defines: \\(1\\) DSPy scope = persona programs only \\(intent_classify, tool_select, response_frame, approval_rationale\\), \\(2\\) training signal from FB-001 preference store with quality gates, \\(3\\) output = prompt_bundle artifact through REG-001, \\(4\\) governance eval gate including denial-rate regression check to ensure optimized persona doesn't weaken OC-001 deny-first coverage, \\(5\\) registry lifecycle draft→candidate→paper with operator approval for live.\")",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py handoff LP-001 Codex \"LP-001 contract draft ready at services/control-plane/persona/lp001/contract.md. Key decisions made: DSPy scope limited to persona programs only, training from FB-001 preference store with operator-only signal quality gate, output is prompt_bundle through REG-001 lifecycle, evaluation gate includes denial-rate regression check \\(optimized persona must not weaken OC-001 deny-first coverage\\). Three open questions in §9 for Codex to decide: optimizer choice, prompt_bundle schema need, denial-rate threshold expression.\")",
+      "Bash(AI_NAME=Claude bash scripts/ai-status.sh progress AUD-CLAUDE-001 \"Audit complete. Key findings: \\(1\\) EX-001 OVERSTATED — marked done but services/execution/artifact-loader/ does not exist; must be reset to in_progress/blocked. \\(2\\) P3-001 valid design but not LEAN-integrated: no LEAN dep pinned, _resolve_symbol\\(\\) uses invalid LEAN API, no smoke test. \\(3\\) P4-001 valid local contract; persona agent is an all-stub surrogate — upstream OpenClaw integration decision pending. \\(4\\) OC-001 and OC-003 valid as local contracts but no upstream OpenClaw adapter exists — integration blocked until OpenClaw source is selected.\")",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py progress AUD-CLAUDE-001 \"Audit complete. Key findings: \\(1\\) EX-001 OVERSTATED — marked done but services/execution/artifact-loader/ does not exist; must be reset to in_progress/blocked. \\(2\\) P3-001 valid design but not LEAN-integrated: no LEAN dep pinned, _resolve_symbol\\(\\) uses invalid LEAN API, no smoke test. \\(3\\) P4-001 valid local contract; persona agent is all-stub surrogate — upstream OpenClaw integration decision pending. \\(4\\) OC-001 and OC-003 valid as local contracts but no upstream OpenClaw adapter exists — blocked on OpenClaw source selection.\")",
+      "Bash(python3 scripts/ai_status.py --help)",
+      "Bash(python3 -c \"import json; json.load\\(open\\('ai-status.json'\\)\\)\")",
+      "Bash(python3 -c ':*)",
+      "Bash(python3 -c \"import json; json.load\\(open\\('ai-status.json'\\)\\); print\\('JSON valid'\\)\")",
+      "Bash(AI_NAME=Claude python3 scripts/ai_status.py progress AUD-CLAUDE-001 \"Audit complete. Key findings: \\(1\\) EX-001 OVERSTATED — marked done but services/execution/artifact-loader/ does not exist in repo; must be reset. \\(2\\) P3-001 valid adapter design but not LEAN-integrated: no LEAN dep pinned, _resolve_symbol\\(\\) uses invalid duck-typed API instead of Symbol.Create\\(\\), no smoke test. \\(3\\) P4-001 valid local contract; persona agent is all-stub surrogate — upstream OpenClaw integration decision deferred. \\(4\\) OC-001 and OC-003 valid as local contracts but no upstream OpenClaw adapter exists — blocked on OpenClaw source selection. Full findings at audits/oss-alignment/claude_audit.md.\")",
+      "Bash(pwd)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(rg *)",
+      "Bash(cat *)",
+      "Bash(sed *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(python3 scripts/ai_status.py *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(apt *)",
+      "Bash(npm install *)",
+      "Bash(pip install *)",
+      "Bash(docker *)"
+    ],
+    "deny": [
+      "Bash(git reset --hard*)",
+      "Bash(git checkout -- *)",
+      "Bash(sudo *)",
+      "Bash(rm -rf /*)",
+      "Bash(chmod 777 *)"
+    ],
+    "defaultMode": "acceptEdits",
+    "disableBypassPermissionsMode": "disable"
+  },
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .orchestrator/permission_broker.py log-hook PermissionRequest",
+            "shell": "bash"
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .orchestrator/permission_broker.py log-hook PermissionDenied",
+            "shell": "bash"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .orchestrator/permission_broker.py log-hook PostToolUse",
+            "shell": "bash"
+          }
+        ]
+      }
+    ]
+  }
+}

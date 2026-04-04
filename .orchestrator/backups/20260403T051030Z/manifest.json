@@ -1,0 +1,20 @@
+{
+  "created_at": "2026-04-03T05:10:30Z",
+  "files": [
+    {
+      "target_path": "/home/ajoe734/code/Lean/.vscode/settings.json",
+      "existed": true,
+      "backup_file": "01-settings.json"
+    },
+    {
+      "target_path": "/home/ajoe734/code/Lean/.claude/settings.local.json",
+      "existed": true,
+      "backup_file": "02-settings.local.json"
+    },
+    {
+      "target_path": "/home/ajoe734/.gemini/settings.json",
+      "existed": false,
+      "backup_file": null
+    }
+  ]
+}

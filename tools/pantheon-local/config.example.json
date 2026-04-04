@@ -1,0 +1,41 @@
+{
+  "project_id": "pantheon-lean",
+  "prompt_output_dir": "./tools/pantheon-local/review-jobs",
+  "state_file": "./.pantheon-review-state.json",
+  "reviewers": {
+    "Claude": {
+      "target_profile": "claude_desktop",
+      "chatbox_label": "Claude Desktop",
+      "instructions": [
+        "先完成你被指派的 review，再做其他任務。",
+        "先讀 task metadata、review notes 和相關檔案後再開始。",
+        "review 完成後請把結果寫回 ai-status.json / ai-activity-log.jsonl 的既有流程。"
+      ]
+    },
+    "Gemini": {
+      "target_profile": "vscode_chat",
+      "chatbox_label": "VS Code Chat",
+      "instructions": [
+        "先處理你當前被指派的 review。",
+        "如果檔案路徑、artifact 或 contract 不一致，先記錄 blocker。"
+      ]
+    },
+    "Codex": {
+      "target_profile": "vscode_chat",
+      "chatbox_label": "VS Code Chat",
+      "instructions": [
+        "優先完成 review 與 contract alignment。",
+        "不要另開第二套任務追蹤。"
+      ]
+    },
+    "Grok": {
+      "target_profile": "grok_vscode",
+      "chatbox_label": "VS Code Chat (Grok)",
+      "instructions": [
+        "先完成被指派的 review，再處理 coding/spec/research 類任務。",
+        "若 Grok 在 VS Code 可用，優先用 VS Code chat 進行程式與規格工作；瀏覽器只作研究 fallback。",
+        "review 完成後請把結果寫回 ai-status.json / ai-activity-log.jsonl 的既有流程。"
+      ]
+    }
+  }
+}
