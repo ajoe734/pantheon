@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-01-architecture-alignment",
   "objective": "Align the repo to the governed Pantheon target architecture where Pantheon orchestrates workflows, the evolution plane learns through feedback and registry gates, and LEAN executes only approved artifacts.",
-  "updated_at": "2026-04-04T13:56:21Z",
+  "updated_at": "2026-04-06T10:42:17Z",
   "canonical_files": [
     "AI_COLLABORATION_GUIDE.md",
     "current-work.md",
@@ -19,13 +19,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
-        "P3-001"
+        "P3-001",
+        "LP-004"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
-      "last_update": "2026-04-02T03:36:14Z"
+      "next": "Changes requested. See services/execution/lean-runtime/review_p3001_codex_zh.md: fix the lean_runtime import path, stop marking signals processed before real execution, and correct algo.Time timezone handling in stale checks.",
+      "last_update": "2026-04-06T09:31:43Z"
     },
     {
       "name": "Gemini",
@@ -35,13 +36,8 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "EX-001",
-        "OC-002",
-        "REG-002",
-        "LP-003"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "Resetting status per AUD-CLAUDE-001: contract is done but implementation is missing. Re-evaluating LEAN native bridge.",
       "last_update": "2026-04-02T18:00:00Z"
@@ -56,14 +52,13 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "REG-003",
-        "FB-001",
-        "LP-001",
-        "ARC-007"
+        "EX-001",
+        "OC-002",
+        "REG-002"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Preparatory migration work is in place in the mixed repo, and docs/repo-split-runbook.md now records the manual cutover path. Remaining work is external: create pantheon + pantheon-lean repos, move Pantheon paths, and add lean/ as a submodule.",
-      "last_update": "2026-04-04T13:54:37Z"
+      "next": "Implemented services/control-plane/cron/ with governed ingest/review/retrain/deploy workflow definitions, local OpenClaw dispatch envelopes, WorkflowHandoff validation, and a deploy path that routes through REG-002 PromotionGate. Verified with python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/cron/smoke_test.py, and python3 -m py_compile services/control-plane/cron/*.py. Remaining follow-up: replace the smoke-test runtime pin with the first real upstream release tag/commit when the transport wiring is finalized.",
+      "last_update": "2026-04-06T09:08:19Z"
     },
     {
       "name": "Grok",
@@ -75,11 +70,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "AUD-GROK-002"
+        "RS-001"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Started adapter spike for RS-001 upstream integration",
-      "last_update": "2026-04-02T14:28:20Z"
+      "next": "LP-003 審查完成並批准。MLflow adapter 實現完整、測試充分、文檔清晰。現在轉向 LP-005 調整。",
+      "last_update": "2026-04-06T09:46:29Z"
     }
   ],
   "tasks": [
@@ -223,8 +218,8 @@
       "title": "Wire LEAN runtime signal consumer",
       "phase": "Phase 3",
       "owner": "Claude",
-      "reviewer": "Gemini",
-      "status": "review",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [
         "P1-001",
         "P2-002"
@@ -236,8 +231,8 @@
         "runtime can consume signal payload",
         "broker config edge documented"
       ],
-      "next": "Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
-      "last_update": "2026-04-02T03:36:14Z",
+      "next": "Changes requested. See services/execution/lean-runtime/review_p3001_codex_zh.md: fix the lean_runtime import path, stop marking signals processed before real execution, and correct algo.Time timezone handling in stale checks.",
+      "last_update": "2026-04-06T09:31:43Z",
       "summary_zh": "把 signal intake 真正接進 LEAN runtime，讓已經標準化的訊號可以被解析、檢查後送到執行流程。"
     },
     {
@@ -297,7 +292,7 @@
     },
     {
       "id": "ARC-001",
-      "title": "Publish target architecture aligned to OpenClaw evolution model",
+      "title": "Publish Pantheon target architecture aligned to the product and upstream integration model",
       "phase": "Architecture",
       "owner": "Codex",
       "reviewer": "Claude",
@@ -311,9 +306,9 @@
         "promotion gate defined",
         "learning object split documented"
       ],
-      "next": "Use the target architecture as the north star for product planning",
-      "last_update": "2026-04-01T16:25:00Z",
-      "summary_zh": "把新版目標架構寫清楚，讓 OpenClaw、Evolution Plane、Research Plane 與 LEAN 的責任分工有共同北極星。"
+      "next": "Use the Pantheon target architecture as the north star for product and integration planning.",
+      "last_update": "2026-04-05T05:27:27Z",
+      "summary_zh": "把 Pantheon 產品、上游 OpenClaw、Evolution Plane、Research Plane 與 LEAN 的責任分工寫清楚，避免再把產品本體和外部框架混成同一層。"
     },
     {
       "id": "ARC-002",
@@ -341,7 +336,7 @@
       "id": "EX-001",
       "title": "Define artifact loader contract for paper and live execution",
       "phase": "Epic A",
-      "owner": "Gemini",
+      "owner": "Codex",
       "reviewer": "Claude",
       "status": "in_progress",
       "depends_on": [
@@ -358,13 +353,13 @@
         "promotion state checks specified",
         "[CODEX NOTE] artifact loader must use LEAN Object Store (ObjectStore.Save/Read) as the transport between registry and LEAN runtime — direct file injection or GCS reads bypassing LEAN data provider are not acceptable"
       ],
-      "next": "Resetting status per AUD-CLAUDE-001: contract is done but implementation is missing. Re-evaluating LEAN native bridge.",
-      "last_update": "2026-04-02T18:00:00Z",
+      "next": "Ownership shifted from Gemini to Codex after repeated Gemini auto-worker failures. Resetting status per AUD-CLAUDE-001: contract is done but implementation is missing. Re-evaluating LEAN native bridge.",
+      "last_update": "2026-04-06T06:03:44Z",
       "summary_zh": "定義 artifact loader 契約，確保 LEAN 只會透過受治理的 artifact 與 Object Store 載入 paper/live 可執行內容。"
     },
     {
       "id": "OC-001",
-      "title": "Define OpenClaw tool permission model with allowlist and denylist",
+      "title": "Define Pantheon tool permission model for upstream OpenClaw integration",
       "phase": "Epic B",
       "owner": "Codex",
       "reviewer": "Claude",
@@ -388,15 +383,15 @@
         "後續只需追蹤兩個 minor open items：policy schema 是否要直接表達 allow_with_approval，以及 promotion-state 是否要在 router 層做二次確認。"
       ],
       "review_file": "services/control-plane/permissions/review_oc001_claude.md",
-      "summary_zh": "定義 OpenClaw 的工具權限模型，用 allowlist/denylist 把哪些 persona、channel、cron 能做哪些事鎖清楚。"
+      "summary_zh": "定義 Pantheon 的工具權限模型，並把 upstream OpenClaw 的工具能力映射到 deny-first allowlist/denylist 規則。"
     },
     {
       "id": "OC-002",
-      "title": "Implement OpenClaw cron workflows for ingest, review, retrain, and deploy",
+      "title": "Implement Pantheon cron workflows through upstream OpenClaw integration",
       "phase": "Epic B",
-      "owner": "Gemini",
-      "reviewer": "Claude",
-      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Grok",
+      "status": "review_approved",
       "depends_on": [
         "OC-001"
       ],
@@ -408,13 +403,15 @@
         "review and retrain workflow defined",
         "deploy workflow references promotion gate"
       ],
-      "next": "Defining workflow entrypoints and mapping StrategySpec to OpenClaw workflow parameters.",
-      "last_update": "2026-04-02T17:30:00Z",
-      "summary_zh": "把 ingest、review、retrain、deploy 做成 cron workflow，讓研究、訓練與部署能分權且可追蹤。"
+      "next": "OC-002 APPROVED FOR DISPATCH: All workflows implemented and tested. Integration with OC-001, OC-003, REG-002 verified. Ready for downstream use by RS-001, RS-002.",
+      "last_update": "2026-04-06T10:42:17Z",
+      "summary_zh": "把 ingest、review、retrain、deploy 做成 Pantheon 的受治理 cron workflow，底層再接 upstream OpenClaw。",
+      "review_notes_zh": "OC-002 實作完整且所有測試通過。四個工作流程已通過整合驗證：ingest 製造受治理的 research_package、review 產生 approval_request（政策實施）、retrain 排放 registry_submission、deploy 正確路由通過 REG-002 推昇門。所有依賴滿足。授權派送。",
+      "review_file": "services/control-plane/cron/review_oc002_grok.md"
     },
     {
       "id": "OC-003",
-      "title": "Define OpenClaw strategy spec and workflow handoff objects",
+      "title": "Define Pantheon StrategySpec and upstream OpenClaw handoff objects",
       "phase": "Epic B",
       "owner": "Codex",
       "reviewer": "Claude",
@@ -433,7 +430,7 @@
       ],
       "next": "OC-003 APPROVED for v1 lock. Review at services/control-plane/specs/review_oc003_claude.md. StrategySpec boundary correct (no execution detail leak), governance_context aligned with OC-001/P4-001, registry_hints not over-coupled to storage. Two minor open items: oneOf discriminator clarity in workflow_handoff schema, and from_stage/to_stage should eventually be enum-constrained.",
       "last_update": "2026-04-02T05:37:22Z",
-      "summary_zh": "定義 OpenClaw 的策略規格與交接物件，讓 orchestration 輸出可以被 registry、research 與 execution 穩定接手。"
+      "summary_zh": "定義 Pantheon 的 StrategySpec 與 upstream OpenClaw workflow handoff 物件，讓 orchestration 輸出能被 registry、research 與 execution 穩定接手。"
     },
     {
       "id": "REG-001",
@@ -464,9 +461,9 @@
       "id": "REG-002",
       "title": "Implement candidate, paper, and live promotion gate",
       "phase": "Epic C",
-      "owner": "Gemini",
+      "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "in_progress",
       "depends_on": [
         "REG-001",
         "EX-001"
@@ -482,8 +479,8 @@
         "promotion checks documented",
         "deployment path consumes promotion state"
       ],
-      "next": "Logic, CLI, and smoke test complete. Relocated to services/. Ready for review.",
-      "last_update": "2026-04-02T18:00:00Z",
+      "next": "Reconciling promotion-gate metadata with REG-003/EX-001 contracts and tightening the service-local CLI/smoke-test path.",
+      "last_update": "2026-04-06T06:05:58Z",
       "summary_zh": "實作 candidate -> paper -> live 的 promotion gate，避免 persona 或工具直接把未批准內容推進 live。"
     },
     {
@@ -515,7 +512,7 @@
       "phase": "Epic C",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "REG-001",
         "REG-002"
@@ -530,8 +527,8 @@
         "lineage chain documented",
         "promotion audit references rollback target"
       ],
-      "next": "Drafted REG-003 promoted artifact lineage contract, canonical schema, and compatibility alias at artifact_metadata_schema.json. Please review rollback strictness, loader-side sufficiency, and experiment-backend compatibility.",
-      "last_update": "2026-04-02T13:50:25Z",
+      "next": "Implementation phase must clarify: (1) how gate.py metadata expectations align with lineage contract, (2) rollback target definition for paper vs live. Build promoted_artifact_metadata.schema.json, loader-side validation, and artifact creation flow.",
+      "last_update": "2026-04-05T05:41:15Z",
       "summary_zh": "把 rollback 與 lineage 要求補進所有已升版 artifact，確保 live 出問題時能追來源並安全回退。"
     },
     {
@@ -540,7 +537,7 @@
       "phase": "Epic D",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "REG-001"
       ],
@@ -552,8 +549,8 @@
         "telemetry schema defined",
         "registry linkage fields included"
       ],
-      "next": "Drafted trajectory and preference store contract plus machine-readable trader feedback and execution telemetry schemas with registry linkage fields. Ready for governance review.",
-      "last_update": "2026-04-02T03:44:32Z",
+      "next": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. governance boundary correct (feedback cannot trigger live promotion), event family separation clean, linkage object sufficient for REG-001/EV-001. Three minor items: (M-1) actor_role 'reviewer' not in OC-001 role enum — reconcile in FB-002 follow-up; (M-2) telemetry promotion_state omits 'draft' — add comment to contract §6; (M-3) 'annotate' operation in edits is non-standard — add $comment to schema. Recommend evaluating registry_id as required field when EV-001 lands.",
+      "last_update": "2026-04-05T12:24:01Z",
       "summary_zh": "定義 trajectory 與 preference store schema，把人類回饋與系統學習資料收斂成可治理的格式。"
     },
     {
@@ -562,7 +559,7 @@
       "phase": "Epic D",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "review_approved",
       "depends_on": [
         "FB-001",
         "OC-001"
@@ -575,16 +572,21 @@
         "rationale attached to feedback events",
         "feedback links back to registry artifacts"
       ],
-      "next": "Capture explicit human feedback as governed learning input",
-      "last_update": null,
-      "summary_zh": "把交易員的 approve、edit、reject 與 rationale 變成可記錄的明確 feedback 事件，供後續學習使用。"
+      "next": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. Trader feedback ingestion captures approve/edit/reject/rationale with governed artifact linkage, idempotent JSONL storage, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped because fastapi extras are absent); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "last_update": "2026-04-05T14:54:00Z",
+      "summary_zh": "把交易員的 approve、edit、reject 與 rationale 變成可記錄的明確 feedback 事件，供後續學習使用。",
+      "review_notes_zh": [
+        "審查通過：approve/edit/reject/rationale 事件覆蓋完整，governance 邊界正確。",
+        "minor follow-up 已吸收：actor_role 對齊 OC-001、contract 補上 telemetry draft 說明、annotate 操作補上 schema $comment。"
+      ],
+      "review_file": "services/feedback/schema/review_fb001_fb002_claude.md"
     },
     {
       "id": "FB-003",
       "title": "Capture execution telemetry including pnl, drawdown, slippage, and fills",
       "phase": "Epic D",
-      "owner": "Gemini",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
         "P3-001",
@@ -598,15 +600,15 @@
         "paper and live telemetry distinguished",
         "fill and slippage capture documented"
       ],
-      "next": "Turn execution outputs into structured telemetry for the evolution plane",
-      "last_update": null,
+      "next": "Ownership shifted from Gemini to Claude so execution telemetry can move with the execution/governance lane. Turn execution outputs into structured telemetry for the evolution plane",
+      "last_update": "2026-04-06T06:03:44Z",
       "summary_zh": "把 pnl、drawdown、slippage、fills 等 execution telemetry 結構化，讓 evolution plane 能評估策略表現。"
     },
     {
       "id": "EV-001",
       "title": "Define evaluator and critic contracts",
       "phase": "Epic D",
-      "owner": "Gemini",
+      "owner": "Grok",
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
@@ -621,15 +623,15 @@
         "critic rationale shape defined",
         "registry handoff fields included"
       ],
-      "next": "Define evaluator and critic contracts once telemetry and registry skeletons are in view",
-      "last_update": "2026-04-01T14:21:26Z",
+      "next": "Ownership shifted from Gemini to Grok so evaluator/critic contract work stays moving even while Gemini auto workers are unstable. Define evaluator and critic contracts once telemetry and registry skeletons are in view",
+      "last_update": "2026-04-06T06:03:44Z",
       "summary_zh": "定義 evaluator 與 critic 的輸出契約，讓評估結果能被 registry 與 optimizer 使用，而不是直接改 live。"
     },
     {
       "id": "EV-002",
       "title": "Define optimizer outputs and registry handoff rules",
       "phase": "Epic D",
-      "owner": "Gemini",
+      "owner": "Claude",
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
@@ -644,17 +646,17 @@
         "registry handoff rules documented",
         "promotion gate dependencies identified"
       ],
-      "next": "Define optimizer outputs as governed artifacts instead of direct live mutations",
-      "last_update": null,
+      "next": "Ownership shifted from Gemini to Claude to keep optimizer handoff rules with the governance lane. Define optimizer outputs as governed artifacts instead of direct live mutations",
+      "last_update": "2026-04-06T06:03:44Z",
       "summary_zh": "定義 optimizer 產出與 registry handoff 規則，確保優化結果先變成受治理 artifact 再決定是否升版。"
     },
     {
       "id": "RS-001",
-      "title": "Build research ingestion workflow for papers, repos, and notes",
+      "title": "Begin research ingestion workflow implementation with verified adapters",
       "phase": "Epic E",
-      "owner": "Gemini",
+      "owner": "Grok",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "OC-002"
       ],
@@ -667,16 +669,16 @@
         "raw research kept outside live path",
         "[CODEX NOTE] ingestion sources must use structured APIs only: OpenAlex API for academic papers, GitHub REST API + repository contents endpoints for code repos — general web scraping is not acceptable"
       ],
-      "next": "Define governed ingestion so OpenClaw can discover research without free-roaming live changes",
-      "last_update": null,
-      "summary_zh": "建立研究素材 ingestion workflow，讓 OpenClaw 可以透過受控 API 管道發現論文、repo 與研究筆記。"
+      "next": "LP-003 審查完成並批准。MLflow adapter 實現完整、測試充分、文檔清晰。現在轉向 LP-005 調整。",
+      "last_update": "2026-04-06T09:46:29Z",
+      "summary_zh": "建立研究素材 ingestion workflow，讓 Pantheon 透過受控 API 管道發現論文、repo 與研究筆記，而不是自由漫遊抓網頁。"
     },
     {
       "id": "RS-002",
       "title": "Normalize discovered material into StrategySpec",
       "phase": "Epic E",
       "owner": "Codex",
-      "reviewer": "Gemini",
+      "reviewer": "Grok",
       "status": "todo",
       "depends_on": [
         "RS-001",
@@ -690,17 +692,17 @@
         "research material normalization rules documented",
         "registry-ready fields included"
       ],
-      "next": "Turn discovered research into normalized StrategySpec objects before replication",
-      "last_update": null,
+      "next": "Reviewer shifted from Gemini to Grok to keep the research normalization lane flowing. Turn discovered research into normalized StrategySpec objects before replication",
+      "last_update": "2026-04-06T06:03:44Z",
       "summary_zh": "把蒐集到的研究素材正規化成 StrategySpec，讓後續 replication、registry 與 execution 都吃同一種規格。"
     },
     {
       "id": "RS-003",
       "title": "Run first-pass replication gate before registry admission",
       "phase": "Epic E",
-      "owner": "Gemini",
+      "owner": "Grok",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "RS-002",
         "REG-001"
@@ -713,8 +715,8 @@
         "candidate admission rules defined",
         "failed replication cannot reach registry"
       ],
-      "next": "Create the replication gate that sits between discovered research and registry entry",
-      "last_update": null,
+      "next": "Grok",
+      "last_update": "2026-04-06T06:11:56Z",
       "summary_zh": "在 registry admission 前先跑 first-pass replication gate，避免網路上找到的東西直接進正式候選。"
     },
     {
@@ -723,7 +725,7 @@
       "phase": "Epic F",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "FB-001",
         "OC-003"
@@ -736,8 +738,8 @@
         "DSPy artifact linkage to registry defined",
         "evaluation inputs identified"
       ],
-      "next": "LP-001 updated with concrete DSPy decisions and prompt_bundle.schema.json. Please re-review the contract under the new upstream-integration model.",
-      "last_update": "2026-04-02T13:42:42Z",
+      "next": "Codex to implement DSPy adapter under services/learning/dspy/ with BootstrapFewShot optimizer, pin DSPy version, and run smoke test with FB-001 governed examples.",
+      "last_update": "2026-04-05T05:41:15Z",
       "summary_zh": "把 DSPy 用在 persona policy 優化，優化的是工具使用與推理流程，不是直接改 live 策略。"
     },
     {
@@ -745,7 +747,7 @@
       "title": "Integrate imitation workflows for trader behavior cloning",
       "phase": "Epic F",
       "owner": "Codex",
-      "reviewer": "Gemini",
+      "reviewer": "Grok",
       "status": "todo",
       "depends_on": [
         "FB-001",
@@ -759,17 +761,17 @@
         "behavior cloning workflow documented",
         "registry linkage for learned policies defined"
       ],
-      "next": "[CODEX NOTE] moved to v1.5 from v2 — imitation (BC from trader trajectories) is more foundational than TRL; DSPy + imitation + MLflow should ship together in v1.5",
-      "last_update": null,
+      "next": "Reviewer shifted from Gemini to Grok to reduce Gemini single-point review risk. [CODEX NOTE] moved to v1.5 from v2 — imitation (BC from trader trajectories) is more foundational than TRL; DSPy + imitation + MLflow should ship together in v1.5",
+      "last_update": "2026-04-06T06:03:44Z",
       "summary_zh": "導入 imitation 來學人類交易員的操作軌跡，讓系統能從行為示範而不是只靠文字偏好學習。"
     },
     {
       "id": "LP-003",
       "title": "Integrate experiment registry metadata with MLflow or W&B",
       "phase": "Epic F",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Grok",
+      "status": "review_approved",
       "depends_on": [
         "REG-001"
       ],
@@ -781,17 +783,21 @@
         "aliases or promotion metadata documented",
         "artifact version handoff defined"
       ],
-      "next": "Selected MLflow as primary backend. Defining adapter to map REG-001 metadata to MLflow experiments.",
-      "last_update": "2026-04-02T17:30:00Z",
-      "summary_zh": "把 registry metadata 接到 MLflow 或 W&B，讓實驗結果、artifact 與 promotion 狀態能追蹤。"
+      "next": "LP-003 通過審查: MLflow registry adapter 實現完整，experiment_refs/promoted_metadata 形狀與 REG-001/REG-003/EX-001 相容，可直接支援 LP-005。",
+      "last_update": "2026-04-06T09:46:11Z",
+      "summary_zh": "把 registry metadata 接到 MLflow 或 W&B，讓實驗結果、artifact 與 promotion 狀態能追蹤。",
+      "review_notes_zh": [
+        "LP-003 通過審查。實現完整：正確的治理語義、完整的 lifecycle state 對應、充分的 lineage 與 rollback 支援、完整的 artifact handoff、promoted_metadata 適於下游使用。所有測試通過。與 LP-005 完全相容。"
+      ],
+      "review_file": "services/registry/experiments/review_lp003_grok_zh.md"
     },
     {
       "id": "LP-004",
       "title": "Define approved TRL preference-learning workflows",
       "phase": "Epic F",
-      "owner": "Gemini",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [
         "FB-002",
         "LP-001"
@@ -804,17 +810,17 @@
         "approval requirements documented",
         "registry handoff for learned outputs defined"
       ],
-      "next": "Limit TRL usage to approved preference-learning loops tied to governed feedback",
-      "last_update": null,
+      "next": "Claude",
+      "last_update": "2026-04-06T06:06:00Z",
       "summary_zh": "定義受批准的 TRL preference-learning workflow，限制它只能吃治理過的 feedback 資料。"
     },
     {
       "id": "LP-005",
       "title": "Define RL path for FinRL or RLlib plus Tune when sequential RL is justified",
       "phase": "Epic F",
-      "owner": "Gemini",
+      "owner": "Grok",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "review_approved",
       "depends_on": [
         "RS-003",
         "LP-003"
@@ -827,8 +833,8 @@
         "search and tuning path defined",
         "registry and promotion constraints documented"
       ],
-      "next": "Only add RL infrastructure once the governed research and registry path is stable",
-      "last_update": null,
+      "next": "All 4 code review items fixed and committed. Lifecycle states aligned, RL artifact model updated for registry governance, RS-003 upstream role clarified, non-existent references removed. Document is now internally consistent with REG-001/REG-003/EX-001 contracts.",
+      "last_update": "2026-04-06T09:54:01Z",
       "summary_zh": "定義何時才值得進入 FinRL / RLlib / Tune 的 RL 路徑，避免太早把系統複雜化。"
     },
     {
@@ -871,7 +877,7 @@
     },
     {
       "id": "TOOL-001",
-      "title": "Scaffold shared local review automation runtime",
+      "title": "Scaffold shared local orchestrator runtime",
       "phase": "Tooling",
       "owner": "Codex",
       "reviewer": "Gemini",
@@ -880,28 +886,29 @@
         "OPS-003"
       ],
       "artifacts": [
-        "tools/openclaw-local/README.md",
-        "tools/openclaw-local/watcher/watch_review.py",
-        "tools/openclaw-local/windows/OpenClawAgent.ps1",
-        "tools/openclaw-local/windows/profiles.example.json",
-        "tools/openclaw-local/queue-schema/review-job.schema.json"
+        ".orchestrator/supervisor.py",
+        ".orchestrator/watch_events.py",
+        ".orchestrator/config.json",
+        ".llm-inbox/claude.md",
+        ".github/agents/orchestrator-worker.agent.md",
+        "docs/agent-orchestrator.md"
       ],
       "acceptance": [
-        "WSL watcher emits queue jobs on non-review to review",
-        "Windows agent can process queue jobs for desktop automation",
-        "Project-level config and adapter guide documented"
+        "watcher emits deduplicated wake events from shared state changes",
+        "supervisor dispatches provider workers through CLI or inbox adapters",
+        "approval broker, provider config, and runtime docs are documented"
       ],
-      "next": "Completed shared local automation starter kit inside tools/openclaw-local so future projects can reuse the same watcher plus Windows-agent runtime without coupling it to repo business logic.",
-      "last_update": "2026-04-02T03:24:58Z",
-      "summary_zh": "建立共享的本機 review automation runtime，讓 WSL 負責偵測 review 任務、Windows 負責通知與桌面自動化，之後其他專案也能重用。"
+      "next": "Canonical local runtime now lives under .orchestrator/, .llm-inbox/, and .github/agents/. tools/pantheon-local remains historical reference only.",
+      "last_update": "2026-04-05T05:27:27Z",
+      "summary_zh": "建立共享的本機 orchestrator runtime，讓 watcher、supervisor、approval broker 與 provider inbox 在同一套共享狀態檔上協作。"
     },
     {
       "id": "RS-000",
-      "title": "Draft browser-first research intake spec for Grok",
+      "title": "Draft Grok research and coding intake spec",
       "phase": "Epic E",
       "owner": "Grok",
       "reviewer": "Gemini",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "OC-001",
         "ARC-002"
@@ -915,9 +922,9 @@
         "browser-first intake workflow documented",
         "handoff contract to RS-001 and RS-002 documented"
       ],
-      "next": "Define which structured sources Grok may use, how it should normalize findings into governed handoff notes, and how Gemini can consume that output for RS-001 and RS-002.",
-      "last_update": "2026-04-02T05:36:51Z",
-      "summary_zh": "讓 Grok 先定義 browser-first 的研究入口規格：哪些外部來源可用、怎麼整理成受治理的研究筆記，以及怎麼交接給 RS-001 / RS-002。"
+      "next": "Verified all acceptance criteria met: (1) structured-source-only policy documented in source catalog, (2) VS Code-first intake workflow documented, (3) handoff contract to RS-001/RS-002 with JSON schemas documented. Ready for Gemini review.",
+      "last_update": "2026-04-05T23:11:00Z",
+      "summary_zh": "定義 Grok 在 Pantheon 裡可做的研究與 coding intake 邊界，說清楚可用來源、可做任務，以及如何把結果交給下游。"
     },
     {
       "id": "AUD-CLAUDE-001",
@@ -951,7 +958,7 @@
       "phase": "Audit",
       "owner": "Grok",
       "reviewer": "Gemini",
-      "status": "todo",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "audits/oss-alignment/grok_audit.md"
@@ -960,8 +967,8 @@
         "RS-000 through RS-003 assessed",
         "findings written to audits/oss-alignment/grok_audit.md"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-04-02T08:13:57Z",
+      "next": "Audit complete: RS-000 through RS-003 assessed against OSS integration model. Findings written to audits/oss-alignment/grok_audit.md. Key recommendation: RS-001-003 require upstream API adapters before proceeding as conceptual work.",
+      "last_update": "2026-04-05T14:43:03Z",
       "summary_zh": "審查研究與來源處理工作是否符合 upstream OSS 整合模型。"
     },
     {
@@ -1095,12 +1102,13 @@
       "phase": "Audit",
       "owner": "Grok",
       "reviewer": "Gemini",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Started adapter spike for RS-001 upstream integration",
-      "last_update": "2026-04-02T14:28:20Z"
+      "next": "Verified all tests passing, code compiled successfully, ready for Gemini review",
+      "last_update": "2026-04-05T14:54:18Z",
+      "summary_zh": "為 RS-001 先做 OpenAlex 與 GitHub adapter spike，確認研究來源能走受治理的 structured API 路線。"
     },
     {
       "id": "ARC-007",
@@ -1108,7 +1116,7 @@
       "phase": "Architecture",
       "owner": "Codex",
       "reviewer": "Gemini",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "AI_COLLABORATION_GUIDE.md",
@@ -1122,9 +1130,98 @@
         "Manual cutover runbook documented",
         "Canonical task state includes the repo split work"
       ],
-      "next": "Preparatory migration work is in place in the mixed repo, and docs/repo-split-runbook.md now records the manual cutover path. Remaining work is external: create pantheon + pantheon-lean repos, move Pantheon paths, and add lean/ as a submodule.",
-      "last_update": "2026-04-04T13:54:37Z",
+      "next": "Repo split cleanup and validation completed: removed duplicate root pantheon_algo, added repo-split runbook, switched docker-compose LEAN paths to ./lean, and verified submodule/layout/compose checks in pantheon.",
+      "last_update": "2026-04-05T13:33:14Z",
       "summary_zh": "把 Pantheon 服務從混合式 LEAN workspace 分離成獨立 repo，並以 `lean/` submodule 方式接回 LEAN fork，避免邊界與同步策略繼續漂移。"
+    },
+    {
+      "id": "TOOL-002",
+      "title": "Implement GitHub approval bus for mobile approvals",
+      "summary_zh": "建立 GitHub approval bus，讓 review 自動同步到 PR、blocked 自動同步到 issue，並把手機上的 approve/comment 透過 orchestrator polling 回寫到共享狀態。",
+      "phase": "Tooling",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "done",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/github_bus.py",
+        ".orchestrator/github_command_parser.py",
+        ".orchestrator/github_webhook_server.py",
+        ".orchestrator/github_cloud_relay.py",
+        "docs/github-approval-bus.md",
+        ".github/ISSUE_TEMPLATE/pantheon-ops-bus.md",
+        ".github/PULL_REQUEST_TEMPLATE/pantheon-review-bus.md"
+      ],
+      "acceptance": [],
+      "next": "GitHub approval bus is implemented locally: PR/issue sync, mobile comment commands, webhook intake, cloud relay interfaces, and templates are in place.",
+      "last_update": "2026-04-05T08:02:20Z"
+    },
+    {
+      "id": "BUS-VAL-001",
+      "title": "Validate GitHub issue approval bus round-trip",
+      "summary_zh": "建立一個只用來驗證 GitHub approval bus 的 blocked 測試任務，確認手機上的 issue comment 指令能被 orchestrator 拉回並回寫到 ai-status。",
+      "phase": "Tooling",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "done",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [],
+      "next": "Validated issue approval bus round-trip: GitHub issue #1 accepted /approve, ai-status reopened locally, and the pantheon ops issue was closed by the bus.",
+      "last_update": "2026-04-05T13:37:54Z"
+    },
+    {
+      "id": "BUS-VAL-002",
+      "title": "Validate GitHub issue approval bus round-trip after task-id normalization fix",
+      "summary_zh": "第二輪 GitHub approval bus 驗證任務，專門確認 issue comment 指令在修正大小寫容錯後，能由 orchestrator 自動回寫 ai-status。",
+      "phase": "Tooling",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "done",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [],
+      "next": "Validated post-normalization issue approval bus round-trip: GitHub issue #3 accepted /approve with task-id normalization, ai-status reopened locally, and the pantheon ops issue was closed by the bus.",
+      "last_update": "2026-04-05T13:37:58Z"
+    },
+    {
+      "id": "BUS-VAL-003",
+      "title": "Validate Pantheon blocked-task GitHub bus after workspace cutover",
+      "phase": "Tooling",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "done",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [
+        "pantheon supervisor creates an ops issue from the blocked task",
+        "github-bus-state records BUS-VAL-003 under pantheon repo",
+        "current-work and dashboard reflect the blocked validation task"
+      ],
+      "next": "Hardened orchestrator worker-failure detection while investigating bus re-dispatches: transcript scans now only match anchored runtime/tool failure lines, so borrowed log text like Error:/QUOTA_EXHAUSTED inside BUS-VAL-001 or FB-002 sessions no longer triggers false worker_failed + retry loops. Added .orchestrator/test_supervisor.py regression coverage and verified python3 -m unittest discover -s .orchestrator -p 'test_*.py' plus py_compile.",
+      "last_update": "2026-04-05T14:08:50Z",
+      "summary_zh": "第三輪 blocked 驗證任務，專門確認 cutover 後的 Pantheon supervisor 會從 pantheon repo 本身建立 GitHub ops issue。"
+    },
+    {
+      "id": "BUS-VAL-004",
+      "title": "Skip stale queued wake events after task status changes",
+      "summary_zh": "修補 orchestrator queue 中已過期的 wake event，避免 task 狀態已變更後仍被舊 dispatch 喚醒。",
+      "phase": "Tooling",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_supervisor.py"
+      ],
+      "acceptance": [
+        "stale dispatcher events are skipped at delivery time",
+        "done or approved tasks are not launched from old queue entries",
+        "regression tests cover stale in_progress and stale review dispatches"
+      ],
+      "next": "Reviewer shifted from Gemini to Claude so tooling validation no longer depends on the unstable Gemini review lane. Review approved: The stale dispatch guard in process_queue correctly re-validates events against current status, and regression tests successfully verify the skipping of stale events and execution of current events.",
+      "last_update": "2026-04-06T06:03:44Z"
     }
   ],
   "handoffs": [
@@ -1188,16 +1285,18 @@
       "from": "Claude",
       "to": "Gemini",
       "message": "Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
-      "status": "pending",
-      "created_at": "2026-04-02T03:36:14Z"
+      "status": "done",
+      "created_at": "2026-04-02T03:36:14Z",
+      "resolved_at": "2026-04-06T06:03:44Z"
     },
     {
       "task_id": "FB-001",
       "from": "Codex",
       "to": "Claude",
       "message": "Drafted trajectory and preference store contract plus machine-readable trader feedback and execution telemetry schemas with registry linkage fields. Ready for governance review.",
-      "status": "pending",
-      "created_at": "2026-04-02T03:44:32Z"
+      "status": "done",
+      "created_at": "2026-04-02T03:44:32Z",
+      "resolved_at": "2026-04-05T12:24:01Z"
     },
     {
       "task_id": "OC-003",
@@ -1222,16 +1321,18 @@
       "from": "Codex",
       "to": "Claude",
       "message": "LP-001 updated with concrete DSPy decisions and prompt_bundle.schema.json. Please re-review the contract under the new upstream-integration model.",
-      "status": "pending",
-      "created_at": "2026-04-02T13:42:42Z"
+      "status": "done",
+      "created_at": "2026-04-02T13:42:42Z",
+      "resolved_at": "2026-04-05T11:56:45Z"
     },
     {
       "task_id": "REG-003",
       "from": "Codex",
       "to": "Claude",
       "message": "Drafted REG-003 promoted artifact lineage contract, canonical schema, and compatibility alias at artifact_metadata_schema.json. Please review rollback strictness, loader-side sufficiency, and experiment-backend compatibility.",
-      "status": "pending",
-      "created_at": "2026-04-02T13:50:25Z"
+      "status": "done",
+      "created_at": "2026-04-02T13:50:25Z",
+      "resolved_at": "2026-04-05T11:56:45Z"
     },
     {
       "task_id": "AUD-CLAUDE-001",
@@ -1247,8 +1348,99 @@
       "from": "Gemini",
       "to": "Claude",
       "message": "Logic, CLI, and smoke test complete. Ready for governance review.",
-      "status": "pending",
-      "created_at": "2026-04-02T18:00:00Z"
+      "status": "done",
+      "created_at": "2026-04-02T18:00:00Z",
+      "resolved_at": "2026-04-05T11:56:45Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented services/control-plane/feedback/ with append-only trader feedback ingestion, idempotent JSONL store, schema/runtime validation for approve/edit/reject/rationale, and OC-001 role alignment. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (11 tests OK, 6 API tests skipped because local env lacks fastapi/pydantic); python3 -m py_compile on feedback modules passed.",
+      "status": "done",
+      "created_at": "2026-04-05T13:47:44Z",
+      "resolved_at": "2026-04-05T13:51:41Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Hardened FB-002 before review: trader_feedback_event schema now enforces governed target linkage via anyOf, runtime schema validation uses a shared Draft7Validator with a custom RFC3339+timezone date-time checker for environments missing jsonschema date-time support, README reflects schema+runtime linkage enforcement, and store tests cover invalid timestamps plus missing linkage. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (13 tests OK, 6 API tests skipped because local env lacks fastapi/pydantic); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-05T13:53:52Z",
+      "resolved_at": "2026-04-05T14:06:14Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Owner-side hardening applied: GET /trader-feedback now returns 422 for invalid created_after/created_before RFC3339 values and for inverted time windows; query enums are typed; README and API tests updated. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (15 tests OK, 8 API tests skipped because local env lacks fastapi/pydantic); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-05T14:07:27Z",
+      "resolved_at": "2026-04-05T14:07:44Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Hardened FB-002 query validation by moving created_after/created_before parsing into store-level build_query_filters(), so invalid timestamps and inverted windows are enforced in a pure Python path that remains unit-tested without FastAPI extras. FastAPI now maps QueryFilterValidationError back to HTTP 422. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 API tests skipped because local env lacks fastapi); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-05T14:09:49Z",
+      "resolved_at": "2026-04-05T14:53:37Z"
+    },
+    {
+      "task_id": "BUS-VAL-004",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Added a stale dispatch guard in process_queue so queued dispatcher wake events are revalidated against current ai-status before worker launch; stale events are marked completed with wake_skipped instead of re-awakening changed or done tasks. Added regression tests for stale skip and current dispatch pass-through. Verified with python3 -m unittest discover -s .orchestrator -p 'test_*.py' and python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py.",
+      "status": "done",
+      "created_at": "2026-04-05T23:15:45Z",
+      "resolved_at": "2026-04-06T04:10:22Z"
+    },
+    {
+      "task_id": "P3-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer shifted from Gemini to Codex after repeated Gemini auto-worker failures. Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
+      "status": "done",
+      "created_at": "2026-04-06T06:03:44Z",
+      "resolved_at": "2026-04-06T06:06:13Z"
+    },
+    {
+      "task_id": "LP-005",
+      "from": "Codex",
+      "to": "Codex",
+      "message": "LP-005 RL path definition complete: entry criteria, RLlib+Ray Tune workflow, registry constraints, and edge cases documented in services/learning/rl/. Ready for Codex review against TARGET_ARCHITECTURE and registry feasibility.",
+      "status": "done",
+      "created_at": "2026-04-06T06:11:05Z",
+      "resolved_at": "2026-04-06T09:36:09Z"
+    },
+    {
+      "task_id": "OC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented services/control-plane/cron/ with governed ingest/review/retrain/deploy workflow definitions, local OpenClaw dispatch envelopes, WorkflowHandoff validation, and a deploy path that routes through REG-002 PromotionGate. Verified with python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/cron/smoke_test.py, and python3 -m py_compile services/control-plane/cron/*.py. Remaining follow-up: replace the smoke-test runtime pin with the first real upstream release tag/commit when the transport wiring is finalized.",
+      "status": "done",
+      "created_at": "2026-04-06T09:08:19Z",
+      "resolved_at": "2026-04-06T10:38:34Z"
+    },
+    {
+      "task_id": "LP-003",
+      "from": "Codex",
+      "to": "Grok",
+      "message": "LP-003 implementation ready for review: added services/registry/experiments/ with an MLflow-first registry adapter, in-memory + real tracking backends, documented lineage/alias/artifact-handoff rules, and aligned the MLflow pin to 3.10.1. Verified with python3 -m unittest discover -s services/registry/experiments -p 'test_*.py', python3 services/registry/experiments/smoke_test.py, and python3 -m py_compile services/registry/experiments/*.py. Review focus: confirm the experiment_refs/promoted_metadata shape is sufficient for LP-005 and future registry materialization.",
+      "status": "done",
+      "created_at": "2026-04-06T09:44:05Z",
+      "resolved_at": "2026-04-06T09:46:11Z"
+    },
+    {
+      "task_id": "OC-002",
+      "from": "Orchestrator",
+      "to": "Grok",
+      "message": "Auto-reassigned review from Claude to Grok after repeated provider failure: {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"duration_ms\":750,\"duration_api_ms\":0,\"num_turns\":1,\"result\":\"You've hit your limit · resets 7pm (Asia/Taipei)\",\"stop_reason\":\"stop_sequence\",\"session_id\":\"e6418df6-6b7d-40ca-bbb0-06273e7a7bfc\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\"},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"6bf4bc61-02dd-4c08-9aac-e7da4335c545\"}",
+      "status": "done",
+      "created_at": "2026-04-06T10:38:34Z",
+      "resolved_at": "2026-04-06T10:42:02Z"
     }
   ],
   "blockers": [
@@ -1278,6 +1470,24 @@
       "status": "resolved",
       "created_at": "2026-04-02T05:37:35Z",
       "resolved_at": "2026-04-02T12:00:00Z"
+    },
+    {
+      "task_id": "BUS-VAL-001",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Awaiting GitHub Mobile /approve validation from issue comment.",
+      "status": "resolved",
+      "created_at": "2026-04-05T08:22:21Z",
+      "resolved_at": "2026-04-05T11:42:40Z"
+    },
+    {
+      "task_id": "BUS-VAL-002",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Awaiting GitHub approval-bus round-trip after task-id normalization fix.",
+      "status": "resolved",
+      "created_at": "2026-04-05T11:43:16Z",
+      "resolved_at": "2026-04-05T11:45:15Z"
     }
   ],
   "workload": {
@@ -1288,36 +1498,40 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 3,
-      "active": 1,
+      "total": 6,
+      "active": 2,
       "blocked": 0,
       "done": 2,
-      "review": 1,
-      "todo": 0
+      "review": 0,
+      "review_approved": 0,
+      "todo": 4
     },
     "Gemini": {
-      "total": 13,
-      "active": 4,
+      "total": 2,
+      "active": 0,
       "blocked": 0,
       "done": 2,
-      "review": 1,
-      "todo": 10
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     },
     "Codex": {
-      "total": 28,
-      "active": 4,
+      "total": 37,
+      "active": 3,
       "blocked": 0,
-      "done": 21,
-      "review": 3,
+      "done": 26,
+      "review": 1,
+      "review_approved": 6,
       "todo": 4
     },
     "Grok": {
-      "total": 3,
+      "total": 7,
       "active": 1,
       "blocked": 0,
-      "done": 0,
+      "done": 4,
       "review": 0,
-      "todo": 3
+      "review_approved": 1,
+      "todo": 2
     }
   }
 }
