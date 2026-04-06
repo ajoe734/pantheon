@@ -6,12 +6,15 @@ Validates research candidates against admission criteria before
 allowing promotion to the registry.
 """
 
-import json
 import uuid
-from typing import Dict, Any, Tuple, Optional, List
+import json
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from gate_schema import (
+from jsonschema import Draft7Validator, RefResolver
+
+from .gate_schema import (
     ReplicationRequest,
     ReplicationResponse,
     ReplicationResult,
@@ -19,7 +22,7 @@ from gate_schema import (
     CandidateAdmissionStatus,
     RegistryPromotionRequest,
 )
-from gate_config import GateConfig, AdmissionRules
+from .gate_config import GateConfig, AdmissionRules
 
 
 class ReplicationGate:
@@ -37,6 +40,7 @@ class ReplicationGate:
     def __init__(self, config: Optional[GateConfig] = None):
         self.config = config or GateConfig()
         self.gate_run_logs: List[Dict[str, Any]] = []
+        self._canonical_spec_validator = self._build_strategy_spec_validator()
 
     def evaluate_candidate(self, request: ReplicationRequest) -> ReplicationResponse:
         """
@@ -168,6 +172,28 @@ class ReplicationGate:
                     evidence="StrategySpec must be a JSON object",
                 )
 
+            if self._is_canonical_strategy_spec(spec):
+                errors = sorted(
+                    self._canonical_spec_validator.iter_errors(spec),
+                    key=lambda item: list(item.path),
+                )
+                if errors:
+                    first = errors[0]
+                    location = ".".join(str(part) for part in first.path) or "<root>"
+                    return ReplicationResult(
+                        criterion_id="schema_validity",
+                        passed=False,
+                        evidence=f"Canonical StrategySpec invalid at {location}: {first.message}",
+                        details={"schema": "OC-003", "path": list(first.path)},
+                    )
+
+                return ReplicationResult(
+                    criterion_id="schema_validity",
+                    passed=True,
+                    evidence="Canonical StrategySpec schema is valid",
+                    details={"schema": "OC-003", "strategy_id": spec.get("strategy_id")},
+                )
+
             # Check required fields
             required_fields = ["name", "description", "signals", "parameters"]
             missing = [f for f in required_fields if f not in spec]
@@ -192,6 +218,26 @@ class ReplicationGate:
                 passed=False,
                 evidence=f"Schema validation failed: {str(e)}",
             )
+
+    def _build_strategy_spec_validator(self) -> Draft7Validator:
+        schema_path = (
+            Path(__file__).resolve().parents[2]
+            / "control-plane"
+            / "specs"
+            / "strategy_spec.schema.json"
+        )
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        resolver = RefResolver(
+            base_uri=f"{schema_path.parent.resolve().as_uri()}/",
+            referrer=schema,
+        )
+        return Draft7Validator(schema, resolver=resolver)
+
+    def _is_canonical_strategy_spec(self, spec: Dict[str, Any]) -> bool:
+        return any(
+            field in spec
+            for field in ("spec_version", "strategy_id", "market_scope", "execution_profile")
+        )
 
     def _check_lineage_completeness(self, request: ReplicationRequest) -> ReplicationResult:
         """Check if research handoff has complete lineage information."""

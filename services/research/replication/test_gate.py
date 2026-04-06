@@ -7,15 +7,15 @@ Tests all admission criteria and gate logic.
 import unittest
 from datetime import datetime
 
-from gate_schema import (
+from .gate_schema import (
     ReplicationRequest,
     ReplicationResponse,
     ReplicationStatus,
     CandidateAdmissionStatus,
     ReplicationCriteria,
 )
-from gate import ReplicationGate, create_promotion_request
-from gate_config import GateConfig, AdmissionRules
+from .gate import ReplicationGate, create_promotion_request
+from .gate_config import GateConfig, AdmissionRules
 
 
 class TestGateSchema(unittest.TestCase):
@@ -183,10 +183,38 @@ class TestReplicationGate(unittest.TestCase):
                 },
             },
             proposed_strategy_spec={
-                "name": "Test Strategy",
-                "description": "A test strategy",
-                "signals": ["price_ma"],
-                "parameters": {"window": 20},
+                "spec_version": "1.0",
+                "strategy_id": "strat-test-001",
+                "title": "Test Strategy",
+                "hypothesis": "Price moving-average momentum can survive governed replication.",
+                "objective": "Validate Sharpe ratio above 1.0 with bounded drawdown.",
+                "market_scope": {
+                    "symbols": ["SPY"],
+                    "asset_classes": ["equities"],
+                    "frequency": "1d",
+                },
+                "data_dependencies": [
+                    {"ref": "https://api.openalex.org/works/W123", "kind": "paper"}
+                ],
+                "execution_profile": {
+                    "signal_schema_version": "1.0",
+                    "quantity_type": "PERCENT_PORTFOLIO",
+                    "execution_mode_hint": "research",
+                },
+                "evaluation_plan": {
+                    "metrics": ["sharpe_ratio", "max_drawdown"],
+                    "candidate_gate": "Pass replication gate",
+                },
+                "governance": {
+                    "approval_required": True,
+                    "policy_id": "oc-001-research-normalization",
+                },
+                "provenance": {
+                    "source_kind": "paper",
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "source_refs": ["https://api.openalex.org/works/W123"],
+                    "created_by": "Codex",
+                },
             },
         )
 
@@ -214,8 +242,10 @@ class TestReplicationGate(unittest.TestCase):
         """Test schema validity check with missing fields."""
         request = self._create_valid_request()
         request.proposed_strategy_spec = {
-            "name": "Test",
-            # Missing: description, signals, parameters
+            "spec_version": "1.0",
+            "strategy_id": "broken-spec",
+            "title": "Broken spec",
+            # Missing canonical required sections
         }
         response = self.gate.evaluate_candidate(request)
 
@@ -223,7 +253,7 @@ class TestReplicationGate(unittest.TestCase):
             r for r in response.results if r.criterion_id == "schema_validity"
         )
         self.assertFalse(schema_result.passed)
-        self.assertIn("Missing", schema_result.evidence)
+        self.assertIn("required property", schema_result.evidence)
 
     def test_lineage_completeness_check(self):
         """Test lineage completeness check."""
