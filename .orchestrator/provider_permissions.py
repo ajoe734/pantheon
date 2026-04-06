@@ -215,10 +215,21 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(git status*)",
         "Bash(git diff*)",
         "Bash(git show*)",
+        "Bash(git push *)",
+        "Bash(gh issue comment *)",
+        "Bash(gh pr create *)",
+        "Bash(bash scripts/ai-status.sh *)",
+        "Bash(AI_NAME=* bash scripts/ai-status.sh *)",
         "Bash(python3 scripts/ai_status.py *)",
+        "Bash(python3 -m unittest discover *)",
+        "Bash(cd * && python3 -m unittest discover *)",
+        "Bash(python3 -m py_compile *)",
+        "Bash(cd * && python3 -m py_compile *)",
+        "Bash(python3 */smoke_test.py*)",
+        "Bash(cd * && python3 smoke_test.py*)",
+        "Bash(AI_NAME=* python3 scripts/ai_status.py *)",
     ]
     ask = [
-        "Bash(git push *)",
         "Bash(curl *)",
         "Bash(wget *)",
         "Bash(apt *)",
@@ -243,7 +254,8 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _verified_claude_hooks() -> dict[str, Any]:
-    command = "python3 .orchestrator/permission_broker.py hook"
+    broker_path = ROOT / ".orchestrator" / "permission_broker.py"
+    command = f"python3 {broker_path} hook"
     hook = lambda event: [{"hooks": [{"type": "command", "command": f"{command} {event}", "shell": "bash"}]}]
     return {
         "PreToolUse": hook("PreToolUse"),
@@ -281,6 +293,10 @@ def desired_claude_local_settings(config: dict[str, Any], current: dict[str, Any
     allow_values = list(dict.fromkeys([*(permissions.get("allow", []) or []), *verified_policy["allow"]]))
     ask_values = list(dict.fromkeys([*(permissions.get("ask", []) or []), *verified_policy["ask"]]))
     deny_values = list(dict.fromkeys([*(permissions.get("deny", []) or []), *verified_policy["deny"]]))
+    allow_set = set(allow_values)
+    ask_values = [value for value in ask_values if value not in allow_set]
+    ask_set = set(ask_values)
+    deny_values = [value for value in deny_values if value not in allow_set and value not in ask_set]
     next_permissions = {
         **permissions,
         "allow": allow_values,
@@ -292,11 +308,15 @@ def desired_claude_local_settings(config: dict[str, Any], current: dict[str, Any
         next_permissions["disableBypassPermissionsMode"] = verified_policy["disableBypassPermissionsMode"]
     hooks = existing.get("hooks", {})
     merged_hooks = {**hooks}
+    legacy_hook_snippets = (
+        "python3 .orchestrator/permission_broker.py hook",
+        "permission_broker.py log-hook",
+    )
     for event, hook_entries in _verified_claude_hooks().items():
         existing_entries = [
             entry
             for entry in hooks.get(event, [])
-            if f"permission_broker.py log-hook {event}" not in json.dumps(entry, sort_keys=True)
+            if not any(snippet in json.dumps(entry, sort_keys=True) for snippet in legacy_hook_snippets)
         ]
         serialized_existing = {json.dumps(entry, sort_keys=True) for entry in existing_entries}
         merged = list(existing_entries)

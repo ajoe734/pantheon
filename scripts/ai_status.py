@@ -43,9 +43,12 @@ STATUS_LABELS = {
     "todo": "todo",
     "in_progress": "in_progress",
     "review": "review",
+    "review_approved": "review_approved",
     "blocked": "blocked",
     "done": "done",
 }
+
+DEPENDENCY_DONE_STATUSES = {"done", "review_approved"}
 
 
 def iso_now() -> str:
@@ -274,6 +277,20 @@ def parse_csv_env(name: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def parse_delimited_env(name: str, delimiter: str = "||") -> list[str]:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return []
+    return [item.strip() for item in value.split(delimiter) if item.strip()]
+
+
+def dependency_is_satisfied(task_map: dict[str, dict[str, Any]], dep_id: str) -> bool:
+    dependency = task_map.get(dep_id)
+    if dependency is None:
+        return True
+    return dependency.get("status") in DEPENDENCY_DONE_STATUSES
+
+
 def validate_state(state: dict[str, Any]) -> None:
     for task in state["tasks"]:
         ensure_agent(task["owner"])
@@ -316,7 +333,7 @@ def recompute_agents(state: dict[str, Any]) -> None:
         ready = [
             task
             for task in queued
-            if all(task_map.get(dep_id, {"status": "done"}).get("status") == "done" for dep_id in task.get("depends_on", []))
+            if all(dependency_is_satisfied(task_map, dep_id) for dep_id in task.get("depends_on", []))
         ]
         waiting = [task for task in queued if task not in ready]
 
@@ -363,7 +380,15 @@ def recompute_agents(state: dict[str, Any]) -> None:
 def recompute_workload(state: dict[str, Any]) -> None:
     summary: dict[str, dict[str, int]] = {}
     for name in KNOWN_AGENTS:
-        summary[name] = {"total": 0, "active": 0, "blocked": 0, "done": 0, "review": 0, "todo": 0}
+        summary[name] = {
+            "total": 0,
+            "active": 0,
+            "blocked": 0,
+            "done": 0,
+            "review": 0,
+            "review_approved": 0,
+            "todo": 0,
+        }
 
     for task in state["tasks"]:
         owner = task["owner"]
@@ -377,12 +402,46 @@ def recompute_workload(state: dict[str, Any]) -> None:
     state["workload_summary"] = summary
 
 
+def task_delivery_layer(task: dict[str, Any]) -> str:
+    prefix = task["id"].split("-", 1)[0]
+    if prefix in {"OC", "RS", "LP", "SPIKE"}:
+        return "upstream"
+    return "product"
+
+
 def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> None:
     def cell(value: Any) -> str:
         text = "-" if value is None or value == "" else str(value)
         return text.replace("|", "\\|").replace("\n", "<br>")
 
+    def append_layer_table(lines: list[str], tasks: list[dict[str, Any]]) -> None:
+        lines.extend(
+            [
+                "| ID | Phase | Task | Owner | Status | Depends On | 中文說明 |",
+                "|---|---|---|---|---|---|---|",
+            ]
+        )
+        if not tasks:
+            lines.append("| _(none)_ | - | - | - | - | - | - |")
+            return
+        for task in tasks:
+            depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
+            lines.append(
+                "| `{id}` | {phase} | {title} | {owner} | {status} | {depends} | {summary} |".format(
+                    id=cell(task["id"]),
+                    phase=cell(task["phase"]),
+                    title=cell(task["title"]),
+                    owner=cell(task["owner"]),
+                    status=cell(task["status"]),
+                    depends=cell(depends),
+                    summary=cell(task.get("summary_zh") or "-"),
+                )
+            )
+
     current_logs = logs[-20:]
+    active_tasks = [task for task in state["tasks"] if task.get("status") != "done"]
+    pantheon_tasks = [task for task in active_tasks if task_delivery_layer(task) == "product"]
+    upstream_tasks = [task for task in active_tasks if task_delivery_layer(task) == "upstream"]
     lines: list[str] = [
         "# Current Work",
         "",
@@ -408,6 +467,25 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     for agent in state["agents"]:
         next_text = agent.get("next") or "No active assignment"
         lines.append(f"- `{agent['name']}`: {', '.join(agent['capability_lane'])}; next: {next_text}")
+
+    lines.extend(
+        [
+            "",
+            "## Delivery Layers",
+            "",
+            "### Pantheon Product Work",
+            "",
+        ]
+    )
+    append_layer_table(lines, pantheon_tasks)
+    lines.extend(
+        [
+            "",
+            "### Upstream OpenClaw / OSS Integration Work",
+            "",
+        ]
+    )
+    append_layer_table(lines, upstream_tasks)
 
     lines.extend(["", "## Task Board", "", "| ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |", "|---|---|---|---|---|---|---|---|---|---|"])
 
@@ -472,9 +550,21 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
 
 def sync_docs_site() -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
-    for path in [STATUS_FILE, LOG_FILE, CURRENT_WORK_FILE]:
+    mirror_files = [
+        STATUS_FILE,
+        LOG_FILE,
+        CURRENT_WORK_FILE,
+        ROOT / ".orchestrator" / "state.json",
+        ROOT / ".orchestrator" / "approval-queue.json",
+    ]
+    rename_map = {
+        "state.json": "orchestrator-state.json",
+        "approval-queue.json": "approval-queue.json",
+    }
+    for path in mirror_files:
         if path.exists():
-            shutil.copy2(path, DOCS_SITE_DIR / path.name)
+            target_name = rename_map.get(path.name, path.name)
+            shutil.copy2(path, DOCS_SITE_DIR / target_name)
 
 
 def sync_all(state: dict[str, Any]) -> None:
@@ -520,7 +610,7 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
 
     for task_id, pending in pending_by_task.items():
         task = task_map.get(task_id)
-        if task and task.get("status") in {"in_progress", "blocked", "done"}:
+        if task and task.get("status") in {"in_progress", "blocked", "done", "review_approved"}:
             for handoff in pending:
                 handoff["status"] = "done"
                 handoff["resolved_at"] = iso_now()
@@ -536,6 +626,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
     task_id, owner, reviewer = args[0], args[1], args[2]
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
+    summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     ensure_agent(owner)
     ensure_agent(reviewer)
     if owner == reviewer:
@@ -547,6 +638,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
         task = {
             "id": task_id,
             "title": title,
+            "summary_zh": summary_zh,
             "phase": os.environ.get("TASK_PHASE", "Unassigned"),
             "owner": owner,
             "reviewer": reviewer,
@@ -563,6 +655,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
         task["reviewer"] = reviewer
         if title:
             task["title"] = title
+        if summary_zh:
+            task["summary_zh"] = summary_zh
         task["last_update"] = timestamp
         task["next"] = "Ownership updated"
 
@@ -614,6 +708,39 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
     append_log({"ts": timestamp, "agent": actor, "type": "progress", "task_id": task_id, "message": message})
+
+
+def command_note(state: dict[str, Any], args: list[str]) -> None:
+    if len(args) < 2:
+        raise SystemExit("Usage: note <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = os.environ.get("AI_NAME", "Codex")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    timestamp = iso_now()
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log({"ts": timestamp, "agent": actor, "type": "note", "task_id": task_id, "message": message})
+
+
+def command_reopen(state: dict[str, Any], args: list[str]) -> None:
+    if len(args) < 2:
+        raise SystemExit("Usage: reopen <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = os.environ.get("AI_NAME", "Codex")
+    ensure_agent(actor)
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    timestamp = iso_now()
+    task["status"] = "in_progress"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    append_log({"ts": timestamp, "agent": actor, "type": "reopen", "task_id": task_id, "message": message})
 
 
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
@@ -693,6 +820,35 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "done", "task_id": task_id, "message": message})
 
 
+def command_approve(state: dict[str, Any], args: list[str]) -> None:
+    if len(args) < 2:
+        raise SystemExit("Usage: approve <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = os.environ.get("AI_NAME", "Codex")
+    ensure_agent(actor)
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+
+    timestamp = iso_now()
+    task["status"] = "review_approved"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+
+    review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
+    if review_notes:
+        task["review_notes_zh"] = review_notes
+
+    review_file = os.environ.get("REVIEW_FILE", "").strip()
+    if review_file:
+        task["review_file"] = review_file
+
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    append_log({"ts": timestamp, "agent": actor, "type": "review_approved", "task_id": task_id, "message": message})
+
+
 def command_sync(state: dict[str, Any], _args: list[str]) -> None:
     return None
 
@@ -706,9 +862,12 @@ def main(argv: list[str]) -> int:
         "assign": command_assign,
         "start": command_start,
         "progress": command_progress,
+        "note": command_note,
+        "reopen": command_reopen,
         "handoff": command_handoff,
         "blocker": command_blocker,
         "done": command_done,
+        "approve": command_approve,
         "sync": command_sync,
     }
 

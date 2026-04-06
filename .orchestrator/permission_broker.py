@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -21,20 +22,58 @@ from runtime_state import load_approval_state
 
 SAFE_BASH_PATTERNS = [
     re.compile(r"^pwd$"),
+    re.compile(r"^echo(\s|$)"),
+    re.compile(r"^printf(\s|$)"),
     re.compile(r"^ls(\s|$)"),
     re.compile(r"^find(\s|$)"),
+    re.compile(r"^grep(\s|$)"),
     re.compile(r"^rg(\s|$)"),
     re.compile(r"^cat(\s|$)"),
     re.compile(r"^sed(\s|$)"),
     re.compile(r"^head(\s|$)"),
     re.compile(r"^tail(\s|$)"),
+    re.compile(r"^wc(\s|$)"),
+    re.compile(r"^sort(\s|$)"),
+    re.compile(r"^uniq(\s|$)"),
+    re.compile(r"^awk(\s|$)"),
+    re.compile(r"^jq(\s|$)"),
+    re.compile(r"^ps(\s|$)"),
+    re.compile(r"^pgrep(\s|$)"),
+    re.compile(r"^which(\s|$)"),
+    re.compile(r"^type(\s|$)"),
+    re.compile(r"^date(\s|$)"),
+    re.compile(r"^sleep(\s|$)"),
     re.compile(r"^git status(\s|$)"),
     re.compile(r"^git diff(\s|$)"),
     re.compile(r"^git show(\s|$)"),
+    re.compile(r"^git log(\s|$)"),
+    re.compile(r"^git branch(\s|$)"),
+    re.compile(r"^git push(\s|$)"),
+    re.compile(r"^git -C .+ (status|diff|show|log|remote -v|submodule status)(\s|$)"),
+    re.compile(r"^gh issue comment(\s|$)"),
+    re.compile(r"^gh pr create(\s|$)"),
+    re.compile(r"^git remote -v$"),
+    re.compile(r"^git -C .+ (add|commit|push|remote set-url|submodule|rm)"),
+    re.compile(r"^git rm(\s|$)"),
     re.compile(r"^python3 scripts/ai_status\.py(\s|$)"),
+    re.compile(r"^python3 -m unittest discover(\s|$)"),
+    re.compile(r"^cd .+ && python3 -m unittest discover(\s|$)"),
+    re.compile(r"^python3 -m py_compile(\s|$)"),
+    re.compile(r"^cd .+ && python3 -m py_compile(\s|$)"),
+    re.compile(r"^python3 (?:[A-Za-z0-9_./-]+/)?smoke_test\.py(?:\s|$)"),
+    re.compile(r"^cd .+ && python3 smoke_test\.py(?:\s|$)"),
+    re.compile(r"^python3 \.orchestrator/approval_queue\.py(\s|$)"),
+    re.compile(r"^python3 \.orchestrator/doctor\.py(\s|$)"),
+    re.compile(r"^python3 \.orchestrator/supervisor\.py(\s|$)"),
+    re.compile(r"^nohup python3 \.orchestrator/supervisor\.py"),
+    re.compile(r"^nohup python3 -m http\.server"),
+    re.compile(r"^fuser \d+"),
+    re.compile(r"^lsof -i:"),
+    re.compile(r"^kill \d+"),
+    re.compile(r"^pkill -f supervisor\.py"),
 ]
 DEFER_BASH_PATTERNS = [
-    re.compile(r"^git push(\s|$)"),
+    re.compile(r"^git (add|commit|remote set-url|submodule)(\s|$)"),
     re.compile(r"^(curl|wget)(\s|$)"),
     re.compile(r"^(apt|apt-get)(\s|$)"),
     re.compile(r"^npm install(\s|$)"),
@@ -52,6 +91,38 @@ DENY_BASH_PATTERNS = [
 SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook"}
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
+
+SAFE_PYTHON_ONE_LINER_MARKERS = (
+    "print(",
+    "with open(",
+)
+SAFE_PYTHON_JSON_LOAD_MARKERS = (
+    "json.load",
+    "json.loads",
+)
+UNSAFE_PYTHON_ONE_LINER_MARKERS = (
+    ".write(",
+    "write_text(",
+    "write_bytes(",
+    "append(",
+    "unlink(",
+    "rmdir(",
+    "mkdir(",
+    "rename(",
+    "replace(",
+    "chmod(",
+    "chown(",
+    "subprocess",
+    "os.system",
+    "requests.",
+    "urllib.",
+    "socket.",
+)
+
+STATUS_SYNC_BASH_PATTERNS = (
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*(?:bash\s+)?scripts/ai-status\.sh(?:\s|$)"),
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*python3\s+scripts/ai_status\.py(?:\s|$)"),
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +161,10 @@ def hook_payload() -> dict[str, Any]:
 
 
 def classify_command(shell_command: str) -> str:
+    if _is_safe_status_sync_command(shell_command):
+        return "allow"
+    if _is_safe_python_one_liner(shell_command):
+        return "allow"
     for pattern in DENY_BASH_PATTERNS:
         if pattern.search(shell_command):
             return "deny"
@@ -100,6 +175,20 @@ def classify_command(shell_command: str) -> str:
         if pattern.search(shell_command):
             return "defer"
     return "defer"
+
+
+def _is_safe_python_one_liner(shell_command: str) -> bool:
+    command = shell_command.strip()
+    if not (command.startswith('python3 -c "') or command.startswith("python3 -c '")):
+        return False
+    if any(marker in command for marker in UNSAFE_PYTHON_ONE_LINER_MARKERS):
+        return False
+    return True
+
+
+def _is_safe_status_sync_command(shell_command: str) -> bool:
+    command = shell_command.strip()
+    return any(pattern.search(command) for pattern in STATUS_SYNC_BASH_PATTERNS)
 
 
 def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
@@ -117,13 +206,22 @@ def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
 def _paths_within_workspace(paths: list[Path]) -> bool:
     if not paths:
         return True
+    allowed_roots = [ROOT, ROOT.parent / "pantheon"]
     for path in paths:
         resolved = path if path.is_absolute() else ROOT / path
-        try:
-            resolved.relative_to(ROOT)
-        except ValueError:
+        if not any(
+            _is_relative_to(resolved, root) for root in allowed_roots
+        ):
             return False
     return True
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
@@ -205,8 +303,8 @@ def _parse_permission_rule(rule: str) -> tuple[str | None, str | None]:
 
 
 def _bash_rule_matches(rule_content: str, shell_command: str) -> bool:
-    if rule_content.endswith("*"):
-        return shell_command.startswith(rule_content[:-1])
+    if "*" in rule_content:
+        return fnmatch.fnmatchcase(shell_command, rule_content)
     return shell_command == rule_content
 
 
@@ -576,7 +674,10 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
                 )
                 emit_hook_response(_permission_request_response(behavior, message=decision["reason"]))
             else:
-                effective_decision = "deny"
+                # Defer: log it but don't emit a hook response.
+                # This lets Claude Code's native approval UI ask the user,
+                # instead of silently denying.
+                effective_decision = "defer"
                 effective_reason = decision["reason"]
                 log_event(
                     config,
@@ -588,7 +689,7 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
                         "effective_reason": effective_reason,
                     },
                 )
-                emit_hook_response(_permission_request_response("deny", message=decision["reason"]))
+                # No emit_hook_response → Claude Code falls through to its own prompt
             return 0
 
         if active_override:

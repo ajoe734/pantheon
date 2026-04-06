@@ -52,6 +52,10 @@ def handoff_key(handoff: dict[str, Any]) -> str:
     return "|".join(parts)
 
 
+def enqueue_runtime_events_enabled(config: dict[str, Any]) -> bool:
+    return bool(config.get("events", {}).get("enqueue_runtime_events", False))
+
+
 def build_snapshot(config: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
     schema = config["schema"]
     tasks_path = schema["tasks_path"]
@@ -96,6 +100,70 @@ def resolve_target_for_waiting_status(status_value: str, config: dict[str, Any])
     return None
 
 
+def build_task_status_event(task_id: str, task: dict[str, Any], new_status: str, config: dict[str, Any]) -> dict[str, Any] | None:
+    lower_status = new_status.lower()
+    review_statuses = {value.lower() for value in config.get("events", {}).get("review_statuses", ["review"])}
+
+    if lower_status in review_statuses and task.get("reviewer"):
+        return {
+            "key": f"{task_id}:status:{lower_status}:{task.get('reviewer')}",
+            "task_id": task_id,
+            "target_agent": task.get("reviewer"),
+            "reason": f"status:{new_status}",
+            "task": task,
+        }
+
+    waiting_target = resolve_target_for_waiting_status(new_status, config)
+    if waiting_target:
+        return {
+            "key": f"{task_id}:status:{lower_status}:{waiting_target}",
+            "task_id": task_id,
+            "target_agent": waiting_target,
+            "reason": f"status:{new_status}",
+            "task": task,
+        }
+
+    target = resolve_target_for_status(task, new_status, config)
+    if target:
+        return {
+            "key": f"{task_id}:status:{lower_status}:{target}",
+            "task_id": task_id,
+            "target_agent": target,
+            "reason": f"status:{new_status}",
+            "task": task,
+        }
+    return None
+
+
+def compute_replay_events(current: dict[str, Any], config: dict[str, Any]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for task_id, task in current.get("tasks", {}).items():
+        new_status = str(task.get("status") or "")
+        if not new_status:
+            continue
+        event = build_task_status_event(task_id, task, new_status, config)
+        if event:
+            events.append(event)
+
+    if config.get("events", {}).get("watch_handoffs", True):
+        for handoff in current.get("pending_handoffs", []):
+            events.append(
+                {
+                    "key": f"handoff:{handoff_key(handoff)}",
+                    "task_id": handoff.get("task_id"),
+                    "target_agent": handoff.get("to"),
+                    "reason": "handoff_pending",
+                    "task": {
+                        "id": handoff.get("task_id"),
+                        "artifacts": [],
+                        "next": handoff.get("message"),
+                    },
+                    "handoff": handoff,
+                }
+            )
+    return events
+
+
 def compute_events(previous: dict[str, Any], current: dict[str, Any], config: dict[str, Any]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     previous_tasks = previous.get("tasks", {})
@@ -134,43 +202,9 @@ def compute_events(previous: dict[str, Any], current: dict[str, Any], config: di
         if new_status == old_status:
             continue
 
-        lower_status = new_status.lower()
-        if lower_status in review_statuses and task.get("reviewer"):
-            events.append(
-                {
-                    "key": f"{task_id}:status:{lower_status}:{task.get('reviewer')}",
-                    "task_id": task_id,
-                    "target_agent": task.get("reviewer"),
-                    "reason": f"status:{new_status}",
-                    "task": task,
-                }
-            )
-            continue
-
-        waiting_target = resolve_target_for_waiting_status(new_status, config)
-        if waiting_target:
-            events.append(
-                {
-                    "key": f"{task_id}:status:{lower_status}:{waiting_target}",
-                    "task_id": task_id,
-                    "target_agent": waiting_target,
-                    "reason": f"status:{new_status}",
-                    "task": task,
-                }
-            )
-            continue
-
-        target = resolve_target_for_status(task, new_status, config)
-        if target:
-            events.append(
-                {
-                    "key": f"{task_id}:status:{lower_status}:{target}",
-                    "task_id": task_id,
-                    "target_agent": target,
-                    "reason": f"status:{new_status}",
-                    "task": task,
-                }
-            )
+        event = build_task_status_event(task_id, task, new_status, config)
+        if event:
+            events.append(event)
 
     if config.get("events", {}).get("watch_handoffs", True):
         previous_pending = set(previous.get("pending_handoff_keys", []))
@@ -279,15 +313,26 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
         return False
 
     events = compute_events(state, snapshot, config)
+    if replay:
+        merged_events: dict[str, dict[str, Any]] = {}
+        for event in compute_replay_events(snapshot, config):
+            merged_events[event["key"]] = event
+        for event in events:
+            merged_events[event["key"]] = event
+        events = list(merged_events.values())
+
     seen = state.setdefault("seen_event_keys", {})
     changed = False
-    for event in events:
-        if event["key"] in seen:
-            continue
-        queued = queue_delivery_event(config, event)
-        if queued:
-            seen[event["key"]] = utc_now()
-            changed = True
+    if enqueue_runtime_events_enabled(config):
+        for event in events:
+            if event["key"] in seen and not replay:
+                continue
+            queued = queue_delivery_event(config, event)
+            if queued:
+                seen[event["key"]] = utc_now()
+                changed = True
+    elif events:
+        changed = True
 
     state["initialized_at"] = state.get("initialized_at") or utc_now()
     state["last_scan_at"] = utc_now()

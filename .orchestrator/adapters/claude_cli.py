@@ -75,13 +75,16 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
 
         provider = self.config.get("providers", {}).get("claude", {})
         runtime = provider.get("runtime", {})
+        output_format = runtime.get("output_format", "stream-json")
         command = [
             runtime.get("cli") or cli,
             "-p",
             request.message,
             "--output-format",
-            runtime.get("output_format", "stream-json"),
+            output_format,
         ]
+        if output_format == "stream-json":
+            command.append("--verbose")
         if runtime.get("include_hook_events", True):
             command.append("--include-hook-events")
 

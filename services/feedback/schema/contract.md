@@ -130,7 +130,7 @@ Trader feedback events capture explicit human judgment.
 | `event_type` | yes | one of the feedback event types above |
 | `created_at` | yes | RFC3339 timestamp |
 | `actor_id` | yes | stable reviewer/operator id |
-| `actor_role` | yes | `operator`, `approver`, or other governed role |
+| `actor_role` | yes | `operator`, `approver`, or `system` to stay aligned with OC-001 |
 | `channel` | yes | source channel such as `console`, `web`, `telegram` |
 | `target` | yes | governed linkage object from §4 |
 | `task_ref` | no | workflow task or review id |
@@ -150,6 +150,11 @@ Any materialized updated artifact must still flow back through registry and prom
 ## 6. Execution Telemetry Events
 
 Execution telemetry captures how the governed artifact behaved after approval.
+
+Draft artifacts are intentionally excluded from execution telemetry even though
+`draft` remains valid in the shared linkage object. Draft artifacts must not
+reach executable surfaces, so telemetry begins once an artifact reaches
+candidate, paper, or live evaluation paths.
 
 ### 6.1 Minimum telemetry event types
 
@@ -216,4 +221,3 @@ Claude should review this contract for:
 - whether the governance boundary is clear enough that feedback cannot mutate live directly
 - whether the event families are sufficiently separated
 - whether the linkage object is strong enough for later evaluator and optimizer work
-

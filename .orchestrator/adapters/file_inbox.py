@@ -47,7 +47,7 @@ class FileInboxAdapter(BaseAdapter):
         inbox_path.write_text(body, encoding="utf-8")
 
         command: list[str] = []
-        if inbox_settings.get("open_in_vscode", True) and command_exists("code"):
+        if inbox_settings.get("open_in_vscode", False) and command_exists("code"):
             command = ["code", "-r", str(inbox_path)]
             subprocess.Popen(
                 command,

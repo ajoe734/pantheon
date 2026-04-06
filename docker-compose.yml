@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Pantheon + LEAN docker-compose
 #
@@ -17,18 +15,18 @@ version: '3.8'
 # Each OSS learning framework runs in its own container with its own
 # requirements.txt to avoid dependency conflicts.
 #
-# Future: when pantheon repo is extracted, `lean:` will build from
-# ./lean (git submodule) instead of `.` (repo root).
+# The repo split is complete. LEAN now builds from the `lean/`
+# submodule and keeps its runtime assets there as well.
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
 
   # ── Execution Plane ──────────────────────────────────────────────────────
   lean:
-    build: .
+    build: ./lean
     volumes:
-      - ./Data:/Lean/Data
-      - ./Launcher/config.json:/app/config.json
+      - ./lean/Data:/Lean/Data
+      - ./lean/Launcher/config.json:/app/config.json
     depends_on:
       - signal-store
     environment:

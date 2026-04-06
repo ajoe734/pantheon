@@ -49,7 +49,7 @@ three assumptions and narrows one:
 
 ## Contract Surface
 
-Base methods from [`client.py`](/home/ajoe734/code/Lean/services/signal-store/client.py):
+Base methods from [`client.py`](/home/ajoe734/code/pantheon/services/signal-store/client.py):
 
 ```python
 class SignalStoreClient(ABC):
@@ -84,12 +84,12 @@ The base contract uses `validate_signal_payload_minimal()` to guard the transpor
 - `size/quantity` is numeric and non-negative
 
 This is the minimum store contract, not the full schema.
-Production implementations should compose it with the canonical validator from [schema.json](/home/ajoe734/code/Lean/services/research/schema.json) instead of duplicating every enum rule in a second place.
+Production implementations should compose it with the canonical validator from [schema.json](/home/ajoe734/code/pantheon/services/research/schema.json) instead of duplicating every enum rule in a second place.
 
 ## Example Payload
 
-Current schema example lives in [signal_example.json](/home/ajoe734/code/Lean/services/research/signal_example.json).
-The richer multi-plane draft scenarios remain in [example_payload.json](/home/ajoe734/code/Lean/services/research/example_payload.json).
+Current schema example lives in [signal_example.json](/home/ajoe734/code/pantheon/services/research/signal_example.json).
+The richer multi-plane draft scenarios remain in [example_payload.json](/home/ajoe734/code/pantheon/services/research/example_payload.json).
 
 Minimal example accepted by the store:
 

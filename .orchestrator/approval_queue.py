@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import sys
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +20,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from common import config_path, load_config, new_runtime_id, utc_now, write_activity_log, write_json
-from runtime_state import default_approval_state, load_approval_state, save_approval_state
+from runtime_state import default_approval_state, load_approval_state, load_runtime_state, save_approval_state
 
 
 @contextmanager
@@ -39,6 +41,108 @@ def list_pending(config: dict[str, Any], include_history: bool = False) -> dict[
     if include_history:
         payload["history"] = state.get("history", [])
     return payload
+
+
+def _parse_utc(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _stale_pending_seconds(config: dict[str, Any]) -> float:
+    return float(config.get("approvals", {}).get("stale_pending_seconds", 1800))
+
+
+def _is_stale_pending(item: dict[str, Any], *, now: datetime, stale_after_seconds: float) -> bool:
+    if item.get("status") != "pending":
+        return False
+    if item.get("task_id") or item.get("worker_run_id"):
+        return False
+    created_at = _parse_utc(item.get("created_at"))
+    if created_at is None:
+        return False
+    return (now - created_at).total_seconds() >= stale_after_seconds
+
+
+def _pid_is_alive(pid: Any) -> bool:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    return os.path.exists(f"/proc/{value}")
+
+
+def _orphaned_worker_note(item: dict[str, Any], workers: dict[str, Any]) -> str | None:
+    run_id = item.get("worker_run_id")
+    if not run_id:
+        return None
+    worker = workers.get(run_id)
+    if worker is None:
+        return "Auto-pruned orphaned approval after its worker state disappeared."
+    if not _pid_is_alive(worker.get("pid")):
+        return "Auto-pruned approval because the worker exited before approval could be applied."
+    return None
+
+
+def _pruned_pending_item(item: dict[str, Any], *, note: str) -> dict[str, Any]:
+    return {
+        **item,
+        "status": "resolved",
+        "decision": "deny",
+        "resolved_at": utc_now(),
+        "note": note,
+        "remember": False,
+        "resume_override_active": False,
+        "resume_override_consumed_at": None,
+        "resume_override_consumed_reason": None,
+    }
+
+
+def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    stale_after_seconds = _stale_pending_seconds(config)
+    pruned: list[dict[str, Any]] = []
+    with approval_lock(config):
+        state = load_approval_state(config)
+        runtime_state = load_runtime_state(config)
+        workers = runtime_state.get("workers", {})
+        keep: list[dict[str, Any]] = []
+        for item in state.get("pending", []):
+            orphaned_note = _orphaned_worker_note(item, workers)
+            if orphaned_note:
+                pruned.append(_pruned_pending_item(item, note=orphaned_note))
+                continue
+            if _is_stale_pending(item, now=now, stale_after_seconds=stale_after_seconds):
+                pruned.append(
+                    _pruned_pending_item(
+                        item,
+                        note=f"Auto-pruned stale approval after {int(stale_after_seconds)}s without task/worker binding.",
+                    )
+                )
+                continue
+            keep.append(item)
+        if not pruned:
+            return []
+        state["pending"] = keep
+        state.setdefault("history", []).extend(pruned)
+        save_approval_state(config, state)
+    for item in pruned:
+        write_activity_log(
+            config,
+            {
+                "type": "approval_pruned",
+                "provider": item.get("provider"),
+                "task_id": item.get("task_id"),
+                "message": f"Auto-pruned stale approval {item.get('approval_id')}",
+                "approval_id": item.get("approval_id"),
+                "worker_run_id": item.get("worker_run_id"),
+                "decision": "deny",
+            },
+        )
+    return pruned
 
 
 def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
@@ -336,6 +440,9 @@ def parse_args() -> argparse.Namespace:
     deny_parser.add_argument("--note")
     deny_parser.add_argument("--remember", action="store_true")
 
+    prune_parser = subparsers.add_parser("prune-stale", help="Auto-deny stale pending approvals.")
+    prune_parser.add_argument("--json", action="store_true")
+
     serve_parser = subparsers.add_parser("serve", help="Serve the approval queue over HTTP.")
     serve_parser.add_argument("--listen", default="127.0.0.1:8765")
 
@@ -369,6 +476,19 @@ def main() -> int:
             remember=getattr(args, "remember", False),
         )
         print(json.dumps(resolved, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "prune-stale":
+        pruned = prune_stale_approvals(config)
+        payload = {"pruned": pruned, "count": len(pruned)}
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            if not pruned:
+                print("No stale approvals pruned.")
+            else:
+                for item in pruned:
+                    print(f"{item['approval_id']} pruned ({item.get('tool_name')})")
         return 0
 
     host, port = args.listen.rsplit(":", 1)
