@@ -6,7 +6,7 @@ a research candidate is admitted to the registry.
 """
 
 from typing import List, Dict, Any, Optional
-from gate_schema import ReplicationCriteria
+from .gate_schema import ReplicationCriteria
 import json
 
 
