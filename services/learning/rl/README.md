@@ -43,11 +43,11 @@ RLlib Training (PPO + Ray Tune hyperparameter search)
     ↓
 Out-of-Sample Validation
     ↓
-Replication Gate (RS-003)
+Registry Admission (REG-001) + RL evaluation
     ↓
-Registry Admission (REG-001)
+Promotion through Lifecycle (draft → candidate → paper → live)
     ↓
-Staged Deployment (0.5% → 2% → full allocation)
+Staged Deployment via LEAN (0.5% → 2% → full allocation)
     ↓
 Live Monitoring & Rollback
 ```
@@ -60,7 +60,7 @@ Live Monitoring & Rollback
 | **Search** | Ray Tune with Population-Based Training (PBT) |
 | **Validation Horizon** | Train: 2023–2025-06, Validate: 2025-07–12, Test: 2026-01–03 |
 | **Stress Tests** | Must pass market regime shift, slippage sensitivity, vol regime shift (20% degradation max) |
-| **Promotion** | Staged: development → staging → approved → production (0.5% → 2% → full) |
+| **Lifecycle** | draft → candidate → paper → live (governance vocabulary per registry contract) |
 | **Rollback** | Automatic if single-day loss > 2% or rolling Sharpe drops > 20% |
 
 ---
@@ -72,8 +72,7 @@ services/learning/rl/
 ├── README.md                 (this file)
 ├── PATH_DEFINITION.md        (entry criteria + workflow)
 ├── ENV_CONTRACT.md           (RLlib interface spec)
-└── examples/                 (added as reference implementations)
-    └── config_ppo_portfolio.yaml  (example Ray Tune config)
+└── DECISION_TREES_AND_EDGE_CASES.md  (edge case handling)
 ```
 
 ---
@@ -81,17 +80,19 @@ services/learning/rl/
 ## Integration Points
 
 ### Upstream: RS-003 (Replication Gate)
-- Input: Approved research strategies from replication gate.
-- Output: RL candidates that satisfy entry criteria → forwarded to replication gate.
+- Input: Research strategies identified as RL candidates must pass RS-003 replication gate *before* RL training begins.
+- Role: RS-003 validates the source strategy spec (research normalization + first-pass replication).
+- Output: Approved strategy candidate ready for registry admission and RL training.
 
-### Upstream: REG-001 (Registry Gate)
+### Downstream: REG-001 (Registry Gate)
 - Input: RL policy artifact + metadata (performance, hyperparameters, entry criteria checklist).
-- Output: RL policy promoted through registry stages (staging → approved → production).
+- Output: RL policy promoted through lifecycle states (draft → candidate → paper → live).
+- Governance: Artifact must follow registry contract (section §3.1 of PATH_DEFINITION.md).
 
-### Downstream: LEAN Execution
-- Input: RL policy artifact (model URI + config).
-- Output: Action inference per decision epoch.
-- Integration: RLPolicyExecutor loads policy, computes action from LEAN signal state.
+### Downstream: LEAN Execution (EX-001 Loader)
+- Input: RL policy artifact at `paper` or `live` state, materialized to Object Store by registry.
+- Output: Action inference per decision epoch via RLPolicyExecutor.
+- Integration: EX-001 artifact loader validates promotion state and checksum before RLPolicyExecutor receives artifact.
 
 ---
 
@@ -105,6 +106,7 @@ Before training a new RL policy, verify:
   - [ ] Exploration benefit: policy should discover actions outside historical distribution
   - [ ] Data sufficiency: 2+ years OHLCV + 3+ market regimes available
   - [ ] Framework match: Problem fits RLlib (multi-agent) or FinRL (single-agent)
+  - [ ] Source strategy passed RS-003 replication gate
 
 - [ ] **Problem Statement**
   - [ ] Clear objective (e.g., "optimize exit timing for tech sector")
@@ -123,58 +125,18 @@ Before training a new RL policy, verify:
 
 ---
 
-## Training Quickstart
+## Training Workflow
 
-### 1. Prepare Data
+The RL training flow requires implementation of support infrastructure. The conceptual workflow is:
 
-```bash
-# Fetch OHLCV and portfolio state from data warehouse
-python3 scripts/fetch_training_data.py \
-  --problem exit_timing \
-  --tickers MSFT AAPL NVDA \
-  --start 2023-01-01 \
-  --end 2025-06-30 \
-  --output s3://pantheon-data/portfolio_exit_training.parquet
-```
-
-### 2. Configure RLlib Trainer
-
-Edit or copy `ENV_CONTRACT.md` config template:
-
-```bash
-cp services/learning/rl/examples/config_ppo_portfolio.yaml \
-   services/learning/rl/config_ppo_exit_timing.yaml
-
-# Customize config with your tickers, data path, hyperparameter ranges
-```
-
-### 3. Run Ray Tune Search
-
-```bash
-python3 scripts/train_rl_policy.py \
-  --config services/learning/rl/config_ppo_exit_timing.yaml \
-  --num_trials 32 \
-  --log_dir s3://pantheon-artifacts/rl_training_runs/
-```
-
-### 4. Evaluate Best Trial
-
-```bash
-python3 scripts/evaluate_rl_policy.py \
-  --trial_dir s3://pantheon-artifacts/rl_training_runs/best_trial/ \
-  --test_data s3://pantheon-data/portfolio_exit_test.parquet \
-  --output report_exit_timing_v1.json
-```
-
-### 5. Submit to Registry
-
-```bash
-python3 scripts/registry_submit.py \
-  --policy_uri s3://pantheon-artifacts/rl_policy_exit_timing_v1/model.zip \
-  --config_uri s3://pantheon-artifacts/rl_policy_exit_timing_v1/config.yaml \
-  --entry_criteria_report entry_criteria_verified.json \
-  --evaluation_report report_exit_timing_v1.json
-```
+1. **Data Preparation**: Fetch OHLCV + portfolio state, validate splits (66% train / 17% val / 17% test).
+2. **Environment Setup**: Create RLlib environment per ENV_CONTRACT.md, implement state space + reward function.
+3. **Ray Tune Search**: Configure PBT or Bayesian search over hyperparameters (3–8 params, 16–64 trials).
+4. **Evaluation**: Post-search, evaluate top trials on held-out test period, verify entry criteria gates.
+5. **Artifact Packaging**: Bundle trained policy + config + entry criteria report for registry submission.
+6. **Registry Submission**: Submit to registry as `draft` lifecycle state (REG-001).
+7. **Registry Promotion**: Registry validates artifact structure, promotes through `candidate` → `paper` → `live`.
+8. **LEAN Integration**: Once at `paper` or `live`, registry materializes artifact to Object Store; LEAN loader consumes via EX-001 contract.
 
 ---
 
@@ -182,11 +144,11 @@ python3 scripts/registry_submit.py \
 
 - [x] Entry criteria documented in PATH_DEFINITION.md
 - [x] RLlib + Ray Tune workflow defined in PATH_DEFINITION.md
-- [x] Registry and promotion constraints defined in PATH_DEFINITION.md
+- [x] Registry and promotion constraints defined in PATH_DEFINITION.md (lifecycle states: draft/candidate/paper/live)
 - [x] Environment interface specified in ENV_CONTRACT.md
 - [x] Data format and normalization rules in ENV_CONTRACT.md
-- [x] Training configuration template in ENV_CONTRACT.md
-- [x] Integration points with RS-003, REG-001, LEAN documented
+- [x] RL artifact model aligned with REG-001/REG-003/EX-001 governance in PATH_DEFINITION.md
+- [x] Integration points with RS-003, REG-001, LEAN documented (RS-003 role clarified as upstream)
 - [x] Decision tree for when to use RL vs. Qlib in PATH_DEFINITION.md
 
 ---
@@ -219,11 +181,15 @@ python3 scripts/registry_submit.py \
 
 ---
 
-**Document Status**: Ready for Codex review  
+**Document Status**: Revised to address Codex review comments  
 **Reviewer**: Codex  
 **Approval Criteria**:
+- [x] Lifecycle vocabulary aligned with registry contract (draft/candidate/paper/live)
+- [x] RL artifact model aligned with REG-001/REG-003/EX-001 governance metadata
+- [x] RS-003 role clarified as upstream research gate (not post-training policy gate)
+- [x] Non-existent script and example file references removed
 - [ ] Entry criteria alignment with TARGET_ARCHITECTURE confirmed
 - [ ] Ray Tune workflow matches RLlib conventions
 - [ ] Registry integration is feasible with REG-001
-- [ ] LEAN execution contract is implementable
+- [ ] LEAN execution contract is implementable via EX-001
 - [ ] All links and references are valid

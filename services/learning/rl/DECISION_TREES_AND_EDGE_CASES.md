@@ -252,8 +252,7 @@ HIGH RISK: Do NOT train yet. Fix underlying issues first.
 |-----|------|------------------|
 | 15–16 | Test set evaluation & stress tests | Test Sharpe ≥ 80% of validation |
 | 17 | Entry criteria verification | All 5 criteria signed off |
-| 18–19 | Replication gate (RS-003) | First-pass replication confirmed |
-| 20–21 | Registry submission & review (REG-001) | Codex/Grok review passed |
+| 18–21 | Registry submission & review (REG-001) | Artifact validated, promoted to candidate state |
 
 ---
 
@@ -311,6 +310,11 @@ REVIEW & CONSIDER ROLLBACK if:
 Before deploying an RL policy, ensure:
 
 ```
+PRE-TRAINING DOCUMENTATION
+✓ Source strategy spec passed RS-003 replication gate
+✓ Problem statement & use case justification
+✓ Entry criteria checklist (all 5 conditions met)
+
 TRAINING DOCUMENTATION
 ✓ Config YAML with all hyperparameters
 ✓ Data checksums (training, validation, test)
@@ -321,7 +325,6 @@ TRAINING DOCUMENTATION
 EVALUATION DOCUMENTATION
 ✓ Stress test results (regime shift, slippage, vol)
 ✓ Entry criteria verification form (all 5 signed off)
-✓ Replication gate report (RS-003)
 ✓ Registry submission form (REG-001)
 
 DEPLOYMENT DOCUMENTATION

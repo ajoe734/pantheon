@@ -48,7 +48,9 @@ RL is justified when:
 ```
 Governance Layer
     ↓
-Research Intake (RS-003: Replication Gate) 
+Research Intake → RS-001 (Ingestion) → RS-002 (Normalization)
+    ↓
+Replication Gate (RS-003: validates research candidate)
     ↓
 RL Candidate Selection (this layer)
     ↓
@@ -58,14 +60,16 @@ Ray Tune Hyperparameter Search
     ↓
 Backtesting & Evaluation (LEAN)
     ↓
-Registry Admission (REG-001 gate)
+Registry Admission (REG-001 gate) + RL-specific constraints
     ↓
-Promotion & Live Execution
+Promotion through Registry (draft → candidate → paper → live)
+    ↓
+LEAN Execution
 ```
 
 ### 2.1 Candidate Selection
 
-**Input**: Approved research from RS-003 (replication-gate-passed strategies).
+**Input**: Approved research strategies from RS-003 (replication-gate-passed strategy candidates).
 
 **Filter**: Apply entry criteria (§1) to determine if the candidate should try RL or skip to registry admission.
 
@@ -216,16 +220,27 @@ For each trial:
 
 ### 3.1 Artifact Model for RL Policies
 
-Each RL policy artifact contains:
+Each RL policy artifact stored in the registry follows the governance contract (REG-001/REG-003/EX-001):
 
 ```json
 {
-  "id": "rl_policy_portfolio_exit_v1",
-  "type": "rl_policy",
-  "framework": "rllib",
-  "algorithm": "ppo",
+  "registry_id": "rl-policy-portfolio-exit-v1.0.0",
+  "artifact_type": "rl_policy",
+  "strategy_id": "portfolio_exit_optimization",
+  "version": "1.0.0",
+  "lifecycle_state": "draft",
   "created_at": "2026-04-15T10:00:00Z",
+  "lineage": {
+    "parent_registry_ids": [],
+    "source_run_ids": ["ray-tune-run-2026-04-15-portfolio-exit"],
+    "source_dataset_refs": ["dataset:tech-portfolio-2023-2025-daily"],
+    "source_strategy_spec_id": "strategy-spec:portfolio-exit-v1"
+  },
+  "checksum": "sha256:abc123def456...",
+  "storage_ref": "openclaw/registry/portfolio_exit_optimization/1.0.0/artifact.bin",
   "metadata": {
+    "framework": "rllib",
+    "algorithm": "ppo",
     "problem_statement": "Optimize exit timing for tech sector positions",
     "entry_criteria_satisfied": {
       "supervised_alpha_exhausted": true,
@@ -235,7 +250,7 @@ Each RL policy artifact contains:
     },
     "training_data": {
       "tickers": ["MSFT", "AAPL", "NVDA"],
-      "period": "2023-01-01 to 2025-12-31",
+      "period": "2023-01-01 to 2025-06-30",
       "frequency": "daily",
       "samples": 504000
     },
@@ -260,34 +275,62 @@ Each RL policy artifact contains:
       "episode_length": 252
     }
   },
-  "model_uri": "s3://pantheon-artifacts/rl_policy_portfolio_exit_v1/model.zip",
-  "config_uri": "s3://pantheon-artifacts/rl_policy_portfolio_exit_v1/config.yaml",
-  "promotion_status": "staging",
-  "promotion_tests": [
-    {
-      "name": "market_regime_stress",
+  "evaluation_summary": {
+    "market_regime_stress": {
       "status": "passed",
       "notes": "Tested on 2008 financial crisis data"
     },
-    {
-      "name": "slippage_sensitivity",
+    "slippage_sensitivity": {
       "status": "passed",
       "notes": "Robust to 2–10 bps additional slippage"
     }
-  ]
+  },
+  "promoted_at": null,
+  "approver": null,
+  "rollback_target": null
 }
 ```
+
+**Registry Projection for Execution (Object Store)**:
+
+When promoted to `paper` or `live`, the registry materializes a metadata.json projection into Object Store:
+
+```json
+{
+  "registry_id": "rl-policy-portfolio-exit-v1.0.0",
+  "strategy_id": "portfolio_exit_optimization",
+  "version": "1.0.0",
+  "promotion_state": "live",
+  "checksum": "sha256:abc123def456...",
+  "artifact_type": "rl_policy",
+  "artifact_path": "openclaw/registry/portfolio_exit_optimization/1.0.0/artifact.bin",
+  "rollback_target": "rl-policy-portfolio-exit-v0.9.9",
+  "metadata": {
+    "framework": "rllib",
+    "algorithm": "ppo",
+    "environment": {
+      "state_dim": 128,
+      "action_space": "discrete",
+      "action_size": 5
+    }
+  }
+}
+```
+
+The LEAN execution loader reads this Object Store projection before loading the artifact bytes, validating governance and promotion state. See EX-001 contract for details.
 
 ### 3.2 Registry Gate (REG-001 + LP-005 Constraints)
 
 Before an RL policy reaches registry, it must pass:
 
 #### Gate 1: Replication Criteria (RS-003)
-- **Input**: RL policy trained and evaluated on historical data.
-- **Requirement**: First-pass replication gate confirms the policy works in a live simulation (LEAN mock execution).
-- **Artifact**: Replication report with trade-by-trade logs.
+- **Input**: RL-selected research strategy candidate that satisfies entry criteria (§1).
+- **Requirement**: RS-003 validates the source research strategy before it enters the registry. This is upstream of RL policy training.
+- **Artifact**: Replication report confirming strategy normalization and first-pass validation.
+- **Next Step**: Approved strategy candidate enters registry as StrategySpec candidate.
 
 #### Gate 2: Entry Criteria Verification (LP-005)
+- **Input**: Training run of RL policy based on the approved strategy candidate.
 - **Requirement**: Trained policy explicitly demonstrates it satisfies §1 entry criteria.
 - **Checksum**:
   ```
@@ -326,18 +369,26 @@ Example: `rl_policy_portfolio_exit_v1.2.3`
 #### Promotion Workflow
 
 ```
-development
-    ↓ (pass entry + replication gate)
-staging
-    ↓ (pass stress tests)
-approved
-    ↓ (manual approval gate)
-production (0.5% portfolio allocation)
-    ↓ (monitor 2+ weeks)
-production (2% portfolio allocation)
-    ↓ (if risk-adjusted Sharpe > baseline + 0.1)
-production (full allocation or trading-strategy-specific % cap)
+draft (new, not yet replication-validated)
+    ↓ (pass entry criteria + RS-003 replication gate)
+candidate (passed replication gate, ready for registry evaluation)
+    ↓ (pass stress tests and REG-001 evaluation)
+paper (approved for paper/backtest execution)
+    ↓ (pass live monitoring checkpoint)
+live (approved for live execution, staged allocation)
+    ↓ (if performance degrades beyond thresholds)
+retired (no longer approved for promotion or loading)
 ```
+
+#### Transition Rules
+
+- `draft` → `candidate`: RL policy trained, entry criteria verified, passes replication gate validation.
+- `candidate` → `paper`: Out-of-sample robustness confirmed, stress tests passed.
+- `paper` → `live`: Manual approval gate passed, ready for staged live deployment (start 0.5% allocation).
+- `live` → `retired`: Monitoring detects unrecoverable performance degradation or fundamental policy failure.
+- Any state → `retired`: Explicit retirement (e.g., research direction changed).
+
+No direct transitions between `paper` ↔ `live` and other non-adjacent states.
 
 #### Live Monitoring
 
@@ -369,37 +420,55 @@ Immediate rollback to previous version if:
 
 #### Input Contract
 
-LEAN receives RL policy as:
+LEAN receives RL policy through governed registry channels:
+
+1. **Registry Stage**: RL policy artifact reaches `paper` or `live` in registry (REG-001).
+2. **Artifact Materialization**: Registry/promotion tooling materializes artifact bytes + metadata to Object Store at:
+   - `openclaw/registry/{strategy_id}/{version}/metadata.json`
+   - `openclaw/registry/{strategy_id}/{version}/artifact.bin`
+3. **LEAN Loader** (EX-001): Validates metadata.json, verifies promotion state, loads artifact bytes.
+4. **Policy Executor**: RLlib policy inference.
 
 ```python
 class RLPolicyExecutor:
-    def __init__(self, policy_uri: str, config_uri: str):
-        # Load pre-trained RLlib policy and environment config
-        self.policy = load_rllib_policy(policy_uri)
-        self.env_config = load_config(config_uri)
+    def __init__(self, registry_metadata: dict, artifact_bytes: bytes):
+        # Receives validated governance metadata from artifact loader (EX-001)
+        self.registry_id = registry_metadata["registry_id"]
+        self.strategy_id = registry_metadata["strategy_id"]
+        self.promotion_state = registry_metadata["promotion_state"]  # 'paper' or 'live'
+        
+        # Load RLlib policy from artifact bytes
+        self.policy = load_rllib_policy(artifact_bytes)
+        self.env_config = registry_metadata["metadata"]["environment"]
     
     def get_action(self, state: np.ndarray) -> np.ndarray:
-        # state: (batch_size, state_dim) from LEAN.Signal
+        # state: (batch_size, state_dim) from LEAN signal
         # returns: action indices or continuous values
         return self.policy.compute_single_action(state)
     
     def get_metadata(self) -> dict:
         return {
+            "registry_id": self.registry_id,
+            "strategy_id": self.strategy_id,
+            "promotion_state": self.promotion_state,
             "framework": "rllib",
             "algorithm": "ppo",
-            "state_requirements": self.env_config.state_fields,
-            "action_space": self.env_config.action_space,
+            "state_requirements": self.env_config["state_dim"],
+            "action_space": self.env_config["action_space"],
         }
 ```
 
 #### Execution Loop
 
-1. **LEAN** collects signal data (OHLCV, portfolio state).
-2. **LEAN** normalizes state per RL policy's preprocessing.
-3. **RLPolicyExecutor** computes action from state.
-4. **LEAN** maps action to orders (discrete → quantity, continuous → % position change).
-5. **LEAN** executes orders with broker interaction.
-6. **LEAN** logs trade outcome (fill price, slippage, PnL).
+1. **Registry** materializes RL policy to Object Store (after promotion to `paper` or `live`).
+2. **LEAN** loader (EX-001) reads metadata.json, validates governance, loads artifact bytes.
+3. **RLPolicyExecutor** is initialized with validated registry metadata + artifact.
+4. **LEAN Signal** collects state data (OHLCV, portfolio state).
+5. **LEAN** normalizes state per RL policy's environment config.
+6. **RLPolicyExecutor.get_action()** computes action from normalized state.
+7. **LEAN** maps action to orders (discrete → quantity, continuous → % position change).
+8. **LEAN** executes orders through broker integration.
+9. **LEAN** logs trade outcome (fill price, slippage, PnL) → used for daily monitoring.
 
 ---
 
@@ -437,10 +506,11 @@ Is supervised alpha exhausted (Sharpe stable for 3+ months)?
 
 ## 6. Next Steps
 
-1. **RS-003 Completion** (Grok): First-pass replication gate must be operational before LP-005 is blocked on it.
-2. **REG-001 Completion** (Codex + Grok): Registry gate must validate RL policies against the constraints in §3.
-3. **LEAN RL Integration** (Claude): Execution engine must support RLlib policy loading and action inference.
-4. **Smoke Test** (Grok + Codex): Train a single small RL candidate (e.g., 1 ticker, 1 year of data) to validate the full path end-to-end.
+1. **RS-003 Integration** (Grok): RL-selected research strategies must pass RS-003 replication gate *before* RL training begins (upstream validation).
+2. **REG-001 Integration** (Codex + Grok): Registry gate must accept RL policy artifacts and validate against the constraints in §3.
+3. **RL Artifact Materialization** (Codex): Registry promotion tooling must materialize RL artifacts to Object Store with correct governance metadata (see §3.1).
+4. **LEAN RL Integration** (Claude): Execution engine must implement RLPolicyExecutor and use EX-001 loader to validate promotion state before policy load.
+5. **Smoke Test** (Grok + Codex): Train a single small RL candidate (e.g., 1 ticker, 1 year of data) to validate the full path end-to-end.
 
 ---
 
