@@ -7,6 +7,9 @@
     "state_file": ".orchestrator/state.json",
     "event_queue": ".orchestrator/event-queue.jsonl",
     "approval_queue": ".orchestrator/approval-queue.json",
+    "github_bus_state": ".orchestrator/github-bus-state.json",
+    "github_webhook_events": ".orchestrator/github-webhook-events.jsonl",
+    "github_relay_state": ".orchestrator/github-relay-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -19,7 +22,165 @@
     "poll_interval_seconds": 2.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
-    "auto_refresh_provider_capabilities": true
+    "auto_refresh_provider_capabilities": false
+  },
+  "worker_retry": {
+    "enabled": true,
+    "max_attempts": 5,
+    "backoff_schedule_seconds": [
+      5,
+      15,
+      30,
+      60,
+      120
+    ],
+    "jitter_seconds": 3,
+    "transient_error_patterns": [
+      "429",
+      "resource_exhausted",
+      "rate limit",
+      "rate limited",
+      "timed out",
+      "etimedout",
+      "econnreset",
+      "temporarily unavailable",
+      "try again later",
+      "server overloaded",
+      "deadline exceeded",
+      "terminalquotaerror",
+      "retryablequotaerror",
+      "quota_exhausted",
+      "quota exhausted",
+      "exhausted your capacity",
+      "no capacity available for model"
+    ],
+    "fallback_mode": "file_inbox"
+  },
+  "worker_reassignment": {
+    "enabled": true,
+    "after_attempts": 2,
+    "reassign_on_terminal_failure": true,
+    "eligible_statuses": [
+      "todo",
+      "in_progress",
+      "review"
+    ],
+    "owner_fallbacks": {
+      "Claude": [
+        "Codex",
+        "Grok",
+        "Gemini"
+      ],
+      "Gemini": [
+        "Codex",
+        "Claude",
+        "Grok"
+      ],
+      "Codex": [
+        "Claude",
+        "Grok",
+        "Gemini"
+      ],
+      "Grok": [
+        "Codex",
+        "Claude",
+        "Gemini"
+      ]
+    },
+    "reviewer_fallbacks": {
+      "Claude": [
+        "Codex",
+        "Grok",
+        "Gemini"
+      ],
+      "Gemini": [
+        "Codex",
+        "Claude",
+        "Grok"
+      ],
+      "Codex": [
+        "Claude",
+        "Grok",
+        "Gemini"
+      ],
+      "Grok": [
+        "Codex",
+        "Claude",
+        "Gemini"
+      ]
+    }
+  },
+  "approvals": {
+    "stale_pending_seconds": 1800
+  },
+  "github_bus": {
+    "enabled": true,
+    "command_timeout_seconds": 8,
+    "poll_interval_seconds": 30,
+    "repo": "ajoe734/pantheon",
+    "default_branch": "master",
+    "offline_backoff_seconds": 300,
+    "auto_request_reviewers": true,
+    "close_resolved_issues": true,
+    "labels": {
+      "review": [
+        "pantheon-bus",
+        "pantheon-review"
+      ],
+      "ops": [
+        "pantheon-bus",
+        "pantheon-ops",
+        "approval-needed"
+      ],
+      "resolved": [
+        "resolved"
+      ]
+    },
+    "commands": [
+      "/approve",
+      "/deny",
+      "/retry",
+      "/resume",
+      "/recheck",
+      "/status"
+    ],
+    "reviewers": {
+      "Claude": [
+        "ajoe734"
+      ],
+      "Gemini": [
+        "ajoe734"
+      ],
+      "Codex": [
+        "ajoe734"
+      ],
+      "Grok": [
+        "ajoe734"
+      ]
+    },
+    "templates": {
+      "ops_issue": ".orchestrator/templates/github_ops_issue.md",
+      "review_pr": ".orchestrator/templates/github_review_pr.md"
+    },
+    "phase3": {
+      "github_app": {
+        "enabled": false,
+        "app_id_env": "PANTHEON_GITHUB_APP_ID",
+        "private_key_env": "PANTHEON_GITHUB_APP_PRIVATE_KEY",
+        "installation_id_env": "PANTHEON_GITHUB_INSTALLATION_ID"
+      },
+      "webhook": {
+        "enabled": false,
+        "host": "127.0.0.1",
+        "port": 8776,
+        "secret_env": "PANTHEON_GITHUB_WEBHOOK_SECRET"
+      },
+      "cloud_relay": {
+        "enabled": false,
+        "url_env": "PANTHEON_GITHUB_RELAY_URL",
+        "token_env": "PANTHEON_GITHUB_RELAY_TOKEN"
+      }
+    }
   },
   "schema": {
     "tasks_path": "tasks",
@@ -33,11 +194,11 @@
     "last_update_field": "last_update"
   },
   "events": {
+    "enqueue_runtime_events": false,
     "review_statuses": [
       "review"
     ],
     "status_targets": {
-      "review": "reviewer",
       "needs_reply": "owner",
       "needs_input": "owner",
       "handoff": "owner"
@@ -45,9 +206,9 @@
     "waiting_status_patterns": [
       "^waiting_on_(?P<agent>[A-Za-z0-9_-]+)$"
     ],
-    "watch_assignee_changes": true,
+    "watch_assignee_changes": false,
     "watch_reviewer_changes": false,
-    "watch_handoffs": true,
+    "watch_handoffs": false,
     "pending_handoff_statuses": [
       "pending"
     ]
@@ -86,8 +247,7 @@
       "provider": "copilot",
       "adapter": "copilot_local",
       "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/grok.md",
-      "model_preference": "grok-code-fast-1"
+      "file_inbox_path": ".llm-inbox/grok.md"
     }
   },
   "providers": {
@@ -95,7 +255,7 @@
       "delivery_mode": "claude_cli",
       "file_inbox": {
         "path": ".llm-inbox/claude.md",
-        "open_in_vscode": true
+        "open_in_vscode": false
       },
       "runtime": {
         "cli": "claude",
@@ -127,7 +287,7 @@
       "delivery_mode": "gemini",
       "file_inbox": {
         "path": ".llm-inbox/gemini.md",
-        "open_in_vscode": true
+        "open_in_vscode": false
       },
       "gemini": {
         "cli": "gemini",
@@ -140,32 +300,35 @@
         "auto_add_to_policy_by_default": true,
         "disable_yolo_mode": false,
         "disable_always_allow": false
+      },
+      "retry": {
+        "max_attempts": 5
       }
     },
     "codex": {
       "delivery_mode": "codex",
       "file_inbox": {
         "path": ".llm-inbox/codex.md",
-        "open_in_vscode": true
+        "open_in_vscode": false
       },
       "codex": {
         "cli": "codex",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
-        "dangerously_bypass": false
+        "dangerously_bypass": true
       },
       "approval": {
         "orchestrator_only": true,
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
-        "dangerously_bypass": false
+        "dangerously_bypass": true
       }
     },
     "copilot": {
       "delivery_mode": "copilot_local",
       "file_inbox": {
         "path": ".llm-inbox/copilot.md",
-        "open_in_vscode": true,
+        "open_in_vscode": false,
         "agent_paths": {
           "grok": ".llm-inbox/grok.md",
           "copilot": ".llm-inbox/copilot.md"
@@ -193,12 +356,34 @@
       },
       "model_preference": {
         "default": "claude",
-        "grok": "grok-code-fast-1",
+        "grok": null,
         "supported": [
-          "claude",
-          "grok-code-fast-1"
+          "claude"
         ]
       }
     }
+  },
+  "ready_dispatcher": {
+    "enabled": true,
+    "review_statuses": [
+      "review"
+    ],
+    "owned_statuses": [
+      "in_progress",
+      "todo"
+    ],
+    "done_statuses": [
+      "done",
+      "review_approved"
+    ],
+    "active_worker_statuses": [
+      "running",
+      "waiting_approval",
+      "retry_backoff",
+      "manual_pending",
+      "stalled"
+    ],
+    "max_tasks_per_agent": 1,
+    "max_dispatches_per_tick": 4
   }
 }

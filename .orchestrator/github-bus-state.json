@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "repo": "ajoe734/pantheon",
+  "last_sync_at": "2026-04-06T11:50:22Z",
+  "offline_until": null,
+  "last_error": null,
+  "processed_review_ids": [],
+  "processed_comment_ids": [
+    "issue:4188762525",
+    "issue:4188761478",
+    "issue:4188756789",
+    "issue:4188761374",
+    "issue:4188942881",
+    "issue:4188755030",
+    "issue:4188760825",
+    "issue:4188758424",
+    "issue:4188761278",
+    "issue:4188761398"
+  ],
+  "processed_webhook_deliveries": [],
+  "tasks": {
+    "BUS-VAL-001": {
+      "review_pr": null,
+      "ops_issue": {
+        "number": 1,
+        "url": "https://github.com/ajoe734/pantheon/issues/1",
+        "title": "[OpsBus] BUS-VAL-001 blocked: Awaiting GitHub Mobile /approve validation from issue com...",
+        "last_comment_id": null,
+        "state": "closed"
+      },
+      "last_review_hash": null,
+      "last_issue_hash": "{\"body\": \"<!-- pantheon-bus -->\\n# Pantheon Ops Bus\\n\\n## Task\\n- ID: `BUS-VAL-001`\\n- Title: Validate GitHub issue approval bus round-trip\\n- Summary: 建立一個只用來驗證 GitHub approval bus 的 blocked 測試任務，確認手機上的 issue comment 指令能被 orchestrator 拉回並回寫到 ai-status。\\n- Status: `blocked`\\n- Owner: `Codex`\\n- Reviewer: `Gemini`\\n- Depends On: -\\n\\n## Why This Issue Exists\\n- Reason: Awaiting GitHub Mobile /approve validation from issue comment.\\n- Details: Waiting for: Gemini\\n- Next Step: Awaiting GitHub Mobile /approve validation from issue comment.\\n\\n## Mobile Commands\\nLeave one command on the first line of a comment:\\n\\n- `/approve BUS-VAL-001`\\n- `/deny BUS-VAL-001`\\n- `/retry BUS-VAL-001`\\n- `/status BUS-VAL-001`\\n- `/resume Codex`\\n- `/recheck BUS-VAL-001`\\n\\nOnly allowlisted GitHub users are applied by the bus.\\n\", \"labels\": [\"pantheon-bus\", \"pantheon-ops\", \"approval-needed\"], \"title\": \"[OpsBus] BUS-VAL-001 blocked: Awaiting GitHub Mobile /approve validation from issue com...\"}"
+    },
+    "BUS-VAL-002": {
+      "review_pr": null,
+      "ops_issue": {
+        "number": 3,
+        "url": "https://github.com/ajoe734/pantheon/issues/3",
+        "title": "[OpsBus] BUS-VAL-002 blocked: Awaiting GitHub approval-bus round-trip after task-id nor...",
+        "last_comment_id": null,
+        "state": "closed"
+      },
+      "last_review_hash": null,
+      "last_issue_hash": "{\"body\": \"<!-- pantheon-bus -->\\n# Pantheon Ops Bus\\n\\n## Task\\n- ID: `BUS-VAL-002`\\n- Title: Validate GitHub issue approval bus round-trip after task-id normalization fix\\n- Summary: 第二輪 GitHub approval bus 驗證任務，專門確認 issue comment 指令在修正大小寫容錯後，能由 orchestrator 自動回寫 ai-status。\\n- Status: `blocked`\\n- Owner: `Codex`\\n- Reviewer: `Gemini`\\n- Depends On: -\\n\\n## Why This Issue Exists\\n- Reason: Awaiting GitHub approval-bus round-trip after task-id normalization fix.\\n- Details: Waiting for: Gemini\\n- Next Step: Awaiting GitHub approval-bus round-trip after task-id normalization fix.\\n\\n## Mobile Commands\\nLeave one command on the first line of a comment:\\n\\n- `/approve BUS-VAL-002`\\n- `/deny BUS-VAL-002`\\n- `/retry BUS-VAL-002`\\n- `/status BUS-VAL-002`\\n- `/resume Codex`\\n- `/recheck BUS-VAL-002`\\n\\nOnly allowlisted GitHub users are applied by the bus.\\n\", \"labels\": [\"pantheon-bus\", \"pantheon-ops\", \"approval-needed\"], \"title\": \"[OpsBus] BUS-VAL-002 blocked: Awaiting GitHub approval-bus round-trip after task-id nor...\"}"
+    },
+    "BUS-VAL-003": {
+      "review_pr": null,
+      "ops_issue": {
+        "number": 4,
+        "url": "https://github.com/ajoe734/pantheon/issues/4",
+        "title": "[OpsBus] BUS-VAL-003 blocked: Awaiting Pantheon-side blocked-task issue creation after...",
+        "last_comment_id": null,
+        "state": "closed"
+      },
+      "last_review_hash": null,
+      "last_issue_hash": "{\"body\": \"<!-- pantheon-bus -->\\n# Pantheon Ops Bus\\n\\n## Task\\n- ID: `BUS-VAL-003`\\n- Title: Validate Pantheon blocked-task GitHub bus after workspace cutover\\n- Summary: 第三輪 blocked 驗證任務，專門確認 cutover 後的 Pantheon supervisor 會從 pantheon repo 本身建立 GitHub ops issue。\\n- Status: `blocked`\\n- Owner: `Codex`\\n- Reviewer: `Gemini`\\n- Depends On: -\\n\\n## Why This Issue Exists\\n- Reason: Awaiting Pantheon-side blocked-task issue creation after cutover.\\n- Details: Gemini\\n- Next Step: Awaiting Pantheon-side blocked-task issue creation after cutover.\\n\\n## Mobile Commands\\nLeave one command on the first line of a comment:\\n\\n- `/approve BUS-VAL-003`\\n- `/deny BUS-VAL-003`\\n- `/retry BUS-VAL-003`\\n- `/status BUS-VAL-003`\\n- `/resume Codex`\\n- `/recheck BUS-VAL-003`\\n\\nOnly allowlisted GitHub users are applied by the bus.\\n\", \"labels\": [\"pantheon-bus\", \"pantheon-ops\", \"approval-needed\"], \"title\": \"[OpsBus] BUS-VAL-003 blocked: Awaiting Pantheon-side blocked-task issue creation after...\"}"
+    },
+    "P3-001": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] P3-001 Wire LEAN runtime signal consumer",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"P3-001\"}",
+      "last_issue_hash": null
+    },
+    "FB-002": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] FB-002 Capture trader approve, edit, reject, and rationale events",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"FB-002\"}",
+      "last_issue_hash": null
+    },
+    "BUS-VAL-004": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] BUS-VAL-004 Skip stale queued wake events after task status changes",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"BUS-VAL-004\"}",
+      "last_issue_hash": null
+    },
+    "OC-002": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] OC-002 Implement Pantheon cron workflows through upstream OpenClaw integration",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"OC-002\"}",
+      "last_issue_hash": null
+    },
+    "LP-005": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] LP-005 Define RL path for FinRL or RLlib plus Tune when sequential RL is justified",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"LP-005\"}",
+      "last_issue_hash": null
+    },
+    "LP-003": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] LP-003 Integrate experiment registry metadata with MLflow or W&B",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"LP-003\"}",
+      "last_issue_hash": null
+    }
+  }
+}

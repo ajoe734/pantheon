@@ -35,10 +35,10 @@
     },
     "actor_role": {
       "type": "string",
+      "$comment": "Aligned to OC-001 governed roles. Human reviewers should be encoded as operator or approver, not a separate reviewer role.",
       "enum": [
         "operator",
         "approver",
-        "reviewer",
         "system"
       ]
     },
@@ -75,6 +75,7 @@
           },
           "operation": {
             "type": "string",
+            "$comment": "annotate is kept for non-destructive human comments attached to a path without mutating the artifact body.",
             "enum": [
               "replace",
               "append",
@@ -127,8 +128,57 @@
           "type": "string"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "registry_id"
+          ]
+        },
+        {
+          "required": [
+            "artifact_version",
+            "artifact_type"
+          ]
+        },
+        {
+          "required": [
+            "lineage_ref",
+            "artifact_type"
+          ]
+        }
+      ]
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "edit"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "edits"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "rationale"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "rationale"
+        ]
+      }
+    }
+  ]
 }

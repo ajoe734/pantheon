@@ -72,6 +72,12 @@ Compatibility-only files:
 
 These are wrappers, not truth.
 
+Cutover rule:
+
+- run the supervisor, dashboard, status sync, and GitHub approval bus from the `pantheon` repo only
+- do not run `scripts/launch-docs-site.sh`, `scripts/ai-status.sh`, or any orchestrator command from the old `Lean` workspace
+- the `Lean` checkout is now execution-side only and should not host Pantheon collaboration state
+
 ## 2. Collaboration Model
 
 Separate stable capability lanes from sprint ownership.
@@ -111,6 +117,7 @@ AI_NAME=Codex ./scripts/ai-status.sh assign <task-id> <owner> <reviewer> "Option
 AI_NAME=Codex ./scripts/ai-status.sh start <task-id> "Started implementation"
 AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Finished contract draft"
 AI_NAME=Codex ./scripts/ai-status.sh handoff <task-id> Gemini "Please review the payload shape"
+AI_NAME=Codex REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="審查通過||後續追蹤事項" ./scripts/ai-status.sh approve <task-id> "Review approved and locked for v1"
 AI_NAME=Codex ./scripts/ai-status.sh blocker <task-id> "Waiting for broker decision" Gemini
 AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Completed and verified"
 ./scripts/sync-state.sh
@@ -131,6 +138,8 @@ Optional environment variables:
 - `TASK_ARTIFACTS`
 - `TASK_ACCEPTANCE`
 - `TASK_DEPENDS_ON`
+- `REVIEW_FILE`
+- `REVIEW_NOTES_ZH` (`||` separated when setting multiple notes)
 
 ## 4. Working Agreement
 
@@ -165,6 +174,15 @@ Every collaborating LLM should follow this work order by default:
 4. **Only then remain blocked**
 - if you truly cannot review, cannot advance your own tasks, and cannot safely help another task, log a blocker
 - do not stop at "waiting" if useful work is available
+
+### Provider Failure Reassignment
+
+- if an auto worker repeatedly fails on the same task, the supervisor should not keep hammering the same provider forever
+- after repeated provider failures, the supervisor may reassign:
+  - `review` tasks by swapping the `reviewer`
+  - `todo` / `in_progress` tasks by swapping the `owner`
+- reassignment should be written back into `ai-status.json` so every LLM sees the new owner/reviewer assignment from the canonical task board
+- inbox fallback is still allowed when no safe alternate owner/reviewer exists, but reassignment is preferred over repeatedly retrying a provider that is already failing
 
 ### Helper Claim Rule
 

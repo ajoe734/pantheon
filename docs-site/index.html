@@ -3,111 +3,160 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenClaw 協作看板</title>
-    <link rel="stylesheet" href="./style.css" />
+    <title>Pantheon 協作看板</title>
+    <link rel="stylesheet" href="./style.css?v=20260406-1845" />
   </head>
   <body>
     <div class="shell">
       <header class="hero">
-        <div>
-          <p class="eyebrow">OpenClaw x LEAN</p>
+        <div class="hero-copy-block">
+          <p class="eyebrow">Pantheon x LEAN</p>
           <h1>協作看板</h1>
-          <p id="objective" class="hero-copy">正在載入本期目標...</p>
+          <p id="objective" class="hero-copy">正在載入目標...</p>
         </div>
         <div class="hero-actions">
           <button id="refresh-button" class="primary-button" type="button">重新整理</button>
-          <div class="meta-card">
-            <span class="meta-label">最後更新</span>
+          <div class="hero-meta">
+            <span class="chip">資料更新</span>
             <strong id="updated-at">-</strong>
           </div>
         </div>
       </header>
 
-      <main class="grid">
-        <section class="panel span-3">
-          <div class="section-head">
-            <h2>工作量分配</h2>
-            <span class="section-copy">每位代理的目標比例與即時任務數</span>
+      <section class="overview-strip">
+        <div id="overview-metrics" class="overview-grid"></div>
+      </section>
+
+      <main class="dashboard-grid">
+        <section class="panel runtime-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Runtime</p>
+              <h2>Supervisor 與 Queue</h2>
+            </div>
           </div>
-          <div id="workload-grid" class="workload-grid"></div>
+          <div class="panel-body">
+            <div id="runtime-cards" class="runtime-grid"></div>
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <h3>Auto Worker</h3>
+                <p class="subpanel-copy">依 provider 分組，拆成進行中、等待處理、已完成。</p>
+              </div>
+              <div id="worker-groups" class="worker-groups"></div>
+            </section>
+          </div>
         </section>
 
-        <section class="panel span-3">
-          <div class="section-head">
-            <h2>代理分工</h2>
-            <span class="section-copy">目前分支、進行中任務與下一步</span>
+        <section class="panel work-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Execution</p>
+              <h2>Agent 與任務</h2>
+            </div>
           </div>
-          <div id="agent-lanes" class="agent-lanes"></div>
+          <div class="panel-body">
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <h3>Agent Lanes</h3>
+                <p class="subpanel-copy">先看每個 auto worker 目前焦點、可開工數與等待前置數。</p>
+              </div>
+              <div id="agent-lanes" class="agent-grid"></div>
+            </section>
+
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <h3>Task Board</h3>
+                <div id="board-summary" class="inline-summary"></div>
+              </div>
+              <div id="task-board" class="board"></div>
+            </section>
+          </div>
         </section>
 
-        <section class="panel span-6">
-          <div class="section-head">
-            <h2>任務看板</h2>
-            <span class="section-copy">統一查看 owner、依賴關係與狀態</span>
+        <section class="panel coordination-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Coordination</p>
+              <h2>交接、阻塞與活動</h2>
+            </div>
           </div>
-          <div id="task-board" class="board"></div>
-        </section>
+          <div class="panel-body">
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <h3>交接佇列</h3>
+              </div>
+              <div id="handoff-list" class="stack"></div>
+            </section>
 
-        <section class="panel span-6">
-          <div class="section-head">
-            <h2>審查備註</h2>
-            <span class="section-copy">集中顯示 reviewer 已寫好的修正意見與參考檔案</span>
-          </div>
-          <div id="review-note-list" class="stack"></div>
-        </section>
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <h3>阻塞項目</h3>
+              </div>
+              <div id="blocker-list" class="stack"></div>
+            </section>
 
-        <section class="panel span-6">
-          <div class="section-head">
-            <h2>Audit 狀態區</h2>
-            <span class="section-copy">追蹤每個 LLM 的對齊檢查進度、範圍與產出檔案</span>
-          </div>
-          <div id="audit-summary" class="dependency-summary"></div>
-          <div id="audit-list" class="stack"></div>
-        </section>
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <h3>Sprint 摘要</h3>
+              </div>
+              <div id="snapshot" class="snapshot"></div>
+            </section>
 
-        <section class="panel span-6">
-          <div class="section-head">
-            <h2>依賴排程</h2>
-            <span class="section-copy">按照任務相依關係推算目前可開工、下一波與後續波次</span>
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <h3>即時活動</h3>
+              </div>
+              <div id="activity-list" class="activity"></div>
+            </section>
           </div>
-          <div id="dependency-summary" class="dependency-summary"></div>
-          <div id="dependency-schedule" class="dependency-schedule"></div>
-        </section>
-
-        <section class="panel span-3">
-          <div class="section-head">
-            <h2>交接佇列</h2>
-            <span class="section-copy">目前誰在等誰接手</span>
-          </div>
-          <div id="handoff-list" class="stack"></div>
-        </section>
-
-        <section class="panel span-3">
-          <div class="section-head">
-            <h2>阻塞項目</h2>
-            <span class="section-copy">只顯示目前仍未解決的阻塞</span>
-          </div>
-          <div id="blocker-list" class="stack"></div>
-        </section>
-
-        <section class="panel span-3">
-          <div class="section-head">
-            <h2>Sprint 摘要</h2>
-            <span class="section-copy">從 current-work.md 擷取的摘要</span>
-          </div>
-          <div id="snapshot" class="snapshot"></div>
-        </section>
-
-        <section class="panel span-3">
-          <div class="section-head">
-            <h2>最近活動</h2>
-            <span class="section-copy">最新 append-only 歷史紀錄</span>
-          </div>
-          <div id="activity-list" class="activity"></div>
         </section>
       </main>
+
+      <section class="panel insights-panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Secondary</p>
+            <h2>次要分析區</h2>
+          </div>
+        </div>
+        <div class="panel-body insights-grid">
+          <details class="insight" open>
+            <summary>
+              <span>依賴排程</span>
+              <small>先看 ready、active、waiting 的波次關係</small>
+            </summary>
+            <div id="dependency-summary" class="mini-grid"></div>
+            <div id="dependency-schedule" class="stack"></div>
+          </details>
+
+          <details class="insight">
+            <summary>
+              <span>Audit 狀態</span>
+              <small>對齊檢查與 reviewer follow-up</small>
+            </summary>
+            <div id="audit-summary" class="mini-grid"></div>
+            <div id="audit-list" class="stack"></div>
+          </details>
+
+          <details class="insight">
+            <summary>
+              <span>Review Notes</span>
+              <small>目前 reviewer 給的備註</small>
+            </summary>
+            <div id="review-note-list" class="stack"></div>
+          </details>
+
+          <details class="insight">
+            <summary>
+              <span>Delivery Layers</span>
+              <small>Pantheon 產品工作與 Upstream 整合分層</small>
+            </summary>
+            <div id="delivery-layers" class="stack"></div>
+          </details>
+        </div>
+      </section>
     </div>
 
-    <script src="./script.js" type="module"></script>
+    <script src="./script.js?v=20260406-1845" type="module"></script>
   </body>
 </html>

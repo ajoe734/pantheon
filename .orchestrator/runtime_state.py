@@ -22,6 +22,11 @@ def default_state() -> dict[str, Any]:
         "approvals": {
             "last_reconciled_at": None,
         },
+        "supervisor": {
+            "pid": None,
+            "started_at": None,
+            "last_heartbeat_at": None,
+        },
     }
 
 
@@ -29,7 +34,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
-    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals"}})
+    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor"}})
     state.setdefault("tasks", {})
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
@@ -38,12 +43,89 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("workers", {})
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
+    state.setdefault("supervisor", {})
+    state["supervisor"].setdefault("pid", None)
+    state["supervisor"].setdefault("started_at", None)
+    state["supervisor"].setdefault("last_heartbeat_at", None)
     state["version"] = 2
     return state
 
 
+ACTIVE_QUEUE_STATUSES = {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled", "started", "fallback"}
+
+
+def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, Any]]) -> None:
+    valid_event_ids = [event.get("event_id") for event in queued_events if event.get("event_id")]
+    queue = state.setdefault("queue", {})
+    existing_records = queue.setdefault("events", {})
+    queue["events"] = {
+        event_id: deepcopy(existing_records.get(event_id, {"attempt_count": 0, "status": "queued"}))
+        for event_id in valid_event_ids
+    }
+
+    workers = state.setdefault("workers", {})
+    for event_id, record in queue["events"].items():
+        related = [worker for worker in workers.values() if worker.get("queue_event_id") == event_id]
+        if not related:
+            continue
+        latest = sorted(related, key=lambda item: item.get("last_event_at") or "", reverse=True)[0]
+        if any(worker.get("status") in ACTIVE_QUEUE_STATUSES for worker in related):
+            record["status"] = "manual_pending" if any(worker.get("status") in {"manual_pending", "waiting_approval"} for worker in related) else "started"
+            continue
+        if any(worker.get("status") == "failed" for worker in related):
+            record["status"] = "failed"
+            record["processed_at"] = latest.get("last_event_at")
+            if latest.get("last_error"):
+                record["error"] = latest.get("last_error")
+            continue
+        record["status"] = "completed"
+        record["processed_at"] = latest.get("last_event_at")
+
+
+
+
+def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | None = None) -> None:
+    tasks_by_id = tasks_by_id or {}
+    queue_events = state.setdefault("queue", {}).setdefault("events", {})
+    workers = state.setdefault("workers", {})
+    keep: dict[str, Any] = {}
+    for run_id, worker in workers.items():
+        status = str(worker.get("status") or "")
+        task_id = str(worker.get("task_id") or "")
+        event_id = worker.get("queue_event_id")
+        task_status = str(tasks_by_id.get(task_id) or "")
+        if status in {"running", "started", "waiting_approval", "manual_pending", "retry_backoff", "fallback", "stalled"}:
+            keep[run_id] = worker
+            continue
+        if event_id and event_id in queue_events and queue_events[event_id].get("status") not in {"completed", "failed", "done"}:
+            keep[run_id] = worker
+            continue
+        if task_status and task_status not in {"done", "review_approved"} and status == "completed":
+            keep[run_id] = worker
+            continue
+        # Drop terminal workers once the queue event is settled, or the task itself is already terminal.
+        if status in {"failed", "completed"}:
+            continue
+        keep[run_id] = worker
+    state["workers"] = keep
+
 def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
-    return migrate_state(load_json(config_path(config, "state_file"), default=default_state()))
+    state = migrate_state(load_json(config_path(config, "state_file"), default=default_state()))
+    queued_events = load_jsonl(config_path(config, "event_queue"))
+    _rebuild_queue_records(state, queued_events)
+
+    valid_pending_event_ids = set(state.setdefault("queue", {}).setdefault("events", {}))
+    workers = state.setdefault("workers", {})
+    stale_manual_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if worker.get("status") == "manual_pending" and worker.get("queue_event_id") not in valid_pending_event_ids
+    ]
+    for run_id in stale_manual_workers:
+        workers.pop(run_id, None)
+
+    prune_worker_records(state)
+    return state
 
 
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:

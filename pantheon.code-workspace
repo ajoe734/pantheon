@@ -1,0 +1,27 @@
+{
+  "folders": [
+    {
+      "name": "Pantheon",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.orchestrator/backups": true,
+      "**/__pycache__": true,
+      "**/*.pyc": true
+    },
+    "search.exclude": {
+      "**/.orchestrator/backups": true,
+      "**/__pycache__": true
+    },
+    "claudeCode.initialPermissionMode": "acceptEdits",
+    "claudeCode.allowDangerouslySkipPermissions": false,
+    "github.copilot.chat.backgroundAgent.enabled": false,
+    "github.copilot.chat.cloudAgent.enabled": false,
+    "github.copilot.chat.claudeAgent.enabled": false,
+    "github.copilot.chat.reviewAgent.enabled": false,
+    "geminicodeassist.enable": true,
+    "geminicodeassist.agentYoloMode": false
+  }
+}

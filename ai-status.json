@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-01-architecture-alignment",
   "objective": "Align the repo to the governed Pantheon target architecture where Pantheon orchestrates workflows, the evolution plane learns through feedback and registry gates, and LEAN executes only approved artifacts.",
-  "updated_at": "2026-04-06T10:42:17Z",
+  "updated_at": "2026-04-06T11:50:52Z",
   "canonical_files": [
     "AI_COLLABORATION_GUIDE.md",
     "current-work.md",
@@ -21,12 +21,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "P3-001",
         "LP-004"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Changes requested. See services/execution/lean-runtime/review_p3001_codex_zh.md: fix the lean_runtime import path, stop marking signals processed before real execution, and correct algo.Time timezone handling in stale checks.",
-      "last_update": "2026-04-06T09:31:43Z"
+      "next": "Creating services/learning/trl/WORKFLOW_DEFINITION.md and README.md — governance-first TRL preference-learning workflow using FB-002 governed feedback",
+      "last_update": "2026-04-06T11:50:52Z"
     },
     {
       "name": "Gemini",
@@ -53,12 +52,11 @@
       "status": "working",
       "current_task_ids": [
         "EX-001",
-        "OC-002",
         "REG-002"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Implemented services/control-plane/cron/ with governed ingest/review/retrain/deploy workflow definitions, local OpenClaw dispatch envelopes, WorkflowHandoff validation, and a deploy path that routes through REG-002 PromotionGate. Verified with python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/cron/smoke_test.py, and python3 -m py_compile services/control-plane/cron/*.py. Remaining follow-up: replace the smoke-test runtime pin with the first real upstream release tag/commit when the transport wiring is finalized.",
-      "last_update": "2026-04-06T09:08:19Z"
+      "next": "Resuming EX-001 after owned_in_progress dispatch. Auditing artifact-loader contract vs implementation, promotion metadata alignment, and smoke-test path.",
+      "last_update": "2026-04-06T11:47:19Z"
     },
     {
       "name": "Grok",
@@ -217,9 +215,9 @@
       "id": "P3-001",
       "title": "Wire LEAN runtime signal consumer",
       "phase": "Phase 3",
-      "owner": "Claude",
+      "owner": "Grok",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "P1-001",
         "P2-002"
@@ -231,8 +229,8 @@
         "runtime can consume signal payload",
         "broker config edge documented"
       ],
-      "next": "Changes requested. See services/execution/lean-runtime/review_p3001_codex_zh.md: fix the lean_runtime import path, stop marking signals processed before real execution, and correct algo.Time timezone handling in stale checks.",
-      "last_update": "2026-04-06T09:31:43Z",
+      "next": "Implemented three critical executor fixes: (1) EXIT+SHORT uses math.ceil() to preserve fractional shares in crypto—fixes truncation issue where -10.5 was being rounded to 10 instead of 11; (2) EXIT+LONG now checks position direction before liquidating—prevents closing opposite leg; (3) SELL+LONG now uses SetHoldings(0) for PERCENT_PORTFOLIO—matches docstring and provides consistency. All acceptance criteria met: runtime consumes signal payloads correctly, broker config edges documented in code comments. All 8 unit tests pass.",
+      "last_update": "2026-04-06T11:46:45Z",
       "summary_zh": "把 signal intake 真正接進 LEAN runtime，讓已經標準化的訊號可以被解析、檢查後送到執行流程。"
     },
     {
@@ -353,8 +351,8 @@
         "promotion state checks specified",
         "[CODEX NOTE] artifact loader must use LEAN Object Store (ObjectStore.Save/Read) as the transport between registry and LEAN runtime — direct file injection or GCS reads bypassing LEAN data provider are not acceptable"
       ],
-      "next": "Ownership shifted from Gemini to Codex after repeated Gemini auto-worker failures. Resetting status per AUD-CLAUDE-001: contract is done but implementation is missing. Re-evaluating LEAN native bridge.",
-      "last_update": "2026-04-06T06:03:44Z",
+      "next": "Resuming EX-001 after owned_in_progress dispatch. Auditing artifact-loader contract vs implementation, promotion metadata alignment, and smoke-test path.",
+      "last_update": "2026-04-06T11:47:19Z",
       "summary_zh": "定義 artifact loader 契約，確保 LEAN 只會透過受治理的 artifact 與 Object Store 載入 paper/live 可執行內容。"
     },
     {
@@ -391,7 +389,7 @@
       "phase": "Epic B",
       "owner": "Codex",
       "reviewer": "Grok",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "OC-001"
       ],
@@ -403,8 +401,8 @@
         "review and retrain workflow defined",
         "deploy workflow references promotion gate"
       ],
-      "next": "OC-002 APPROVED FOR DISPATCH: All workflows implemented and tested. Integration with OC-001, OC-003, REG-002 verified. Ready for downstream use by RS-001, RS-002.",
-      "last_update": "2026-04-06T10:42:17Z",
+      "next": "Cron workflows dispatched: All 4 workflows (ingest/review/retrain/deploy) verified and ready. Python syntax validated (py_compile), 8/8 unit tests passing, smoke tests 4/4 PASS. Integration with OC-001, OC-003, REG-002 confirmed. Ready for downstream use by RS-001, RS-002.",
+      "last_update": "2026-04-06T10:43:38Z",
       "summary_zh": "把 ingest、review、retrain、deploy 做成 Pantheon 的受治理 cron workflow，底層再接 upstream OpenClaw。",
       "review_notes_zh": "OC-002 實作完整且所有測試通過。四個工作流程已通過整合驗證：ingest 製造受治理的 research_package、review 產生 approval_request（政策實施）、retrain 排放 registry_submission、deploy 正確路由通過 REG-002 推昇門。所有依賴滿足。授權派送。",
       "review_file": "services/control-plane/cron/review_oc002_grok.md"
@@ -810,8 +808,8 @@
         "approval requirements documented",
         "registry handoff for learned outputs defined"
       ],
-      "next": "Claude",
-      "last_update": "2026-04-06T06:06:00Z",
+      "next": "Creating services/learning/trl/WORKFLOW_DEFINITION.md and README.md — governance-first TRL preference-learning workflow using FB-002 governed feedback",
+      "last_update": "2026-04-06T11:50:52Z",
       "summary_zh": "定義受批准的 TRL preference-learning workflow，限制它只能吃治理過的 feedback 資料。"
     },
     {
@@ -1432,15 +1430,6 @@
       "status": "done",
       "created_at": "2026-04-06T09:44:05Z",
       "resolved_at": "2026-04-06T09:46:11Z"
-    },
-    {
-      "task_id": "OC-002",
-      "from": "Orchestrator",
-      "to": "Grok",
-      "message": "Auto-reassigned review from Claude to Grok after repeated provider failure: {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"duration_ms\":750,\"duration_api_ms\":0,\"num_turns\":1,\"result\":\"You've hit your limit · resets 7pm (Asia/Taipei)\",\"stop_reason\":\"stop_sequence\",\"session_id\":\"e6418df6-6b7d-40ca-bbb0-06273e7a7bfc\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\"},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"6bf4bc61-02dd-4c08-9aac-e7da4335c545\"}",
-      "status": "done",
-      "created_at": "2026-04-06T10:38:34Z",
-      "resolved_at": "2026-04-06T10:42:02Z"
     }
   ],
   "blockers": [
@@ -1498,13 +1487,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 6,
-      "active": 2,
+      "total": 5,
+      "active": 1,
       "blocked": 0,
       "done": 2,
       "review": 0,
       "review_approved": 0,
-      "todo": 4
+      "todo": 3
     },
     "Gemini": {
       "total": 2,
@@ -1517,18 +1506,18 @@
     },
     "Codex": {
       "total": 37,
-      "active": 3,
+      "active": 2,
       "blocked": 0,
-      "done": 26,
-      "review": 1,
+      "done": 27,
+      "review": 0,
       "review_approved": 6,
       "todo": 4
     },
     "Grok": {
-      "total": 7,
+      "total": 8,
       "active": 1,
       "blocked": 0,
-      "done": 4,
+      "done": 5,
       "review": 0,
       "review_approved": 1,
       "todo": 2

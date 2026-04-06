@@ -177,8 +177,9 @@ def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
 
 def runtime_log_path(prefix: str, target: str) -> Path:
     slug = normalize_agent_id(target) or "unknown"
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return ORCHESTRATOR_DIR / "logs" / f"{stamp}-{prefix}-{slug}.log"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    suffix = uuid.uuid4().hex[:6]
+    return ORCHESTRATOR_DIR / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
 
 
 def new_runtime_id(prefix: str) -> str:

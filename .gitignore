@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+.codex/
+.vscode/
+.orchestrator/backups/
+.orchestrator/logs/

@@ -42,3 +42,8 @@ entry = {
 # 晉升至 LIVE (會因為缺 approver/rollback_target 而被攔截)
 updated_entry = gate.promote(entry, PromotionState.LIVE, approver="human-trader-01")
 ```
+
+
+## Workspace Cutover
+
+Operate Pantheon from this repo. Use `scripts/launch-docs-site.sh`, `scripts/ai-status.sh`, and `.orchestrator/` here. The sibling `Lean` checkout is execution-side only and should no longer host Pantheon collaboration state or dashboard processes.
