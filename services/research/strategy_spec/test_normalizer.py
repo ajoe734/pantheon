@@ -2,7 +2,7 @@
 
 import unittest
 
-from normalizer import StrategySpecNormalizationError, StrategySpecNormalizer
+from .normalizer import StrategySpecNormalizationError, StrategySpecNormalizer
 
 
 def _paper_handoff() -> dict:
