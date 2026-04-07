@@ -1,0 +1,270 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/critic-result/v1",
+  "title": "CriticResult",
+  "description": "Output from a critic system providing rationale and failure analysis",
+  "type": "object",
+  "required": [
+    "registry_id",
+    "artifact_type",
+    "strategy_id",
+    "target_artifact_id",
+    "target_artifact_type",
+    "target_promotion_state",
+    "critic_id",
+    "critic_version",
+    "critique_timestamp",
+    "critique_trigger",
+    "findings",
+    "key_risks",
+    "decision_guidance"
+  ],
+  "properties": {
+    "registry_id": {
+      "type": "string",
+      "description": "Unique id for this critique result entry in the registry"
+    },
+    "artifact_type": {
+      "type": "string",
+      "enum": ["critique_result"],
+      "description": "Always critique_result for critic outputs"
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Stable family id of the target artifact"
+    },
+    "target_artifact_id": {
+      "type": "string",
+      "description": "registry_id of the artifact under critique"
+    },
+    "target_artifact_type": {
+      "type": "string",
+      "enum": [
+        "strategy_spec",
+        "model_artifact",
+        "feature_set",
+        "prompt_bundle",
+        "signal_snapshot",
+        "execution_bundle"
+      ]
+    },
+    "target_promotion_state": {
+      "type": "string",
+      "enum": ["draft", "candidate", "paper", "live", "retired"]
+    },
+    "critic_id": {
+      "type": "string",
+      "description": "Stable id of the critic system that produced this assessment"
+    },
+    "critic_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the critic implementation"
+    },
+    "critique_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "critique_trigger": {
+      "type": "string",
+      "enum": [
+        "evaluation_disagreement",
+        "borderline_score",
+        "failure_forensics",
+        "risk_flagged",
+        "promotion_override_requested",
+        "baseline_drift_detected"
+      ],
+      "description": "Reason critique was requested"
+    },
+    "evaluation_context": {
+      "type": "object",
+      "description": "Reference to evaluations being critiqued (if applicable)",
+      "properties": {
+        "referenced_evaluation_id": {
+          "type": "string"
+        },
+        "evaluator_overall_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "conflicting_evaluations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "evaluator_id": { "type": "string" },
+              "overall_score": { "type": "number" },
+              "recommendation": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "finding_id",
+          "category",
+          "severity",
+          "description"
+        ],
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "description": "Unique id for this finding within the critique"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "replication_risk",
+              "execution_fidelity",
+              "model_degradation",
+              "market_regime_sensitivity",
+              "correlation_change",
+              "signal_drift",
+              "parameter_sensitivity",
+              "data_quality",
+              "other"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "description": {
+            "type": "string",
+            "description": "Plain-language description of the finding"
+          },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Specific evidence supporting this finding"
+          },
+          "impact": {
+            "type": "string",
+            "description": "How this finding affects the promotion decision"
+          },
+          "recommendation": {
+            "type": "string",
+            "description": "Suggested mitigation or action"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "key_risks": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "required": [
+          "rank",
+          "risk_type",
+          "risk_level",
+          "description"
+        ],
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Priority ranking (1 = highest)"
+          },
+          "risk_type": {
+            "type": "string",
+            "enum": [
+              "model_degradation",
+              "market_regime_sensitivity",
+              "correlation_change",
+              "overfitting",
+              "data_leakage",
+              "operational",
+              "liquidity",
+              "counterparty",
+              "other"
+            ]
+          },
+          "risk_level": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "description": {
+            "type": "string"
+          },
+          "likelihood": {
+            "type": "string",
+            "enum": ["certain", "high", "medium", "low", "remote"]
+          },
+          "impact": {
+            "type": "string",
+            "enum": ["catastrophic", "high", "medium", "low"]
+          },
+          "mitigation": {
+            "type": "string",
+            "description": "Suggested mitigation strategy"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "decision_guidance": {
+      "type": "object",
+      "required": [
+        "recommended_action",
+        "confidence_in_recommendation",
+        "rationale_summary"
+      ],
+      "properties": {
+        "recommended_action": {
+          "type": "string",
+          "enum": [
+            "approve_candidate_to_paper",
+            "reject_candidate",
+            "approve_paper_to_live",
+            "reject_paper_to_live",
+            "recommend_retirement",
+            "escalate_for_review",
+            "needs_further_evaluation"
+          ]
+        },
+        "confidence_in_recommendation": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rationale_summary": {
+          "type": "string",
+          "description": "Concise explanation of the recommendation"
+        },
+        "conditions_for_approval": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Conditions that must be met for the recommended action"
+        },
+        "conditions_for_rejection": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Conditions under which the recommendation should be reversed"
+        },
+        "escalation_recommendation": {
+          "type": "string",
+          "description": "Who or what should review if confidence is low"
+        },
+        "next_evaluation_trigger": {
+          "type": "string",
+          "description": "When the next evaluation should be performed"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Comprehensive explanation of the critique reasoning"
+    }
+  },
+  "additionalProperties": false
+}

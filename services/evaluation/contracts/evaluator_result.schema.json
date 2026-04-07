@@ -1,0 +1,257 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/evaluator-result/v1",
+  "title": "EvaluatorResult",
+  "description": "Output from an evaluator system assessing a governed artifact",
+  "type": "object",
+  "required": [
+    "registry_id",
+    "artifact_type",
+    "strategy_id",
+    "target_artifact_id",
+    "target_artifact_type",
+    "target_promotion_state",
+    "evaluator_id",
+    "evaluator_version",
+    "evaluation_timestamp",
+    "evaluation_data_snapshot",
+    "score_components",
+    "overall_score",
+    "recommendation",
+    "confidence"
+  ],
+  "properties": {
+    "registry_id": {
+      "type": "string",
+      "description": "Unique id for this evaluation result entry in the registry"
+    },
+    "artifact_type": {
+      "type": "string",
+      "enum": ["evaluation_result"],
+      "description": "Always evaluation_result for evaluator outputs"
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Stable family id of the target artifact being evaluated"
+    },
+    "target_artifact_id": {
+      "type": "string",
+      "description": "registry_id of the artifact under evaluation"
+    },
+    "target_artifact_type": {
+      "type": "string",
+      "enum": [
+        "strategy_spec",
+        "model_artifact",
+        "feature_set",
+        "prompt_bundle",
+        "signal_snapshot",
+        "execution_bundle"
+      ],
+      "description": "Type of artifact being evaluated"
+    },
+    "target_promotion_state": {
+      "type": "string",
+      "enum": ["draft", "candidate", "paper", "live", "retired"],
+      "description": "Promotion state of the target artifact at evaluation time"
+    },
+    "evaluator_id": {
+      "type": "string",
+      "description": "Stable id of the evaluator system that produced this assessment"
+    },
+    "evaluator_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the evaluator implementation"
+    },
+    "evaluation_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp when evaluation was performed"
+    },
+    "evaluation_data_snapshot": {
+      "type": "object",
+      "required": ["target_artifact_version", "target_artifact_checksum"],
+      "properties": {
+        "target_artifact_version": {
+          "type": "string",
+          "description": "Version string of the evaluated artifact"
+        },
+        "target_artifact_checksum": {
+          "type": "string",
+          "description": "Checksum (sha256 or equivalent) of the artifact for reproducibility"
+        },
+        "target_created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "target_lineage": {
+          "type": "object",
+          "properties": {
+            "parent_registry_ids": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "source_run_ids": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "execution_telemetry_window": {
+          "type": "object",
+          "properties": {
+            "start_date": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "end_date": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "execution_mode": {
+              "type": "string",
+              "enum": ["paper", "live"]
+            },
+            "num_executions": {
+              "type": "integer"
+            }
+          }
+        },
+        "feedback_events_considered": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "types": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "preference_model_used": {
+          "type": "object",
+          "properties": {
+            "model_artifact_id": { "type": "string" },
+            "model_version": { "type": "string" },
+            "model_training_window": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "score_components": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["value", "weight", "dimension_score"],
+        "properties": {
+          "value": {
+            "description": "Raw metric value"
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Weight for this component in overall score calculation"
+          },
+          "dimension_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Normalized score for this dimension"
+          },
+          "interpretation": {
+            "type": "string",
+            "description": "Human-readable context for this dimension"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "model_id": {
+            "type": "string",
+            "description": "For model-based components like preference alignment"
+          }
+        }
+      },
+      "description": "Individual scored dimensions. Weights should sum to 1.0 ± 0.01"
+    },
+    "overall_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Final composite score combining all dimensions"
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": [
+        "candidate_to_paper",
+        "candidate_hold",
+        "paper_to_live",
+        "paper_hold",
+        "retire",
+        "needs_critique"
+      ],
+      "description": "Actionable recommendation for promotion decision"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Evaluator confidence in the overall score"
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Human-readable summary of the evaluation logic and key findings"
+    },
+    "auditable_fields": {
+      "type": "object",
+      "properties": {
+        "evaluator_parameters": {
+          "type": "object",
+          "description": "Configuration parameters used by the evaluator"
+        },
+        "features_considered": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of features or signals used in evaluation"
+        },
+        "missing_data_handling": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": { "type": "string" },
+              "action": {
+                "type": "string",
+                "enum": ["imputed", "nulled", "dropped"]
+              },
+              "imputation_value": {},
+              "confidence_impact": { "type": "number" }
+            }
+          }
+        },
+        "previous_evaluations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "registry_id": { "type": "string" },
+              "target_artifact_id": { "type": "string" },
+              "overall_score": { "type": "number" },
+              "evaluation_timestamp": { "type": "string" }
+            }
+          }
+        },
+        "model_performance_metrics": {
+          "type": "object",
+          "description": "Performance metrics for any learned models used"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
