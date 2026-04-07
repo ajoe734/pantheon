@@ -89,11 +89,13 @@ def run_smoke_tests() -> list[tuple[str, bool]]:
             "target_state": "live",
             "approver": "risk-committee",
             "registry_entry": {
+                "registry_id": "reg-strat-openalex-001-1.2.0",
+                "artifact_type": "model_artifact",
                 "strategy_id": "strat-openalex-001",
                 "version": "1.2.0",
+                "checksum": "sha256:abc123def4567890",
                 "lifecycle_state": "paper",
                 "approver": None,
-                "rollback_target": "1.1.0",
                 "evaluation_summary": {
                     "risk_review_passed": True,
                     "sharpe_ratio": 1.42,
@@ -102,6 +104,12 @@ def run_smoke_tests() -> list[tuple[str, bool]]:
                     "source_run_id": "registry-paper-001",
                 },
                 "replication_success": True,
+                "metadata": {
+                    "rollback": {
+                        "target_registry_id": "reg-strat-openalex-001-1.1.0",
+                        "target_version": "1.1.0",
+                    }
+                },
             },
         },
         dry_run=False,

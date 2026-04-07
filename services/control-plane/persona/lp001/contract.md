@@ -1,9 +1,9 @@
 # DSPy Persona Policy Optimization Contract
 
 **Task:** LP-001  
-**Owner:** Claude (helper claim; original owner: Codex)  
-**Reviewer:** Codex  
-**Status:** DRAFT — ready for Codex review
+**Owner:** Codex  
+**Reviewer:** Claude  
+**Status:** APPROVED for v1 lock; implementation lives under `services/learning/dspy/`
 
 ---
 
@@ -195,8 +195,17 @@ This is computed against OC-001 deny rules applied to the eval message set.
      - `mandatory_deny_violation_count == 0`
    - reason: this expresses the actual safety requirement more clearly than a vague denial-rate phrase
 
-## 10. Remaining Follow-up
+## 10. Implementation Notes
 
-1. Pin the upstream DSPy version in the dependency layer.
-2. Build the first adapter under `services/learning/dspy/`.
-3. Add a minimal smoke test using governed examples from `FB-001`.
+The v1 implementation now exists under:
+
+- `services/learning/dspy/adapter.py`
+- `services/learning/dspy/smoke_test.py`
+- `services/learning/dspy/test_adapter.py`
+- `services/learning/dspy/examples/preference_dataset_sample.json`
+
+Delivery status:
+
+1. DSPy version pinned in `services/learning/dspy/requirements.txt`
+2. governed adapter implemented under `services/learning/dspy/`
+3. smoke test added with FB-001-style governed examples

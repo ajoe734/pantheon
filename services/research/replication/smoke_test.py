@@ -56,20 +56,48 @@ def create_realistic_research_handoff() -> dict:
 def create_realistic_strategy_spec() -> dict:
     """Create a realistic strategy spec from normalized research."""
     return {
-        "name": "Momentum Mean Reversion Strategy",
-        "description": "Cross-asset momentum strategy with mean reversion signals",
-        "version": "1.0.0",
-        "signals": ["momentum_score", "drawdown_indicator", "price_mean_reversion"],
-        "parameters": {
-            "lookback_window": 20,
-            "mean_reversion_threshold": 1.5,
-            "max_position_size": 0.05,
-            "risk_limit": 0.02,
-        },
-        "metadata": {
-            "research_source": "OpenAlex W3052820607",
-            "backtesting_period": "2020-2025",
+        "spec_version": "1.0",
+        "strategy_id": "strat-momentum-mean-reversion-001",
+        "title": "Momentum Mean Reversion Strategy",
+        "hypothesis": (
+            "Cross-asset momentum entries can be improved by short-term mean reversion "
+            "filters without bypassing governed replication."
+        ),
+        "objective": (
+            "Validate Sharpe ratio above 1.0, max drawdown below 20%, and stable "
+            "signal generation latency under governed research execution."
+        ),
+        "market_scope": {
+            "symbols": ["SPY"],
             "asset_classes": ["equities"],
+            "frequency": "1d",
+        },
+        "data_dependencies": [
+            {"ref": "OpenAlex:W3052820607", "kind": "paper"},
+            {"ref": "daily-bars-us-equities", "kind": "dataset"},
+        ],
+        "execution_profile": {
+            "signal_schema_version": "1.0",
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "rebalance_cadence": "1d",
+            "execution_mode_hint": "research",
+        },
+        "evaluation_plan": {
+            "metrics": ["sharpe_ratio", "max_drawdown", "win_rate"],
+            "candidate_gate": "Pass RS-003 replication gate with verified governance.",
+            "paper_gate": "Promote through REG-002 with explicit paper approval.",
+            "live_gate": "Promote through REG-002 with explicit live approval.",
+        },
+        "governance": {
+            "approval_required": True,
+            "policy_id": "oc-001-research-normalization",
+            "risk_profile": "research_only:high:ready_for_replication",
+        },
+        "provenance": {
+            "source_kind": "paper",
+            "created_at": "2026-04-06T10:00:00Z",
+            "source_refs": ["OpenAlex:W3052820607"],
+            "created_by": "Codex",
         },
     }
 

@@ -1,0 +1,91 @@
+model:
+  type: logistic_regression
+  framework: scikit-learn
+  config:
+    max_iter: 1000
+    random_state: 42
+    class_weight: balanced
+    solver: lbfgs
+
+data:
+  feature_schema: feature_schema.json
+  train_fraction: 0.66
+  val_fraction: 0.17
+  test_fraction: 0.17
+  temporal_split: true
+  stratified: false
+  dedup_window_days: 1
+  oversample_threshold: 3
+
+features:
+  - name: artifact_type
+    type: categorical
+    encoding: one_hot
+  - name: strategy_id
+    type: categorical
+    encoding: label
+  - name: days_since_creation
+    type: numeric
+    scaling: standard
+  - name: prior_promotion_state
+    type: categorical
+    encoding: one_hot
+  - name: operator_id
+    type: categorical
+    encoding: label
+  - name: operator_approve_rate
+    type: numeric
+    scaling: minmax
+  - name: mean_sharpe
+    type: numeric
+    scaling: standard
+    imputation: median
+  - name: max_drawdown
+    type: numeric
+    scaling: standard
+    imputation: median
+  - name: sector_concentration
+    type: numeric
+    scaling: minmax
+  - name: num_positions
+    type: numeric
+    scaling: standard
+
+training:
+  timestamp: "2026-04-06T13:00:00Z"
+  duration_seconds_target: 5
+  random_seed: 42
+  validation_metric: roc_auc
+  early_stopping: false
+
+evaluation:
+  metrics:
+    - accuracy
+    - roc_auc
+    - precision
+    - recall
+    - f1
+    - confusion_matrix
+  holdout_window_days: 7
+  baseline_comparison: true
+  drift_detection: true
+  feature_importance: true
+
+registry:
+  artifact_type: model_artifact
+  model_family: preference_model
+  lifecycle_state: draft
+  acceptance_criteria:
+    accuracy_min: 0.70
+    auc_roc_min: 0.75
+    coverage_min: 0.85
+    temporal_stability_max: 0.08
+    baseline_improvement_min: 0
+
+output:
+  model_file: model_bundle.joblib
+  schema_file: input_schema.json
+  metrics_file: eval_metrics.json
+  metadata_file: model_metadata.json
+  config_file: training_config.yaml
+  package_format: tar.gz

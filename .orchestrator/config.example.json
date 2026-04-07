@@ -20,6 +20,7 @@
   },
   "supervisor": {
     "poll_interval_seconds": 2.0,
+    "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": false
@@ -68,20 +69,20 @@
     "owner_fallbacks": {
       "Claude": [
         "Codex",
-        "Grok",
+        "Copilot",
         "Gemini"
       ],
       "Gemini": [
         "Codex",
         "Claude",
-        "Grok"
+        "Copilot"
       ],
       "Codex": [
         "Claude",
-        "Grok",
+        "Copilot",
         "Gemini"
       ],
-      "Grok": [
+      "Copilot": [
         "Codex",
         "Claude",
         "Gemini"
@@ -90,20 +91,20 @@
     "reviewer_fallbacks": {
       "Claude": [
         "Codex",
-        "Grok",
+        "Copilot",
         "Gemini"
       ],
       "Gemini": [
         "Codex",
         "Claude",
-        "Grok"
+        "Copilot"
       ],
       "Codex": [
         "Claude",
-        "Grok",
+        "Copilot",
         "Gemini"
       ],
-      "Grok": [
+      "Copilot": [
         "Codex",
         "Claude",
         "Gemini"
@@ -154,7 +155,7 @@
       "Codex": [
         "your-github-handle"
       ],
-      "Grok": [
+      "Copilot": [
         "your-github-handle"
       ]
     },
@@ -243,7 +244,7 @@
       "file_inbox_path": ".llm-inbox/copilot.md"
     },
     "grok": {
-      "display_name": "Grok",
+      "display_name": "Copilot (legacy alias)",
       "provider": "copilot",
       "adapter": "copilot_local",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -365,21 +366,35 @@
     "review_statuses": [
       "review"
     ],
+    "finalize_statuses": [
+      "review_approved"
+    ],
     "owned_statuses": [
       "in_progress",
       "todo"
     ],
-    "done_statuses": [
+    "dependency_done_statuses": [
+      "done"
+    ],
+    "worker_terminal_statuses": [
       "done",
       "review_approved"
     ],
     "active_worker_statuses": [
       "running",
       "waiting_approval",
+      "suspended_approval",
       "retry_backoff",
       "manual_pending",
       "stalled"
     ],
+    "helper_claim": {
+      "enabled": true,
+      "task_statuses": [
+        "todo"
+      ],
+      "require_owner_higher_priority_load": true
+    },
     "max_tasks_per_agent": 1,
     "max_dispatches_per_tick": 4
   }

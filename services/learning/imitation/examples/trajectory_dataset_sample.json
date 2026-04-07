@@ -1,0 +1,80 @@
+{
+  "dataset_id": "traj-approved-2026-04-06",
+  "strategy_id": "alpha-mean-reversion",
+  "source_dataset_refs": [
+    "dataset://feedback/approved/2026-04-06"
+  ],
+  "source_strategy_spec_id": "strat-alpha-mean-reversion-v2",
+  "sessions": [
+    {
+      "trajectory_id": "traj-001",
+      "actor_id": "trader-01",
+      "actor_role": "operator",
+      "decision": "approve",
+      "target": {
+        "registry_id": "reg-alpha-1",
+        "strategy_id": "alpha-mean-reversion",
+        "artifact_version": "1.2.0",
+        "artifact_type": "strategy_spec",
+        "promotion_state": "candidate"
+      },
+      "steps": [
+        {
+          "observation": [
+            0.95,
+            0.10,
+            -0.20
+          ],
+          "action": "buy_small",
+          "reward": 0.40,
+          "feedback_event_id": "evt-001"
+        },
+        {
+          "observation": [
+            0.90,
+            0.12,
+            -0.15
+          ],
+          "action": "buy_small",
+          "reward": 0.35,
+          "feedback_event_id": "evt-002"
+        }
+      ]
+    },
+    {
+      "trajectory_id": "traj-002",
+      "actor_id": "trader-02",
+      "actor_role": "approver",
+      "decision": "edit",
+      "target": {
+        "registry_id": "reg-alpha-1",
+        "strategy_id": "alpha-mean-reversion",
+        "artifact_version": "1.2.0",
+        "artifact_type": "strategy_spec",
+        "promotion_state": "paper"
+      },
+      "steps": [
+        {
+          "observation": [
+            -0.85,
+            -0.20,
+            0.55
+          ],
+          "action": "reduce_risk",
+          "reward": 0.15,
+          "feedback_event_id": "evt-003"
+        },
+        {
+          "observation": [
+            -0.88,
+            -0.18,
+            0.60
+          ],
+          "action": "reduce_risk",
+          "reward": 0.18,
+          "feedback_event_id": "evt-004"
+        }
+      ]
+    }
+  ]
+}

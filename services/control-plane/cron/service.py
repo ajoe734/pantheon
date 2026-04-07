@@ -199,6 +199,14 @@ class CronOrchestrator:
 
         gate = self.promotion_gate_factory()
         updated_entry = gate.promote(entry, target_state, approver=approver)
+        execution_projection = None
+        if hasattr(gate, "build_execution_projection"):
+            projection = gate.build_execution_projection(updated_entry)
+            execution_projection = {
+                "metadata_key": projection.metadata_key,
+                "artifact_key": projection.artifact_key,
+                "metadata": projection.metadata,
+            }
 
         deployment_request = {
             "strategy_id": updated_entry["strategy_id"],
@@ -207,6 +215,7 @@ class CronOrchestrator:
             "execution_context": "live" if updated_entry["lifecycle_state"] == "live" else workflow.execution_context,
             "artifact_loader_contract": "EX-001",
             "promotion_gate": "REG-002",
+            "execution_projection": execution_projection,
         }
 
         return WorkflowRunResult(

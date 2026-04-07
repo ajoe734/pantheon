@@ -32,11 +32,18 @@ KNOWN_AGENTS = {
         "default_branch": "feat/codex-collab-system",
         "target_workload": 30,
     },
-    "Grok": {
+    "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
-        "default_branch": "feat/grok-research-critique",
+        "default_branch": "feat/copilot-research-critique",
         "target_workload": 25,
     },
+}
+
+AGENT_ALIASES = {
+    "grok": "Copilot",
+    "copilot": "Copilot",
+    "copilot host": "Copilot",
+    "copilot_host": "Copilot",
 }
 
 STATUS_LABELS = {
@@ -48,11 +55,31 @@ STATUS_LABELS = {
     "done": "done",
 }
 
-DEPENDENCY_DONE_STATUSES = {"done", "review_approved"}
+DEPENDENCY_DONE_STATUSES = {"done"}
 
 
 def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def canonical_agent_name(name: str | None) -> str:
+    if name is None:
+        return ""
+    trimmed = str(name).strip()
+    if not trimmed:
+        return ""
+    canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
+    lowered = trimmed.lower()
+    if lowered in canonical_by_lower:
+        return canonical_by_lower[lowered]
+    alias_target = AGENT_ALIASES.get(lowered)
+    if alias_target:
+        return alias_target
+    return trimmed
+
+
+def current_actor(default: str = "Codex") -> str:
+    return canonical_agent_name(os.environ.get("AI_NAME", default))
 
 
 def default_state() -> dict[str, Any]:
@@ -62,7 +89,7 @@ def default_state() -> dict[str, Any]:
         "sprint": "2026-04-01-collab-foundation",
         "objective": (
             "Stabilize the Pantheon — multi-persona automated trading system operating system so Claude, Gemini, "
-            "Codex, and Grok share one task board, one history feed, and one visual dashboard."
+            "Codex, and Copilot share one task board, one history feed, and one visual dashboard."
         ),
         "updated_at": timestamp,
         "canonical_files": [
@@ -208,7 +235,9 @@ def default_state() -> dict[str, Any]:
 def load_state() -> dict[str, Any]:
     if not STATUS_FILE.exists() or STATUS_FILE.read_text(encoding="utf-8").strip() == "":
         return default_state()
-    return json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    normalize_state_agents(state)
+    return state
 
 
 def load_logs() -> list[dict[str, Any]]:
@@ -239,12 +268,14 @@ def append_log(entry: dict[str, Any]) -> None:
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
-    if name not in KNOWN_AGENTS:
+    canonical = canonical_agent_name(name)
+    if canonical not in KNOWN_AGENTS:
         raise SystemExit(f"Unknown agent: {name}")
-    return KNOWN_AGENTS[name]
+    return KNOWN_AGENTS[canonical]
 
 
 def get_agent(state: dict[str, Any], name: str) -> dict[str, Any]:
+    name = canonical_agent_name(name)
     ensure_agent(name)
     for agent in state["agents"]:
         if agent["name"] == name:
@@ -291,7 +322,46 @@ def dependency_is_satisfied(task_map: dict[str, dict[str, Any]], dep_id: str) ->
     return dependency.get("status") in DEPENDENCY_DONE_STATUSES
 
 
+def ensure_review_finalize_handoff(
+    state: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    from_agent: str,
+    timestamp: str,
+    message: str | None = None,
+) -> None:
+    owner = canonical_agent_name(task.get("owner"))
+    if not owner:
+        return
+    pending_owner_handoff = next(
+        (
+            handoff
+            for handoff in state.get("handoffs", [])
+            if handoff.get("task_id") == task.get("id")
+            and handoff.get("to") == owner
+            and handoff.get("status") != "done"
+        ),
+        None,
+    )
+    if pending_owner_handoff:
+        if message:
+            pending_owner_handoff["message"] = message
+        return
+
+    state.setdefault("handoffs", []).append(
+        {
+            "task_id": task.get("id"),
+            "from": canonical_agent_name(from_agent),
+            "to": owner,
+            "message": message or "Review approved. Owner must finalize this task to move it from review_approved to done.",
+            "status": "pending",
+            "created_at": timestamp,
+        }
+    )
+
+
 def validate_state(state: dict[str, Any]) -> None:
+    normalize_state_agents(state)
     for task in state["tasks"]:
         ensure_agent(task["owner"])
         ensure_agent(task["reviewer"])
@@ -307,6 +377,25 @@ def validate_state(state: dict[str, Any]) -> None:
     for handoff in state.get("handoffs", []):
         ensure_agent(handoff["from"])
         ensure_agent(handoff["to"])
+
+
+def normalize_state_agents(state: dict[str, Any]) -> None:
+    for task in state.get("tasks", []):
+        task["owner"] = canonical_agent_name(task.get("owner"))
+        task["reviewer"] = canonical_agent_name(task.get("reviewer"))
+        if task.get("waiting_for"):
+            task["waiting_for"] = canonical_agent_name(task.get("waiting_for"))
+
+    for blocker in state.get("blockers", []):
+        blocker["owner"] = canonical_agent_name(blocker.get("owner"))
+        blocker["waiting_for"] = canonical_agent_name(blocker.get("waiting_for"))
+
+    for handoff in state.get("handoffs", []):
+        handoff["from"] = canonical_agent_name(handoff.get("from"))
+        handoff["to"] = canonical_agent_name(handoff.get("to"))
+
+    for agent in state.get("agents", []):
+        agent["name"] = canonical_agent_name(agent.get("name"))
 
 
 def recompute_agents(state: dict[str, Any]) -> None:
@@ -329,6 +418,7 @@ def recompute_agents(state: dict[str, Any]) -> None:
         agent = get_agent(state, name)
         owned = by_owner.get(name, [])
         active = [task for task in owned if task["status"] in {"in_progress", "review", "blocked"}]
+        approved = [task for task in owned if task["status"] == "review_approved"]
         queued = [task for task in owned if task["status"] == "todo"]
         ready = [
             task
@@ -346,6 +436,9 @@ def recompute_agents(state: dict[str, Any]) -> None:
         elif any(task["status"] == "review" for task in active):
             agent["status"] = "reviewing"
             agent["current_task_ids"] = [task["id"] for task in active]
+        elif approved:
+            agent["status"] = "finalize"
+            agent["current_task_ids"] = [task["id"] for task in approved]
         elif ready:
             agent["status"] = "ready"
             agent["current_task_ids"] = [task["id"] for task in ready]
@@ -364,6 +457,9 @@ def recompute_agents(state: dict[str, Any]) -> None:
             )[0]
             agent["next"] = latest.get("next", "")
             agent["last_update"] = latest.get("last_update")
+        elif approved:
+            agent["next"] = approved[0].get("next", "")
+            agent["last_update"] = approved[0].get("last_update")
         elif ready:
             agent["next"] = ready[0].get("next", "")
             agent["last_update"] = ready[0].get("last_update")
@@ -568,6 +664,7 @@ def sync_docs_site() -> None:
 
 
 def sync_all(state: dict[str, Any]) -> None:
+    normalize_state_agents(state)
     validate_state(state)
     normalize_handoffs(state)
     recompute_agents(state)
@@ -610,21 +707,63 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
 
     for task_id, pending in pending_by_task.items():
         task = task_map.get(task_id)
-        if task and task.get("status") in {"in_progress", "blocked", "done", "review_approved"}:
-            for handoff in pending:
-                handoff["status"] = "done"
-                handoff["resolved_at"] = iso_now()
-            continue
+        if task:
+            task_status = task.get("status")
+            if task_status in {"in_progress", "blocked", "done"}:
+                for handoff in pending:
+                    handoff["status"] = "done"
+                    handoff["resolved_at"] = iso_now()
+                continue
+            if task_status == "review_approved":
+                owner = canonical_agent_name(task.get("owner"))
+                owner_handoffs = [handoff for handoff in pending if handoff.get("to") == owner]
+                for handoff in pending:
+                    if handoff not in owner_handoffs:
+                        handoff["status"] = "done"
+                        handoff["resolved_at"] = iso_now()
+                if not owner_handoffs:
+                    ensure_review_finalize_handoff(
+                        state,
+                        task,
+                        from_agent=canonical_agent_name(task.get("reviewer")),
+                        timestamp=iso_now(),
+                        message=task.get("next"),
+                    )
+                continue
 
         for handoff in pending[:-1]:
             handoff["status"] = "done"
             handoff["resolved_at"] = iso_now()
 
+    for task in state.get("tasks", []):
+        if task.get("status") != "review_approved":
+            continue
+        task_id = task.get("id")
+        owner = canonical_agent_name(task.get("owner"))
+        pending = [
+            handoff
+            for handoff in state.get("handoffs", [])
+            if handoff.get("task_id") == task_id and handoff.get("status") != "done"
+        ]
+        owner_handoffs = [handoff for handoff in pending if handoff.get("to") == owner]
+        for handoff in pending:
+            if handoff not in owner_handoffs:
+                handoff["status"] = "done"
+                handoff["resolved_at"] = iso_now()
+        if not owner_handoffs:
+            ensure_review_finalize_handoff(
+                state,
+                task,
+                from_agent=canonical_agent_name(task.get("reviewer")),
+                timestamp=iso_now(),
+                message=task.get("next"),
+            )
+
 
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
-    task_id, owner, reviewer = args[0], args[1], args[2]
+    task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     ensure_agent(owner)
@@ -667,7 +806,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     append_log(
         {
             "ts": timestamp,
-            "agent": os.environ.get("AI_NAME", "Codex"),
+            "agent": current_actor(),
             "type": "assign",
             "task_id": task_id,
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
@@ -679,11 +818,13 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: start <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = os.environ.get("AI_NAME", "Codex")
+    actor = current_actor()
     ensure_agent(actor)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
@@ -697,12 +838,14 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: progress <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = os.environ.get("AI_NAME", "Codex")
+    actor = current_actor()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
-    if task["status"] == "todo":
+    if task["status"] in {"todo", "review_approved"}:
         task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
@@ -714,7 +857,7 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: note <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = os.environ.get("AI_NAME", "Codex")
+    actor = current_actor()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -728,11 +871,15 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = os.environ.get("AI_NAME", "Codex")
+    actor = current_actor()
     ensure_agent(actor)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can reopen {task_id}")
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
@@ -740,19 +887,36 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
+    if actor == reviewer and owner and owner != reviewer:
+        state.setdefault("handoffs", []).append(
+            {
+                "task_id": task_id,
+                "from": reviewer,
+                "to": owner,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
     append_log({"ts": timestamp, "agent": actor, "type": "reopen", "task_id": task_id, "message": message})
 
 
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
-    task_id, to_agent, message = args[0], args[1], args[2]
-    actor = os.environ.get("AI_NAME", "Codex")
+    task_id, to_agent, message = args[0], canonical_agent_name(args[1]), args[2]
+    actor = current_actor()
     ensure_agent(actor)
     ensure_agent(to_agent)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can hand off {task_id} for review")
+    if task.get("reviewer") != to_agent:
+        raise SystemExit(
+            f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
+        )
     timestamp = iso_now()
     task["status"] = "review"
     task["last_update"] = timestamp
@@ -775,13 +939,15 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: blocker <task-id> <message> <waiting-for>")
-    task_id, message, waiting_for = args[0], args[1], args[2]
-    actor = os.environ.get("AI_NAME", "Codex")
+    task_id, message, waiting_for = args[0], args[1], canonical_agent_name(args[2])
+    actor = current_actor()
     ensure_agent(actor)
     ensure_agent(waiting_for)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
     timestamp = iso_now()
     task["status"] = "blocked"
     task["waiting_for"] = waiting_for
@@ -805,11 +971,15 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = os.environ.get("AI_NAME", "Codex")
+    actor = current_actor()
     ensure_agent(actor)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
+    if task.get("status") != "review_approved":
+        raise SystemExit(f"{task_id} must be review_approved before it can move to done")
     timestamp = iso_now()
     task["status"] = "done"
     task["last_update"] = timestamp
@@ -824,11 +994,15 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = os.environ.get("AI_NAME", "Codex")
+    actor = current_actor()
     ensure_agent(actor)
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("reviewer") != actor:
+        raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
+    if task.get("status") != "review":
+        raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 
     timestamp = iso_now()
     task["status"] = "review_approved"
@@ -845,7 +1019,14 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         task["review_file"] = review_file
 
     mark_blockers_resolved(state, task_id)
-    mark_handoffs_done(state, task_id)
+    mark_handoffs_done_for_actor(state, task_id, actor)
+    ensure_review_finalize_handoff(
+        state,
+        task,
+        from_agent=actor,
+        timestamp=timestamp,
+        message=message,
+    )
     append_log({"ts": timestamp, "agent": actor, "type": "review_approved", "task_id": task_id, "message": message})
 
 

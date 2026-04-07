@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 try:
     import jsonschema
@@ -33,14 +33,148 @@ class LoadedArtifact:
     metadata: dict[str, Any]
     payload: bytes
     projection: ObjectStoreProjection
+    artifact_path: str | None = None
+
+
+class LeanObjectStoreAdapter:
+    """
+    Normalize LEAN Object Store access across:
+
+    - Python algorithms (`self.object_store.read`, `save_bytes`, ...)
+    - wrapped .NET APIs (`ObjectStore.Read`, `SaveBytes`, ...)
+    - test doubles that expose either naming style
+    """
+
+    def __init__(self, object_store: Any):
+        self._store = self._resolve_store(object_store)
+
+    @classmethod
+    def from_runtime(cls, runtime_or_store: Any) -> "LeanObjectStoreAdapter":
+        return cls(runtime_or_store)
+
+    @staticmethod
+    def _resolve_store(runtime_or_store: Any) -> Any:
+        for attr_name in ("object_store", "ObjectStore"):
+            store = getattr(runtime_or_store, attr_name, None)
+            if store is not None:
+                return store
+        return runtime_or_store
+
+    def contains_key(self, key: str) -> bool:
+        contains = _resolve_method(self._store, ("ContainsKey", "contains_key"))
+        if contains is not None:
+            return bool(contains(key))
+        try:
+            self.read_bytes(key)
+            return True
+        except Exception:
+            return False
+
+    def read_json(self, key: str) -> dict[str, Any] | None:
+        read_json = _resolve_method(self._store, ("ReadJson", "read_json"))
+        if read_json is None:
+            return None
+
+        try:
+            payload = read_json(key)
+        except TypeError:
+            return None
+
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        return None
+
+    def read_text(self, key: str) -> str:
+        read = _resolve_method(self._store, ("Read", "read"))
+        if read is not None:
+            payload = read(key)
+            if isinstance(payload, str):
+                return payload
+            if isinstance(payload, bytes):
+                return payload.decode("utf-8")
+
+        payload = self.read_bytes(key)
+        return payload.decode("utf-8")
+
+    def read_bytes(self, key: str) -> bytes:
+        read_bytes = _resolve_method(self._store, ("ReadBytes", "read_bytes"))
+        if read_bytes is not None:
+            payload = read_bytes(key)
+            if isinstance(payload, bytes):
+                return payload
+            if isinstance(payload, str):
+                return payload.encode("utf-8")
+
+        read = _resolve_method(self._store, ("Read", "read"))
+        if read is not None:
+            payload = read(key)
+            if isinstance(payload, bytes):
+                return payload
+            if isinstance(payload, str):
+                return payload.encode("utf-8")
+
+        raise ArtifactLoadError(
+            "Object Store adapter must expose Read/ReadBytes or read/read_bytes methods."
+        )
+
+    def save_json(self, key: str, payload: Mapping[str, Any]) -> None:
+        save_json = _resolve_method(self._store, ("SaveJson", "save_json"))
+        if save_json is not None:
+            save_json(key, dict(payload))
+            return
+        self.save_text(key, json.dumps(dict(payload)))
+
+    def save_text(self, key: str, payload: str) -> None:
+        save = _resolve_method(self._store, ("Save", "save"))
+        if save is not None:
+            save(key, payload)
+            return
+
+        save_bytes = _resolve_method(self._store, ("SaveBytes", "save_bytes"))
+        if save_bytes is not None:
+            save_bytes(key, payload.encode("utf-8"))
+            return
+
+        raise ArtifactLoadError(
+            "Object Store adapter must expose Save/SaveBytes or save/save_bytes methods."
+        )
+
+    def save_bytes(self, key: str, payload: bytes) -> None:
+        save_bytes = _resolve_method(self._store, ("SaveBytes", "save_bytes"))
+        if save_bytes is not None:
+            save_bytes(key, payload)
+            return
+
+        save = _resolve_method(self._store, ("Save", "save"))
+        if save is not None:
+            try:
+                save(key, payload)
+                return
+            except TypeError:
+                save(key, payload.decode("utf-8"))
+                return
+
+        raise ArtifactLoadError(
+            "Object Store adapter must expose Save/SaveBytes or save/save_bytes methods."
+        )
+
+    def get_file_path(self, key: str) -> str | None:
+        get_file_path = _resolve_method(self._store, ("GetFilePath", "get_file_path"))
+        if get_file_path is None:
+            return None
+
+        path = get_file_path(key)
+        if path in (None, ""):
+            return None
+        return str(path)
 
 
 class ArtifactLoader:
     """
     Service-local EX-001 reference loader.
 
-    The real LEAN bridge still needs a runtime-side adapter around ObjectStore.Read/ReadBytes.
-    This loader keeps the governed behavior testable in Python first:
+    The loader now normalizes LEAN Object Store access for both Python and wrapped
+    .NET naming styles while keeping the governed behavior testable in Python first:
 
     - read metadata from canonical Object Store keys
     - validate the promoted-artifact schema
@@ -49,7 +183,7 @@ class ArtifactLoader:
     """
 
     def __init__(self, object_store: Any, schema_path: str | Path | None = None):
-        self._store = object_store
+        self._store = LeanObjectStoreAdapter.from_runtime(object_store)
         self._schema_path = Path(schema_path or self.default_schema_path()).resolve()
         self._schema = _load_schema(self._schema_path)
         self._validator = (
@@ -61,6 +195,14 @@ class ArtifactLoader:
     @staticmethod
     def default_schema_path() -> Path:
         return Path(__file__).resolve().parent / "artifact-loader" / "artifact_metadata_schema.json"
+
+    @classmethod
+    def from_runtime(
+        cls,
+        runtime_or_store: Any,
+        schema_path: str | Path | None = None,
+    ) -> "ArtifactLoader":
+        return cls(runtime_or_store, schema_path=schema_path)
 
     @staticmethod
     def build_projection(strategy_id: str, version: str) -> ObjectStoreProjection:
@@ -83,17 +225,21 @@ class ArtifactLoader:
 
         payload = self._read_bytes(projection.artifact_key)
         self._validate_checksum(metadata["checksum"], payload)
-        return LoadedArtifact(metadata=metadata, payload=payload, projection=projection)
+        artifact_path = self._store.get_file_path(projection.artifact_key)
+        return LoadedArtifact(
+            metadata=metadata,
+            payload=payload,
+            projection=projection,
+            artifact_path=artifact_path,
+        )
 
     def _read_metadata(self, key: str) -> dict[str, Any]:
-        if not self._contains_key(key):
+        if not self._store.contains_key(key):
             raise ArtifactLoadError(f"Object Store metadata key not found: {key}")
 
-        read_json = _resolve_method(self._store, ("ReadJson", "read_json"))
-        if read_json is not None:
-            payload = read_json(key)
-            if isinstance(payload, dict):
-                return payload
+        payload = self._store.read_json(key)
+        if payload is not None:
+            return payload
 
         text = self._read_text(key)
         try:
@@ -105,69 +251,12 @@ class ArtifactLoader:
         return metadata
 
     def _read_text(self, key: str) -> str:
-        read = _resolve_method(self._store, ("Read", "read"))
-        if read is not None:
-            payload = read(key)
-            if isinstance(payload, str):
-                return payload
-            if isinstance(payload, bytes):
-                return payload.decode("utf-8")
-
-        payload = self._read_bytes(key)
-        return payload.decode("utf-8")
+        return self._store.read_text(key)
 
     def _read_bytes(self, key: str) -> bytes:
-        if not self._contains_key(key):
+        if not self._store.contains_key(key):
             raise ArtifactLoadError(f"Object Store artifact key not found: {key}")
-
-        read_bytes = _resolve_method(self._store, ("ReadBytes", "read_bytes"))
-        if read_bytes is not None:
-            payload = read_bytes(key)
-            if isinstance(payload, bytes):
-                return payload
-            if isinstance(payload, str):
-                return payload.encode("utf-8")
-
-        read = _resolve_method(self._store, ("Read", "read"))
-        if read is not None:
-            payload = read(key)
-            if isinstance(payload, bytes):
-                return payload
-            if isinstance(payload, str):
-                return payload.encode("utf-8")
-
-        raise ArtifactLoadError(
-            "Object Store adapter must expose Read/ReadBytes or read/read_bytes methods."
-        )
-
-    def _contains_key(self, key: str) -> bool:
-        contains = _resolve_method(self._store, ("ContainsKey", "contains_key"))
-        if contains is not None:
-            return bool(contains(key))
-        try:
-            self._read_bytes_without_guard(key)
-            return True
-        except ArtifactLoadError:
-            return False
-
-    def _read_bytes_without_guard(self, key: str) -> bytes:
-        read_bytes = _resolve_method(self._store, ("ReadBytes", "read_bytes"))
-        if read_bytes is not None:
-            payload = read_bytes(key)
-            if isinstance(payload, bytes):
-                return payload
-            if isinstance(payload, str):
-                return payload.encode("utf-8")
-
-        read = _resolve_method(self._store, ("Read", "read"))
-        if read is not None:
-            payload = read(key)
-            if isinstance(payload, bytes):
-                return payload
-            if isinstance(payload, str):
-                return payload.encode("utf-8")
-
-        raise ArtifactLoadError(f"Object Store key not readable: {key}")
+        return self._store.read_bytes(key)
 
     def _validate_metadata(
         self,
@@ -213,6 +302,10 @@ class ArtifactLoader:
                 raise ArtifactLoadError(
                     "Live artifact rollback object missing required fields: " + ", ".join(missing)
                 )
+            if rollback.get("target_registry_id") == metadata.get("registry_id"):
+                raise ArtifactLoadError("Live artifact rollback target_registry_id cannot equal registry_id.")
+            if rollback.get("target_version") == metadata.get("version"):
+                raise ArtifactLoadError("Live artifact rollback target_version cannot equal version.")
 
     def _validate_checksum(self, expected_checksum: str, payload: bytes) -> None:
         expected = str(expected_checksum).strip()
@@ -231,6 +324,34 @@ def _resolve_method(target: Any, candidates: tuple[str, ...]) -> Any | None:
         if callable(method):
             return method
     return None
+
+
+def materialize_execution_projection(
+    runtime_or_store: Any,
+    projection: Any,
+    payload: bytes,
+) -> ObjectStoreProjection:
+    """
+    Persist a REG-002 execution projection into a LEAN-compatible Object Store.
+
+    `projection` may be an EX-001 `ObjectStoreProjection`, a REG-002 `ExecutionProjection`,
+    or any object exposing `metadata_key`, `artifact_key`, and `metadata`.
+    """
+    metadata_key = getattr(projection, "metadata_key", None)
+    artifact_key = getattr(projection, "artifact_key", None)
+    metadata = getattr(projection, "metadata", None)
+
+    if not isinstance(metadata_key, str) or not metadata_key:
+        raise ArtifactLoadError("Execution projection is missing metadata_key.")
+    if not isinstance(artifact_key, str) or not artifact_key:
+        raise ArtifactLoadError("Execution projection is missing artifact_key.")
+    if not isinstance(metadata, Mapping):
+        raise ArtifactLoadError("Execution projection is missing metadata.")
+
+    store = LeanObjectStoreAdapter.from_runtime(runtime_or_store)
+    store.save_json(metadata_key, dict(metadata))
+    store.save_bytes(artifact_key, payload)
+    return ObjectStoreProjection(metadata_key=metadata_key, artifact_key=artifact_key)
 
 
 def _load_schema(path: Path) -> dict[str, Any]:

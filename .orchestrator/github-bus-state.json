@@ -1,21 +1,21 @@
 {
   "version": 1,
   "repo": "ajoe734/pantheon",
-  "last_sync_at": "2026-04-06T11:50:22Z",
+  "last_sync_at": "2026-04-07T02:19:23Z",
   "offline_until": null,
   "last_error": null,
   "processed_review_ids": [],
   "processed_comment_ids": [
     "issue:4188762525",
-    "issue:4188761478",
     "issue:4188756789",
-    "issue:4188761374",
-    "issue:4188942881",
-    "issue:4188755030",
-    "issue:4188760825",
-    "issue:4188758424",
     "issue:4188761278",
-    "issue:4188761398"
+    "issue:4188761374",
+    "issue:4188758424",
+    "issue:4188761478",
+    "issue:4188761398",
+    "issue:4188760825",
+    "issue:4188942881",
+    "issue:4188755030"
   ],
   "processed_webhook_deliveries": [],
   "tasks": {
@@ -125,6 +125,78 @@
       },
       "ops_issue": null,
       "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"LP-003\"}",
+      "last_issue_hash": null
+    },
+    "EX-001": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] EX-001 Define artifact loader contract for paper and live execution",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"EX-001\"}",
+      "last_issue_hash": null
+    },
+    "RS-002": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] RS-002 Normalize discovered material into StrategySpec",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"RS-002\"}",
+      "last_issue_hash": null
+    },
+    "LP-004": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] LP-004 Define approved TRL preference-learning workflows",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"LP-004\"}",
+      "last_issue_hash": null
+    },
+    "REG-002": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] REG-002 Implement candidate, paper, and live promotion gate",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"REG-002\"}",
+      "last_issue_hash": null
+    },
+    "LP-002": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] LP-002 Integrate imitation workflows for trader behavior cloning",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"LP-002\"}",
+      "last_issue_hash": null
+    },
+    "FB-003": {
+      "review_pr": {
+        "number": null,
+        "url": null,
+        "title": "[ReviewBus] FB-003 Capture execution telemetry including pnl, drawdown, slippage, and fills",
+        "branch": null,
+        "state": "skipped_no_branch"
+      },
+      "ops_issue": null,
+      "last_review_hash": "{\"state\": \"skipped_no_branch\", \"status\": \"review\", \"task_id\": \"FB-003\"}",
       "last_issue_hash": null
     }
   }

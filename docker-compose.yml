@@ -58,7 +58,7 @@ services:
 
   # ── OSS Learning Workers (each isolated Python environment) ───────────────
   dspy-worker:
-    build: ./services/research/dspy
+    build: ./services/learning/dspy
     environment:
       - REDIS_URL=redis://signal-store:6379
       - MLFLOW_TRACKING_URI=http://mlflow-server:5000
@@ -85,7 +85,7 @@ services:
       - mlflow-server
 
   imitation-worker:
-    build: ./services/research/imitation
+    build: ./services/learning/imitation
     environment:
       - REDIS_URL=redis://signal-store:6379
       - MLFLOW_TRACKING_URI=http://mlflow-server:5000

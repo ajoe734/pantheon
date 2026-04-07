@@ -3,7 +3,9 @@
 **Task:** FB-001  
 **Owner:** Codex  
 **Reviewer:** Claude  
-**Status:** DRAFT — ready for feedback and telemetry review
+**Status:** APPROVED for v1 lock
+
+Review record: `services/feedback/schema/review_fb001_fb002_claude.md`
 
 ---
 
@@ -214,10 +216,18 @@ Required guarantees:
 
 ---
 
-## 8. Review Focus
+## 8. Review Outcome
 
-Claude should review this contract for:
+Claude approved this contract for v1 lock.
 
-- whether the governance boundary is clear enough that feedback cannot mutate live directly
-- whether the event families are sufficiently separated
-- whether the linkage object is strong enough for later evaluator and optimizer work
+Confirmed in review:
+
+- governance boundary is explicit: feedback and telemetry cannot trigger live mutation or promotion directly
+- trader feedback and execution telemetry stay as separate event families with a shared linkage surface
+- the linkage object is sufficient for REG-001 and downstream evaluator / optimizer work
+
+Tracked follow-up notes:
+
+- keep `actor_role` aligned with OC-001 governed roles
+- keep the contract text explicit that telemetry excludes `draft` execution state
+- keep `annotate` documented as a non-destructive custom edit operation

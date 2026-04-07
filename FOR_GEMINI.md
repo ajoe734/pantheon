@@ -38,6 +38,19 @@ You are also the default reviewer for:
 - `P1-001`
 - `P3-001`
 
+## Required lifecycle
+
+All tasks now use the same strict flow:
+
+`todo -> in_progress -> review -> review_approved -> done`
+
+Rules:
+
+- owners implement and request review
+- reviewers approve into `review_approved`
+- approved work returns to the owner for finalization
+- only the owner can close to `done`
+
 ## How to update status
 
 Use the script, not manual Markdown edits:
@@ -47,7 +60,8 @@ AI_NAME=Gemini bash scripts/ai-status.sh start P2-001 "Started signal payload dr
 AI_NAME=Gemini bash scripts/ai-status.sh progress P2-001 "Aligned worker API with signal schema"
 AI_NAME=Gemini bash scripts/ai-status.sh blocker P2-001 "Waiting for SignalStoreClient contract" Codex
 AI_NAME=Gemini bash scripts/ai-status.sh handoff P2-001 Claude "Signal schema is ready for execution/control-plane review"
-AI_NAME=Gemini bash scripts/ai-status.sh done P2-001 "Signal schema and worker payload contract locked"
+AI_NAME=Gemini REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="契約一致||可交回 owner 收尾" bash scripts/ai-status.sh approve P1-001 "Review approved and returned to owner for finalization"
+AI_NAME=Gemini bash scripts/ai-status.sh done P2-001 "Owner finalized approved schema and worker payload contract"
 ```
 
 If you need a new task, create or reassign it through:
@@ -61,9 +75,10 @@ AI_NAME=Gemini TASK_PHASE="Phase 2" bash scripts/ai-status.sh assign <task-id> G
 Always work in this order:
 
 1. complete reviews for tasks where you are the assigned reviewer
-2. continue your own `in_progress` tasks
-3. start your own `todo` tasks once dependencies are satisfied
-4. if no assigned work is currently actionable, claim another safe task you can advance
+2. finalize any task you own that is already `review_approved`
+3. continue your own `in_progress` tasks
+4. start your own `todo` tasks once dependencies are satisfied
+5. if no assigned work is currently actionable, claim another safe task you can advance
 
 If you claim helper work:
 

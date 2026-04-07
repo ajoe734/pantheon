@@ -14,10 +14,11 @@
 狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
 
-Task ID: BUS-VAL-001
+Task ID: EX-001
 原因: owned_in_progress_dispatch
 可能相關檔案:
-- (none inferred)
+- services/execution/artifact-loader/contract.md
+- services/execution/artifact-loader/artifact_metadata_schema.json
 
 ## Context Files
 - `ai-status.json`

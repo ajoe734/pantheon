@@ -127,6 +127,8 @@ h1 {
 .metric-card {
   border-radius: var(--radius-md);
   padding: 16px;
+  display: grid;
+  gap: 8px;
 }
 
 .metric-value {
@@ -143,6 +145,47 @@ h1 {
 
 .metric-note {
   font-size: 0.86rem;
+}
+
+.metric-details {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.metric-details summary {
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--ink-subtle);
+}
+
+.metric-task-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.metric-task-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  min-width: 0;
+}
+
+.metric-task-head,
+.metric-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.metric-task-copy,
+.metric-empty {
+  font-size: 0.84rem;
+  color: var(--ink-subtle);
+  margin: 0;
 }
 
 .dashboard-grid {
@@ -241,6 +284,23 @@ h1 {
   background: var(--red-soft);
 }
 
+.status-superseded,
+.status-reassigned {
+  color: var(--muted);
+  background: var(--slate-soft);
+}
+
+.worker-lifecycle.lifecycle-active {
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.worker-lifecycle.lifecycle-superseded,
+.worker-lifecycle.lifecycle-reassigned {
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.08);
+}
+
 .status-waiting,
 .status-manual_pending,
 .status-retry_backoff,
@@ -326,7 +386,7 @@ h1 {
 }
 
 .worker-buckets {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .worker-bucket {
@@ -450,9 +510,119 @@ h1 {
   border-radius: var(--radius-md);
 }
 
+.dependency-wave {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(22, 34, 32, 0.03);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dependency-wave-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dependency-wave-head > div:first-child {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.dependency-wave-head .chip-row {
+  flex: 1 1 280px;
+  justify-content: flex-start;
+}
+
+.dependency-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.dependency-card {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dependency-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dependency-copy {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.batch-pill.batch-completed,
+.dependency-card.batch-completed {
+  background: rgba(33, 128, 141, 0.08);
+  border-color: rgba(33, 128, 141, 0.2);
+}
+
+.batch-pill.batch-approved,
+.dependency-card.batch-approved {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.22);
+}
+
+.batch-pill.batch-active,
+.dependency-card.batch-active {
+  background: rgba(255, 179, 71, 0.09);
+  border-color: rgba(255, 179, 71, 0.24);
+}
+
+.batch-pill.batch-ready,
+.dependency-card.batch-ready {
+  background: rgba(17, 153, 142, 0.08);
+  border-color: rgba(17, 153, 142, 0.24);
+}
+
+.batch-pill.batch-waiting,
+.dependency-card.batch-waiting {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.22);
+}
+
+.batch-pill.batch-blocked,
+.dependency-card.batch-blocked {
+  background: rgba(220, 38, 38, 0.07);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+
+.activity-card {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(22, 34, 32, 0.03);
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.activity-message {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.activity-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .insights-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -461,6 +631,7 @@ h1 {
   border-radius: var(--radius-lg);
   background: rgba(22, 34, 32, 0.03);
   padding: 14px;
+  min-width: 0;
 }
 
 .insight > summary {
@@ -469,6 +640,7 @@ h1 {
   flex-direction: column;
   gap: 4px;
   margin-bottom: 12px;
+  min-width: 0;
 }
 
 .insight > summary small {
