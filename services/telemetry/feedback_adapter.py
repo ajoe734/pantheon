@@ -23,6 +23,23 @@ from feedback.store import TraderFeedbackStore, build_query_filters, parse_rfc33
 
 log = logging.getLogger(__name__)
 
+# Telemetry event types - must be filtered explicitly to separate from feedback events
+TELEMETRY_EVENT_TYPES = {
+    "pnl_snapshot",
+    "drawdown_snapshot",
+    "slippage_observation",
+    "fill_observation",
+    "order_rejection",
+}
+
+# Feedback event types - must be explicitly excluded in telemetry queries
+FEEDBACK_EVENT_TYPES = {
+    "approve",
+    "edit",
+    "reject",
+    "rationale",
+}
+
 
 class FeedbackStoreAdapter:
     """
@@ -70,13 +87,20 @@ class FeedbackStoreAdapter:
         This ensures that new adapter instances can see all previously persisted
         telemetry events from the shared store, enabling proper cross-process queries
         and preventing duplicate event_id issues in query results.
+        
+        Explicitly filters to telemetry event types only to maintain event family separation.
+        Feedback events (approve, edit, reject, rationale) are excluded from recovery.
         """
         if not self.feedback_store:
             return
         
         all_events = self.feedback_store.iter_events()
-        self.telemetry_log = all_events
-        log.debug(f"Recovered {len(all_events)} telemetry events from shared store")
+        # Filter to telemetry events only - exclude feedback events
+        self.telemetry_log = [
+            e for e in all_events
+            if e.get("event_type") in TELEMETRY_EVENT_TYPES
+        ]
+        log.debug(f"Recovered {len(self.telemetry_log)} telemetry events from shared store")
 
     def ingest_telemetry_event(
         self,
@@ -148,6 +172,10 @@ class FeedbackStoreAdapter:
         If a shared feedback store is configured, queries the store directly using
         TraderFeedbackStore.list() with proper filters. Otherwise, queries local buffer.
         
+        Maintains event family separation: only returns telemetry event types
+        (pnl_snapshot, drawdown_snapshot, slippage_observation, fill_observation, order_rejection).
+        Feedback events (approve, edit, reject, rationale) are explicitly excluded.
+        
         Parameters
         ----------
         strategy_id : str
@@ -172,6 +200,9 @@ class FeedbackStoreAdapter:
                 event_type=event_type,
             )
             results = self.feedback_store.list(filters)
+            
+            # Explicitly filter to telemetry event types only
+            results = [e for e in results if e.get("event_type") in TELEMETRY_EVENT_TYPES]
             
             # Apply mode filter if provided (not in shared store filters)
             if mode:
@@ -206,6 +237,9 @@ class FeedbackStoreAdapter:
         If a shared feedback store is configured, queries the store directly.
         Otherwise, queries local buffer.
         
+        Maintains event family separation: only returns telemetry event types.
+        Feedback events (approve, edit, reject, rationale) are explicitly excluded.
+        
         Parameters
         ----------
         promotion_state : str
@@ -219,7 +253,12 @@ class FeedbackStoreAdapter:
         if self.feedback_store:
             # Query shared store with promotion_state filter
             filters = build_query_filters(promotion_state=promotion_state)
-            return self.feedback_store.list(filters)
+            results = self.feedback_store.list(filters)
+            
+            # Explicitly filter to telemetry event types only
+            results = [e for e in results if e.get("event_type") in TELEMETRY_EVENT_TYPES]
+            
+            return results
         
         # Fall back to local buffer if no store
         return [
@@ -242,6 +281,9 @@ class FeedbackStoreAdapter:
         
         This method implements the full query contract with all filters:
         strategy_id, registry_id, promotion_state, event_type, created_at range.
+        
+        Maintains event family separation: only returns telemetry event types.
+        Feedback events (approve, edit, reject, rationale) are explicitly excluded.
         
         Parameters
         ----------
@@ -276,7 +318,12 @@ class FeedbackStoreAdapter:
                 created_before=created_before,
                 limit=limit,
             )
-            return self.feedback_store.list(filters)
+            results = self.feedback_store.list(filters)
+            
+            # Explicitly filter to telemetry event types only
+            results = [e for e in results if e.get("event_type") in TELEMETRY_EVENT_TYPES]
+            
+            return results[:limit]
         
         # Fall back to local buffer filtering
         results = self.telemetry_log
