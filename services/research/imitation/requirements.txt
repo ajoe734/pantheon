@@ -1,3 +1,3 @@
-imitation==1.0.0
-pydantic>=2.6.3
-redis>=5.0.0
+# Deprecated shim.
+# Canonical LP-002 requirements now live in services/learning/imitation/.
+-r ../../learning/imitation/requirements.txt

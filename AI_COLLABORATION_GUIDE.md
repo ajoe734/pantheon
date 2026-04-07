@@ -1,6 +1,6 @@
 # AI Collaboration Guide
 
-Last updated: 2026-04-04
+Last updated: 2026-04-06
 Status: canonical collaboration rules for the Pantheon project
 
 ## 0. Repository Architecture (2026-04-04 — migration complete)
@@ -87,12 +87,12 @@ Separate stable capability lanes from sprint ownership.
 - `Claude`: execution plane, control plane, governance review
 - `Gemini`: GCP, CI/CD, runtime packaging, worker operations
 - `Codex`: integration contracts, status system, schema, acceptance
-- `Grok`: coding assist, research ingestion, external search, spec review, critique
+- `Copilot`: coding assist, research ingestion, external search, spec review, critique
 
-Recommended local mode for `Grok`:
+Recommended local mode for `Copilot`:
 
-- prefer `VS Code` chat if your Grok is exposed there as a coding assistant
-- use `Grok Web` / browser chat as fallback when the task is mainly research or external search
+- prefer `VS Code` chat if your Copilot lane is exposed there as a coding assistant
+- use a browser-hosted coding/research chat as fallback when the task is mainly research or external search
 - do not require API automation for normal collaboration
 - route it through the same status / handoff system as the other agents
 
@@ -105,8 +105,19 @@ Rules:
 - each task has exactly one `owner`
 - `reviewer` cannot equal `owner`
 - blocked tasks must include `waiting_for`
+- every task must pass through `review -> review_approved -> done`
+- direct `done` from `todo` or `in_progress` is not allowed
+- only the `reviewer` may move a task into `review_approved`
+- only the `owner` may finalize a `review_approved` task into `done`
 - done transitions must include a checkpoint message
 - interface changes should be reflected through status updates, not hidden in chat only
+
+Lifecycle rule:
+
+- `todo` / `in_progress`: owner implementation work
+- `review`: reviewer must either approve or request concrete changes
+- `review_approved`: reviewer gate passed; the task returns to the owner for finalization
+- `done`: owner has finished final checks, accepted the approved state, and formally closed the task
 
 ## 3. Status Commands
 
@@ -117,9 +128,10 @@ AI_NAME=Codex ./scripts/ai-status.sh assign <task-id> <owner> <reviewer> "Option
 AI_NAME=Codex ./scripts/ai-status.sh start <task-id> "Started implementation"
 AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Finished contract draft"
 AI_NAME=Codex ./scripts/ai-status.sh handoff <task-id> Gemini "Please review the payload shape"
-AI_NAME=Codex REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="審查通過||後續追蹤事項" ./scripts/ai-status.sh approve <task-id> "Review approved and locked for v1"
+AI_NAME=Gemini REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="審查通過||後續追蹤事項" ./scripts/ai-status.sh approve <task-id> "Review approved and returned to the owner for finalization"
+AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Owner picked up the approved task for final checks"
 AI_NAME=Codex ./scripts/ai-status.sh blocker <task-id> "Waiting for broker decision" Gemini
-AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Completed and verified"
+AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
 ./scripts/sync-state.sh
 ```
 
@@ -160,8 +172,8 @@ Every collaborating LLM should follow this work order by default:
 - if review fails, write the required changes into status and hand the task back clearly
 
 2. **Then do your own assigned work**
-- look for tasks where you are the `owner`
-- prefer tasks that are `in_progress` first
+- first finalize any task where you are the `owner` and the task is already `review_approved`
+- then continue tasks that are `in_progress`
 - then pick tasks that are `todo` but already unblocked by dependencies
 - do not idle if one of your assigned tasks is already safe to start
 
@@ -205,11 +217,12 @@ AI_NAME=Codex bash scripts/ai-status.sh handoff REG-001 Gemini "Registry contrac
 
 A review is not complete until the reviewer does one of these:
 
-- approves by handing off with explicit acceptance
-- writes concrete required changes into `review_notes` or task `next`
+- approves with `approve`, which moves the task to `review_approved` and hands it back to the owner for finalization
+- uses `reopen` plus concrete required changes when the task must return to implementation
 - records a blocker if review cannot proceed because files or artifacts are missing
 
 Do not leave review feedback only in chat.
+Do not use `done` as the reviewer.
 
 ## 6. Dashboard
 
@@ -251,8 +264,8 @@ Please read these files before starting:
 - OSS_INTEGRATION_CHECKLIST.md
 - WORK_REBASELINE.md
 
-You are [Claude/Gemini/Codex/Grok].
+You are [Claude/Gemini/Codex/Copilot].
 Follow the current owner/reviewer assignments from ai-status.json.
 Update progress through scripts/ai-status.sh instead of manually editing multiple Markdown files.
-Work in this order: finish assigned reviews first, then your own unblocked tasks, then claim other safe tasks and set the original owner as reviewer.
+Work in this order: finish assigned reviews first, then finalize your own `review_approved` tasks, then continue your own unblocked tasks, then claim other safe tasks and set the original owner as reviewer.
 ```

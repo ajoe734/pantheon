@@ -1,33 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-04-06T11:50:55Z",
-  "pending": [
-    {
-      "approval_id": "apr-20260406T115055Z-8b0b7f9f",
-      "status": "pending",
-      "created_at": "2026-04-06T11:50:55Z",
-      "resolved_at": null,
-      "decision": null,
-      "note": null,
-      "remember": false,
-      "resume_override_active": false,
-      "resume_override_consumed_at": null,
-      "resume_override_consumed_reason": null,
-      "provider": "claude",
-      "task_id": "LP-004",
-      "worker_run_id": "claude-20260406T114920Z-2c3e7aef",
-      "session_id": "c5027b42-c2de-4356-90f2-4ae3fe8c5ec4",
-      "tool_use_id": "toolu_01256bn4fMEbpovUYB6X5K9p",
-      "expires_at": null,
-      "tool_name": "Bash",
-      "tool_input": {
-        "command": "mkdir -p /home/ajoe734/code/pantheon/services/learning/trl",
-        "description": "Create trl directory"
-      },
-      "risk_class": "needs_review",
-      "suggested_rule": "Bash(mkdir -p /home/ajoe734/code/pantheon/services/learning/trl)"
-    }
-  ],
+  "updated_at": "2026-04-06T13:46:20Z",
+  "pending": [],
   "history": [
     {
       "approval_id": "apr-20260404T085226Z-b3835e29",
@@ -4082,6 +4056,162 @@
       },
       "risk_class": "unknown",
       "suggested_rule": null
+    },
+    {
+      "approval_id": "apr-20260406T115055Z-8b0b7f9f",
+      "status": "resolved",
+      "created_at": "2026-04-06T11:50:55Z",
+      "resolved_at": "2026-04-06T12:14:04Z",
+      "decision": "deny",
+      "note": "Auto-pruned approval because the worker exited before approval could be applied.",
+      "remember": false,
+      "resume_override_active": false,
+      "resume_override_consumed_at": null,
+      "resume_override_consumed_reason": null,
+      "provider": "claude",
+      "task_id": "LP-004",
+      "worker_run_id": "claude-20260406T114920Z-2c3e7aef",
+      "session_id": "c5027b42-c2de-4356-90f2-4ae3fe8c5ec4",
+      "tool_use_id": "toolu_01256bn4fMEbpovUYB6X5K9p",
+      "expires_at": null,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "mkdir -p /home/ajoe734/code/pantheon/services/learning/trl",
+        "description": "Create trl directory"
+      },
+      "risk_class": "needs_review",
+      "suggested_rule": "Bash(mkdir -p /home/ajoe734/code/pantheon/services/learning/trl)"
+    },
+    {
+      "approval_id": "apr-20260406T121443Z-a4a12ad6",
+      "status": "resolved",
+      "created_at": "2026-04-06T12:14:43Z",
+      "resolved_at": "2026-04-06T12:20:16Z",
+      "decision": "deny",
+      "note": "Auto-pruned approval because the worker exited before approval could be applied.",
+      "remember": false,
+      "resume_override_active": false,
+      "resume_override_consumed_at": null,
+      "resume_override_consumed_reason": null,
+      "provider": "claude",
+      "task_id": "EX-001",
+      "worker_run_id": "claude-20260406T121405Z-d179a06f",
+      "session_id": "76a2653e-97c2-470e-bd9f-5674bf1f46bb",
+      "tool_use_id": "toolu_01RJdZ95eqwAGaYoDUzFKvW6",
+      "expires_at": null,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "python3 -m pytest services/execution/test_artifact_loader.py -v 2>&1",
+        "description": "Run EX-001 unit tests"
+      },
+      "risk_class": "needs_review",
+      "suggested_rule": "Bash(python3 -m pytest services/execution/test_artifact_loader.py -v 2>&1)"
+    },
+    {
+      "approval_id": "apr-20260406T121447Z-6643ee0c",
+      "status": "resolved",
+      "created_at": "2026-04-06T12:14:47Z",
+      "resolved_at": "2026-04-06T12:20:16Z",
+      "decision": "deny",
+      "note": "Auto-pruned approval because the worker exited before approval could be applied.",
+      "remember": false,
+      "resume_override_active": false,
+      "resume_override_consumed_at": null,
+      "resume_override_consumed_reason": null,
+      "provider": "claude",
+      "task_id": "EX-001",
+      "worker_run_id": "claude-20260406T121405Z-d179a06f",
+      "session_id": "76a2653e-97c2-470e-bd9f-5674bf1f46bb",
+      "tool_use_id": "toolu_0129phHKAHQbmhSUNYSdions",
+      "expires_at": null,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "python3 -m pytest services/execution/test_artifact_loader.py -v 2>&1",
+        "description": "Run EX-001 artifact loader unit tests"
+      },
+      "risk_class": "needs_review",
+      "suggested_rule": "Bash(python3 -m pytest services/execution/test_artifact_loader.py -v 2>&1)"
+    },
+    {
+      "approval_id": "apr-20260406T122050Z-9941a0dd",
+      "status": "resolved",
+      "created_at": "2026-04-06T12:20:50Z",
+      "resolved_at": "2026-04-06T12:29:03Z",
+      "decision": "allow",
+      "note": "Auto-allowed low-risk local test command after broker policy update.",
+      "remember": false,
+      "resume_override_active": true,
+      "resume_override_consumed_at": null,
+      "resume_override_consumed_reason": null,
+      "provider": "claude",
+      "task_id": "EX-001",
+      "worker_run_id": "claude-20260406T122017Z-9b59e8ca",
+      "session_id": "5183ca8a-1cf9-486d-a788-69ccffca9ec3",
+      "tool_use_id": "toolu_016e3R4KY4p2uo3QcvkYtxcY",
+      "expires_at": null,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "python3 -m unittest services.execution.test_artifact_loader 2>&1",
+        "description": "Run EX-001 unit tests"
+      },
+      "risk_class": "needs_review",
+      "suggested_rule": "Bash(python3 -m unittest services.execution.test_artifact_loader 2>&1)",
+      "resume_override_rule": "Bash(python3 -m unittest services.execution.test_artifact_loader 2>&1)",
+      "resume_override_rule_inserted": true,
+      "resume_override_suspended_ask_rules": []
+    },
+    {
+      "approval_id": "apr-20260406T122051Z-eb7b4035",
+      "status": "resolved",
+      "created_at": "2026-04-06T12:20:51Z",
+      "resolved_at": "2026-04-06T12:29:03Z",
+      "decision": "allow",
+      "note": "Auto-allowed low-risk local test command after broker policy update.",
+      "remember": false,
+      "resume_override_active": true,
+      "resume_override_consumed_at": "2026-04-06T12:29:14Z",
+      "resume_override_consumed_reason": "PostToolUse:Bash",
+      "provider": "claude",
+      "task_id": "EX-001",
+      "worker_run_id": "claude-20260406T122017Z-9b59e8ca",
+      "session_id": "5183ca8a-1cf9-486d-a788-69ccffca9ec3",
+      "tool_use_id": "toolu_01Q92ESBHnozEMTPRuD1McwC",
+      "expires_at": null,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "python3 services/execution/smoke_test_artifact_loader.py 2>&1",
+        "description": "Run EX-001 smoke test"
+      },
+      "risk_class": "needs_review",
+      "suggested_rule": "Bash(python3 services/execution/smoke_test_artifact_loader.py 2>&1)",
+      "resume_override_rule": "Bash(python3 services/execution/smoke_test_artifact_loader.py 2>&1)",
+      "resume_override_rule_inserted": true,
+      "resume_override_suspended_ask_rules": []
+    },
+    {
+      "approval_id": "apr-20260406T123039Z-9742726d",
+      "status": "resolved",
+      "created_at": "2026-04-06T12:30:39Z",
+      "resolved_at": "2026-04-06T13:46:20Z",
+      "decision": "allow",
+      "note": "Auto-allow status sync approval for EX-001 after broker fix.",
+      "remember": true,
+      "resume_override_active": false,
+      "resume_override_consumed_at": null,
+      "resume_override_consumed_reason": null,
+      "provider": "claude",
+      "task_id": "EX-001",
+      "worker_run_id": "claude-20260406T122017Z-9b59e8ca",
+      "session_id": "5183ca8a-1cf9-486d-a788-69ccffca9ec3",
+      "tool_use_id": "toolu_01NmPmTzvYYdk3umhsKLs3ai",
+      "expires_at": null,
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": "AI_NAME=Claude REVIEW_NOTES_ZH=\"審查通過：(1) paper/live 拒絕規則明確，嚴格等值比對涵蓋 draft/candidate/retired；(2) schema 路徑為單一規範來源，兩層 \\$ref 鏈由 _resolve_local_refs 正確解析；(3) transport 完全委派給注入的 object_store，無直接 file I/O 或 GCS bypass；(4) metadata shape 足夠支撐真實 LEAN ObjectStore adapter；(5) REG-002 的 legacy rollback_target fallback 在 projection 前已標準化，loader 端永遠收到 canonical 格式，可接受。9/9 unit tests + smoke test 全通。\" python3 scripts/ai_status.py approve EX-001 \"Review approved by Claude. All 9 unit tests + smoke test pass. paper/live rejection rules explicit; schema path canonical (single source via \\$ref chain); transport fully injected, no direct file I/O or GCS bypass; metadata shape sufficient for LEAN ObjectStore adapter; REG-002 legacy rollback_target fallback normalizes to canonical form before projection write — acceptable transitional shim. EX-001 is ready for downstream consumers (REG-002 execution_projection path and future LEAN-native adapter).\"",
+        "description": "Approve EX-001 task via ai_status.py"
+      },
+      "risk_class": "needs_review",
+      "suggested_rule": "Bash(AI_NAME=Claude REVIEW_NOTES_ZH=\"審查通過：(1) paper/live 拒絕規則明確，嚴格等值比對涵蓋 draft/candidate/retired；(2) schema 路徑為單一規範來源，兩層 \\$ref 鏈由 _resolve_local_refs 正確解析；(3) transport 完全委派給注入的 object_store，無直接 file I/O 或 GCS bypass；(4) metadata shape 足夠支撐真實 LEAN ObjectStore adapter；(5) REG-002 的 legacy rollback_target fallback 在 projection 前已標準化，loader 端永遠收到 canonical 格式，可接受。9/9 unit tests + smoke test 全通。\" python3 scripts/ai_status.py approve EX-001 \"Review approved by Claude. All 9 unit tests + smoke test pass. paper/live rejection rules explicit; schema path canonical (single source via \\$ref chain); transport fully injected, no direct file I/O or GCS bypass; metadata shape sufficient for LEAN ObjectStore adapter; REG-002 legacy rollback_target fallback normalizes to canonical form before projection write — acceptable transitional shim. EX-001 is ready for downstream consumers (REG-002 execution_projection path and future LEAN-native adapter).\")"
     }
   ]
 }

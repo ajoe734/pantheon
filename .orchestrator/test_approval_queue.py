@@ -104,6 +104,49 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self.assertEqual(len(saved["pending"]), 1)
         self.assertEqual(saved["pending"][0]["approval_id"], "apr-live-worker")
 
+    def test_keeps_pending_approval_when_claude_worker_can_resume_session(self) -> None:
+        self._write_json(
+            self.root / "approval-queue.json",
+            {
+                "pending": [
+                    {
+                        "approval_id": "apr-claude-resume",
+                        "status": "pending",
+                        "created_at": "2026-04-06T10:00:00Z",
+                        "provider": "claude",
+                        "task_id": "LP-004",
+                        "worker_run_id": "claude-resume",
+                        "tool_name": "ToolSearch",
+                    }
+                ],
+                "history": [],
+            },
+        )
+        self._write_json(
+            self.root / "state.json",
+            {
+                "workers": {
+                    "claude-resume": {
+                        "run_id": "claude-resume",
+                        "task_id": "LP-004",
+                        "provider": "claude",
+                        "status": "waiting_approval",
+                        "pid": 999999,
+                        "session_id": "sess-123",
+                    }
+                },
+                "queue": {"events": {}},
+            },
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+
+        pruned = approval_queue.prune_stale_approvals(self.config)
+
+        self.assertEqual(pruned, [])
+        saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(saved["pending"]), 1)
+        self.assertEqual(saved["pending"][0]["approval_id"], "apr-claude-resume")
+
 
 if __name__ == "__main__":
     unittest.main()

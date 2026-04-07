@@ -20,6 +20,21 @@ class PromotionGateSpy:
         updated["lifecycle_state"] = target_state.value
         return updated
 
+    def build_execution_projection(self, entry):
+        return type(
+            "Projection",
+            (),
+            {
+                "metadata_key": f"openclaw/registry/{entry['strategy_id']}/{entry['version']}/metadata.json",
+                "artifact_key": f"openclaw/registry/{entry['strategy_id']}/{entry['version']}/artifact.bin",
+                "metadata": {
+                    "strategy_id": entry["strategy_id"],
+                    "version": entry["version"],
+                    "promotion_state": entry["lifecycle_state"],
+                },
+            },
+        )()
+
 
 class TestOpenClawCronClient(unittest.TestCase):
     def setUp(self):
@@ -134,8 +149,11 @@ class TestCronOrchestrator(unittest.TestCase):
             {
                 "target_state": "paper",
                 "registry_entry": {
+                    "registry_id": "reg-strat-001-1.0.0",
+                    "artifact_type": "model_artifact",
                     "strategy_id": "strat-001",
                     "version": "1.0.0",
+                    "checksum": "sha256:abc123def4567890",
                     "lifecycle_state": "candidate",
                     "replication_success": True,
                     "lineage": {"source_run_id": "replication-run-001"},
@@ -143,7 +161,12 @@ class TestCronOrchestrator(unittest.TestCase):
                         "risk_review_passed": True,
                         "sharpe_ratio": 1.1,
                     },
-                    "rollback_target": "0.9.0",
+                    "metadata": {
+                        "rollback": {
+                            "target_registry_id": "reg-strat-001-0.9.0",
+                            "target_version": "0.9.0",
+                        }
+                    },
                 },
             },
         )
@@ -151,6 +174,10 @@ class TestCronOrchestrator(unittest.TestCase):
         self.assertEqual(len(gate_spy.calls), 1)
         self.assertEqual(result.registry_entry["lifecycle_state"], "paper")
         self.assertEqual(result.deployment_request["promotion_gate"], "REG-002")
+        self.assertEqual(
+            result.deployment_request["execution_projection"]["metadata_key"],
+            "openclaw/registry/strat-001/1.0.0/metadata.json",
+        )
 
     def test_deploy_live_rejects_without_approver(self):
         with self.assertRaises(PromotionError):
@@ -159,8 +186,11 @@ class TestCronOrchestrator(unittest.TestCase):
                 {
                     "target_state": "live",
                     "registry_entry": {
+                        "registry_id": "reg-strat-001-1.0.0",
+                        "artifact_type": "model_artifact",
                         "strategy_id": "strat-001",
                         "version": "1.0.0",
+                        "checksum": "sha256:abc123def4567890",
                         "lifecycle_state": "paper",
                         "replication_success": True,
                         "lineage": {"source_run_id": "replication-run-001"},
@@ -168,7 +198,12 @@ class TestCronOrchestrator(unittest.TestCase):
                             "risk_review_passed": True,
                             "sharpe_ratio": 1.1,
                         },
-                        "rollback_target": "0.9.0",
+                        "metadata": {
+                            "rollback": {
+                                "target_registry_id": "reg-strat-001-0.9.0",
+                                "target_version": "0.9.0",
+                            }
+                        },
                     },
                 },
             )

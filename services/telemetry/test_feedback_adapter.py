@@ -751,6 +751,157 @@ class TestAdapterSchemaCompliance(unittest.TestCase):
                 self.assertIn(event["event_type"], {"slippage_observation"})
                 self.assertNotIn(event["event_type"], {"approve", "edit", "reject", "rationale"})
 
+    def test_shared_store_limit_applied_after_family_filter_get_telemetry_for_strategy(self):
+        """
+        Regression test: verify that get_telemetry_for_strategy applies limit AFTER family filtering.
+        
+        This ensures that large numbers of feedback events in the shared store do not
+        prevent telemetry events from being returned due to store-level limit being hit
+        before telemetry family filtering occurs.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_path))
+            
+            # Add 120 feedback events FIRST (these will consume store iteration)
+            for i in range(120):
+                adapter.feedback_store.append({
+                    "event_id": f"fb-{i}",
+                    "event_type": "approve",
+                    "created_at": f"2026-04-07T00:00:{(i % 60):02d}Z",
+                    "actor_id": "user1",
+                    "actor_role": "approver",
+                    "channel": "console",
+                    "target": {
+                        "strategy_id": "strat-mixed",
+                        "promotion_state": "candidate"
+                    }
+                })
+            
+            # Now add a single telemetry event AFTER all feedback events
+            adapter.ingest_telemetry_event(
+                event={
+                    "event_id": "evt-mixed-1",
+                    "event_type": "pnl_snapshot",
+                    "created_at": "2026-04-07T02:00:00Z",
+                    "execution_mode": "paper",
+                    "target": {"strategy_id": "strat-mixed"},
+                    "metrics": {"pnl": 1.0}
+                },
+                strategy_id="strat-mixed",
+                promotion_state="candidate"
+            )
+            
+            # Query should return the telemetry event, not be blocked by feedback events
+            results = adapter.get_telemetry_for_strategy("strat-mixed")
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["event_type"], "pnl_snapshot")
+            self.assertNotIn(results[0]["event_type"], {"approve", "edit", "reject", "rationale"})
+
+    def test_shared_store_limit_applied_after_family_filter_get_telemetry_by_promotion_state(self):
+        """
+        Regression test: verify that get_telemetry_by_promotion_state applies limit AFTER family filtering.
+        
+        This ensures that large numbers of feedback events in the shared store do not
+        prevent telemetry events from being returned.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_path))
+            
+            # Add 150 feedback events
+            for i in range(150):
+                adapter.feedback_store.append({
+                    "event_id": f"fb-promo-{i}",
+                    "event_type": "reject",
+                    "created_at": f"2026-04-07T01:{(i % 60):02d}:00Z",
+                    "actor_id": "user1",
+                    "actor_role": "approver",
+                    "channel": "api",
+                    "target": {
+                        "strategy_id": "strat-many",
+                        "promotion_state": "paper"
+                    }
+                })
+            
+            # Add 5 telemetry events for the same promotion state
+            for j in range(5):
+                adapter.ingest_telemetry_event(
+                    event={
+                        "event_id": f"evt-paper-{j}",
+                        "event_type": "drawdown_snapshot",
+                        "created_at": f"2026-04-07T03:{j:02d}:00Z",
+                        "execution_mode": "paper",
+                        "target": {"strategy_id": "strat-many"},
+                        "metrics": {"drawdown_pct": 0.5 * j}
+                    },
+                    strategy_id="strat-many",
+                    promotion_state="paper"
+                )
+            
+            # Query by promotion state should return all 5 telemetry events,
+            # not be blocked or truncated by the 150 feedback events
+            results = adapter.get_telemetry_by_promotion_state("paper")
+            self.assertEqual(len(results), 5)
+            for event in results:
+                self.assertEqual(event["event_type"], "drawdown_snapshot")
+                self.assertNotIn(event["event_type"], {"approve", "edit", "reject", "rationale"})
+
+    def test_shared_store_limit_applied_after_family_filter_query_telemetry(self):
+        """
+        Regression test: verify that query_telemetry applies limit AFTER family filtering.
+        
+        This ensures that the limit parameter constrains the telemetry results,
+        not the raw matches in the shared store before family filtering.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_path))
+            
+            # Add 200 feedback events that match the linkage
+            for i in range(200):
+                adapter.feedback_store.append({
+                    "event_id": f"fb-query-{i}",
+                    "event_type": "edit",
+                    "created_at": f"2026-04-07T02:{(i % 60):02d}:{(i // 60):02d}Z",
+                    "actor_id": "user2",
+                    "actor_role": "editor",
+                    "channel": "console",
+                    "target": {
+                        "strategy_id": "strat-query",
+                        "promotion_state": "live"
+                    }
+                })
+            
+            # Add 10 telemetry events
+            for j in range(10):
+                adapter.ingest_telemetry_event(
+                    event={
+                        "event_id": f"evt-query-{j}",
+                        "event_type": "fill_observation",
+                        "created_at": f"2026-04-07T04:{j:02d}:00Z",
+                        "execution_mode": "live",
+                        "target": {"strategy_id": "strat-query"},
+                        "metrics": {"fill_count": j * 10}
+                    },
+                    strategy_id="strat-query",
+                    promotion_state="live"
+                )
+            
+            # Query with limit=3 should return 3 telemetry events,
+            # not be constrained by the 200 feedback events before them
+            results = adapter.query_telemetry(
+                strategy_id="strat-query",
+                promotion_state="live",
+                limit=3
+            )
+            self.assertEqual(len(results), 3, 
+                           "limit=3 should return exactly 3 results after family filtering, "
+                           "not be pre-empted by 200 feedback events")
+            for event in results:
+                self.assertEqual(event["event_type"], "fill_observation")
+                self.assertNotIn(event["event_type"], {"approve", "edit", "reject", "rationale"})
+
 
 if __name__ == "__main__":
     unittest.main()

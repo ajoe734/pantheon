@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
@@ -63,10 +64,13 @@ WORKER_FAILURE_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"^status:\s*(401|429)\b", re.IGNORECASE),
-    re.compile(r"hit your limit", re.IGNORECASE),
+    re.compile(r"^(?:you(?:'ve| have)\s+)?hit your limit\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
+
+LOCAL_TZ = ZoneInfo("Asia/Taipei")
+SUPERVISOR_LOG_QUIET = False
 
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
@@ -93,6 +97,9 @@ def clear_supervisor_pid(config: dict[str, Any]) -> None:
 
 def iter_matching_supervisor_pids() -> list[int]:
     current_script = str(Path(__file__).resolve())
+    current_script_name = str(Path(__file__).name)
+    current_script_rel = ".orchestrator/supervisor.py"
+    current_repo_root = str(THIS_DIR.parent.resolve())
     matches: list[int] = []
     for proc_dir in Path("/proc").iterdir():
         if not proc_dir.name.isdigit():
@@ -106,7 +113,17 @@ def iter_matching_supervisor_pids() -> list[int]:
         if not raw:
             continue
         parts = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\x00") if part]
-        if current_script in parts:
+        try:
+            proc_cwd = str((proc_dir / "cwd").resolve())
+        except OSError:
+            proc_cwd = ""
+        script_matches = any(
+            part == current_script
+            or part == current_script_rel
+            or part.endswith(f"/{current_script_name}")
+            for part in parts
+        )
+        if script_matches and proc_cwd == current_repo_root:
             matches.append(pid)
     return sorted(matches)
 
@@ -154,7 +171,137 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-watch", action="store_true", help="Process the event queue without running watch_events first.")
     parser.add_argument("--replay", action="store_true", help="Pass replay through to watch_events for the first scan.")
     parser.add_argument("--poll-interval", type=float, default=None)
+    parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
+    parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
     return parser.parse_args()
+
+
+def console_log(message: str, *, quiet: bool = False) -> None:
+    if quiet:
+        return
+    timestamp = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
+
+
+def parse_runtime_timestamp(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def heartbeat_lag_seconds(previous_heartbeat: str | None, current_heartbeat: str | None) -> float | None:
+    previous_dt = parse_runtime_timestamp(previous_heartbeat)
+    current_dt = parse_runtime_timestamp(current_heartbeat)
+    if previous_dt is None or current_dt is None:
+        return None
+    return max(0.0, (current_dt - previous_dt).total_seconds())
+
+
+def format_runtime_timestamp_local(ts: str | None) -> str:
+    dt = parse_runtime_timestamp(ts)
+    if dt is None:
+        return "-"
+    return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> dict[str, Any]:
+    workers = state.get("workers", {}) or {}
+    queue_events = state.get("queue", {}).get("events", {}) or {}
+    pending_approvals = approval_state.get("pending", []) or []
+    active_statuses = {"running", "started", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled", "fallback"}
+    active_workers = [
+        {
+            "run_id": run_id,
+            "task_id": worker.get("task_id"),
+            "agent_id": worker.get("agent_id"),
+            "provider": worker.get("provider"),
+            "status": worker.get("status"),
+        }
+        for run_id, worker in workers.items()
+        if worker.get("status") in active_statuses
+    ]
+    queue_items = [
+        {
+            "event_id": event_id,
+            "status": record.get("status"),
+            "run_id": record.get("run_id"),
+            "error": record.get("error"),
+        }
+        for event_id, record in queue_events.items()
+        if str(record.get("status") or "") not in {"completed", "done"}
+    ]
+    return {
+        "active_worker_count": len(active_workers),
+        "queue_count": len(queue_items),
+        "pending_approval_count": len(pending_approvals),
+        "active_workers": active_workers,
+        "queue_items": queue_items,
+    }
+
+
+def safe_load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return load_approval_state(config)
+    except KeyError:
+        return {"pending": [], "history": []}
+
+
+def log_runtime_summary(
+    state: dict[str, Any],
+    approval_state: dict[str, Any],
+    *,
+    changed: bool,
+    quiet: bool,
+    verbose: bool,
+    previous_heartbeat: str | None = None,
+    warn_after_seconds: float = 10.0,
+    once: bool = False,
+) -> None:
+    summary = summarize_runtime(state, approval_state)
+    heartbeat = (
+        state.get("supervisor", {}).get("last_heartbeat_at")
+        or "-"
+    )
+    heartbeat_local = format_runtime_timestamp_local(heartbeat if heartbeat != "-" else None)
+    lag_seconds = heartbeat_lag_seconds(previous_heartbeat, heartbeat)
+    lag_summary = f"{lag_seconds:.1f}s" if lag_seconds is not None else "-"
+    mode = "once" if once else "tick"
+    console_log(
+        (
+            f"supervisor {mode}: heartbeat={heartbeat_local} lag={lag_summary} changed={'yes' if changed else 'no'} "
+            f"queue={summary['queue_count']} "
+            f"approvals={summary['pending_approval_count']} "
+            f"active_workers={summary['active_worker_count']}"
+        ),
+        quiet=quiet,
+    )
+    if lag_seconds is not None and lag_seconds > warn_after_seconds:
+        console_log(
+            f"WARNING heartbeat lag exceeded threshold: {lag_seconds:.1f}s > {warn_after_seconds:.1f}s",
+            quiet=quiet,
+        )
+    if not verbose or quiet:
+        return
+    console_log(f"heartbeat: {heartbeat_local} (utc={heartbeat}, lag={lag_summary})", quiet=quiet)
+    if summary["active_workers"]:
+        details = ", ".join(
+            f"{item['agent_id'] or item['provider']}:{item['task_id']}({item['status']})"
+            for item in summary["active_workers"]
+        )
+        console_log(f"active workers: {details}", quiet=quiet)
+    else:
+        console_log("active workers: none", quiet=quiet)
+    if summary["queue_items"]:
+        details = ", ".join(
+            f"{item['event_id']}({item['status']})"
+            for item in summary["queue_items"]
+        )
+        console_log(f"queue: {details}", quiet=quiet)
+    else:
+        console_log("queue: empty", quiet=quiet)
 
 
 def load_provider_report(config: dict[str, Any]) -> dict[str, Any]:
@@ -378,6 +525,16 @@ def pid_is_alive(pid: int | None) -> bool:
     return True
 
 
+def terminate_worker_pid(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
+
+
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
     if not url:
         return None
@@ -465,9 +622,56 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         stripped = line.strip()
         if not stripped:
             continue
+        if '"ts":' in stripped and '"type":' in stripped:
+            continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
             return stripped
     return None
+
+
+def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
+    provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
+    normalized = str(reason or "").lower()
+    retry = worker_retry_settings(config, worker.get("provider"))
+    transient_patterns = [str(pattern).lower() for pattern in retry.get("transient_error_patterns", [])]
+
+    auth_markers = {
+        "status: 401",
+        "unauthorized",
+        "authentication",
+        "auth failed",
+        "invalid api key",
+        "forbidden",
+        "permission denied",
+    }
+    capacity_markers = {
+        "status: 429",
+        "quota_exhausted",
+        "resource_exhausted",
+        "rate limit",
+        "rate limited",
+        "hit your limit",
+        "exhausted your capacity",
+        "no capacity available",
+        "terminalquotaerror",
+        "retryablequotaerror",
+    }
+    unknown_critical_markers = {
+        "an unexpected critical error occurred",
+        "[object object]",
+    }
+
+    if any(marker in normalized for marker in auth_markers):
+        return {"kind": "auth", "transient": False, "label": "auth"}
+    if any(marker in normalized for marker in capacity_markers):
+        return {"kind": "capacity", "transient": True, "label": "capacity/429"}
+    if provider == "gemini" and any(marker in normalized for marker in unknown_critical_markers):
+        return {"kind": "unknown_critical", "transient": False, "label": "unknown critical error"}
+    if any(pattern in normalized for pattern in transient_patterns):
+        return {"kind": "transient", "transient": True, "label": "transient"}
+    if any(marker in normalized for marker in unknown_critical_markers):
+        return {"kind": "unknown_critical", "transient": False, "label": "unknown critical error"}
+    return {"kind": "terminal", "transient": False, "label": "terminal"}
 
 
 def _parse_iso_utc(ts: str | None) -> datetime | None:
@@ -662,6 +866,8 @@ def maybe_reassign_task_after_worker_failure(
         return None
 
     failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
+    failure = classify_worker_failure(config, worker, reason)
+    failure_label = failure.get("label", "provider failure")
     owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
 
@@ -671,7 +877,7 @@ def maybe_reassign_task_after_worker_failure(
         if not new_reviewer:
             return None
         message = (
-            f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated provider failure: {reason}"
+            f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated {failing_agent} {failure_label}: {reason}"
         )
         if not persist_task_reassignment(
             config,
@@ -694,6 +900,10 @@ def maybe_reassign_task_after_worker_failure(
                 "worker_run_id": worker.get("run_id"),
             },
         )
+        console_log(
+            f"reassigned review: task={task_id} from={reviewer} to={new_reviewer} kind={failure_label}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
         return new_reviewer
 
     if task_status in {"todo", "in_progress"} and owner == failing_agent:
@@ -708,7 +918,7 @@ def maybe_reassign_task_after_worker_failure(
         if not new_reviewer:
             return None
         message = (
-            f"Auto-reassigned ownership from {owner} to {new_owner} after repeated provider failure: {reason}"
+            f"Auto-reassigned ownership from {owner} to {new_owner} after repeated {failing_agent} {failure_label}: {reason}"
         )
         if not persist_task_reassignment(
             config,
@@ -732,6 +942,10 @@ def maybe_reassign_task_after_worker_failure(
                 "worker_run_id": worker.get("run_id"),
             },
         )
+        console_log(
+            f"reassigned owner: task={task_id} from={owner} to={new_owner} kind={failure_label}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
         return new_owner
 
     return None
@@ -740,11 +954,9 @@ def maybe_reassign_task_after_worker_failure(
 def is_transient_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> bool:
     if not reason:
         return False
-    retry = worker_retry_settings(config, worker.get("provider"))
-    if not retry.get("enabled", True):
+    if not worker_retry_settings(config, worker.get("provider")).get("enabled", True):
         return False
-    normalized = reason.lower()
-    return any(pattern.lower() in normalized for pattern in retry.get("transient_error_patterns", []))
+    return bool(classify_worker_failure(config, worker, reason).get("transient"))
 
 
 def retry_delay_seconds(config: dict[str, Any], worker: dict[str, Any]) -> float:
@@ -807,6 +1019,7 @@ def maybe_trigger_retry_or_fallback(
     reason: str,
 ) -> tuple[bool, bool]:
     retry = worker_retry_settings(config, worker.get("provider"))
+    failure = classify_worker_failure(config, worker, reason)
     max_attempts = int(retry.get("max_attempts", 5))
     retry_count = int(worker.get("retry_count", 0))
     request = request_for_worker(config, worker)
@@ -828,10 +1041,14 @@ def maybe_trigger_retry_or_fallback(
                 "type": "worker_retry_scheduled",
                 "provider": worker.get("provider"),
                 "task_id": worker.get("task_id"),
-                "message": f"Transient worker failure detected; retry {worker.get('retry_count')} scheduled at {worker.get('next_retry_at')}: {reason}",
+                "message": f"Transient worker failure detected ({failure.get('label')}); retry {worker.get('retry_count')} scheduled at {worker.get('next_retry_at')}: {reason}",
                 "worker_run_id": worker["run_id"],
                 "next_retry_at": worker.get("next_retry_at"),
             },
+        )
+        console_log(
+            f"retry scheduled: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} next={worker.get('next_retry_at')}",
+            quiet=SUPERVISOR_LOG_QUIET,
         )
         return True, True
 
@@ -938,6 +1155,13 @@ def _claude_resume_allowed_tools(approval: dict[str, Any] | None) -> list[str]:
     return candidates
 
 
+def worker_supports_approval_resume(worker: dict[str, Any]) -> bool:
+    return bool(
+        worker.get("provider") == "claude"
+        and (worker.get("session_id") or worker.get("resume_token"))
+    )
+
+
 def resume_claude_worker(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -1027,6 +1251,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
     task_map = task_index_from_status(config, load_status(config))
     valid_queue_event_ids = set(state.get("queue", {}).get("events", {}))
     redispatch_statuses = redispatch_candidate_statuses(config)
+    active_worker_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     pending_by_run: dict[str, list[dict[str, Any]]] = {}
     resolved_by_run: dict[str, list[dict[str, Any]]] = {}
     for item in approval_state.get("pending", []):
@@ -1044,6 +1269,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
     changed = retry_due_workers(config, state, provider_report, now) or changed
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
+        previous_last_event_at = worker.get("last_event_at")
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
                 task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
@@ -1065,10 +1291,109 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                 changed = True
                 continue
         update_from_log(config, worker)
+        alive = pid_is_alive(worker.get("pid"))
+        last_event_advanced = bool(
+            previous_last_event_at
+            and worker.get("last_event_at")
+            and worker.get("last_event_at") > previous_last_event_at
+        )
+        if (
+            worker.get("queue_event_id")
+            and not worker_matches_current_assignment(config, worker, task_map)
+        ):
+            if worker.get("status") == "superseded":
+                continue
+            if alive:
+                terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Worker superseded after task responsibility moved to another agent."
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                "completed",
+                worker["last_error"],
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_superseded",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+            console_log(
+                f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            changed = True
+            continue
+        if (
+            worker.get("queue_event_id")
+            and worker.get("status") in active_worker_statuses
+            and higher_priority_ready_task_exists(config, worker, task_map)
+        ):
+            if alive:
+                terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Worker superseded to prioritize higher-priority review/finalize work."
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                "completed",
+                worker["last_error"],
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_superseded",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+            console_log(
+                f"worker superseded for priority escalation: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            changed = True
+            continue
+        if (
+            not alive
+            and worker.get("queue_event_id")
+            and worker.get("status") in {"fallback", "manual_pending", "retry_backoff", "stalled", "waiting_approval", "suspended_approval"}
+            and not worker_matches_current_assignment(config, worker, task_map)
+        ):
+            workers.pop(run_id, None)
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                "completed",
+                "Dropped stale worker after task ownership/review assignment moved to another agent.",
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_reaped",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Dropped stale worker after task responsibility moved to another agent.",
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+            changed = True
+            continue
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])
         if pending:
-            if not pid_is_alive(worker.get("pid")):
+            if not alive and not worker_supports_approval_resume(worker):
                 worker["status"] = "failed"
                 worker["deferred_action"] = None
                 worker["deferred_tool_use"] = None
@@ -1102,8 +1427,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                 changed = True
                 continue
             approval = pending[0]
-            if worker.get("status") != "waiting_approval":
-                worker["status"] = "waiting_approval"
+            next_status = "waiting_approval" if pid_is_alive(worker.get("pid")) else "suspended_approval"
+            if worker.get("status") != next_status:
+                worker["status"] = next_status
                 worker["deferred_action"] = approval.get("approval_id")
                 worker["last_event_at"] = approval.get("created_at") or worker.get("last_event_at") or utc_now()
                 write_activity_log(
@@ -1112,7 +1438,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                         "type": "worker_waiting_approval",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
-                        "message": f"Worker waiting on approval {approval.get('approval_id')}",
+                        "message": (
+                            f"Worker suspended for approval {approval.get('approval_id')}"
+                            if next_status == "suspended_approval"
+                            else f"Worker waiting on approval {approval.get('approval_id')}"
+                        ),
                         "worker_run_id": worker["run_id"],
                         "approval_id": approval.get("approval_id"),
                     },
@@ -1122,7 +1452,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                 changed = True
             continue
 
-        if worker.get("status") == "waiting_approval" and resolved:
+        if worker.get("status") in {"waiting_approval", "suspended_approval"} and resolved:
             latest = resolved[-1]
             if latest.get("approval_id") != worker.get("last_approval_id"):
                 worker["last_approval_id"] = latest.get("approval_id")
@@ -1162,11 +1492,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     finalize_queue_event_record(config, state, worker, "failed", latest.get("note") or "Worker approval denied.")
                     changed = True
                     continue
-                changed = True
+            changed = True
 
-        alive = pid_is_alive(worker.get("pid"))
         current_status = worker.get("status")
-        if current_status == "waiting_approval" and not pending:
+        if current_status in {"waiting_approval", "suspended_approval"} and not pending:
             worker["deferred_action"] = None
             worker["deferred_tool_use"] = None
             if not resolved:
@@ -1177,7 +1506,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
             else:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
-                worker["last_error"] = "Approval state disappeared before the worker could resume."
+                worker["last_error"] = (
+                    "Approval state disappeared before the worker could resume."
+                    if current_status == "waiting_approval"
+                    else "Approval state disappeared before the suspended worker could resume."
+                )
                 write_activity_log(
                     config,
                     {
@@ -1192,9 +1525,51 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
             changed = True
 
         if alive:
+            if worker.get("status") == "stalled" and last_event_advanced:
+                worker["status"] = "running"
+                worker["last_event_at"] = worker.get("last_event_at") or utc_now()
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_recovered",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": "Worker produced new output after being marked stalled; status restored to running.",
+                        "worker_run_id": worker["run_id"],
+                    },
+                )
+                console_log(
+                    f"worker recovered: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
+                changed = True
+                continue
             last_event = worker.get("last_event_at")
             if last_event:
                 last_dt = datetime.fromisoformat(last_event.replace("Z", "+00:00"))
+                stalled_for_seconds = (now - last_dt).total_seconds()
+                if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
+                    terminate_worker_pid(worker.get("pid"))
+                    worker["status"] = "failed"
+                    worker["last_event_at"] = utc_now()
+                    worker["last_error"] = f"Worker remained stalled for {int(stalled_for_seconds)} seconds and was terminated for redispatch."
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_failed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": worker["last_error"],
+                            "worker_run_id": worker["run_id"],
+                        },
+                    )
+                    finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                    console_log(
+                        f"worker terminated after extended stall: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                        quiet=SUPERVISOR_LOG_QUIET,
+                    )
+                    changed = True
+                    continue
                 if (now - last_dt).total_seconds() >= stall_after and worker.get("status") != "stalled":
                     worker["status"] = "stalled"
                     write_activity_log(
@@ -1212,6 +1587,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
 
         failure_reason = detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
+            failure = classify_worker_failure(config, worker, failure_reason)
+            console_log(
+                f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
             if is_transient_worker_failure(config, worker, failure_reason):
                 handled, retry_changed = maybe_trigger_retry_or_fallback(config, state, provider_report, worker, failure_reason)
                 if handled:
@@ -1251,6 +1631,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
 
         if worker.get("status") not in {"completed", "failed", "manual_pending"}:
             task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+            terminal_statuses = {
+                str(value).lower()
+                for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
+            }
             if task_status in redispatch_statuses:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
@@ -1268,7 +1652,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     },
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            else:
+            elif task_status in terminal_statuses:
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 write_activity_log(
@@ -1284,6 +1668,23 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     },
                 )
                 finalize_queue_event_record(config, state, worker, "completed")
+            else:
+                worker["status"] = "failed"
+                worker["last_event_at"] = utc_now()
+                worker["last_error"] = "Worker exited before the task reached a terminal status."
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_failed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": worker["last_error"],
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             changed = True
     return changed
 
@@ -1324,17 +1725,29 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("ready_dispatcher", {}) or {})
     settings.setdefault("enabled", True)
     settings.setdefault("review_statuses", ["review"])
+    settings.setdefault("finalize_statuses", ["review_approved"])
     settings.setdefault("owned_statuses", ["in_progress", "todo"])
-    settings.setdefault("done_statuses", ["done", "review_approved"])
+    legacy_done_statuses = settings.get("done_statuses", ["done", "review_approved"])
+    settings.setdefault("dependency_done_statuses", ["done"])
+    settings.setdefault("worker_terminal_statuses", legacy_done_statuses)
     settings.setdefault("active_worker_statuses", ["running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"])
     settings.setdefault("max_tasks_per_agent", 1)
     settings.setdefault("max_dispatches_per_tick", 4)
     return settings
 
 
+def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
+    settings = dict(ready_dispatch_settings(config).get("helper_claim", {}) or {})
+    settings.setdefault("enabled", True)
+    settings.setdefault("task_statuses", ["todo"])
+    settings.setdefault("require_owner_higher_priority_load", True)
+    return settings
+
+
 def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     settings = ready_dispatch_settings(config)
     statuses = set(str(value).lower() for value in settings.get("review_statuses", []))
+    statuses.update(str(value).lower() for value in settings.get("finalize_statuses", []))
     statuses.update(str(value).lower() for value in settings.get("owned_statuses", []))
     return statuses
 
@@ -1498,7 +1911,7 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
 
 def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     reason = str(event.get("reason") or "")
-    if reason not in {"review_ready_dispatch", "owned_in_progress_dispatch", "owned_ready_dispatch"}:
+    if reason not in {"review_ready_dispatch", "owned_finalize_dispatch", "owned_in_progress_dispatch", "owned_ready_dispatch"}:
         return None
 
     task_id = str(event.get("task_id") or "")
@@ -1512,16 +1925,19 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
     settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
-    done_statuses = {str(value).lower() for value in settings.get("done_statuses", ["done", "review_approved"])}
+    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
+    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     task_status = str(task.get("status") or "").lower()
 
     eligible = False
     if reason == "review_ready_dispatch":
         eligible = task_status in review_statuses and task.get(reviewer_field) == target_agent
+    elif reason == "owned_finalize_dispatch":
+        eligible = task_status in finalize_statuses and task.get(owner_field) == target_agent
     elif reason == "owned_in_progress_dispatch":
-        eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, done_statuses)
+        eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
     elif reason == "owned_ready_dispatch":
-        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, done_statuses)
+        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
 
     if not eligible:
         return None
@@ -1529,9 +1945,200 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
 
 
+def dispatch_reason_priority(reason: str | None) -> int | None:
+    normalized = str(reason or "")
+    priorities = {
+        "review_ready_dispatch": 0,
+        "owned_finalize_dispatch": 1,
+        "owned_in_progress_dispatch": 2,
+        "owned_ready_dispatch": 3,
+    }
+    return priorities.get(normalized)
+
+
+def dispatch_priority_for_task(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    agent_name: str,
+    *,
+    dependencies_done_statuses: set[str] | None = None,
+) -> int | None:
+    settings = ready_dispatch_settings(config)
+    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
+    dependency_done_statuses = dependencies_done_statuses or {
+        str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])
+    }
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_status = str(task.get("status") or "").lower()
+    if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+        return 0
+    if task_status in finalize_statuses and task.get(owner_field) == agent_name:
+        return 1
+    if (
+        task_status == "in_progress"
+        and task.get(owner_field) == agent_name
+        and dependencies_satisfied(task, {str(task.get("id") or ""): task}, dependency_done_statuses)
+    ):
+        return 2
+    if (
+        task_status == "todo"
+        and task.get(owner_field) == agent_name
+        and dependencies_satisfied(task, {str(task.get("id") or ""): task}, dependency_done_statuses)
+    ):
+        return 3
+    return None
+
+
+def agent_dispatch_loads(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    active_statuses: set[str],
+) -> dict[str, list[int]]:
+    loads: dict[str, list[int]] = {}
+
+    for worker in state.get("workers", {}).values():
+        if worker.get("status") not in active_statuses:
+            continue
+        reason = str(worker.get("request_snapshot", {}).get("reason") or "")
+        priority = dispatch_reason_priority(reason)
+        if priority is None:
+            continue
+        agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+        if not agent_name:
+            continue
+        loads.setdefault(agent_name, []).append(priority)
+
+    queue_records = state.get("queue", {}).get("events", {})
+    for event in load_event_queue(config):
+        event_id = str(event.get("event_id") or "")
+        if not event_id:
+            continue
+        record = queue_records.get(event_id, {})
+        if record.get("status") in {"completed", "failed"}:
+            continue
+        reason = str(event.get("reason") or "")
+        priority = dispatch_reason_priority(reason)
+        if priority is None:
+            continue
+        agent_name = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
+        if not agent_name:
+            continue
+        loads.setdefault(agent_name, []).append(priority)
+
+    return loads
+
+
+def choose_helper_claim_agent(
+    config: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    owner_name: str,
+    reviewer_name: str,
+    idle_agent_name: str,
+    agent_loads: dict[str, list[int]],
+    helper_settings: dict[str, Any],
+) -> bool:
+    if not helper_settings.get("enabled", True):
+        return False
+    allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}
+    if str(task.get("status") or "").lower() not in allowed_statuses:
+        return False
+    if not owner_name or owner_name == idle_agent_name:
+        return False
+    owner_loads = agent_loads.get(owner_name, [])
+    if helper_settings.get("require_owner_higher_priority_load", True):
+        current_priority = dispatch_reason_priority("owned_ready_dispatch")
+        if current_priority is None or not any(priority < current_priority for priority in owner_loads):
+            return False
+    fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
+    if not fallbacks:
+        return False
+    return idle_agent_name in fallbacks
+
+
+def higher_priority_ready_task_exists(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> bool:
+    current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
+    if current_priority is None:
+        return False
+
+    agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+    current_task_id = str(worker.get("task_id") or "")
+    settings = ready_dispatch_settings(config)
+    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
+    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+
+    for task_id, task in task_map.items():
+        if task_id == current_task_id:
+            continue
+        task_status = str(task.get("status") or "").lower()
+        candidate_priority = None
+        if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+            candidate_priority = 0
+        elif task_status in finalize_statuses and task.get(owner_field) == agent_name:
+            candidate_priority = 1
+        elif (
+            task_status == "in_progress"
+            and task.get(owner_field) == agent_name
+            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        ):
+            candidate_priority = 2
+        elif (
+            task_status == "todo"
+            and task.get(owner_field) == agent_name
+            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        ):
+            candidate_priority = 3
+
+        if candidate_priority is not None and candidate_priority < current_priority:
+            return True
+
+    return False
+
+
+def worker_matches_current_assignment(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> bool:
+    task_id = str(worker.get("task_id") or "")
+    task = task_map.get(task_id)
+    if not task:
+        return False
+    agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+    settings = ready_dispatch_settings(config)
+    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
+    owned_statuses = {str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])}
+    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_status = str(task.get("status") or "").lower()
+    if task_status in dependency_done_statuses:
+        return False
+    if task_status in review_statuses:
+        return task.get(reviewer_field) == agent_name
+    if task_status in finalize_statuses:
+        return task.get(owner_field) == agent_name
+    if task_status in owned_statuses:
+        return task.get(owner_field) == agent_name
+    return False
+
+
 def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     reason = str(event.get("reason") or "")
-    if reason not in {"review_ready_dispatch", "owned_in_progress_dispatch", "owned_ready_dispatch"}:
+    if reason not in {"review_ready_dispatch", "owned_finalize_dispatch", "owned_in_progress_dispatch", "owned_ready_dispatch"}:
         return None
 
     expected_key = current_dispatch_event_key(config, event, task_map)
@@ -1593,14 +2200,19 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = [str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])]
-    done_statuses = {str(value).lower() for value in settings.get("done_statuses", ["done", "review_approved"])}
+    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     max_tasks_per_agent = max(1, int(settings.get("max_tasks_per_agent", 1)))
     max_dispatches_per_tick = max(1, int(settings.get("max_dispatches_per_tick", 4)))
 
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
+    pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
+    agent_loads = agent_dispatch_loads(config, state, active_statuses)
+    helper_settings = helper_claim_settings(config)
     seen = state.setdefault("seen_event_keys", {})
 
     changed = False
@@ -1630,12 +2242,73 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
             if task_status in review_statuses and task_reviewer == target_agent:
                 reason = "review_ready_dispatch"
                 priority = 0
-            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, done_statuses):
-                reason = "owned_in_progress_dispatch"
+            elif task_status in finalize_statuses and task_owner == target_agent:
+                reason = "owned_finalize_dispatch"
                 priority = 1
-            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, done_statuses):
-                reason = "owned_ready_dispatch"
+            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+                reason = "owned_in_progress_dispatch"
                 priority = 2
+            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+                reason = "owned_ready_dispatch"
+                priority = 3
+
+            helper_claim_candidate = (
+                task_status == "todo"
+                and dependencies_satisfied(task, task_map, dependency_done_statuses)
+                and task_id not in active_task_ids
+                and task_id not in pending_task_ids
+                and choose_helper_claim_agent(
+                    config,
+                    task=task,
+                    owner_name=str(task_owner or ""),
+                    reviewer_name=str(task_reviewer or ""),
+                    idle_agent_name=target_agent,
+                    agent_loads=agent_loads,
+                    helper_settings=helper_settings,
+                )
+            )
+
+            if helper_claim_candidate:
+                helper_message = (
+                    f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
+                )
+                if persist_task_reassignment(
+                    config,
+                    task_id=task_id,
+                    new_owner=target_agent,
+                    new_reviewer=str(task_owner or task_reviewer or ""),
+                    message=helper_message,
+                    handoff_to=target_agent,
+                    handoff_from=str(task_owner or ""),
+                ):
+                    task[owner_field] = target_agent
+                    task[reviewer_field] = str(task_owner or task_reviewer or "")
+                    task["last_update"] = utc_now()
+                    task["next"] = helper_message
+                    event = build_dispatch_event(task, target_agent, "owned_ready_dispatch", task_map)
+                    if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
+                        seen[event["key"]] = utc_now()
+                        pending_event_keys.add(event["key"])
+                        pending_agents.add(agent_id)
+                        active_task_ids.add(task_id)
+                        changed = True
+                        dispatches += 1
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "task_helper_claimed",
+                                "task_id": task_id,
+                                "message": helper_message,
+                                "from_owner": task_owner,
+                                "to_owner": target_agent,
+                                "new_reviewer": str(task_owner or task_reviewer or ""),
+                            },
+                        )
+                        console_log(
+                            f"helper claim: task={task_id} from={task_owner} to={target_agent}",
+                            quiet=SUPERVISOR_LOG_QUIET,
+                        )
+                        break
 
             if reason is None or priority is None:
                 continue
@@ -1659,7 +2332,15 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
     return changed
 
 
-def run_once(config: dict[str, Any], *, watch: bool, replay: bool = False) -> bool:
+def run_once(
+    config: dict[str, Any],
+    *,
+    watch: bool,
+    replay: bool = False,
+    quiet: bool = False,
+    verbose: bool = False,
+    once: bool = False,
+) -> bool:
     write_supervisor_pid(config)
     heartbeat_at = utc_now()
     def stamp_supervisor_state(state: dict[str, Any]) -> None:
@@ -1672,6 +2353,7 @@ def run_once(config: dict[str, Any], *, watch: bool, replay: bool = False) -> bo
             supervisor_state["started_at"] = heartbeat_at
 
     state = load_runtime_state(config)
+    previous_heartbeat = state.get("supervisor", {}).get("last_heartbeat_at")
     stamp_supervisor_state(state)
     changed = False
     pruned = prune_stale_approvals(config)
@@ -1695,22 +2377,52 @@ def run_once(config: dict[str, Any], *, watch: bool, replay: bool = False) -> bo
     trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
     stamp_supervisor_state(state)
     save_runtime_state(config, state)
+    log_runtime_summary(
+        state,
+        safe_load_approval_state(config),
+        changed=changed,
+        quiet=quiet,
+        verbose=verbose,
+        previous_heartbeat=previous_heartbeat,
+        warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
+        once=once,
+    )
     return changed
 
 
 def main() -> int:
+    global SUPERVISOR_LOG_QUIET
     args = parse_args()
+    SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
     terminate_older_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
     poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 2.0))
-    run_once(config, watch=not args.no_watch, replay=args.replay)
+    console_log(
+        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",
+        quiet=args.quiet,
+    )
+    run_once(
+        config,
+        watch=not args.no_watch,
+        replay=args.replay,
+        quiet=args.quiet,
+        verbose=args.verbose,
+        once=args.once,
+    )
     if args.once:
         return 0
     while True:
         time.sleep(poll_interval)
-        run_once(config, watch=not args.no_watch, replay=False)
+        run_once(
+            config,
+            watch=not args.no_watch,
+            replay=False,
+            quiet=args.quiet,
+            verbose=args.verbose,
+            once=False,
+        )
 
 
 if __name__ == "__main__":

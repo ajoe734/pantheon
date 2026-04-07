@@ -1,7 +1,7 @@
 {
   "version": 2,
   "initialized_at": "2026-04-03T05:09:35Z",
-  "last_scan_at": "2026-04-06T11:50:39Z",
+  "last_scan_at": "2026-04-07T02:19:47Z",
   "tasks": {
     "OPS-001": {
       "id": "OPS-001",
@@ -82,7 +82,7 @@
     "P3-001": {
       "id": "P3-001",
       "status": "done",
-      "owner": "Grok",
+      "owner": "Copilot",
       "reviewer": "Codex",
       "artifacts": [
         "services/execution/lean-runtime/"
@@ -143,15 +143,15 @@
     },
     "EX-001": {
       "id": "EX-001",
-      "status": "in_progress",
-      "owner": "Codex",
+      "status": "done",
+      "owner": "Copilot",
       "reviewer": "Claude",
       "artifacts": [
         "services/execution/artifact-loader/contract.md",
         "services/execution/artifact-loader/artifact_metadata_schema.json"
       ],
-      "next": "Resuming EX-001 after owned_in_progress dispatch. Auditing artifact-loader contract vs implementation, promotion metadata alignment, and smoke-test path.",
-      "last_update": "2026-04-06T11:47:19Z"
+      "next": "Finalized. Artifact loader contract locked: paper/live execution modes defined, metadata schema canonical via single $ref chain, transport via injected Object Store (no direct file I/O), promotion state validation in place. Service implementation complete with 9/9 unit tests passing and smoke tests verified. Ready for downstream consumers: REG-002 execution_projection path and LEAN-native adapter integration.",
+      "last_update": "2026-04-06T16:00:49Z"
     },
     "OC-001": {
       "id": "OC-001",
@@ -168,7 +168,7 @@
       "id": "OC-002",
       "status": "done",
       "owner": "Codex",
-      "reviewer": "Grok",
+      "reviewer": "Copilot",
       "artifacts": [
         "services/control-plane/cron/"
       ],
@@ -199,17 +199,17 @@
     },
     "REG-002": {
       "id": "REG-002",
-      "status": "in_progress",
+      "status": "done",
       "owner": "Codex",
-      "reviewer": "Claude",
+      "reviewer": "Copilot",
       "artifacts": [
         "services/registry/promotion/gate.py",
         "services/registry/promotion/cli.py",
         "services/registry/promotion/README.md",
         "services/registry/promotion/smoke_test_gate.py"
       ],
-      "next": "Reconciling promotion-gate metadata with REG-003/EX-001 contracts and tightening the service-local CLI/smoke-test path.",
-      "last_update": "2026-04-06T06:05:58Z"
+      "next": "Review approved. All acceptance criteria met: (1) candidate/paper/live states strictly enforced, (2) promotion requirements documented, (3) deployment path consumes promotion state end-to-end. 29 integration tests passing. Ready for REG-003, FB-003, EV-001.",
+      "last_update": "2026-04-06T15:38:58Z"
     },
     "AUD-GEMINI-001": {
       "id": "AUD-GEMINI-001",
@@ -224,7 +224,7 @@
     },
     "REG-003": {
       "id": "REG-003",
-      "status": "review_approved",
+      "status": "done",
       "owner": "Codex",
       "reviewer": "Claude",
       "artifacts": [
@@ -232,46 +232,46 @@
         "services/registry/lineage/promoted_artifact_metadata.schema.json",
         "artifact_metadata_schema.json"
       ],
-      "next": "Implementation phase must clarify: (1) how gate.py metadata expectations align with lineage contract, (2) rollback target definition for paper vs live. Build promoted_artifact_metadata.schema.json, loader-side validation, and artifact creation flow.",
-      "last_update": "2026-04-05T05:41:15Z"
+      "next": "Rollback metadata is enforced for live promoted artifacts, lineage requirements are documented in the canonical promoted-artifact schema/contract, and promotion docs/tests reference rollback targets end-to-end. Verified with services/registry/promotion/test_gate.py (4 tests) and services/registry/promotion/smoke_test_gate.py.",
+      "last_update": "2026-04-06T15:40:24Z"
     },
     "FB-001": {
       "id": "FB-001",
-      "status": "review_approved",
+      "status": "done",
       "owner": "Codex",
       "reviewer": "Claude",
       "artifacts": [
         "services/feedback/schema/"
       ],
-      "next": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. governance boundary correct (feedback cannot trigger live promotion), event family separation clean, linkage object sufficient for REG-001/EV-001. Three minor items: (M-1) actor_role 'reviewer' not in OC-001 role enum — reconcile in FB-002 follow-up; (M-2) telemetry promotion_state omits 'draft' — add comment to contract §6; (M-3) 'annotate' operation in edits is non-standard — add $comment to schema. Recommend evaluating registry_id as required field when EV-001 lands.",
-      "last_update": "2026-04-05T12:24:01Z"
+      "next": "Finalized FB-001 for v1 lock: trajectory/preference store contract and both feedback/telemetry schemas are aligned to the approved governance boundary, registry linkage fields remain explicit, and the contract artifact now reflects the approved review record. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "last_update": "2026-04-06T15:42:20Z"
     },
     "FB-002": {
       "id": "FB-002",
-      "status": "review_approved",
+      "status": "done",
       "owner": "Codex",
       "reviewer": "Claude",
       "artifacts": [
         "services/control-plane/feedback/"
       ],
-      "next": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. Trader feedback ingestion captures approve/edit/reject/rationale with governed artifact linkage, idempotent JSONL storage, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped because fastapi extras are absent); python3 -m py_compile services/control-plane/feedback/*.py passed.",
-      "last_update": "2026-04-05T14:54:00Z"
+      "next": "Finalized FB-002 for v1 lock: trader feedback ingestion records approve/edit/reject/rationale as governed learning input with explicit artifact linkage, idempotent JSONL persistence, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "last_update": "2026-04-06T15:43:33Z"
     },
     "FB-003": {
       "id": "FB-003",
-      "status": "todo",
-      "owner": "Claude",
+      "status": "in_progress",
+      "owner": "Copilot",
       "reviewer": "Codex",
       "artifacts": [
         "services/telemetry/"
       ],
-      "next": "Ownership shifted from Gemini to Claude so execution telemetry can move with the execution/governance lane. Turn execution outputs into structured telemetry for the evolution plane",
-      "last_update": "2026-04-06T06:03:44Z"
+      "next": "Re-review blocked: shared-store telemetry queries still depend on a hardcoded limit=1000000 before telemetry-family filtering, so large matching feedback history can still starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md.",
+      "last_update": "2026-04-07T02:11:29Z"
     },
     "EV-001": {
       "id": "EV-001",
       "status": "todo",
-      "owner": "Grok",
+      "owner": "Copilot",
       "reviewer": "Codex",
       "artifacts": [
         "services/evaluation/contracts/"
@@ -292,30 +292,30 @@
     },
     "RS-001": {
       "id": "RS-001",
-      "status": "in_progress",
-      "owner": "Grok",
+      "status": "done",
+      "owner": "Copilot",
       "reviewer": "Claude",
       "artifacts": [
         "services/research/ingest/"
       ],
-      "next": "LP-003 審查完成並批准。MLflow adapter 實現完整、測試充分、文檔清晰。現在轉向 LP-005 調整。",
-      "last_update": "2026-04-06T09:46:29Z"
+      "next": "RS-001 完成：實現完整的 research ingestion workflow，使用已驗證的 OpenAlex 和 GitHub 適配器。ResearchIngestionManager 編排發現、正規化、交接；ResearchStore 在 services/research/ingest/store/ 保留治理審計記錄。22 個單元測試和 5 個煙霧測試全部通過。所有接受標準已滿足。交接 RS-002。",
+      "last_update": "2026-04-06T11:52:48.198525Z"
     },
     "RS-002": {
       "id": "RS-002",
-      "status": "todo",
+      "status": "done",
       "owner": "Codex",
-      "reviewer": "Grok",
+      "reviewer": "Copilot",
       "artifacts": [
         "services/research/strategy-spec/"
       ],
-      "next": "Reviewer shifted from Gemini to Grok to keep the research normalization lane flowing. Turn discovered research into normalized StrategySpec objects before replication",
-      "last_update": "2026-04-06T06:03:44Z"
+      "next": "Finalized RS-002 for v1 lock: governed RS-001 discovery handoffs now normalize into canonical OC-003 StrategySpec and WorkflowHandoff objects with schema validation, lineage-preserving replication compatibility, and downstream RS-003/registry-ready metadata. Verification remains the approved review record: 28 tests passing (4 normalizer + 24 replication gate integration).",
+      "last_update": "2026-04-06T15:44:37Z"
     },
     "RS-003": {
       "id": "RS-003",
       "status": "done",
-      "owner": "Grok",
+      "owner": "Copilot",
       "reviewer": "Claude",
       "artifacts": [
         "services/research/replication/"
@@ -325,58 +325,58 @@
     },
     "LP-001": {
       "id": "LP-001",
-      "status": "review_approved",
+      "status": "done",
       "owner": "Codex",
       "reviewer": "Claude",
       "artifacts": [
         "services/learning/dspy/"
       ],
-      "next": "Codex to implement DSPy adapter under services/learning/dspy/ with BootstrapFewShot optimizer, pin DSPy version, and run smoke test with FB-001 governed examples.",
-      "last_update": "2026-04-05T05:41:15Z"
+      "next": "Finalized LP-001: canonical DSPy adapter now lives under services/learning/dspy with governed FB-001 example filtering, BootstrapFewShot-compatible backends, prompt_bundle packaging plus registry-ready metadata, and validated smoke/unit test coverage. Verification: python3 -m py_compile services/learning/dspy/*.py; python3 -m unittest discover -s services/learning/dspy -p 'test_*.py' (3 tests OK); python3 services/learning/dspy/smoke_test.py (stub backend, 4 training + 4 evaluation examples, intent_accuracy=1.0, tool_selection_precision=1.0, deny_coverage_delta=0.0).",
+      "last_update": "2026-04-06T15:59:05Z"
     },
     "LP-002": {
       "id": "LP-002",
-      "status": "todo",
+      "status": "done",
       "owner": "Codex",
-      "reviewer": "Grok",
+      "reviewer": "Copilot",
       "artifacts": [
         "services/learning/imitation/"
       ],
-      "next": "Reviewer shifted from Gemini to Grok to reduce Gemini single-point review risk. [CODEX NOTE] moved to v1.5 from v2 — imitation (BC from trader trajectories) is more foundational than TRL; DSPy + imitation + MLflow should ship together in v1.5",
-      "last_update": "2026-04-06T06:03:44Z"
+      "next": "Finalized LP-002: imitation workflow under services/learning/imitation now maps governed trader trajectories into behavior-cloning datasets, documents the BC-first execution path, and packages draft registry-ready imitation_policy artifacts with lineage, checksums, and governance-filtered metadata. Verification: python3 -m py_compile services/learning/imitation/*.py; python3 -m unittest discover -s services/learning/imitation -p 'test_*.py' (3 tests OK); python3 services/learning/imitation/smoke_test.py (stub backend verified, 2 trajectories, 4 transitions, registry artifact + metrics emitted).",
+      "last_update": "2026-04-06T16:00:17Z"
     },
     "LP-003": {
       "id": "LP-003",
-      "status": "review_approved",
+      "status": "done",
       "owner": "Codex",
-      "reviewer": "Grok",
+      "reviewer": "Copilot",
       "artifacts": [
         "services/registry/experiments/"
       ],
-      "next": "LP-003 通過審查: MLflow registry adapter 實現完整，experiment_refs/promoted_metadata 形狀與 REG-001/REG-003/EX-001 相容，可直接支援 LP-005。",
-      "last_update": "2026-04-06T09:46:11Z"
+      "next": "Finalized LP-003: services/registry/experiments now ships a governed MLflow-first registry adapter that mirrors registry lineage, aliases, artifact handoff, and REG-003-compatible promoted_metadata for downstream execution and LP-005 tracking. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (4 tests OK); python3 services/registry/experiments/smoke_test.py (memory backend passed).",
+      "last_update": "2026-04-06T16:01:24Z"
     },
     "LP-004": {
       "id": "LP-004",
-      "status": "in_progress",
-      "owner": "Claude",
+      "status": "done",
+      "owner": "Copilot",
       "reviewer": "Codex",
       "artifacts": [
         "services/learning/trl/"
       ],
-      "next": "Starting TRL workflow spec — creating services/learning/trl/ with WORKFLOW_DEFINITION.md and README.md",
-      "last_update": "2026-04-06T11:45:45Z"
+      "next": "Finalized LP-004: All three alignment corrections verified. (1) FB-002 event shape using canonical event_type/target/edits fields. (2) Registry handoff using artifact_type=model_artifact with metadata.model_family=preference_model. (3) Evaluator consumption restricted to lifecycle_state=paper. All documents approved and ready for v1 contract lock.",
+      "last_update": "2026-04-06T16:13:58Z"
     },
     "LP-005": {
       "id": "LP-005",
-      "status": "review_approved",
-      "owner": "Grok",
+      "status": "done",
+      "owner": "Copilot",
       "reviewer": "Codex",
       "artifacts": [
         "services/learning/rl/"
       ],
-      "next": "All 4 code review items fixed and committed. Lifecycle states aligned, RL artifact model updated for registry governance, RS-003 upstream role clarified, non-existent references removed. Document is now internally consistent with REG-001/REG-003/EX-001 contracts.",
-      "last_update": "2026-04-06T09:54:01Z"
+      "next": "All 4 code review items fixed and verified. Lifecycle vocabulary (draft/candidate/paper/live/retired), RL artifact governance (registry_id/artifact_type/lineage/checksum/storage_ref), RS-003 upstream role, and references all corrected. Acceptance criteria met: entry criteria documented in PATH_DEFINITION.md §1, RLlib+Ray Tune workflow with search/tuning guidance defined, registry constraints aligned with REG-001/REG-003/EX-001. Ready for integration.",
+      "last_update": "2026-04-06T16:19:41Z"
     },
     "ARC-003": {
       "id": "ARC-003",
@@ -419,7 +419,7 @@
     "RS-000": {
       "id": "RS-000",
       "status": "done",
-      "owner": "Grok",
+      "owner": "Copilot",
       "reviewer": "Gemini",
       "artifacts": [
         "services/research/grok_research_intake_spec.md",
@@ -442,7 +442,7 @@
     "AUD-GROK-001": {
       "id": "AUD-GROK-001",
       "status": "done",
-      "owner": "Grok",
+      "owner": "Copilot",
       "reviewer": "Gemini",
       "artifacts": [
         "audits/oss-alignment/grok_audit.md"
@@ -519,7 +519,7 @@
     "AUD-GROK-002": {
       "id": "AUD-GROK-002",
       "status": "done",
-      "owner": "Grok",
+      "owner": "Copilot",
       "reviewer": "Gemini",
       "artifacts": [],
       "next": "Verified all tests passing, code compiled successfully, ready for Gemini review",
@@ -585,15 +585,15 @@
     },
     "BUS-VAL-004": {
       "id": "BUS-VAL-004",
-      "status": "review_approved",
+      "status": "done",
       "owner": "Codex",
       "reviewer": "Claude",
       "artifacts": [
         ".orchestrator/supervisor.py",
         ".orchestrator/test_supervisor.py"
       ],
-      "next": "Reviewer shifted from Gemini to Claude so tooling validation no longer depends on the unstable Gemini review lane. Review approved: The stale dispatch guard in process_queue correctly re-validates events against current status, and regression tests successfully verify the skipping of stale events and execution of current events.",
-      "last_update": "2026-04-06T06:03:44Z"
+      "next": "Finalized BUS-VAL-004: supervisor process_queue now revalidates queued review/owner dispatch wake events against current task status and dispatch signature before launching a worker, so stale wake-ups are skipped after task status changes while current events still start normally. Verification: python3 -m unittest discover -s .orchestrator -p 'test_*.py' (36 tests OK).",
+      "last_update": "2026-04-06T16:02:31Z"
     }
   },
   "pending_handoff_keys": [],
@@ -608,121 +608,81 @@
     "dispatcher:Grok:P3-001:owned_in_progress_dispatch:{\"dependency_signature\": \"P1-001:done|P2-002:done\", \"depends_on\": [\"P1-001\", \"P2-002\"], \"last_update\": \"2026-04-06T11:26:41Z\", \"owner\": \"Grok\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"P3-001\"}": "2026-04-06T11:36:36Z",
     "dispatcher:Claude:LP-004:owned_in_progress_dispatch:{\"dependency_signature\": \"FB-002:review_approved|LP-001:review_approved\", \"depends_on\": [\"FB-002\", \"LP-001\"], \"last_update\": \"2026-04-06T11:45:45Z\", \"owner\": \"Claude\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"LP-004\"}": "2026-04-06T11:49:19Z",
     "dispatcher:Codex:EX-001:owned_in_progress_dispatch:{\"dependency_signature\": \"P2-001:done|P3-001:done\", \"depends_on\": [\"P2-001\", \"P3-001\"], \"last_update\": \"2026-04-06T06:03:44Z\", \"owner\": \"Codex\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Claude\", \"status\": \"in_progress\", \"task_id\": \"EX-001\"}": "2026-04-06T11:46:46Z",
-    "dispatcher:Grok:RS-001:owned_in_progress_dispatch:{\"dependency_signature\": \"OC-002:done\", \"depends_on\": [\"OC-002\"], \"last_update\": \"2026-04-06T09:46:29Z\", \"owner\": \"Grok\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Claude\", \"status\": \"in_progress\", \"task_id\": \"RS-001\"}": "2026-04-06T11:48:48Z"
+    "dispatcher:Grok:RS-001:owned_in_progress_dispatch:{\"dependency_signature\": \"OC-002:done\", \"depends_on\": [\"OC-002\"], \"last_update\": \"2026-04-06T09:46:29Z\", \"owner\": \"Grok\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Claude\", \"status\": \"in_progress\", \"task_id\": \"RS-001\"}": "2026-04-06T11:48:48Z",
+    "dispatcher:Claude:EX-001:review_ready_dispatch:{\"dependency_signature\": \"P2-001:done|P3-001:done\", \"depends_on\": [\"P2-001\", \"P3-001\"], \"last_update\": \"2026-04-06T12:10:41Z\", \"owner\": \"Codex\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review\", \"task_id\": \"EX-001\"}": "2026-04-06T12:20:16Z",
+    "dispatcher:Grok:EX-001:owned_in_progress_dispatch:{\"dependency_signature\": \"P2-001:done|P3-001:done\", \"depends_on\": [\"P2-001\", \"P3-001\"], \"last_update\": \"2026-04-06T12:21:31Z\", \"owner\": \"Grok\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Claude\", \"status\": \"in_progress\", \"task_id\": \"EX-001\"}": "2026-04-06T12:21:31Z",
+    "dispatcher:Codex:RS-002:owned_ready_dispatch:{\"dependency_signature\": \"RS-001:done|OC-003:done\", \"depends_on\": [\"RS-001\", \"OC-003\"], \"last_update\": \"2026-04-06T06:03:44Z\", \"owner\": \"Codex\", \"reason\": \"owned_ready_dispatch\", \"reviewer\": \"Grok\", \"status\": \"todo\", \"task_id\": \"RS-002\"}": "2026-04-06T13:46:30Z",
+    "dispatcher:Claude:LP-004:owned_in_progress_dispatch:{\"dependency_signature\": \"FB-002:review_approved|LP-001:review_approved\", \"depends_on\": [\"FB-002\", \"LP-001\"], \"last_update\": \"2026-04-06T11:50:52Z\", \"owner\": \"Claude\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"LP-004\"}": "2026-04-06T13:47:39Z",
+    "dispatcher:Grok:LP-004:owned_in_progress_dispatch:{\"dependency_signature\": \"FB-002:review_approved|LP-001:review_approved\", \"depends_on\": [\"FB-002\", \"LP-001\"], \"last_update\": \"2026-04-06T13:48:13Z\", \"owner\": \"Grok\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"LP-004\"}": "2026-04-06T13:48:13Z",
+    "dispatcher:Copilot:LP-004:owned_in_progress_dispatch:{\"dependency_signature\": \"FB-002:review_approved|LP-001:review_approved\", \"depends_on\": [\"FB-002\", \"LP-001\"], \"last_update\": \"2026-04-06T13:52:05.932135Z\", \"owner\": \"Copilot\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"LP-004\"}": "2026-04-06T13:54:11Z",
+    "dispatcher:Claude:LP-004:owned_in_progress_dispatch:{\"dependency_signature\": \"FB-002:review_approved|LP-001:review_approved\", \"depends_on\": [\"FB-002\", \"LP-001\"], \"last_update\": \"2026-04-06T14:04:57Z\", \"owner\": \"Claude\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"LP-004\"}": "2026-04-06T14:04:59Z",
+    "dispatcher:Grok:RS-002:review_ready_dispatch:{\"dependency_signature\": \"RS-001:done|OC-003:done\", \"depends_on\": [\"RS-001\", \"OC-003\"], \"last_update\": \"2026-04-06T14:05:05Z\", \"owner\": \"Codex\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Grok\", \"status\": \"review\", \"task_id\": \"RS-002\"}": "2026-04-06T14:05:06Z",
+    "dispatcher:Codex:LP-004:review_ready_dispatch:{\"dependency_signature\": \"FB-002:review_approved|LP-001:review_approved\", \"depends_on\": [\"FB-002\", \"LP-001\"], \"last_update\": \"2026-04-06T14:05:11Z\", \"owner\": \"Grok\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review\", \"task_id\": \"LP-004\"}": "2026-04-06T14:06:37Z",
+    "dispatcher:Codex:REG-002:owned_in_progress_dispatch:{\"dependency_signature\": \"REG-001:done|EX-001:review_approved\", \"depends_on\": [\"REG-001\", \"EX-001\"], \"last_update\": \"2026-04-06T12:10:41Z\", \"owner\": \"Codex\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Claude\", \"status\": \"in_progress\", \"task_id\": \"REG-002\"}": "2026-04-06T14:14:14Z",
+    "dispatcher:Claude:REG-002:review_ready_dispatch:{\"dependency_signature\": \"REG-001:done|EX-001:review_approved\", \"depends_on\": [\"REG-001\", \"EX-001\"], \"last_update\": \"2026-04-06T14:17:23Z\", \"owner\": \"Codex\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review\", \"task_id\": \"REG-002\"}": "2026-04-06T14:17:23Z",
+    "dispatcher:Copilot:REG-002:review_ready_dispatch:{\"dependency_signature\": \"REG-001:done|EX-001:review_approved\", \"depends_on\": [\"REG-001\", \"EX-001\"], \"last_update\": \"2026-04-06T14:18:01Z\", \"owner\": \"Codex\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Copilot\", \"status\": \"review\", \"task_id\": \"REG-002\"}": "2026-04-06T14:18:01Z",
+    "dispatcher:Codex:LP-002:owned_ready_dispatch:{\"dependency_signature\": \"FB-001:review_approved|RS-002:review_approved\", \"depends_on\": [\"FB-001\", \"RS-002\"], \"last_update\": \"2026-04-06T06:03:44Z\", \"owner\": \"Codex\", \"reason\": \"owned_ready_dispatch\", \"reviewer\": \"Copilot\", \"status\": \"todo\", \"task_id\": \"LP-002\"}": "2026-04-06T14:18:03Z",
+    "dispatcher:Gemini:REG-002:review_ready_dispatch:{\"dependency_signature\": \"REG-001:done|EX-001:review_approved\", \"depends_on\": [\"REG-001\", \"EX-001\"], \"last_update\": \"2026-04-06T14:29:07Z\", \"owner\": \"Codex\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Gemini\", \"status\": \"review\", \"task_id\": \"REG-002\"}": "2026-04-06T14:29:08Z",
+    "dispatcher:Claude:REG-002:review_ready_dispatch:{\"dependency_signature\": \"REG-001:done|EX-001:review_approved\", \"depends_on\": [\"REG-001\", \"EX-001\"], \"last_update\": \"2026-04-06T14:35:24Z\", \"owner\": \"Codex\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review\", \"task_id\": \"REG-002\"}": "2026-04-06T14:35:24Z",
+    "dispatcher:Copilot:REG-002:review_ready_dispatch:{\"dependency_signature\": \"REG-001:done|EX-001:review_approved\", \"depends_on\": [\"REG-001\", \"EX-001\"], \"last_update\": \"2026-04-06T14:36:07Z\", \"owner\": \"Codex\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Copilot\", \"status\": \"review\", \"task_id\": \"REG-002\"}": "2026-04-06T14:36:07Z",
+    "dispatcher:Copilot:FB-003:owned_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:review_approved\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-06T14:40:24Z\", \"owner\": \"Copilot\", \"reason\": \"owned_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"todo\", \"task_id\": \"FB-003\"}": "2026-04-06T15:26:18Z",
+    "dispatcher:Codex:REG-002:owned_finalize_dispatch:{\"dependency_signature\": \"REG-001:done|EX-001:review_approved\", \"depends_on\": [\"REG-001\", \"EX-001\"], \"last_update\": \"2026-04-06T15:23:12Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Copilot\", \"status\": \"review_approved\", \"task_id\": \"REG-002\"}": "2026-04-06T15:38:00Z",
+    "dispatcher:Codex:REG-003:owned_finalize_dispatch:{\"dependency_signature\": \"REG-001:done|REG-002:done\", \"depends_on\": [\"REG-001\", \"REG-002\"], \"last_update\": \"2026-04-05T05:41:15Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review_approved\", \"task_id\": \"REG-003\"}": "2026-04-06T15:38:59Z",
+    "dispatcher:Codex:FB-001:owned_finalize_dispatch:{\"dependency_signature\": \"REG-001:done\", \"depends_on\": [\"REG-001\"], \"last_update\": \"2026-04-05T12:24:01Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review_approved\", \"task_id\": \"FB-001\"}": "2026-04-06T15:40:26Z",
+    "dispatcher:Codex:FB-002:owned_finalize_dispatch:{\"dependency_signature\": \"FB-001:done|OC-001:done\", \"depends_on\": [\"FB-001\", \"OC-001\"], \"last_update\": \"2026-04-05T14:54:00Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review_approved\", \"task_id\": \"FB-002\"}": "2026-04-06T15:42:22Z",
+    "dispatcher:Codex:RS-002:owned_finalize_dispatch:{\"dependency_signature\": \"RS-001:done|OC-003:done\", \"depends_on\": [\"RS-001\", \"OC-003\"], \"last_update\": \"2026-04-06T14:12:25Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Copilot\", \"status\": \"review_approved\", \"task_id\": \"RS-002\"}": "2026-04-06T15:43:34Z",
+    "dispatcher:Codex:LP-001:owned_finalize_dispatch:{\"dependency_signature\": \"FB-001:done|OC-003:done\", \"depends_on\": [\"FB-001\", \"OC-003\"], \"last_update\": \"2026-04-05T05:41:15Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review_approved\", \"task_id\": \"LP-001\"}": "2026-04-06T15:44:39Z",
+    "dispatcher:Copilot:EX-001:owned_finalize_dispatch:{\"dependency_signature\": \"P2-001:done|P3-001:done\", \"depends_on\": [\"P2-001\", \"P3-001\"], \"last_update\": \"2026-04-06T13:46:39Z\", \"owner\": \"Copilot\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review_approved\", \"task_id\": \"EX-001\"}": "2026-04-06T15:45:20Z",
+    "dispatcher:Codex:LP-002:owned_finalize_dispatch:{\"dependency_signature\": \"FB-001:done|RS-002:done\", \"depends_on\": [\"FB-001\", \"RS-002\"], \"last_update\": \"2026-04-06T15:13:36Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Copilot\", \"status\": \"review_approved\", \"task_id\": \"LP-002\"}": "2026-04-06T15:59:07Z",
+    "dispatcher:Codex:LP-003:owned_finalize_dispatch:{\"dependency_signature\": \"REG-001:done\", \"depends_on\": [\"REG-001\"], \"last_update\": \"2026-04-06T09:46:11Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Copilot\", \"status\": \"review_approved\", \"task_id\": \"LP-003\"}": "2026-04-06T16:00:19Z",
+    "dispatcher:Copilot:LP-004:owned_finalize_dispatch:{\"dependency_signature\": \"FB-002:done|LP-001:done\", \"depends_on\": [\"FB-002\", \"LP-001\"], \"last_update\": \"2026-04-06T14:13:25Z\", \"owner\": \"Copilot\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review_approved\", \"task_id\": \"LP-004\"}": "2026-04-06T16:00:50Z",
+    "dispatcher:Codex:BUS-VAL-004:owned_finalize_dispatch:{\"dependency_signature\": \"\", \"depends_on\": [], \"last_update\": \"2026-04-06T06:03:44Z\", \"owner\": \"Codex\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Claude\", \"status\": \"review_approved\", \"task_id\": \"BUS-VAL-004\"}": "2026-04-06T16:01:26Z",
+    "dispatcher:Copilot:LP-005:owned_finalize_dispatch:{\"dependency_signature\": \"RS-003:done|LP-003:done\", \"depends_on\": [\"RS-003\", \"LP-003\"], \"last_update\": \"2026-04-06T09:54:01Z\", \"owner\": \"Copilot\", \"reason\": \"owned_finalize_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review_approved\", \"task_id\": \"LP-005\"}": "2026-04-06T16:13:58Z",
+    "dispatcher:Copilot:FB-003:owned_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-06T14:40:24Z\", \"owner\": \"Copilot\", \"reason\": \"owned_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"todo\", \"task_id\": \"FB-003\"}": "2026-04-06T16:19:42Z",
+    "dispatcher:Codex:FB-003:review_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-06T16:39:22Z\", \"owner\": \"Copilot\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review\", \"task_id\": \"FB-003\"}": "2026-04-07T00:07:45Z",
+    "dispatcher:Codex:FB-003:review_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T00:42:32Z\", \"owner\": \"Copilot\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review\", \"task_id\": \"FB-003\"}": "2026-04-07T00:42:33Z",
+    "dispatcher:Copilot:FB-003:owned_in_progress_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T00:46:04Z\", \"owner\": \"Copilot\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"FB-003\"}": "2026-04-07T00:49:07Z",
+    "dispatcher:Codex:FB-003:review_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T00:55:13Z\", \"owner\": \"Copilot\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review\", \"task_id\": \"FB-003\"}": "2026-04-07T00:55:13Z",
+    "dispatcher:Copilot:FB-003:owned_in_progress_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T00:58:46Z\", \"owner\": \"Copilot\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"FB-003\"}": "2026-04-07T01:05:58Z",
+    "dispatcher:Codex:FB-003:review_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T01:10:10Z\", \"owner\": \"Copilot\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review\", \"task_id\": \"FB-003\"}": "2026-04-07T01:10:11Z",
+    "dispatcher:Copilot:FB-003:owned_in_progress_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T01:14:40Z\", \"owner\": \"Copilot\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"FB-003\"}": "2026-04-07T01:14:40Z",
+    "dispatcher:Codex:FB-003:review_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T01:18:51Z\", \"owner\": \"Copilot\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review\", \"task_id\": \"FB-003\"}": "2026-04-07T02:00:36Z",
+    "dispatcher:Copilot:FB-003:owned_in_progress_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T02:03:46Z\", \"owner\": \"Copilot\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"FB-003\"}": "2026-04-07T02:03:47Z",
+    "dispatcher:Codex:FB-003:review_ready_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T02:08:32Z\", \"owner\": \"Copilot\", \"reason\": \"review_ready_dispatch\", \"reviewer\": \"Codex\", \"status\": \"review\", \"task_id\": \"FB-003\"}": "2026-04-07T02:08:33Z",
+    "dispatcher:Copilot:FB-003:owned_in_progress_dispatch:{\"dependency_signature\": \"P3-001:done|REG-002:done\", \"depends_on\": [\"P3-001\", \"REG-002\"], \"last_update\": \"2026-04-07T02:11:29Z\", \"owner\": \"Copilot\", \"reason\": \"owned_in_progress_dispatch\", \"reviewer\": \"Codex\", \"status\": \"in_progress\", \"task_id\": \"FB-003\"}": "2026-04-07T02:11:29Z"
   },
   "queue": {
     "events": {
-      "evt-20260406T114646Z-d2ca0b81": {
+      "evt-20260407T021129Z-bc9b54d5": {
         "attempt_count": 1,
         "status": "started",
-        "last_attempt_at": "2026-04-06T11:46:46Z",
-        "run_id": "codex-20260406T114646Z-bd2e2169",
-        "processed_at": "2026-04-06T11:46:46Z"
-      },
-      "evt-20260406T114848Z-52218255": {
-        "attempt_count": 1,
-        "status": "started",
-        "last_attempt_at": "2026-04-06T11:48:48Z",
-        "run_id": "copilot-20260406T114848Z-df6575a8",
-        "processed_at": "2026-04-06T11:48:48Z"
-      },
-      "evt-20260406T114919Z-6b438b4a": {
-        "attempt_count": 1,
-        "status": "started",
-        "last_attempt_at": "2026-04-06T11:49:19Z",
-        "run_id": "claude-20260406T114920Z-2c3e7aef",
-        "processed_at": "2026-04-06T11:49:20Z"
+        "last_attempt_at": "2026-04-07T02:11:29Z",
+        "run_id": "copilot-20260407T021130Z-ea2b7741",
+        "processed_at": "2026-04-07T02:11:30Z"
       }
     }
   },
   "workers": {
-    "codex-20260406T114646Z-bd2e2169": {
-      "run_id": "codex-20260406T114646Z-bd2e2169",
-      "provider": "codex",
-      "agent_id": "codex",
-      "task_id": "EX-001",
-      "session_id": "cd416913-4d27-403a-a8e2-205266a59a42",
-      "mode": "codex",
-      "status": "running",
-      "last_event_at": "2026-04-06T11:49:38Z",
-      "deferred_action": null,
-      "resume_token": null,
-      "pr_url": null,
-      "session_url": null,
-      "attempt_count": 1,
-      "queue_event_id": "evt-20260406T114646Z-d2ca0b81",
-      "command": [
-        "codex",
-        "exec",
-        "-C",
-        "/home/ajoe734/code/pantheon",
-        "-c",
-        "ask_for_approval=\"never\"",
-        "-s",
-        "workspace-write",
-        "--skip-git-repo-check",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: EX-001\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/execution/artifact-loader/contract.md\n- services/execution/artifact-loader/artifact_metadata_schema.json\n"
-      ],
-      "log_path": "/home/ajoe734/code/pantheon/.orchestrator/logs/20260406T114646608457Z-codex-codex-2199b9.log",
-      "payload_path": null,
-      "pid": 450013,
-      "notes": "Codex CLI wake-up started in the background.",
-      "metadata": {},
-      "request_snapshot": {
-        "agent_id": "codex",
-        "provider": "codex",
-        "delivery_mode": "codex",
-        "message": "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: EX-001\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/execution/artifact-loader/contract.md\n- services/execution/artifact-loader/artifact_metadata_schema.json\n",
-        "task_id": "EX-001",
-        "reason": "owned_in_progress_dispatch",
-        "context_files": [
-          "ai-status.json",
-          "current-work.md",
-          "ai-activity-log.jsonl",
-          "docs-site/index.html"
-        ],
-        "target_files": [
-          "services/execution/artifact-loader/contract.md",
-          "services/execution/artifact-loader/artifact_metadata_schema.json"
-        ],
-        "metadata": {
-          "handoff": null,
-          "task": {
-            "id": "EX-001",
-            "artifacts": [
-              "services/execution/artifact-loader/contract.md",
-              "services/execution/artifact-loader/artifact_metadata_schema.json"
-            ],
-            "next": "Ownership shifted from Gemini to Codex after repeated Gemini auto-worker failures. Resetting status per AUD-CLAUDE-001: contract is done but implementation is missing. Re-evaluating LEAN native bridge."
-          }
-        }
-      },
-      "parent_run_id": null,
-      "retry_count": 0,
-      "next_retry_at": null,
-      "last_error": null
-    },
-    "copilot-20260406T114848Z-df6575a8": {
-      "run_id": "copilot-20260406T114848Z-df6575a8",
+    "copilot-20260407T021130Z-ea2b7741": {
+      "run_id": "copilot-20260407T021130Z-ea2b7741",
       "provider": "copilot",
-      "agent_id": "grok",
-      "task_id": "RS-001",
+      "agent_id": "copilot",
+      "task_id": "FB-003",
       "session_id": null,
       "mode": "copilot_local",
       "status": "running",
-      "last_event_at": "2026-04-06T11:50:39Z",
+      "last_event_at": "2026-04-07T02:19:46Z",
       "deferred_action": null,
       "resume_token": null,
       "pr_url": null,
       "session_url": null,
       "attempt_count": 1,
-      "queue_event_id": "evt-20260406T114848Z-52218255",
+      "queue_event_id": "evt-20260407T021129Z-bc9b54d5",
       "command": [
         "copilot",
         "--autopilot",
         "-p",
-        "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: RS-001\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/research/ingest/\n",
+        "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: FB-003\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/telemetry/\n",
         "--max-autopilot-continues",
         "12",
         "--allow-all-tools",
@@ -730,20 +690,20 @@
         "/home/ajoe734/code/pantheon",
         "--no-ask-user"
       ],
-      "log_path": "/home/ajoe734/code/pantheon/.orchestrator/logs/20260406T114848216737Z-copilot-grok-3f0f28.log",
+      "log_path": "/home/ajoe734/code/pantheon/.orchestrator/logs/20260407T021130322666Z-copilot-copilot-687c0f.log",
       "payload_path": null,
-      "pid": 452125,
+      "pid": 661008,
       "notes": "Copilot CLI autopilot wake-up started in the background.",
       "metadata": {
-        "shell_command": "copilot --autopilot -p '你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: RS-001\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/research/ingest/\n' --max-autopilot-continues 12 --allow-all-tools --add-dir /home/ajoe734/code/pantheon --no-ask-user",
+        "shell_command": "copilot --autopilot -p '你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: FB-003\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/telemetry/\n' --max-autopilot-continues 12 --allow-all-tools --add-dir /home/ajoe734/code/pantheon --no-ask-user",
         "model_preference": null
       },
       "request_snapshot": {
-        "agent_id": "grok",
+        "agent_id": "copilot",
         "provider": "copilot",
         "delivery_mode": "copilot_local",
-        "message": "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: RS-001\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/research/ingest/\n",
-        "task_id": "RS-001",
+        "message": "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: FB-003\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/telemetry/\n",
+        "task_id": "FB-003",
         "reason": "owned_in_progress_dispatch",
         "context_files": [
           "ai-status.json",
@@ -752,83 +712,16 @@
           "docs-site/index.html"
         ],
         "target_files": [
-          "services/research/ingest/"
+          "services/telemetry/"
         ],
         "metadata": {
           "handoff": null,
           "task": {
-            "id": "RS-001",
+            "id": "FB-003",
             "artifacts": [
-              "services/research/ingest/"
+              "services/telemetry/"
             ],
-            "next": "LP-003 審查完成並批准。MLflow adapter 實現完整、測試充分、文檔清晰。現在轉向 LP-005 調整。"
-          }
-        }
-      },
-      "parent_run_id": null,
-      "retry_count": 0,
-      "next_retry_at": null,
-      "last_error": null
-    },
-    "claude-20260406T114920Z-2c3e7aef": {
-      "run_id": "claude-20260406T114920Z-2c3e7aef",
-      "provider": "claude",
-      "agent_id": "claude",
-      "task_id": "LP-004",
-      "session_id": "c5027b42-c2de-4356-90f2-4ae3fe8c5ec4",
-      "mode": "claude_cli",
-      "status": "running",
-      "last_event_at": "2026-04-06T11:50:34Z",
-      "deferred_action": null,
-      "resume_token": null,
-      "pr_url": null,
-      "session_url": null,
-      "attempt_count": 1,
-      "queue_event_id": "evt-20260406T114919Z-6b438b4a",
-      "command": [
-        "claude",
-        "-p",
-        "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: LP-004\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/learning/trl/\n",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--include-hook-events",
-        "--permission-mode",
-        "auto",
-        "--mcp-config",
-        "/home/ajoe734/code/pantheon/.orchestrator/claude-approval-broker.mcp.json"
-      ],
-      "log_path": "/home/ajoe734/code/pantheon/.orchestrator/logs/20260406T114920678339Z-claude-claude-f276d6.log",
-      "payload_path": null,
-      "pid": 452650,
-      "notes": "Claude CLI wake-up started in the background.",
-      "metadata": {
-        "shell_command": "claude -p '你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: LP-004\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/learning/trl/\n' --output-format stream-json --verbose --include-hook-events --permission-mode auto --mcp-config /home/ajoe734/code/pantheon/.orchestrator/claude-approval-broker.mcp.json"
-      },
-      "request_snapshot": {
-        "agent_id": "claude",
-        "provider": "claude",
-        "delivery_mode": "claude_cli",
-        "message": "你被喚醒了。\n\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\n- ai-status.json\n- current-work.md\n- ai-activity-log.jsonl\n- docs-site/index.html\n\n找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。\n\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\n\nTask ID: LP-004\n原因: owned_in_progress_dispatch\n可能相關檔案:\n- services/learning/trl/\n",
-        "task_id": "LP-004",
-        "reason": "owned_in_progress_dispatch",
-        "context_files": [
-          "ai-status.json",
-          "current-work.md",
-          "ai-activity-log.jsonl",
-          "docs-site/index.html"
-        ],
-        "target_files": [
-          "services/learning/trl/"
-        ],
-        "metadata": {
-          "handoff": null,
-          "task": {
-            "id": "LP-004",
-            "artifacts": [
-              "services/learning/trl/"
-            ],
-            "next": "Starting TRL workflow spec — creating services/learning/trl/ with WORKFLOW_DEFINITION.md and README.md"
+            "next": "Re-review blocked: shared-store telemetry queries still depend on a hardcoded limit=1000000 before telemetry-family filtering, so large matching feedback history can still starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md."
           }
         }
       },
@@ -842,8 +735,8 @@
     "last_reconciled_at": null
   },
   "supervisor": {
-    "pid": 454191,
-    "started_at": "2026-04-06T11:50:39Z",
-    "last_heartbeat_at": "2026-04-06T11:50:39Z"
+    "pid": 621073,
+    "started_at": "2026-04-07T00:45:16Z",
+    "last_heartbeat_at": "2026-04-07T02:19:47Z"
   }
 }

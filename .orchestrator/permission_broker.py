@@ -6,6 +6,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -56,12 +57,16 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^git -C .+ (add|commit|push|remote set-url|submodule|rm)"),
     re.compile(r"^git rm(\s|$)"),
     re.compile(r"^python3 scripts/ai_status\.py(\s|$)"),
+    re.compile(r"^python3 -m unittest(\s|$)"),
+    re.compile(r"^cd .+ && python3 -m unittest(\s|$)"),
     re.compile(r"^python3 -m unittest discover(\s|$)"),
     re.compile(r"^cd .+ && python3 -m unittest discover(\s|$)"),
     re.compile(r"^python3 -m py_compile(\s|$)"),
     re.compile(r"^cd .+ && python3 -m py_compile(\s|$)"),
     re.compile(r"^python3 (?:[A-Za-z0-9_./-]+/)?smoke_test\.py(?:\s|$)"),
+    re.compile(r"^python3 (?:[A-Za-z0-9_./-]*/)?smoke_test[A-Za-z0-9_./-]*\.py(?:\s|$)"),
     re.compile(r"^cd .+ && python3 smoke_test\.py(?:\s|$)"),
+    re.compile(r"^cd .+ && python3 (?:[A-Za-z0-9_./-]*/)?smoke_test[A-Za-z0-9_./-]*\.py(?:\s|$)"),
     re.compile(r"^python3 \.orchestrator/approval_queue\.py(\s|$)"),
     re.compile(r"^python3 \.orchestrator/doctor\.py(\s|$)"),
     re.compile(r"^python3 \.orchestrator/supervisor\.py(\s|$)"),
@@ -88,7 +93,7 @@ DENY_BASH_PATTERNS = [
     re.compile(r"^chmod 777(\s|$)"),
 ]
 
-SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook"}
+SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook", "ToolSearch"}
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
 
@@ -165,6 +170,8 @@ def classify_command(shell_command: str) -> str:
         return "allow"
     if _is_safe_python_one_liner(shell_command):
         return "allow"
+    if _is_safe_workspace_mkdir_command(shell_command):
+        return "allow"
     for pattern in DENY_BASH_PATTERNS:
         if pattern.search(shell_command):
             return "deny"
@@ -188,7 +195,33 @@ def _is_safe_python_one_liner(shell_command: str) -> bool:
 
 def _is_safe_status_sync_command(shell_command: str) -> bool:
     command = shell_command.strip()
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return any(pattern.search(command) for pattern in STATUS_SYNC_BASH_PATTERNS)
+    index = 0
+    while index < len(parts) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", parts[index]):
+        index += 1
+    if index >= len(parts):
+        return False
+    remaining = parts[index:]
+    if len(remaining) >= 2 and remaining[0] == "python3" and remaining[1] == "scripts/ai_status.py":
+        return True
+    if len(remaining) >= 2 and remaining[0] == "bash" and remaining[1] == "scripts/ai-status.sh":
+        return True
+    if remaining[0] == "scripts/ai-status.sh":
+        return True
     return any(pattern.search(command) for pattern in STATUS_SYNC_BASH_PATTERNS)
+
+
+def _is_safe_workspace_mkdir_command(shell_command: str) -> bool:
+    command = shell_command.strip()
+    if not command.startswith("mkdir -p "):
+        return False
+    raw_paths = [item for item in command[len("mkdir -p ") :].split() if item]
+    if not raw_paths:
+        return False
+    return _paths_within_workspace([Path(item) for item in raw_paths])
 
 
 def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:

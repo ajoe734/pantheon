@@ -1,9 +1,9 @@
 # Artifact Loader Contract
 
 **Task:** EX-001  
-**Owner:** Gemini  
+**Owner:** Codex  
 **Reviewer:** Claude  
-**Status:** DRAFT — contract path materialized in repo; LEAN-native implementation still deferred
+**Status:** IN PROGRESS — contract locked; service-local loader, Object Store adapter/materialization helper, and smoke path now exist; algorithm-level LEAN run coverage is still deferred
 
 ---
 
@@ -19,6 +19,12 @@ Its job is not to decide promotion. Its job is to:
 - hand approved artifact payloads into the execution runtime
 
 This contract defines the loader-facing metadata and behavior.
+
+Reference implementation paths:
+
+- `services/execution/artifact_loader.py`
+- `services/execution/test_artifact_loader.py`
+- `services/execution/smoke_test_artifact_loader.py`
 
 Machine-readable metadata schema:
 
@@ -44,6 +50,7 @@ Allowed transport assumption for this contract:
 
 - registry or promotion tooling materializes metadata and artifact payloads into Object Store
 - LEAN reads them through `ObjectStore` semantics
+- Python and wrapped .NET Object Store naming differences (`object_store.read_bytes` vs `ObjectStore.ReadBytes`) are normalized by the EX-001 adapter helper
 
 This matches QuantConnect's documented Object Store workflow for sharing data between research,
 backtest, and live contexts.
@@ -99,11 +106,10 @@ should assume those canonical keys.
 
 This task is still contract-first.
 
-Not yet guaranteed by this file alone:
+Still deferred after the current implementation:
 
-- actual C# `ObjectStore.Read` integration
-- LEAN algorithm smoke test
-- artifact body deserialization into strategy-specific runtime objects
+- algorithm-level smoke coverage inside a real LEAN run
+- artifact body deserialization into strategy-specific runtime objects beyond raw bytes
 
 Those belong to later implementation work after the contract path is locked.
 

@@ -169,8 +169,8 @@ class FeedbackStoreAdapter:
         """
         Retrieve telemetry events for a strategy via shared store semantics.
         
-        If a shared feedback store is configured, queries the store directly using
-        TraderFeedbackStore.list() with proper filters. Otherwise, queries local buffer.
+        If a shared feedback store is configured, iterates through the store directly
+        with proper telemetry family filtering applied BEFORE any limit. Otherwise, queries local buffer.
         
         Maintains event family separation: only returns telemetry event types
         (pnl_snapshot, drawdown_snapshot, slippage_observation, fill_observation, order_rejection).
@@ -193,22 +193,31 @@ class FeedbackStoreAdapter:
             Telemetry events matching filters
         """
         if self.feedback_store:
-            # Query shared store with large limit to avoid pre-emptive truncation
-            # We apply limit AFTER filtering for telemetry event family
-            filters = build_query_filters(
-                strategy_id=strategy_id,
-                promotion_state=promotion_state,
-                event_type=event_type,
-                limit=1000000,  # Large limit; real limit applied after family filter
-            )
-            results = self.feedback_store.list(filters)
-            
-            # Explicitly filter to telemetry event types only
-            results = [e for e in results if e.get("event_type") in TELEMETRY_EVENT_TYPES]
-            
-            # Apply mode filter if provided (not in shared store filters)
-            if mode:
-                results = [e for e in results if e.get("execution_mode") == mode]
+            # Iterate through shared store directly with telemetry family boundary applied first
+            # This ensures limit is applied after family filtering, not before
+            results = []
+            for event in self.feedback_store.iter_events():
+                # First filter: only telemetry event types
+                if event.get("event_type") not in TELEMETRY_EVENT_TYPES:
+                    continue
+                
+                # Second filter: strategy_id
+                if event.get("target", {}).get("strategy_id") != strategy_id:
+                    continue
+                
+                # Third filter: promotion_state if provided
+                if promotion_state and event.get("target", {}).get("promotion_state") != promotion_state:
+                    continue
+                
+                # Fourth filter: event_type if provided
+                if event_type and event.get("event_type") != event_type:
+                    continue
+                
+                # Fifth filter: mode if provided
+                if mode and event.get("execution_mode") != mode:
+                    continue
+                
+                results.append(event)
             
             return results
         
@@ -236,8 +245,8 @@ class FeedbackStoreAdapter:
         """
         Retrieve telemetry events by promotion state via shared store semantics.
         
-        If a shared feedback store is configured, queries the store directly.
-        Otherwise, queries local buffer.
+        If a shared feedback store is configured, iterates through the store directly
+        with proper telemetry family filtering applied BEFORE any limit. Otherwise, queries local buffer.
         
         Maintains event family separation: only returns telemetry event types.
         Feedback events (approve, edit, reject, rationale) are explicitly excluded.
@@ -253,16 +262,19 @@ class FeedbackStoreAdapter:
             Telemetry events in given state
         """
         if self.feedback_store:
-            # Query shared store with large limit to avoid pre-emptive truncation
-            # We apply limit AFTER filtering for telemetry event family
-            filters = build_query_filters(
-                promotion_state=promotion_state,
-                limit=1000000,  # Large limit; real limit applied after family filter
-            )
-            results = self.feedback_store.list(filters)
-            
-            # Explicitly filter to telemetry event types only
-            results = [e for e in results if e.get("event_type") in TELEMETRY_EVENT_TYPES]
+            # Iterate through shared store directly with telemetry family boundary applied first
+            # This ensures limit is applied after family filtering, not before
+            results = []
+            for event in self.feedback_store.iter_events():
+                # First filter: only telemetry event types
+                if event.get("event_type") not in TELEMETRY_EVENT_TYPES:
+                    continue
+                
+                # Second filter: promotion_state
+                if event.get("target", {}).get("promotion_state") != promotion_state:
+                    continue
+                
+                results.append(event)
             
             return results
         
@@ -317,24 +329,54 @@ class FeedbackStoreAdapter:
             Telemetry events matching all provided filters
         """
         if self.feedback_store:
-            # Query shared store with large limit to avoid pre-emptive truncation
-            # Real limit applied after filtering for telemetry event family
-            filters = build_query_filters(
-                strategy_id=strategy_id,
-                registry_id=registry_id,
-                promotion_state=promotion_state,
-                event_type=event_type,
-                created_after=created_after,
-                created_before=created_before,
-                limit=1000000,  # Large limit; real limit applied after family filter
-            )
-            results = self.feedback_store.list(filters)
+            # Parse time filters once if provided
+            parsed_after = parse_rfc3339(created_after) if created_after else None
+            parsed_before = parse_rfc3339(created_before) if created_before else None
             
-            # Explicitly filter to telemetry event types only
-            results = [e for e in results if e.get("event_type") in TELEMETRY_EVENT_TYPES]
+            # Iterate through shared store directly with telemetry family boundary applied first
+            # This ensures limit is applied after family filtering, not before
+            results = []
+            for event in self.feedback_store.iter_events():
+                # First filter: only telemetry event types
+                if event.get("event_type") not in TELEMETRY_EVENT_TYPES:
+                    continue
+                
+                # Second filter: strategy_id if provided
+                if strategy_id and event.get("target", {}).get("strategy_id") != strategy_id:
+                    continue
+                
+                # Third filter: registry_id if provided
+                if registry_id and event.get("target", {}).get("registry_id") != registry_id:
+                    continue
+                
+                # Fourth filter: promotion_state if provided
+                if promotion_state and event.get("target", {}).get("promotion_state") != promotion_state:
+                    continue
+                
+                # Fifth filter: event_type if provided
+                if event_type and event.get("event_type") != event_type:
+                    continue
+                
+                # Sixth filter: created_at range if provided
+                if parsed_after or parsed_before:
+                    try:
+                        event_time = datetime.fromisoformat(
+                            event.get("created_at", "").replace("Z", "+00:00")
+                        )
+                        if parsed_after and event_time < parsed_after:
+                            continue
+                        if parsed_before and event_time > parsed_before:
+                            continue
+                    except (ValueError, TypeError):
+                        continue
+                
+                results.append(event)
+                
+                # Apply limit only after all family and filter conditions pass
+                if len(results) >= limit:
+                    break
             
-            # Apply requested limit to filtered results
-            return results[:limit]
+            return results
         
         # Fall back to local buffer filtering
         results = self.telemetry_log
@@ -350,7 +392,6 @@ class FeedbackStoreAdapter:
         
         # Time range filtering
         if created_after or created_before:
-            from datetime import datetime
             parsed_after = parse_rfc3339(created_after) if created_after else None
             parsed_before = parse_rfc3339(created_before) if created_before else None
             

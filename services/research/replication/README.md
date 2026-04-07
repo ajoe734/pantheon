@@ -186,6 +186,11 @@ else:
 
 ### Input: RS-002 Research Handoff
 
+`RS-002` currently hands RS-003 two aligned payloads:
+
+- a legacy `research_handoff` compatibility envelope for lineage and governance checks
+- a canonical `proposed_strategy_spec` validated against `OC-003`
+
 Expected from RS-002 normalization task:
 
 ```json
@@ -205,6 +210,41 @@ Expected from RS-002 normalization task:
     "normalization_confidence": "high|medium|low",
     "governance_compliance": "verified",
     "downstream_readiness": "ready_for_replication|needs_clarification"
+  }
+}
+```
+
+Canonical `proposed_strategy_spec` example:
+
+```json
+{
+  "spec_version": "1.0",
+  "strategy_id": "strat-momentum-mean-reversion-001",
+  "title": "Momentum Mean Reversion Strategy",
+  "hypothesis": "Cross-asset momentum entries can be improved by short-term mean reversion filters.",
+  "objective": "Validate Sharpe ratio above 1.0 with max drawdown below 20%.",
+  "market_scope": {
+    "symbols": ["SPY"],
+    "asset_classes": ["equities"],
+    "frequency": "1d"
+  },
+  "data_dependencies": [
+    { "ref": "OpenAlex:W3052820607", "kind": "paper" }
+  ],
+  "execution_profile": {
+    "signal_schema_version": "1.0",
+    "quantity_type": "PERCENT_PORTFOLIO",
+    "execution_mode_hint": "research"
+  },
+  "evaluation_plan": {
+    "metrics": ["sharpe_ratio", "max_drawdown"]
+  },
+  "governance": {
+    "approval_required": true
+  },
+  "provenance": {
+    "source_kind": "paper",
+    "created_at": "2026-04-06T10:00:00Z"
   }
 }
 ```

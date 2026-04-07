@@ -3,7 +3,7 @@
 請先閱讀這些共享檔案，並以它們作為唯一共同真相：
 {{shared_files}}
 
-找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。
+找出目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，然後直接繼續工作。
 
 狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。

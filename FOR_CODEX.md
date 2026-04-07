@@ -36,6 +36,19 @@ You also own the collaboration operating system itself:
 - `current-work.md` generation pipeline
 - `docs-site/` collaboration panel
 
+## Required lifecycle
+
+All tasks now use the same strict flow:
+
+`todo -> in_progress -> review -> review_approved -> done`
+
+Rules:
+
+- owners implement, then `handoff` to the reviewer
+- reviewers use `approve` to enter `review_approved`
+- approved tasks return to the owner
+- only the owner can call `done`
+
 ## How to update status
 
 Use the script, not manual Markdown edits:
@@ -45,7 +58,8 @@ AI_NAME=Codex bash scripts/ai-status.sh start P1-001 "Started SignalStoreClient 
 AI_NAME=Codex bash scripts/ai-status.sh progress P1-001 "Drafted interface and storage naming"
 AI_NAME=Codex bash scripts/ai-status.sh blocker P1-001 "Need deployment constraints from Gemini" Gemini
 AI_NAME=Codex bash scripts/ai-status.sh handoff P1-001 Gemini "SignalStoreClient contract ready for review"
-AI_NAME=Codex bash scripts/ai-status.sh done P1-001 "SignalStoreClient contract locked for downstream work"
+AI_NAME=Codex REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="路由契約一致||可交回 owner 收尾" bash scripts/ai-status.sh approve P4-001 "Review approved and handed back for owner finalization"
+AI_NAME=Codex bash scripts/ai-status.sh done P1-001 "Owner finalized approved contract and locked it for downstream work"
 ```
 
 If you need a new task, create or reassign it through:
@@ -59,9 +73,10 @@ AI_NAME=Codex TASK_PHASE="Phase 1" bash scripts/ai-status.sh assign <task-id> Co
 Always work in this order:
 
 1. complete assigned reviews first
-2. continue your own `in_progress` work
-3. start your own unblocked `todo` work
-4. if nothing assigned is actionable, claim another safe task you can move forward
+2. finalize any task you own that is already `review_approved`
+3. continue your own `in_progress` work
+4. start your own unblocked `todo` work
+5. if nothing assigned is actionable, claim another safe task you can move forward
 
 If you claim helper work:
 

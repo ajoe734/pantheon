@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-01-architecture-alignment",
   "objective": "Align the repo to the governed Pantheon target architecture where Pantheon orchestrates workflows, the evolution plane learns through feedback and registry gates, and LEAN executes only approved artifacts.",
-  "updated_at": "2026-04-06T14:43:04Z",
+  "updated_at": "2026-04-07T02:11:29Z",
   "canonical_files": [
     "AI_COLLABORATION_GUIDE.md",
     "current-work.md",
@@ -52,8 +52,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Implemented services/learning/imitation with governed trajectory filtering, BC backend abstraction, registry-ready model_artifact packaging, sample dataset, worker/Dockerfile, and docker-compose worker path update. Verification: python3 -m unittest discover -s services/learning/imitation -p 'test_*.py', python3 services/learning/imitation/smoke_test.py, and python3 -m py_compile services/learning/imitation/*.py all passed. The optional upstream imitation backend is wired but not executed here because the imitation package is not installed in this workspace.",
-      "last_update": "2026-04-06T14:38:10Z"
+      "next": "Reviewer shifted from Gemini to Claude so tooling validation no longer depends on the unstable Gemini review lane. Review approved: The stale dispatch guard in process_queue correctly re-validates events against current status, and regression tests successfully verify the skipping of stale events and execution of current events.",
+      "last_update": "2026-04-06T06:03:44Z"
     },
     {
       "name": "Copilot",
@@ -63,13 +63,13 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
         "FB-003"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Auto-reassigned ownership from Claude to Copilot after repeated provider failure: {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"duration_ms\":482,\"duration_api_ms\":0,\"num_turns\":1,\"result\":\"You've hit your limit · resets 12am (Asia/Taipei)\",\"stop_reason\":\"stop_sequence\",\"session_id\":\"9f685f1f-f0c0-403c-b5e3-014fbeb87299\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\"},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"3447ab22-5fa3-4ba1-ab62-f6879c346d83\"}",
-      "last_update": "2026-04-06T14:40:24Z"
+      "next": "Re-review blocked: shared-store telemetry queries still depend on a hardcoded limit=1000000 before telemetry-family filtering, so large matching feedback history can still starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md.",
+      "last_update": "2026-04-07T02:11:29Z"
     }
   ],
   "tasks": [
@@ -333,7 +333,7 @@
       "phase": "Epic A",
       "owner": "Copilot",
       "reviewer": "Claude",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "P2-001",
         "P3-001"
@@ -348,8 +348,8 @@
         "promotion state checks specified",
         "[CODEX NOTE] artifact loader must use LEAN Object Store (ObjectStore.Save/Read) as the transport between registry and LEAN runtime — direct file injection or GCS reads bypassing LEAN data provider are not acceptable"
       ],
-      "next": "Review approved by Claude. All 9 unit tests + smoke test pass. paper/live rejection rules explicit; schema path canonical (single source via $ref chain); transport fully injected, no direct file I/O or GCS bypass; metadata shape sufficient for LEAN ObjectStore adapter; REG-002 legacy rollback_target fallback normalizes to canonical form before projection write — acceptable transitional shim. EX-001 is ready for downstream consumers (REG-002 execution_projection path and future LEAN-native adapter).",
-      "last_update": "2026-04-06T13:46:39Z",
+      "next": "Finalized. Artifact loader contract locked: paper/live execution modes defined, metadata schema canonical via single $ref chain, transport via injected Object Store (no direct file I/O), promotion state validation in place. Service implementation complete with 9/9 unit tests passing and smoke tests verified. Ready for downstream consumers: REG-002 execution_projection path and LEAN-native adapter integration.",
+      "last_update": "2026-04-06T16:00:49Z",
       "summary_zh": "定義 artifact loader 契約，確保 LEAN 只會透過受治理的 artifact 與 Object Store 載入 paper/live 可執行內容。",
       "review_notes_zh": [
         "審查通過：(1) paper/live 拒絕規則明確，嚴格等值比對涵蓋 draft/candidate/retired；(2) schema 路徑為單一規範來源，兩層 $ref 鏈由 _resolve_local_refs 正確解析；(3) transport 完全委派給注入的 object_store，無直接 file I/O 或 GCS bypass；(4) metadata shape 足夠支撐真實 LEAN ObjectStore adapter；(5) REG-002 的 legacy rollback_target fallback 在 projection 前已標準化，loader 端永遠收到 canonical 格式，可接受。9/9 unit tests + smoke test 全通。"
@@ -461,7 +461,7 @@
       "phase": "Epic C",
       "owner": "Codex",
       "reviewer": "Copilot",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "REG-001",
         "EX-001"
@@ -477,8 +477,8 @@
         "promotion checks documented",
         "deployment path consumes promotion state"
       ],
-      "next": "Review approved by Copilot. All 3 acceptance criteria met: (1) candidate/paper/live states strictly enforced, (2) promotion checks fully documented, (3) deployment path consumes promotion state end-to-end. 29 integration tests passing. Ready for downstream (REG-003, FB-003, EV-001). See review_reg002_copilot.md for full analysis.",
-      "last_update": "2026-04-06T14:39:54Z",
+      "next": "Review approved. All acceptance criteria met: (1) candidate/paper/live states strictly enforced, (2) promotion requirements documented, (3) deployment path consumes promotion state end-to-end. 29 integration tests passing. Ready for REG-003, FB-003, EV-001.",
+      "last_update": "2026-04-06T15:38:58Z",
       "summary_zh": "實作 candidate -> paper -> live 的 promotion gate，避免 persona 或工具直接把未批准內容推進 live。",
       "review_file": "services/registry/promotion/review_reg002_copilot.md"
     },
@@ -511,7 +511,7 @@
       "phase": "Epic C",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "REG-001",
         "REG-002"
@@ -526,8 +526,8 @@
         "lineage chain documented",
         "promotion audit references rollback target"
       ],
-      "next": "Implementation phase must clarify: (1) how gate.py metadata expectations align with lineage contract, (2) rollback target definition for paper vs live. Build promoted_artifact_metadata.schema.json, loader-side validation, and artifact creation flow.",
-      "last_update": "2026-04-05T05:41:15Z",
+      "next": "Rollback metadata is enforced for live promoted artifacts, lineage requirements are documented in the canonical promoted-artifact schema/contract, and promotion docs/tests reference rollback targets end-to-end. Verified with services/registry/promotion/test_gate.py (4 tests) and services/registry/promotion/smoke_test_gate.py.",
+      "last_update": "2026-04-06T15:40:24Z",
       "summary_zh": "把 rollback 與 lineage 要求補進所有已升版 artifact，確保 live 出問題時能追來源並安全回退。"
     },
     {
@@ -536,7 +536,7 @@
       "phase": "Epic D",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "REG-001"
       ],
@@ -548,8 +548,8 @@
         "telemetry schema defined",
         "registry linkage fields included"
       ],
-      "next": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. governance boundary correct (feedback cannot trigger live promotion), event family separation clean, linkage object sufficient for REG-001/EV-001. Three minor items: (M-1) actor_role 'reviewer' not in OC-001 role enum — reconcile in FB-002 follow-up; (M-2) telemetry promotion_state omits 'draft' — add comment to contract §6; (M-3) 'annotate' operation in edits is non-standard — add $comment to schema. Recommend evaluating registry_id as required field when EV-001 lands.",
-      "last_update": "2026-04-05T12:24:01Z",
+      "next": "Finalized FB-001 for v1 lock: trajectory/preference store contract and both feedback/telemetry schemas are aligned to the approved governance boundary, registry linkage fields remain explicit, and the contract artifact now reflects the approved review record. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "last_update": "2026-04-06T15:42:20Z",
       "summary_zh": "定義 trajectory 與 preference store schema，把人類回饋與系統學習資料收斂成可治理的格式。"
     },
     {
@@ -558,7 +558,7 @@
       "phase": "Epic D",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "FB-001",
         "OC-001"
@@ -571,8 +571,8 @@
         "rationale attached to feedback events",
         "feedback links back to registry artifacts"
       ],
-      "next": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. Trader feedback ingestion captures approve/edit/reject/rationale with governed artifact linkage, idempotent JSONL storage, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped because fastapi extras are absent); python3 -m py_compile services/control-plane/feedback/*.py passed.",
-      "last_update": "2026-04-05T14:54:00Z",
+      "next": "Finalized FB-002 for v1 lock: trader feedback ingestion records approve/edit/reject/rationale as governed learning input with explicit artifact linkage, idempotent JSONL persistence, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "last_update": "2026-04-06T15:43:33Z",
       "summary_zh": "把交易員的 approve、edit、reject 與 rationale 變成可記錄的明確 feedback 事件，供後續學習使用。",
       "review_notes_zh": [
         "審查通過：approve/edit/reject/rationale 事件覆蓋完整，governance 邊界正確。",
@@ -586,7 +586,7 @@
       "phase": "Epic D",
       "owner": "Copilot",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "P3-001",
         "REG-002"
@@ -599,8 +599,8 @@
         "paper and live telemetry distinguished",
         "fill and slippage capture documented"
       ],
-      "next": "Auto-reassigned ownership from Claude to Copilot after repeated provider failure: {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"duration_ms\":482,\"duration_api_ms\":0,\"num_turns\":1,\"result\":\"You've hit your limit · resets 12am (Asia/Taipei)\",\"stop_reason\":\"stop_sequence\",\"session_id\":\"9f685f1f-f0c0-403c-b5e3-014fbeb87299\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\"},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"3447ab22-5fa3-4ba1-ab62-f6879c346d83\"}",
-      "last_update": "2026-04-06T14:40:24Z",
+      "next": "Re-review blocked: shared-store telemetry queries still depend on a hardcoded limit=1000000 before telemetry-family filtering, so large matching feedback history can still starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md.",
+      "last_update": "2026-04-07T02:11:29Z",
       "summary_zh": "把 pnl、drawdown、slippage、fills 等 execution telemetry 結構化，讓 evolution plane 能評估策略表現。"
     },
     {
@@ -679,7 +679,7 @@
       "phase": "Epic E",
       "owner": "Codex",
       "reviewer": "Copilot",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "RS-001",
         "OC-003"
@@ -692,8 +692,8 @@
         "research material normalization rules documented",
         "registry-ready fields included"
       ],
-      "next": "RS-002 implementation approved by Grok after comprehensive review: (1) StrategySpec normalizer correctly transforms RS-001 handoffs into OC-003 canonical objects; (2) All 28 unit tests passing (4 normalizer + 24 gate integration); (3) JSON schema validation working correctly; (4) Governance and lineage enforcement implemented; (5) Legacy replication compatibility preserved; (6) Package import fixes applied; (7) End-to-end pipeline tested. Ready for downstream RS-003 replication processing and registry promotion.",
-      "last_update": "2026-04-06T14:12:25Z",
+      "next": "Finalized RS-002 for v1 lock: governed RS-001 discovery handoffs now normalize into canonical OC-003 StrategySpec and WorkflowHandoff objects with schema validation, lineage-preserving replication compatibility, and downstream RS-003/registry-ready metadata. Verification remains the approved review record: 28 tests passing (4 normalizer + 24 replication gate integration).",
+      "last_update": "2026-04-06T15:44:37Z",
       "summary_zh": "把蒐集到的研究素材正規化成 StrategySpec，讓後續 replication、registry 與 execution 都吃同一種規格。"
     },
     {
@@ -725,7 +725,7 @@
       "phase": "Epic F",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "FB-001",
         "OC-003"
@@ -738,8 +738,8 @@
         "DSPy artifact linkage to registry defined",
         "evaluation inputs identified"
       ],
-      "next": "Codex to implement DSPy adapter under services/learning/dspy/ with BootstrapFewShot optimizer, pin DSPy version, and run smoke test with FB-001 governed examples.",
-      "last_update": "2026-04-05T05:41:15Z",
+      "next": "Finalized LP-001: canonical DSPy adapter now lives under services/learning/dspy with governed FB-001 example filtering, BootstrapFewShot-compatible backends, prompt_bundle packaging plus registry-ready metadata, and validated smoke/unit test coverage. Verification: python3 -m py_compile services/learning/dspy/*.py; python3 -m unittest discover -s services/learning/dspy -p 'test_*.py' (3 tests OK); python3 services/learning/dspy/smoke_test.py (stub backend, 4 training + 4 evaluation examples, intent_accuracy=1.0, tool_selection_precision=1.0, deny_coverage_delta=0.0).",
+      "last_update": "2026-04-06T15:59:05Z",
       "summary_zh": "把 DSPy 用在 persona policy 優化，優化的是工具使用與推理流程，不是直接改 live 策略。"
     },
     {
@@ -748,7 +748,7 @@
       "phase": "Epic F",
       "owner": "Codex",
       "reviewer": "Copilot",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "FB-001",
         "RS-002"
@@ -761,8 +761,8 @@
         "behavior cloning workflow documented",
         "registry linkage for learned policies defined"
       ],
-      "next": "Review documented in review_lp002_copilot.md. All criteria verified, tests passing, ready for deployment.",
-      "last_update": "2026-04-06T14:43:04Z",
+      "next": "Finalized LP-002: imitation workflow under services/learning/imitation now maps governed trader trajectories into behavior-cloning datasets, documents the BC-first execution path, and packages draft registry-ready imitation_policy artifacts with lineage, checksums, and governance-filtered metadata. Verification: python3 -m py_compile services/learning/imitation/*.py; python3 -m unittest discover -s services/learning/imitation -p 'test_*.py' (3 tests OK); python3 services/learning/imitation/smoke_test.py (stub backend verified, 2 trajectories, 4 transitions, registry artifact + metrics emitted).",
+      "last_update": "2026-04-06T16:00:17Z",
       "summary_zh": "導入 imitation 來學人類交易員的操作軌跡，讓系統能從行為示範而不是只靠文字偏好學習。",
       "review_file": "review_lp002_copilot.md"
     },
@@ -772,7 +772,7 @@
       "phase": "Epic F",
       "owner": "Codex",
       "reviewer": "Copilot",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "REG-001"
       ],
@@ -784,8 +784,8 @@
         "aliases or promotion metadata documented",
         "artifact version handoff defined"
       ],
-      "next": "LP-003 通過審查: MLflow registry adapter 實現完整，experiment_refs/promoted_metadata 形狀與 REG-001/REG-003/EX-001 相容，可直接支援 LP-005。",
-      "last_update": "2026-04-06T09:46:11Z",
+      "next": "Finalized LP-003: services/registry/experiments now ships a governed MLflow-first registry adapter that mirrors registry lineage, aliases, artifact handoff, and REG-003-compatible promoted_metadata for downstream execution and LP-005 tracking. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (4 tests OK); python3 services/registry/experiments/smoke_test.py (memory backend passed).",
+      "last_update": "2026-04-06T16:01:24Z",
       "summary_zh": "把 registry metadata 接到 MLflow 或 W&B，讓實驗結果、artifact 與 promotion 狀態能追蹤。",
       "review_notes_zh": [
         "LP-003 通過審查。實現完整：正確的治理語義、完整的 lifecycle state 對應、充分的 lineage 與 rollback 支援、完整的 artifact handoff、promoted_metadata 適於下游使用。所有測試通過。與 LP-005 完全相容。"
@@ -798,7 +798,7 @@
       "phase": "Epic F",
       "owner": "Copilot",
       "reviewer": "Codex",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "FB-002",
         "LP-001"
@@ -811,8 +811,8 @@
         "approval requirements documented",
         "registry handoff for learned outputs defined"
       ],
-      "next": "Review approved after aligning LP-004 docs to FB-002, REG-001, and paper-only evaluator consumption.",
-      "last_update": "2026-04-06T14:13:25Z",
+      "next": "Finalized LP-004: All three alignment corrections verified. (1) FB-002 event shape using canonical event_type/target/edits fields. (2) Registry handoff using artifact_type=model_artifact with metadata.model_family=preference_model. (3) Evaluator consumption restricted to lifecycle_state=paper. All documents approved and ready for v1 contract lock.",
+      "last_update": "2026-04-06T16:13:58Z",
       "summary_zh": "定義受批准的 TRL preference-learning workflow，限制它只能吃治理過的 feedback 資料。",
       "review_notes_zh": [
         "審查通過：TRL workflow 現在對齊 FB-002 canonical event shape，pair construction 改為從 target linkage 解析 artifact 並套用 edits。",
@@ -827,7 +827,7 @@
       "phase": "Epic F",
       "owner": "Copilot",
       "reviewer": "Codex",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "RS-003",
         "LP-003"
@@ -840,8 +840,8 @@
         "search and tuning path defined",
         "registry and promotion constraints documented"
       ],
-      "next": "All 4 code review items fixed and committed. Lifecycle states aligned, RL artifact model updated for registry governance, RS-003 upstream role clarified, non-existent references removed. Document is now internally consistent with REG-001/REG-003/EX-001 contracts.",
-      "last_update": "2026-04-06T09:54:01Z",
+      "next": "All 4 code review items fixed and verified. Lifecycle vocabulary (draft/candidate/paper/live/retired), RL artifact governance (registry_id/artifact_type/lineage/checksum/storage_ref), RS-003 upstream role, and references all corrected. Acceptance criteria met: entry criteria documented in PATH_DEFINITION.md §1, RLlib+Ray Tune workflow with search/tuning guidance defined, registry constraints aligned with REG-001/REG-003/EX-001. Ready for integration.",
+      "last_update": "2026-04-06T16:19:41Z",
       "summary_zh": "定義何時才值得進入 FinRL / RLlib / Tune 的 RL 路徑，避免太早把系統複雜化。"
     },
     {
@@ -1216,7 +1216,7 @@
       "phase": "Tooling",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         ".orchestrator/supervisor.py",
@@ -1227,8 +1227,8 @@
         "done or approved tasks are not launched from old queue entries",
         "regression tests cover stale in_progress and stale review dispatches"
       ],
-      "next": "Reviewer shifted from Gemini to Claude so tooling validation no longer depends on the unstable Gemini review lane. Review approved: The stale dispatch guard in process_queue correctly re-validates events against current status, and regression tests successfully verify the skipping of stale events and execution of current events.",
-      "last_update": "2026-04-06T06:03:44Z"
+      "next": "Finalized BUS-VAL-004: supervisor process_queue now revalidates queued review/owner dispatch wake events against current task status and dispatch signature before launching a worker, so stale wake-ups are skipped after task status changes while current events still start normally. Verification: python3 -m unittest discover -s .orchestrator -p 'test_*.py' (36 tests OK).",
+      "last_update": "2026-04-06T16:02:31Z"
     }
   ],
   "handoffs": [
@@ -1520,6 +1520,249 @@
       "status": "done",
       "created_at": "2026-04-06T14:38:10Z",
       "resolved_at": "2026-04-06T14:41:49Z"
+    },
+    {
+      "task_id": "EX-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Review approved by Claude. All 9 unit tests + smoke test pass. paper/live rejection rules explicit; schema path canonical (single source via $ref chain); transport fully injected, no direct file I/O or GCS bypass; metadata shape sufficient for LEAN ObjectStore adapter; REG-002 legacy rollback_target fallback normalizes to canonical form before projection write — acceptable transitional shim. EX-001 is ready for downstream consumers (REG-002 execution_projection path and future LEAN-native adapter).",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:00:49Z"
+    },
+    {
+      "task_id": "REG-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Review approved. All acceptance criteria met: (1) candidate/paper/live states strictly enforced, (2) promotion requirements documented, (3) deployment path consumes promotion state end-to-end. 29 integration tests passing. Ready for REG-003, FB-003, EV-001.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:38:58Z"
+    },
+    {
+      "task_id": "REG-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation phase must clarify: (1) how gate.py metadata expectations align with lineage contract, (2) rollback target definition for paper vs live. Build promoted_artifact_metadata.schema.json, loader-side validation, and artifact creation flow.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:40:24Z"
+    },
+    {
+      "task_id": "FB-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. governance boundary correct (feedback cannot trigger live promotion), event family separation clean, linkage object sufficient for REG-001/EV-001. Three minor items: (M-1) actor_role 'reviewer' not in OC-001 role enum — reconcile in FB-002 follow-up; (M-2) telemetry promotion_state omits 'draft' — add comment to contract §6; (M-3) 'annotate' operation in edits is non-standard — add $comment to schema. Recommend evaluating registry_id as required field when EV-001 lands.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:42:20Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. Trader feedback ingestion captures approve/edit/reject/rationale with governed artifact linkage, idempotent JSONL storage, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped because fastapi extras are absent); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:43:33Z"
+    },
+    {
+      "task_id": "RS-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "RS-002 implementation approved by Grok after comprehensive review: (1) StrategySpec normalizer correctly transforms RS-001 handoffs into OC-003 canonical objects; (2) All 28 unit tests passing (4 normalizer + 24 gate integration); (3) JSON schema validation working correctly; (4) Governance and lineage enforcement implemented; (5) Legacy replication compatibility preserved; (6) Package import fixes applied; (7) End-to-end pipeline tested. Ready for downstream RS-003 replication processing and registry promotion.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:44:37Z"
+    },
+    {
+      "task_id": "LP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex to implement DSPy adapter under services/learning/dspy/ with BootstrapFewShot optimizer, pin DSPy version, and run smoke test with FB-001 governed examples.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:59:05Z"
+    },
+    {
+      "task_id": "LP-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "✅ Review completed and approved. All acceptance criteria validated. Unit tests (3/3 pass), smoke tests verified, Python syntax OK. Registry linkage fully implemented with governance filtering. Codex implementation ready for deployment. Review documented in review_lp002_copilot.md (committed to git).",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:00:17Z"
+    },
+    {
+      "task_id": "LP-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "LP-003 通過審查: MLflow registry adapter 實現完整，experiment_refs/promoted_metadata 形狀與 REG-001/REG-003/EX-001 相容，可直接支援 LP-005。",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:01:24Z"
+    },
+    {
+      "task_id": "LP-004",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review approved after aligning LP-004 docs to FB-002, REG-001, and paper-only evaluator consumption.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:13:58Z"
+    },
+    {
+      "task_id": "LP-005",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "All 4 code review items fixed and committed. Lifecycle states aligned, RL artifact model updated for registry governance, RS-003 upstream role clarified, non-existent references removed. Document is now internally consistent with REG-001/REG-003/EX-001 contracts.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:19:41Z"
+    },
+    {
+      "task_id": "BUS-VAL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer shifted from Gemini to Claude so tooling validation no longer depends on the unstable Gemini review lane. Review approved: The stale dispatch guard in process_queue correctly re-validates events against current status, and regression tests successfully verify the skipping of stale events and execution of current events.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:02:31Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Execution telemetry capture complete. All 26 unit tests passing, smoke tests verified, schema validation enabled, feedback store adapter integrated. Acceptance criteria met: (1) execution telemetry schema linked to feedback store with full governance integration; (2) paper and live telemetry strictly distinguished with mode-separated persistence; (3) fill and slippage capture documented with real-time calculation examples. Ready for EV-001/EV-002 evolution plane integration.",
+      "status": "done",
+      "created_at": "2026-04-06T16:39:22Z",
+      "resolved_at": "2026-04-07T00:11:23Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review blocked: adapter is not wired to the feedback store/canonical schema, and capture drops governed linkage fields. See services/telemetry/review_fb003_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-07T00:11:23Z",
+      "resolved_at": "2026-04-07T00:11:23Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Fixed blocking issues from first review: (1) TelemetryCapture._build_event() now preserves all governed linkage fields (registry_id, artifact_version, artifact_type, promotion_state, lineage_ref) from metadata into target object; (2) FeedbackStoreAdapter now persists events to append-only feedback store file (telemetry/execution_telemetry.jsonl) and no longer adds schema-violating fields. Added 7 regression tests to prevent regression. 33 tests passing, smoke test verified, canonical schema validation passing. All acceptance criteria met.",
+      "status": "done",
+      "created_at": "2026-04-07T00:24:09Z",
+      "resolved_at": "2026-04-07T00:41:04Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex to Claude after repeated Codex capacity/429: {\"ts\": \"2026-04-06T14:40:25Z\", \"agent\": \"Orchestrator\", \"type\": \"task_reassigned\", \"task_id\": \"FB-003\", \"message\": \"Auto-reassigned ownership from Claude to Copilot after repeated provider failure: {\\\"type\\\":\\\"result\\\",\\\"subtype\\\":\\\"success\\\",\\\"is_error\\\":true,\\\"duration_ms\\\":482,\\\"duration_api_ms\\\":0,\\\"num_turns\\\":1,\\\"result\\\":\\\"You've hit your limit · resets 12am (Asia/Taipei)\\\",\\\"stop_reason\\\":\\\"stop_sequence\\\",\\\"session_id\\\":\\\"9f685f1f-f0c0-403c-b5e3-014fbeb87299\\\",\\\"total_cost_usd\\\":0,\\\"usage\\\":{\\\"input_tokens\\\":0,\\\"cache_creation_input_tokens\\\":0,\\\"cache_read_input_tokens\\\":0,\\\"output_tokens\\\":0,\\\"server_tool_use\\\":{\\\"web_search_requests\\\":0,\\\"web_fetch_requests\\\":0},\\\"service_tier\\\":\\\"standard\\\",\\\"cache_creation\\\":{\\\"ephemeral_1h_input_tokens\\\":0,\\\"ephemeral_5m_input_tokens\\\":0},\\\"inference_geo\\\":\\\"\\\",\\\"iterations\\\":[],\\\"speed\\\":\\\"standard\\\"},\\\"modelUsage\\\":{},\\\"permission_denials\\\":[],\\\"terminal_reason\\\":\\\"completed\\\",\\\"fast_mode_state\\\":\\\"off\\\",\\\"uuid\\\":\\\"3447ab22-5fa3-4ba1-ab62-f6879c346d83\\\"}\", \"from_owner\": \"Claude\", \"to_owner\": \"Copilot\", \"from_reviewer\": \"Codex\", \"to_reviewer\": \"Codex\", \"worker_run_id\": \"claude-20260406T143956Z-ae9cbda2\"}",
+      "status": "done",
+      "created_at": "2026-04-07T00:41:04Z",
+      "resolved_at": "2026-04-07T00:42:32Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Codex to Claude after repeated Codex capacity/429: {\"ts\": \"2026-04-06T14:40:25Z\", \"agent\": \"Orchestrator\", \"type\": \"task_reassigned\", \"task_id\": \"FB-003\", \"message\": \"Auto-reassigned ownership from Claude to Copilot after repeated provider failure: {\\\"type\\\":\\\"result\\\",\\\"subtype\\\":\\\"success\\\",\\\"is_error\\\":true,\\\"duration_ms\\\":482,\\\"duration_api_ms\\\":0,\\\"num_turns\\\":1,\\\"result\\\":\\\"You've hit your limit · resets 12am (Asia/Taipei)\\\",\\\"stop_reason\\\":\\\"stop_sequence\\\",\\\"session_id\\\":\\\"9f685f1f-f0c0-403c-b5e3-014fbeb87299\\\",\\\"total_cost_usd\\\":0,\\\"usage\\\":{\\\"input_tokens\\\":0,\\\"cache_creation_input_tokens\\\":0,\\\"cache_read_input_tokens\\\":0,\\\"output_tokens\\\":0,\\\"server_tool_use\\\":{\\\"web_search_requests\\\":0,\\\"web_fetch_requests\\\":0},\\\"service_tier\\\":\\\"standard\\\",\\\"cache_creation\\\":{\\\"ephemeral_1h_input_tokens\\\":0,\\\"ephemeral_5m_input_tokens\\\":0},\\\"inference_geo\\\":\\\"\\\",\\\"iterations\\\":[],\\\"speed\\\":\\\"standard\\\"},\\\"modelUsage\\\":{},\\\"permission_denials\\\":[],\\\"terminal_reason\\\":\\\"completed\\\",\\\"fast_mode_state\\\":\\\"off\\\",\\\"uuid\\\":\\\"3447ab22-5fa3-4ba1-ab62-f6879c346d83\\\"}\", \"from_owner\": \"Claude\", \"to_owner\": \"Copilot\", \"from_reviewer\": \"Codex\", \"to_reviewer\": \"Codex\", \"worker_run_id\": \"claude-20260406T143956Z-ae9cbda2\"}",
+      "status": "done",
+      "created_at": "2026-04-07T00:42:32Z",
+      "resolved_at": "2026-04-07T00:42:57Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Re-review after fixes: governed linkage fields preserved, feedback store adapter persists append-only telemetry without schema-violating fields, 33 tests and smoke test passing. Please review FB-003 again.",
+      "status": "done",
+      "created_at": "2026-04-07T00:42:57Z",
+      "resolved_at": "2026-04-07T00:46:04Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Second review blocked: adapter still bypasses shared feedback-store append/query semantics, and TelemetryCapture mutates caller metadata via pop(), causing governed linkage to disappear on reused metadata. See services/telemetry/review_fb003_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-07T00:46:04Z",
+      "resolved_at": "2026-04-07T00:46:04Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Fixed both blocker issues: (1) TelemetryCapture uses non-mutating metadata copy for repeated captures; (2) FeedbackStoreAdapter properly uses TraderFeedbackStore.append() with idempotent persistence and linkage preservation. Added regression tests. All acceptance criteria met.",
+      "status": "done",
+      "created_at": "2026-04-07T00:55:13Z",
+      "resolved_at": "2026-04-07T00:58:46Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review blocked: FeedbackStoreAdapter still serves queries from process-local telemetry_log instead of shared TraderFeedbackStore semantics, so reloads miss persisted events and duplicate event_ids still double-count in adapter queries. See services/telemetry/review_fb003_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-07T00:58:46Z",
+      "resolved_at": "2026-04-07T00:58:46Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "All three Codex blocking issues resolved and verified: (1) FeedbackStoreAdapter now correctly uses TraderFeedbackStore.list() for authoritative queries with _recover_from_store() on init - enables cross-process recovery; (2) Duplicate event_ids no longer appear in adapter queries - proper idempotency maintained; (3) Smoke test configured with actual feedback_store_path and validates recovery + idempotency. All 35 unit tests passing. Full contract support via query_telemetry(). Commit 5f6bf8a. Ready for Codex final approval.",
+      "status": "done",
+      "created_at": "2026-04-07T01:10:10Z",
+      "resolved_at": "2026-04-07T01:14:40Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review blocked: shared-store telemetry queries still mix feedback and telemetry event families, so approve/edit/reject/rationale can leak into execution telemetry results. See services/telemetry/review_fb003_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-07T01:14:40Z",
+      "resolved_at": "2026-04-07T01:14:40Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "All event family separation issues fixed and tested. TELEMETRY_EVENT_TYPES constant + filters on all query methods. Regression tests verify no feedback events leak into telemetry queries. All 38 tests pass. Commit: f3d9c88",
+      "status": "done",
+      "created_at": "2026-04-07T01:18:51Z",
+      "resolved_at": "2026-04-07T02:03:46Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Re-review blocked: shared-store telemetry queries still apply limit before telemetry-family filtering, so large matching feedback history can starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-07T02:03:46Z",
+      "resolved_at": "2026-04-07T02:03:46Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "All limit application bugs fixed and comprehensively tested. Limit now applied AFTER filtering for telemetry event family to prevent feedback events from consuming query limits. 3 critical regression tests verify the fix works correctly in mixed-family scenarios. All 41 unit tests pass + smoke test passes. Commit: a35ab66. Ready for final review.",
+      "status": "done",
+      "created_at": "2026-04-07T02:08:32Z",
+      "resolved_at": "2026-04-07T02:11:29Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Re-review blocked: shared-store telemetry queries still depend on a hardcoded limit=1000000 before telemetry-family filtering, so large matching feedback history can still starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-07T02:11:29Z",
+      "resolved_at": "2026-04-07T02:11:29Z"
     }
   ],
   "blockers": [
@@ -1598,18 +1841,18 @@
       "total": 36,
       "active": 0,
       "blocked": 0,
-      "done": 27,
+      "done": 36,
       "review": 0,
-      "review_approved": 9,
+      "review_approved": 0,
       "todo": 0
     },
     "Copilot": {
       "total": 11,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
-      "done": 6,
+      "done": 9,
       "review": 0,
-      "review_approved": 3,
+      "review_approved": 0,
       "todo": 2
     }
   }

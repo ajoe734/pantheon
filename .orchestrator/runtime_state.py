@@ -51,7 +51,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     return state
 
 
-ACTIVE_QUEUE_STATUSES = {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled", "started", "fallback"}
+ACTIVE_QUEUE_STATUSES = {"running", "waiting_approval", "suspended_approval", "retry_backoff", "manual_pending", "stalled", "started", "fallback"}
 
 
 def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, Any]]) -> None:
@@ -94,7 +94,7 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
         task_id = str(worker.get("task_id") or "")
         event_id = worker.get("queue_event_id")
         task_status = str(tasks_by_id.get(task_id) or "")
-        if status in {"running", "started", "waiting_approval", "manual_pending", "retry_backoff", "fallback", "stalled"}:
+        if status in {"running", "started", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "fallback", "stalled"}:
             keep[run_id] = worker
             continue
         if event_id and event_id in queue_events and queue_events[event_id].get("status") not in {"completed", "failed", "done"}:
@@ -104,7 +104,7 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
             keep[run_id] = worker
             continue
         # Drop terminal workers once the queue event is settled, or the task itself is already terminal.
-        if status in {"failed", "completed"}:
+        if status in {"failed", "completed", "superseded", "reassigned"}:
             continue
         keep[run_id] = worker
     state["workers"] = keep
