@@ -609,6 +609,148 @@ class TestAdapterSchemaCompliance(unittest.TestCase):
             for et in event_types:
                 self.assertNotIn(et, {"approve", "edit", "reject", "rationale"})
 
+    def test_limit_applied_after_family_filter_get_telemetry_for_strategy(self):
+        """
+        Regression test: Verify that limit is applied AFTER family filtering in get_telemetry_for_strategy.
+        
+        This is critical for shared-store semantics where feedback events may appear
+        before telemetry events. The limit should be applied to telemetry events only,
+        not consumed by feedback events in the linkage.
+        
+        See: services/telemetry/review_fb003_codex_zh.md - New Blocking Finding
+        """
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_file = Path(tmpdir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+            
+            # Add 120 feedback events with same linkage (simulates pre-existing feedback)
+            for i in range(120):
+                feedback = {
+                    "event_id": f"fb-{i}",
+                    "event_type": "approve",
+                    "created_at": f"2026-04-07T00:{i % 60:02d}:00Z",
+                    "actor_id": "u1",
+                    "actor_role": "approver",
+                    "channel": "console",
+                    "target": {"strategy_id": "strat-x", "promotion_state": "paper"},
+                }
+                adapter.feedback_store.append(feedback)
+            
+            # Add telemetry event after all feedback (appears later in store)
+            adapter.ingest_telemetry_event(
+                {
+                    "event_id": "evt-1",
+                    "event_type": "pnl_snapshot",
+                    "created_at": "2026-04-07T02:00:00Z",
+                    "execution_mode": "paper",
+                    "target": {"strategy_id": "strat-x", "promotion_state": "paper"},
+                    "metrics": {"pnl": 1.0},
+                },
+                "strat-x",
+                "paper",
+            )
+            
+            # Without the fix, this would return 0 because TraderFeedbackStore.list()
+            # would consume the default limit of 100 with feedback events
+            results = adapter.get_telemetry_for_strategy("strat-x")
+            
+            # With the fix, we should get the 1 telemetry event
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["event_type"], "pnl_snapshot")
+
+    def test_limit_applied_after_family_filter_get_telemetry_by_promotion_state(self):
+        """
+        Regression test: Verify that limit is applied AFTER family filtering in get_telemetry_by_promotion_state.
+        """
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_file = Path(tmpdir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+            
+            # Add 120 feedback events with "paper" promotion_state
+            for i in range(120):
+                feedback = {
+                    "event_id": f"fb-ps-{i}",
+                    "event_type": "edit",
+                    "created_at": f"2026-04-07T00:{i % 60:02d}:00Z",
+                    "actor_id": "u2",
+                    "actor_role": "editor",
+                    "channel": "api",
+                    "target": {"strategy_id": "strat-y", "promotion_state": "paper"},
+                }
+                adapter.feedback_store.append(feedback)
+            
+            # Add telemetry event after all feedback
+            adapter.ingest_telemetry_event(
+                {
+                    "event_id": "evt-ps-1",
+                    "event_type": "drawdown_snapshot",
+                    "created_at": "2026-04-07T02:00:00Z",
+                    "execution_mode": "paper",
+                    "target": {"strategy_id": "strat-y", "promotion_state": "paper"},
+                    "metrics": {"drawdown": 0.05},
+                },
+                "strat-y",
+                "paper",
+            )
+            
+            # Should return 1 telemetry event, not 0
+            results = adapter.get_telemetry_by_promotion_state("paper")
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["event_type"], "drawdown_snapshot")
+
+    def test_limit_applied_after_family_filter_query_telemetry(self):
+        """
+        Regression test: Verify that limit parameter is applied AFTER family filtering in query_telemetry.
+        """
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_file = Path(tmpdir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+            
+            # Add 150 feedback events with same linkage (exceeds default limit of 100)
+            for i in range(150):
+                feedback = {
+                    "event_id": f"fb-qt-{i}",
+                    "event_type": "reject",
+                    "created_at": f"2026-04-07T00:{i % 60:02d}:00Z",
+                    "actor_id": "u3",
+                    "actor_role": "reviewer",
+                    "channel": "console",
+                    "target": {"strategy_id": "strat-z", "promotion_state": "live", "registry_id": "reg-1"},
+                }
+                adapter.feedback_store.append(feedback)
+            
+            # Add 5 telemetry events after all feedback
+            for j in range(5):
+                adapter.ingest_telemetry_event(
+                    {
+                        "event_id": f"evt-qt-{j}",
+                        "event_type": "slippage_observation",
+                        "created_at": f"2026-04-07T02:{j:02d}:00Z",
+                        "execution_mode": "live",
+                        "target": {"strategy_id": "strat-z", "promotion_state": "live", "registry_id": "reg-1"},
+                        "metrics": {"slippage_bps": 1.5},
+                    },
+                    "strat-z",
+                    "live",
+                )
+            
+            # Query with limit=3: should return 3 telemetry events, not 0
+            results = adapter.query_telemetry(
+                strategy_id="strat-z",
+                promotion_state="live",
+                limit=3
+            )
+            self.assertEqual(len(results), 3)
+            for event in results:
+                self.assertIn(event["event_type"], {"slippage_observation"})
+                self.assertNotIn(event["event_type"], {"approve", "edit", "reject", "rationale"})
+
 
 if __name__ == "__main__":
     unittest.main()

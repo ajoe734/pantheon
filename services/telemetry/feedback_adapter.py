@@ -193,11 +193,13 @@ class FeedbackStoreAdapter:
             Telemetry events matching filters
         """
         if self.feedback_store:
-            # Query shared store with proper filters
+            # Query shared store with large limit to avoid pre-emptive truncation
+            # We apply limit AFTER filtering for telemetry event family
             filters = build_query_filters(
                 strategy_id=strategy_id,
                 promotion_state=promotion_state,
                 event_type=event_type,
+                limit=1000000,  # Large limit; real limit applied after family filter
             )
             results = self.feedback_store.list(filters)
             
@@ -251,8 +253,12 @@ class FeedbackStoreAdapter:
             Telemetry events in given state
         """
         if self.feedback_store:
-            # Query shared store with promotion_state filter
-            filters = build_query_filters(promotion_state=promotion_state)
+            # Query shared store with large limit to avoid pre-emptive truncation
+            # We apply limit AFTER filtering for telemetry event family
+            filters = build_query_filters(
+                promotion_state=promotion_state,
+                limit=1000000,  # Large limit; real limit applied after family filter
+            )
             results = self.feedback_store.list(filters)
             
             # Explicitly filter to telemetry event types only
@@ -285,6 +291,9 @@ class FeedbackStoreAdapter:
         Maintains event family separation: only returns telemetry event types.
         Feedback events (approve, edit, reject, rationale) are explicitly excluded.
         
+        The limit is applied AFTER filtering for telemetry event family to ensure
+        that feedback events in the shared store do not consume the query limit.
+        
         Parameters
         ----------
         strategy_id : str, optional
@@ -300,7 +309,7 @@ class FeedbackStoreAdapter:
         created_before : str, optional
             RFC3339 timestamp filter (inclusive)
         limit : int
-            Maximum number of results to return
+            Maximum number of results to return (applied after telemetry family filter)
             
         Returns
         -------
@@ -308,7 +317,8 @@ class FeedbackStoreAdapter:
             Telemetry events matching all provided filters
         """
         if self.feedback_store:
-            # Query shared store with all provided filters
+            # Query shared store with large limit to avoid pre-emptive truncation
+            # Real limit applied after filtering for telemetry event family
             filters = build_query_filters(
                 strategy_id=strategy_id,
                 registry_id=registry_id,
@@ -316,13 +326,14 @@ class FeedbackStoreAdapter:
                 event_type=event_type,
                 created_after=created_after,
                 created_before=created_before,
-                limit=limit,
+                limit=1000000,  # Large limit; real limit applied after family filter
             )
             results = self.feedback_store.list(filters)
             
             # Explicitly filter to telemetry event types only
             results = [e for e in results if e.get("event_type") in TELEMETRY_EVENT_TYPES]
             
+            # Apply requested limit to filtered results
             return results[:limit]
         
         # Fall back to local buffer filtering
