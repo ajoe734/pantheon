@@ -1,15 +1,79 @@
 {
   "project": "pantheon",
-  "sprint": "2026-04-01-architecture-alignment",
-  "objective": "Align the repo to the governed Pantheon target architecture where Pantheon orchestrates workflows, the evolution plane learns through feedback and registry gates, and LEAN executes only approved artifacts.",
-  "updated_at": "2026-04-07T02:11:29Z",
+  "sprint": "2026-04-09-phased-platform-execution",
+  "objective": "Activate the full Pantheon platform backlog in ai-status so agents can execute continuously by dependency order while preserving canonical policy truth, owner/reviewer defaults, and phased delivery sequencing.",
+  "updated_at": "2026-04-09T16:27:33Z",
+  "canonical_document_layers": {
+    "L0 Collaboration & State": [
+      "AI_COLLABORATION_GUIDE.md",
+      "ai-status.json",
+      "ai-activity-log.jsonl",
+      "current-work.md"
+    ],
+    "L1 Platform Architecture & Policy": [
+      "TARGET_ARCHITECTURE.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "PERSONA_RUNTIME_MODEL.md",
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+      "PAPER_CANARY_LIVE_POLICY.md",
+      "ROLLBACK_AND_POSITION_SEMANTICS.md",
+      "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+      "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+      "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+      "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+      "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+    ],
+    "L2 Planning & Execution": [
+      "CANONICAL_DOCUMENT_MAP.md",
+      "ROADMAP.md",
+      "DEVELOPMENT_WORKBREAKDOWN.md",
+      "OSS_INTEGRATION_CHECKLIST.md"
+    ],
+    "L3 Supporting Design & Migration": [
+      "CANONICAL_CONTRACT_MIGRATION_DECISION.md",
+      "WORK_REBASELINE.md",
+      "Pantheon_總索引版系統分析文件.md",
+      "Pantheon_資料表_Schema_設計版.md",
+      "Pantheon_API_Service_Contract_設計版.md"
+    ]
+  },
   "canonical_files": [
     "AI_COLLABORATION_GUIDE.md",
-    "current-work.md",
     "ai-status.json",
     "ai-activity-log.jsonl",
+    "current-work.md",
     "TARGET_ARCHITECTURE.md",
-    "ROADMAP.md"
+    "OPENCLAW_RUNTIME_CONTRACT.md",
+    "PERSONA_RUNTIME_MODEL.md",
+    "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+    "PAPER_CANARY_LIVE_POLICY.md",
+    "ROLLBACK_AND_POSITION_SEMANTICS.md",
+    "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+    "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+    "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+    "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+    "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+    "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+    "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+    "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+    "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+    "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+    "CANONICAL_DOCUMENT_MAP.md",
+    "ROADMAP.md",
+    "DEVELOPMENT_WORKBREAKDOWN.md",
+    "OSS_INTEGRATION_CHECKLIST.md",
+    "CANONICAL_CONTRACT_MIGRATION_DECISION.md",
+    "WORK_REBASELINE.md",
+    "Pantheon_總索引版系統分析文件.md",
+    "Pantheon_資料表_Schema_設計版.md",
+    "Pantheon_API_Service_Contract_設計版.md"
   ],
   "agents": [
     {
@@ -21,11 +85,13 @@
       ],
       "status": "waiting",
       "current_task_ids": [
-        "EV-002"
+        "CAP-001",
+        "RUN-001",
+        "CAP-002"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Ownership shifted from Gemini to Claude to keep optimizer handoff rules with the governance lane. Define optimizer outputs as governed artifacts instead of direct live mutations",
-      "last_update": "2026-04-06T06:03:44Z"
+      "next": "Formalize capital-pool and binding ownership once deployment planning semantics are stable.",
+      "last_update": "2026-04-09T16:23:19Z"
     },
     {
       "name": "Gemini",
@@ -35,11 +101,15 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "DEP-001",
+        "DEP-002",
+        "EX-002"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Resetting status per AUD-CLAUDE-001: contract is done but implementation is missing. Re-evaluating LEAN native bridge.",
-      "last_update": "2026-04-02T18:00:00Z"
+      "next": "Design the DeploymentPlan contract and planner flow after GOV-001 finalizes ApprovalDecision semantics.",
+      "last_update": "2026-04-09T16:14:14Z"
     },
     {
       "name": "Codex",
@@ -49,11 +119,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "OSS-001A"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "Reviewer shifted from Gemini to Claude so tooling validation no longer depends on the unstable Gemini review lane. Review approved: The stale dispatch guard in process_queue correctly re-validates events against current status, and regression tests successfully verify the skipping of stale events and execution of current events.",
-      "last_update": "2026-04-06T06:03:44Z"
+      "next": "Aligning OpenClaw evidence pack with canonical OC-003 boundaries: fixing smoke-test outputs to emit valid StrategySpec/WorkflowHandoff shapes and correcting governance field ownership before handoff to OSS-001 owner.",
+      "last_update": "2026-04-09T16:22:21Z"
     },
     {
       "name": "Copilot",
@@ -63,13 +135,32 @@
         "spec-review",
         "critique"
       ],
-      "status": "working",
+      "status": "waiting",
       "current_task_ids": [
-        "FB-003"
+        "APP-001",
+        "APP-002",
+        "OSS-002"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Re-review blocked: shared-store telemetry queries still depend on a hardcoded limit=1000000 before telemetry-family filtering, so large matching feedback history can still starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md.",
-      "last_update": "2026-04-07T02:11:29Z"
+      "next": "Plan the governed BFF and consultation surfaces after persona and lineage semantics are in place.",
+      "last_update": "2026-04-09T15:52:09Z"
+    },
+    {
+      "name": "Qwen",
+      "capability_lane": [
+        "integration",
+        "schema",
+        "acceptance",
+        "code-agent"
+      ],
+      "status": "working",
+      "current_task_ids": [
+        "GOV-001",
+        "OSS-001"
+      ],
+      "branch": "feat/qwen-code-agent",
+      "next": "Artifacts updated: integration.md (pin + adapter boundary), governance.md (OC-001/002/003 alignment), smoke_test.md (canonical StrategySpec + WorkflowHandoff validation).",
+      "last_update": "2026-04-09T16:27:33Z"
     }
   ],
   "tasks": [
@@ -586,7 +677,7 @@
       "phase": "Epic D",
       "owner": "Copilot",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "P3-001",
         "REG-002"
@@ -599,9 +690,15 @@
         "paper and live telemetry distinguished",
         "fill and slippage capture documented"
       ],
-      "next": "Re-review blocked: shared-store telemetry queries still depend on a hardcoded limit=1000000 before telemetry-family filtering, so large matching feedback history can still starve pnl/drawdown/fill/slippage results. See services/telemetry/review_fb003_codex_zh.md.",
-      "last_update": "2026-04-07T02:11:29Z",
-      "summary_zh": "把 pnl、drawdown、slippage、fills 等 execution telemetry 結構化，讓 evolution plane 能評估策略表現。"
+      "next": "Finalized: Shared-store telemetry queries enforce telemetry-family filtering before caller limits. 44 unit tests pass, smoke test passes with all acceptance criteria verified. Commit: c18be3b.",
+      "last_update": "2026-04-07T02:33:44Z",
+      "summary_zh": "把 pnl、drawdown、slippage、fills 等 execution telemetry 結構化，讓 evolution plane 能評估策略表現。",
+      "review_notes_zh": [
+        "審查通過：shared-store telemetry query 三條路徑都改成直接掃 iter_events()，先做 telemetry family boundary，再套 linkage / time filters 與 caller limit，不再依賴 TraderFeedbackStore.list() 的 raw-match truncation。",
+        "mixed feedback+telemetry store regression coverage 已補齊，確認 approve/edit/reject/rationale 不會混入 execution telemetry，而且 feedback events 不會先吃掉查詢上限。",
+        "重新驗證 services/telemetry：python3 -m unittest test_feedback_adapter test_capture 共 44 tests 通過，python3 smoke_test.py 通過。"
+      ],
+      "review_file": "services/telemetry/review_fb003_codex_zh.md"
     },
     {
       "id": "EV-001",
@@ -609,7 +706,7 @@
       "phase": "Epic D",
       "owner": "Copilot",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "FB-001",
         "FB-003"
@@ -622,9 +719,13 @@
         "critic rationale shape defined",
         "registry handoff fields included"
       ],
-      "next": "Ownership shifted from Gemini to Grok so evaluator/critic contract work stays moving even while Gemini auto workers are unstable. Define evaluator and critic contracts once telemetry and registry skeletons are in view",
-      "last_update": "2026-04-06T06:03:44Z",
-      "summary_zh": "定義 evaluator 與 critic 的輸出契約，讓評估結果能被 registry 與 optimizer 使用，而不是直接改 live。"
+      "next": "Finalized: EV-001 evaluator and critic contracts complete and validated. Both JSON schemas (evaluator_result.schema.json, critic_result.schema.json) pass validation with required fields aligned to REG-001. Contract specifies evaluator outputs (scores, recommendations, data snapshots) and critic outputs (findings, risks, decision guidance). Integration guide details registry handoff patterns, feedback store isolation, and linkage to FB-003/LP-004. All acceptance criteria met: (1) evaluator schema defined, (2) critic rationale shape defined, (3) registry handoff fields included. Ready for REG-002/REG-003 integration.",
+      "last_update": "2026-04-07T02:58:32Z",
+      "summary_zh": "定義 evaluator 與 critic 的輸出契約，讓評估結果能被 registry 與 optimizer 使用，而不是直接改 live。",
+      "review_notes_zh": [
+        "critic_result 最小範例已對齊 schema；REG-001 已補上 evaluation_result/critique_result artifact types，並明確標成 non-executable reference artifacts；integration guide 已改成對齊實際 FB-003 參數與 REG-001 storage_ref entry model。"
+      ],
+      "review_file": "services/evaluation/contracts/review_ev001_codex.md"
     },
     {
       "id": "EV-002",
@@ -632,7 +733,7 @@
       "phase": "Epic D",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "EV-001",
         "REG-001"
@@ -645,9 +746,14 @@
         "registry handoff rules documented",
         "promotion gate dependencies identified"
       ],
-      "next": "Ownership shifted from Gemini to Claude to keep optimizer handoff rules with the governance lane. Define optimizer outputs as governed artifacts instead of direct live mutations",
-      "last_update": "2026-04-06T06:03:44Z",
-      "summary_zh": "定義 optimizer 產出與 registry handoff 規則，確保優化結果先變成受治理 artifact 再決定是否升版。"
+      "next": "EV-002 finalized: optimizer output contract, registry handoff rules, and promotion gate dependencies fully defined. All acceptance criteria met and review approved by Codex.",
+      "last_update": "2026-04-07T04:18:08Z",
+      "summary_zh": "定義 optimizer 產出與 registry handoff 規則，確保優化結果先變成受治理 artifact 再決定是否升版。",
+      "review_notes_zh": [
+        "審查通過：前一輪兩個 blocker 已收斂。§3.1 與 §4.5/§5.3 現在一致限制 optimizer baseline 只能來自 candidate 或 paper，不再對 live baseline 自相矛盾。",
+        "candidate → paper gate 現在只接受 candidate_to_paper，已對齊 EV-001 recommendation semantics 與 INTEGRATION_GUIDE.md 的 promotion check；兩個 optimizer_result 範例也都重新驗證通過。"
+      ],
+      "review_file": "services/evaluation/optimizers/review_ev002_codex.md"
     },
     {
       "id": "RS-001",
@@ -1229,6 +1335,696 @@
       ],
       "next": "Finalized BUS-VAL-004: supervisor process_queue now revalidates queued review/owner dispatch wake events against current task status and dispatch signature before launching a worker, so stale wake-ups are skipped after task status changes while current events still start normally. Verification: python3 -m unittest discover -s .orchestrator -p 'test_*.py' (36 tests OK).",
       "last_update": "2026-04-06T16:02:31Z"
+    },
+    {
+      "id": "DOC-001",
+      "title": "Promote L1/L3 files and normalize canonical tiers",
+      "summary_zh": "將所有新 L1/L3 政策文件晉升至正式 canonical tier，統一 Tier/Status/Scope/Conflict rule 標頭，確保 guide 與 map 一致。",
+      "phase": "Phase 0: Canonical Cutover",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "done",
+      "depends_on": [],
+      "artifacts": [
+        "TARGET_ARCHITECTURE.md",
+        "OPENCLAW_RUNTIME_CONTRACT.md",
+        "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+        "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+        "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+        "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+        "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+        "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+        "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+        "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md"
+      ],
+      "acceptance": [
+        "canonical tiers published",
+        "all L1/L3 file headers carry Tier, Status, Scope, Conflict rule",
+        "AI_COLLABORATION_GUIDE.md and CANONICAL_DOCUMENT_MAP.md L1 lists agree"
+      ],
+      "last_update": "2026-04-09T16:00:00Z"
+    },
+    {
+      "id": "DOC-002",
+      "title": "Publish canonical document map and conflict-resolution rules",
+      "summary_zh": "發佈 CANONICAL_DOCUMENT_MAP.md，定義四層 tier、衝突解決規則、問題導向路由表，以及 Working Rules。",
+      "phase": "Phase 0: Canonical Cutover",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "done",
+      "depends_on": [
+        "DOC-001"
+      ],
+      "artifacts": [
+        "CANONICAL_DOCUMENT_MAP.md"
+      ],
+      "acceptance": [
+        "question routing table covers all 16 L1 policy files",
+        "tier precedence rules are documented",
+        "onboarding files (AI_COLLABORATION_GUIDE.md, FOR_GROK.md) point to the map"
+      ],
+      "last_update": "2026-04-09T16:00:00Z"
+    },
+    {
+      "id": "DOC-003",
+      "title": "Rewrite architecture overview around artifact_state/deployment_stage split",
+      "summary_zh": "重寫 TARGET_ARCHITECTURE.md，將 artifact_state (draft/candidate/approved/retired) 與 deployment_stage (paper/canary/live/frozen) 明確分離，OpenClaw 定位為上游 OSS substrate。",
+      "phase": "Phase 0: Canonical Cutover",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "done",
+      "depends_on": [
+        "DOC-001"
+      ],
+      "artifacts": [
+        "TARGET_ARCHITECTURE.md"
+      ],
+      "acceptance": [
+        "architecture overview no longer treats paper/live as artifact state",
+        "artifact_state vs deployment_stage ownership split is explicit",
+        "OpenClaw is described as upstream substrate, not the system name"
+      ],
+      "last_update": "2026-04-09T16:00:00Z"
+    },
+    {
+      "id": "DOC-004",
+      "title": "Replace old epic roadmap with phased workstream plan",
+      "summary_zh": "將 ROADMAP.md 從舊版 epic/backlog 格式改寫為 Phase 0-6 分階段計畫，包含 critical path 與 workstream 啟動順序。",
+      "phase": "Phase 0: Canonical Cutover",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "done",
+      "depends_on": [
+        "DOC-003"
+      ],
+      "artifacts": [
+        "ROADMAP.md"
+      ],
+      "acceptance": [
+        "roadmap uses phases and workstreams instead of old epic list",
+        "critical path is documented",
+        "ROADMAP.md points to DEVELOPMENT_WORKBREAKDOWN.md for detailed tasks"
+      ],
+      "last_update": "2026-04-09T16:00:00Z"
+    },
+    {
+      "id": "DOC-005",
+      "title": "Publish full platform backlog with dependencies and acceptance criteria",
+      "summary_zh": "發佈 DEVELOPMENT_WORKBREAKDOWN.md，涵蓋 7 個 workstream 共 28 個任務，每個任務均有 owner、reviewer、depends_on、canonical refs 及 acceptance。",
+      "phase": "Phase 0: Canonical Cutover",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "done",
+      "depends_on": [
+        "DOC-004"
+      ],
+      "artifacts": [
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ],
+      "acceptance": [
+        "every task has owner, reviewer, depends_on, canonical refs, and acceptance criteria",
+        "all 7 workstreams (DOC/REG-GOV-DEP/CAP-RUN-EX/TEL-LIN-INC/EVO/PER-APP/OSS) are present",
+        "second-wave activation set documented"
+      ],
+      "last_update": "2026-04-09T16:00:00Z",
+      "next": "Backlog published and accepted; begin activating downstream tasks by dependency order from DEVELOPMENT_WORKBREAKDOWN.md."
+    },
+    {
+      "id": "DOC-006",
+      "title": "Align ai-status, canonical layers, and onboarding files",
+      "summary_zh": "確保 ai-status.json canonical_document_layers、AI_COLLABORATION_GUIDE.md L1 列表、FOR_* 讀取順序與 current-work generated snapshot 四者一致，全部包含所有 17 個 L1 文件。",
+      "phase": "Phase 0: Canonical Cutover",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "done",
+      "depends_on": [
+        "DOC-002",
+        "DOC-004"
+      ],
+      "artifacts": [
+        "ai-status.json",
+        "AI_COLLABORATION_GUIDE.md",
+        "FOR_GROK.md"
+      ],
+      "acceptance": [
+        "ai-status.json canonical_document_layers lists all 16 L1 files",
+        "AI_COLLABORATION_GUIDE.md L1 section lists all 16 L1 files",
+        "FOR_GROK.md read order includes CANONICAL_DOCUMENT_MAP.md and DEVELOPMENT_WORKBREAKDOWN.md"
+      ],
+      "last_update": "2026-04-09T16:00:00Z"
+    },
+    {
+      "id": "REG-004",
+      "title": "Split artifact_state and deployment_stage in registry contracts",
+      "summary_zh": "把 registry 與 promotion contract 裡的 artifact_state 和 deployment_stage 正式拆開，避免批准語意和部署語意混在一起。",
+      "phase": "Phase 1: Registry and Governance Split",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "done",
+      "depends_on": [
+        "DOC-003"
+      ],
+      "artifacts": [
+        "services/registry/contract.md",
+        "services/registry/promotion/README.md"
+      ],
+      "acceptance": [
+        "registry contracts use draft/candidate/approved/retired",
+        "deployment stage handled separately"
+      ],
+      "next": "REG-004 finalized after Qwen approval. Registry contract, entry schema, and promotion docs now treat artifact_state as canonical governance lifecycle and deployment_stage as separate derived deployment/runtime semantics. Compatibility window for legacy lifecycle_state/promotion_state consumers remains explicitly documented for downstream migration tasks.",
+      "last_update": "2026-04-09T16:03:21Z"
+    },
+    {
+      "id": "GOV-001",
+      "title": "Define ApprovalDecision governance contract",
+      "summary_zh": "定義 ApprovalDecision 的正式治理契約、write owner 與 audit 要求，讓 promotion 和 evolution 共享同一個批准物件。",
+      "phase": "Phase 1: Registry and Governance Split",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "REG-004"
+      ],
+      "artifacts": [
+        "services/control-plane/governance/",
+        "BINDING_AND_DEPLOYMENT_SEMANTICS.md"
+      ],
+      "acceptance": [
+        "approval object exists",
+        "owner matrix is explicit",
+        "promotion and evolution can cite it"
+      ],
+      "next": "Creating ApprovalDecision schema, contract document, and Python module",
+      "last_update": "2026-04-09T16:23:31Z"
+    },
+    {
+      "id": "DEP-001",
+      "title": "Define DeploymentPlan contract and stage planner",
+      "summary_zh": "定義 DeploymentPlan 與 stage transition planner，讓 paper/canary/live/frozen 轉換有正式規格。",
+      "phase": "Phase 1: Registry and Governance Split",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "GOV-001"
+      ],
+      "artifacts": [
+        "services/control-plane/governance/",
+        "PAPER_CANARY_LIVE_POLICY.md"
+      ],
+      "acceptance": [
+        "deployment plan supports paper/canary/live/frozen transitions",
+        "rollback linkage is explicit"
+      ],
+      "next": "Design the DeploymentPlan contract and planner flow after GOV-001 finalizes ApprovalDecision semantics.",
+      "last_update": null
+    },
+    {
+      "id": "DEP-002",
+      "title": "Implement deployment orchestration saga consistency backbone",
+      "summary_zh": "建立 deployment orchestration saga、outbox/inbox 與 compensation 規則，確保跨服務部署一致性。",
+      "phase": "Phase 1: Registry and Governance Split",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "DEP-001"
+      ],
+      "artifacts": [
+        "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+        "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md"
+      ],
+      "acceptance": [
+        "business write plus event outbox is atomic",
+        "ordering and idempotent consumer behavior are verified",
+        "compensation boundaries are documented"
+      ],
+      "next": "Implement the orchestration-first deployment saga after the DeploymentPlan contract is locked.",
+      "last_update": null
+    },
+    {
+      "id": "CAP-001",
+      "title": "Define capital_pool and PersonaCapitalBinding objects",
+      "summary_zh": "把 capital_pool 與 PersonaCapitalBinding 定義成正式平台物件，鎖定 ownership 和單池 runtime 規則。",
+      "phase": "Phase 2: Capital, Runtime, and Execution Control",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "DEP-001"
+      ],
+      "artifacts": [
+        "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+        "PERSONA_RUNTIME_MODEL.md"
+      ],
+      "acceptance": [
+        "pool and binding ownership are explicit",
+        "single-pool runtime rule is documented"
+      ],
+      "next": "Formalize capital-pool and binding ownership once deployment planning semantics are stable.",
+      "last_update": null
+    },
+    {
+      "id": "RUN-001",
+      "title": "Define RuntimeBinding and runtime-manager authority",
+      "summary_zh": "定義 RuntimeBinding 與 runtime-manager 的 write authority，讓實際載入狀態有單一真相。",
+      "phase": "Phase 2: Capital, Runtime, and Execution Control",
+      "owner": "Claude",
+      "reviewer": "Gemini",
+      "status": "todo",
+      "depends_on": [
+        "CAP-001",
+        "DEP-001"
+      ],
+      "artifacts": [
+        "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+        "services/execution/artifact-loader/contract.md"
+      ],
+      "acceptance": [
+        "runtime binding references deployment plan, binding, and stage",
+        "write owner is execution plane"
+      ],
+      "next": "Draft RuntimeBinding ownership and runtime-manager authority after CAP-001 and DEP-001 resolve.",
+      "last_update": null
+    },
+    {
+      "id": "EX-002",
+      "title": "Align rollback execution actions with runtime-manager semantics",
+      "summary_zh": "把 replace、pause_then_replace、liquidate_then_replace 對齊到 runtime-manager 的正式執行行為。",
+      "phase": "Phase 2: Capital, Runtime, and Execution Control",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "RUN-001"
+      ],
+      "artifacts": [
+        "ROLLBACK_AND_POSITION_SEMANTICS.md",
+        "services/execution/artifact-loader/contract.md"
+      ],
+      "acceptance": [
+        "action mapping is explicit",
+        "position handling and cutover semantics are preserved"
+      ],
+      "next": "Map rollback action types into runtime-manager execution paths once RuntimeBinding is defined.",
+      "last_update": null
+    },
+    {
+      "id": "CAP-002",
+      "title": "Implement optimizer-svc internal multi-persona synthesis module",
+      "summary_zh": "在 optimizer-svc 內實作 multi-persona synthesis module，處理同一 capital pool 內多 advisor 衝突。",
+      "phase": "Phase 2: Capital, Runtime, and Execution Control",
+      "owner": "Claude",
+      "reviewer": "Copilot",
+      "status": "todo",
+      "depends_on": [
+        "CAP-001",
+        "GOV-001"
+      ],
+      "artifacts": [
+        "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+        "services/evaluation/optimizers/"
+      ],
+      "acceptance": [
+        "weighted fusion and sponsor selection are implemented inside optimizer-svc",
+        "one canonical synthesis artifact is produced per scope",
+        "conflict_resolution_log is generated"
+      ],
+      "next": "Implement the internal synthesis module after capital binding and approval semantics are available.",
+      "last_update": null
+    },
+    {
+      "id": "TEL-001",
+      "title": "Add deployment-stage and runtime-binding references to telemetry truth",
+      "summary_zh": "讓 telemetry schema 攜帶 deployment stage 與 runtime binding ref，和 execution 真相對齊。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "RUN-001"
+      ],
+      "artifacts": [
+        "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+        "services/telemetry/"
+      ],
+      "acceptance": [
+        "telemetry schema carries stage and binding refs",
+        "canonical store strategy is documented"
+      ],
+      "next": "Extend telemetry truth with stage and binding references after RuntimeBinding semantics are locked.",
+      "last_update": null
+    },
+    {
+      "id": "LIN-001",
+      "title": "Normalize lineage edges and define read-model aggregation contract",
+      "summary_zh": "正規化跨 plane lineage edge，並定義 read-model aggregation contract，避免 lineage 查詢各做各的。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "TEL-001"
+      ],
+      "artifacts": [
+        "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+        "services/telemetry/feedback_adapter.py"
+      ],
+      "acceptance": [
+        "normalized edges are enumerated",
+        "read model is marked derived-only"
+      ],
+      "next": "Define normalized lineage edges and derived read-model rules after TEL-001 lands.",
+      "last_update": null
+    },
+    {
+      "id": "INC-001",
+      "title": "Define incident and postmortem backbone objects",
+      "summary_zh": "定義 incident 與 postmortem 主幹物件，讓它們能連到 runtime binding、telemetry 與 lineage 證據。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Claude",
+      "reviewer": "Copilot",
+      "status": "todo",
+      "depends_on": [
+        "TEL-001",
+        "LIN-001"
+      ],
+      "artifacts": [
+        "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+        "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
+      ],
+      "acceptance": [
+        "incident and postmortem objects attach to stage, binding, and lineage refs"
+      ],
+      "next": "Draft incident/postmortem objects once telemetry and lineage identifiers are aligned.",
+      "last_update": null
+    },
+    {
+      "id": "TEL-002",
+      "title": "Implement telemetry ingest shock-absorption path",
+      "summary_zh": "建立 durable buffer 與 async batch writer，避免高量 telemetry 寫入直接壓死 canonical Postgres。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "TEL-001"
+      ],
+      "artifacts": [
+        "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+        "services/telemetry/"
+      ],
+      "acceptance": [
+        "high-volume ingest does not block canonical Postgres writes",
+        "backpressure and replay behavior are verified",
+        "buffer choice tradeoffs are documented"
+      ],
+      "next": "Add the buffered telemetry ingest path after the canonical telemetry schema is aligned.",
+      "last_update": null
+    },
+    {
+      "id": "LIN-002",
+      "title": "Implement lineage read service performance path",
+      "summary_zh": "實作高效 lineage read service，讓深圖遍歷不會因 recursive join 而逾時。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LIN-001"
+      ],
+      "artifacts": [
+        "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+        "services/telemetry/"
+      ],
+      "acceptance": [
+        "benchmark corpus and p95 target are documented and validated",
+        "deep graph traversal avoids recursive timeout failure"
+      ],
+      "next": "Build the read-optimized lineage assembly path once normalized lineage edges are defined.",
+      "last_update": null
+    },
+    {
+      "id": "EVO-003",
+      "title": "Adopt EvolutionDecision as a first-class governed object",
+      "summary_zh": "把 EvolutionDecision 提升成正式治理物件，寫清 decision lifecycle、actor role 與 evidence link。",
+      "phase": "Phase 4: Evolution Governance",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LIN-001"
+      ],
+      "artifacts": [
+        "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+        "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md"
+      ],
+      "acceptance": [
+        "decision lifecycle, actor roles, evidence links, and cooldown fields are formalized"
+      ],
+      "next": "Define the canonical EvolutionDecision object after lineage identifiers are stable.",
+      "last_update": null
+    },
+    {
+      "id": "EVO-004",
+      "title": "Wire operational evolution boundaries",
+      "summary_zh": "把 freeze、rollback、retrain、redeploy 的 ownership、threshold 與 orchestration boundary 正式接起來。",
+      "phase": "Phase 4: Evolution Governance",
+      "owner": "Claude",
+      "reviewer": "Gemini",
+      "status": "todo",
+      "depends_on": [
+        "EVO-003",
+        "EX-002",
+        "INC-001"
+      ],
+      "artifacts": [
+        "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+        "ROLLBACK_AND_POSITION_SEMANTICS.md"
+      ],
+      "acceptance": [
+        "each action path has owner, threshold, cooldown, and execution boundary"
+      ],
+      "next": "Connect operational evolution actions once EvolutionDecision, incident, and rollback semantics are ready.",
+      "last_update": null
+    },
+    {
+      "id": "EVO-005",
+      "title": "Implement kill-switch and safe-mode fast path",
+      "summary_zh": "建立 kill switch / safe mode 的緊急 fast path，仍經由 runtime-manager 執行並保留 audit trail。",
+      "phase": "Phase 4: Evolution Governance",
+      "owner": "Claude",
+      "reviewer": "Gemini",
+      "status": "todo",
+      "depends_on": [
+        "EVO-004"
+      ],
+      "artifacts": [
+        "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+        "services/execution/"
+      ],
+      "acceptance": [
+        "emergency actions bypass normal review queues but still flow through runtime-manager",
+        "audit trail is preserved",
+        "latency target is benchmarked"
+      ],
+      "next": "Implement the runtime-manager fast path after operational evolution boundaries are wired.",
+      "last_update": null
+    },
+    {
+      "id": "PER-001",
+      "title": "Adopt persona registry/session/runtime model in platform contracts",
+      "summary_zh": "把 persona registry / session / runtime model 正式寫回平台契約與 service boundary。",
+      "phase": "Phase 5: Persona and Application Surfaces",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "CAP-001",
+        "RUN-001"
+      ],
+      "artifacts": [
+        "PERSONA_RUNTIME_MODEL.md",
+        "OPENCLAW_RUNTIME_CONTRACT.md"
+      ],
+      "acceptance": [
+        "persona identity, session, and runtime instance boundaries are explicit"
+      ],
+      "next": "Project the persona registry/session/runtime model into platform contracts after capital and runtime control settle.",
+      "last_update": null
+    },
+    {
+      "id": "APP-001",
+      "title": "Define governed BFF and consultation surfaces",
+      "summary_zh": "定義 BFF/read aggregation 與 consultation surface，禁止再長出平行真相來源。",
+      "phase": "Phase 5: Persona and Application Surfaces",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "PER-001",
+        "LIN-001"
+      ],
+      "artifacts": [
+        "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+        "PERSONA_RUNTIME_MODEL.md"
+      ],
+      "acceptance": [
+        "BFF is read-oriented",
+        "consultation surfaces cite canonical objects",
+        "degraded operator path is documented"
+      ],
+      "next": "Plan the governed BFF and consultation surfaces after persona and lineage semantics are in place.",
+      "last_update": null
+    },
+    {
+      "id": "APP-002",
+      "title": "Define operator-facing deployment, incident, and evolution surfaces",
+      "summary_zh": "定義 operator 介面，讓 deployment、incident、evolution 操作都對應到正式 canonical object。",
+      "phase": "Phase 5: Persona and Application Surfaces",
+      "owner": "Copilot",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "APP-001",
+        "EVO-004"
+      ],
+      "artifacts": [
+        "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+        "PAPER_CANARY_LIVE_POLICY.md"
+      ],
+      "acceptance": [
+        "operator actions map to approval, deployment plan, runtime binding, and evolution decision objects",
+        "fallback path is defined when BFF is degraded"
+      ],
+      "next": "Shape the operator surfaces once APP-001 and operational evolution boundaries are complete.",
+      "last_update": null
+    },
+    {
+      "id": "OSS-001",
+      "title": "Pin upstream OpenClaw source and governed adapter boundary",
+      "summary_zh": "選定並 pin upstream OpenClaw 來源，正式記錄 governed adapter boundary 與 smoke-test 路徑。",
+      "phase": "Phase 6: OSS Integration Hardening",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "DOC-003"
+      ],
+      "artifacts": [
+        "OPENCLAW_RUNTIME_CONTRACT.md",
+        "spikes/openclaw_upstream_selection.md",
+        "integrations/openclaw/integration.md",
+        "integrations/openclaw/governance.md",
+        "integrations/openclaw/smoke_test.md"
+      ],
+      "acceptance": [
+        "source selected",
+        "version pinned",
+        "adapter boundary and smoke-test plan recorded"
+      ],
+      "next": "Artifacts updated: integration.md (pin + adapter boundary), governance.md (OC-001/002/003 alignment), smoke_test.md (canonical StrategySpec + WorkflowHandoff validation).",
+      "last_update": "2026-04-09T16:27:33Z"
+    },
+    {
+      "id": "OSS-002",
+      "title": "Regrade DSPy, imitation, and MLflow against canonical model",
+      "summary_zh": "重新評級 DSPy、imitation、MLflow 與 canonical model 的對齊度，補齊證據與缺口。",
+      "phase": "Phase 6: OSS Integration Hardening",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "DOC-005",
+        "OSS-001"
+      ],
+      "artifacts": [
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "services/learning/"
+      ],
+      "acceptance": [
+        "checklist status reflects real maturity",
+        "missing evidence and follow-ups are explicit"
+      ],
+      "next": "Regrade the key OSS integrations once the OpenClaw pin and full backlog publication are in place.",
+      "last_update": null
+    },
+    {
+      "id": "OSS-003",
+      "title": "Define activation criteria for deferred Qlib, TRL, and RL paths",
+      "summary_zh": "替 Qlib、TRL、RL stack 建立正式啟動門檻，避免它們只是 roadmap 上的空框。",
+      "phase": "Phase 6: OSS Integration Hardening",
+      "owner": "Gemini",
+      "reviewer": "Copilot",
+      "status": "todo",
+      "depends_on": [
+        "EVO-003",
+        "OSS-002"
+      ],
+      "artifacts": [
+        "TARGET_ARCHITECTURE.md",
+        "services/learning/rl/PATH_DEFINITION.md"
+      ],
+      "acceptance": [
+        "deferred frameworks have explicit prerequisites rather than placeholders"
+      ],
+      "next": "Define hard activation criteria for deferred OSS paths after evolution semantics and integration regrade finish.",
+      "last_update": null
+    },
+    {
+      "id": "REG-004A",
+      "title": "Prepare REG-004 acceptance and compatibility audit",
+      "summary_zh": "平行支援 REG-004，先做 registry state-split 的 acceptance/alignment 檢查、schema drift 清單與 compatibility audit，讓主 owner 可以連續往下做而不被驗收細節卡住。",
+      "phase": "Phase 1: Registry and Governance Split",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "DOC-003"
+      ],
+      "artifacts": [
+        "services/registry/contract.md",
+        "services/registry/promotion/README.md",
+        "TARGET_ARCHITECTURE.md"
+      ],
+      "acceptance": [
+        "acceptance checklist for REG-004 is written",
+        "schema drift and compatibility risks are enumerated",
+        "review notes can be handed to REG-004 owner without blocking main implementation"
+      ],
+      "next": "Task finalized to done. No remaining work for Qwen on this task.",
+      "last_update": "2026-04-09T16:08:55Z",
+      "review_notes_zh": [
+        "audit v2 已正確反映 contract/schema/README 現況",
+        "follow-on migration 已和本輪 acceptance 清楚切開",
+        "deployment_stage ownership 與 derived deployment_summary 判準一致"
+      ],
+      "review_file": "services/registry/review_reg004a_codex_approved_zh.md"
+    },
+    {
+      "id": "OSS-001A",
+      "title": "Collect OSS-001 upstream evidence pack and smoke-test checklist",
+      "summary_zh": "平行支援 OSS-001，先蒐集 upstream OpenClaw pinning 證據、來源候選、版本資訊與 smoke-test checklist，讓主 owner 能直接進入整合決策與落地。",
+      "phase": "Phase 6: OSS Integration Hardening",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "in_progress",
+      "depends_on": [
+        "DOC-003"
+      ],
+      "artifacts": [
+        "OPENCLAW_RUNTIME_CONTRACT.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "spikes/openclaw_upstream_selection.md"
+      ],
+      "acceptance": [
+        "upstream source candidates and pin evidence are collected",
+        "smoke-test checklist is drafted",
+        "evidence pack can be handed to OSS-001 owner without blocking adapter work"
+      ],
+      "next": "Aligning OpenClaw evidence pack with canonical OC-003 boundaries: fixing smoke-test outputs to emit valid StrategySpec/WorkflowHandoff shapes and correcting governance field ownership before handoff to OSS-001 owner.",
+      "last_update": "2026-04-09T16:22:21Z"
     }
   ],
   "handoffs": [
@@ -1763,6 +2559,312 @@
       "status": "done",
       "created_at": "2026-04-07T02:11:29Z",
       "resolved_at": "2026-04-07T02:11:29Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "All shared-store telemetry query semantics fixed. Limit applied AFTER family filtering. 44 tests pass, 500+5 event scenario works correctly. Ready for final re-review. Commit: c18be3b",
+      "status": "done",
+      "created_at": "2026-04-07T02:30:00Z",
+      "resolved_at": "2026-04-07T02:32:06Z"
+    },
+    {
+      "task_id": "FB-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review approved. Shared-store telemetry queries now enforce telemetry-family filtering before caller limits, and mixed-family regression coverage plus smoke tests passed. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-07T02:32:06Z",
+      "resolved_at": "2026-04-07T02:33:44Z"
+    },
+    {
+      "task_id": "EV-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "EV-001 complete and ready for review: (1) Evaluator output contract defined with score components, data snapshots, and audit fields. (2) Critic rationale contract defined with findings, risks, and decision guidance. (3) Registry handoff patterns and lineage documented. (4) JSON schemas created and validated. (5) Integration guide covers feedback store isolation, registry storage, and preference model consumption. (6) All acceptance criteria met.",
+      "status": "done",
+      "created_at": "2026-04-07T02:42:22Z",
+      "resolved_at": "2026-04-07T02:56:22Z"
+    },
+    {
+      "task_id": "EV-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review approved. EV-001 contracts, schemas, and integration guide are aligned with FB-003 and REG-001. Fixed the critic example/schema drift, documented evaluation_result and critique_result as non-executable registry artifacts, and validated evaluator/critic examples plus registry entries against their schemas. Ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-07T02:56:22Z",
+      "resolved_at": "2026-04-07T02:58:32Z"
+    },
+    {
+      "task_id": "EV-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EV-002 contract complete. Please review: (1) services/evaluation/optimizers/contract.md — optimizer_result artifact type, registry handoff rules, promotion gate dependencies; (2) optimizer_result.schema.json + 2 validated examples; (3) registry_entry_schema.json and registry/contract.md updated to include optimizer_result artifact type. All 3 acceptance criteria satisfied: versionable artifacts defined, handoff rules documented, promotion gate dependencies identified.",
+      "status": "done",
+      "created_at": "2026-04-07T03:05:11Z",
+      "resolved_at": "2026-04-07T03:08:44Z"
+    },
+    {
+      "task_id": "EV-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review blocked: optimizer contract still contradicts itself on whether live artifacts may be optimizer baselines, and candidate→paper incorrectly accepts paper_to_live as a valid evaluation recommendation. See services/evaluation/optimizers/review_ev002_codex.md.",
+      "status": "done",
+      "created_at": "2026-04-07T03:08:44Z",
+      "resolved_at": "2026-04-07T03:08:44Z"
+    },
+    {
+      "task_id": "EV-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EV-002 contract revised — two blocking governance contradictions fixed. (1) §3.1 diagram 'paper or live' → 'candidate or paper', now consistent with §4.5 and §5.3 live-baseline prohibition. (2) §6.2 recommendation set {candidate_to_paper, paper_to_live} → candidate_to_paper only, now consistent with EV-001 recommendation semantics and INTEGRATION_GUIDE.md:549. Both JSON examples still validate against schema. Please re-review services/evaluation/optimizers/contract.md.",
+      "status": "done",
+      "created_at": "2026-04-07T04:15:39Z",
+      "resolved_at": "2026-04-07T04:17:15Z"
+    },
+    {
+      "task_id": "EV-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "EV-002 re-review approved. The live-baseline contradiction and candidate->paper recommendation drift are resolved, and both optimizer_result examples still validate against schema. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-07T04:17:15Z",
+      "resolved_at": "2026-04-07T04:18:08Z"
+    },
+    {
+      "task_id": "REG-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Contract-first REG-004 cutover is ready for review. Updated services/registry/contract.md and services/registry/registry_entry_schema.json to use artifact_state=draft/candidate/approved/retired, moved deployment_stage ownership into deployment/runtime semantics, and added derived deployment_summary guidance. Updated services/registry/promotion/README.md to describe approved-state governance versus paper/canary/live deployment stages, with explicit legacy compatibility notes for gate.py/loader consumers. Added compatibility notes to services/registry/lineage/contract.md and services/execution/artifact-loader/contract.md. Verification: python3 -m json.tool services/registry/registry_entry_schema.json.",
+      "status": "done",
+      "created_at": "2026-04-09T15:55:47Z",
+      "resolved_at": "2026-04-09T15:57:25Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "REG-004 acceptance/compatibility audit complete. Written to services/registry/review_reg004a_qwen_zh.md. Contains: (1) 33-item acceptance checklist across 7 categories, (2) 11-file schema drift mapping, (3) 8 compatibility risks, (4) recommended 6-phase migration sequence. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-09T15:57:23Z",
+      "resolved_at": "2026-04-09T16:00:53Z"
+    },
+    {
+      "task_id": "REG-004",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"a28d83e4-9050-4bb4-b74c-b75539900b90\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1am (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"a5c9a73d-c80a-4900-ad88-c1c48ef5906c\",\"uuid\":\"d8e0c2e6-ecf7-47a9-bb02-22f864a8db0b\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-09T15:57:25Z",
+      "resolved_at": "2026-04-09T16:02:14Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T15:58:12Z",
+      "resolved_at": "2026-04-09T15:58:42Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T15:58:59Z",
+      "resolved_at": "2026-04-09T15:59:56Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:00:11Z",
+      "resolved_at": "2026-04-09T16:01:08Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review rejected: see services/registry/review_reg004a_codex_zh.md. Audit contains stale reads of the current registry contract/schema and mis-scopes deferred migration work as REG-004 blockers.",
+      "status": "done",
+      "created_at": "2026-04-09T16:00:53Z",
+      "resolved_at": "2026-04-09T16:00:53Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:01:27Z",
+      "resolved_at": "2026-04-09T16:01:58Z"
+    },
+    {
+      "task_id": "REG-004",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Qwen review approved: artifact_state and deployment_stage cleanly separated across contract.md, registry_entry_schema.json, and promotion README. Compatibility window documented. Follow-on migration work correctly deferred.",
+      "status": "done",
+      "created_at": "2026-04-09T16:02:14Z",
+      "resolved_at": "2026-04-09T16:03:21Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:02:40Z",
+      "resolved_at": "2026-04-09T16:03:14Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:03:30Z",
+      "resolved_at": "2026-04-09T16:06:35Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:04:20Z",
+      "resolved_at": "2026-04-09T16:04:54Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "REG-004A revised audit complete. Corrected all three Codex review findings: (1) contract.md and registry_entry_schema.json now correctly assessed as already aligned to artifact_state/deployment_summary split, (2) follow-up migration work properly scoped as out-of-REG-004, (3) deployment_stage ownership consistently treated as derived/non-authoritative throughout. All 23 acceptance checks PASS, 0 FAIL, 6 N/A (out of scope). Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:04:41Z",
+      "resolved_at": "2026-04-09T16:05:16Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:05:10Z",
+      "resolved_at": "2026-04-09T16:05:44Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Audit v2 rewritten. All 4 Codex review findings addressed: (1) registry_entry_schema.json correctly read as already having artifact_state + deployment_summary, (2) follow-on migration work separated from REG-004 acceptance scope, (3) deployment_stage ownership consistent throughout — derived in registry, canonical in DEP-001, (4) acceptance matrix now has consistent PASS/FAIL standards with 18 PASS, 0 FAIL within REG-004 contract scope. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:05:16Z",
+      "resolved_at": "2026-04-09T16:06:44Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review approved. Audit v2 now correctly reflects the current registry contract/schema/README, keeps deployment_summary derived-only, and scopes legacy migration as downstream compatibility work for GOV-001, DEP-001, and execution-side follow-up.",
+      "status": "done",
+      "created_at": "2026-04-09T16:06:44Z",
+      "resolved_at": "2026-04-09T16:08:26Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:07:19Z",
+      "resolved_at": "2026-04-09T16:07:49Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:07:19Z",
+      "resolved_at": "2026-04-09T16:12:19Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "OSS-001 complete. Deliverables: integrations/openclaw/integration.md (pin v2026.4.7 + SHA 5050017, adapter boundary, error model, event envelope), governance.md (OC-001/002/003 alignment, deny-first mapping, normalization pipeline), smoke_test.md (5-step executable test plan). All 3 acceptance criteria met. Spike open questions resolved.",
+      "status": "done",
+      "created_at": "2026-04-09T16:12:38Z",
+      "resolved_at": "2026-04-09T16:21:08Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:13:19Z",
+      "resolved_at": "2026-04-09T16:14:14Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:14:14Z",
+      "resolved_at": "2026-04-09T16:19:20Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:19:36Z",
+      "resolved_at": "2026-04-09T16:20:09Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review rejected: see integrations/openclaw/review_oss001_codex_zh.md. smoke_test.md emits a hybrid StrategySpec/WorkflowHandoff payload that cannot validate against services/control-plane/specs/strategy_spec.schema.json, and governance.md assigns workflow_handoff-only fields to StrategySpec.",
+      "status": "done",
+      "created_at": "2026-04-09T16:21:08Z",
+      "resolved_at": "2026-04-09T16:21:08Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:21:41Z",
+      "resolved_at": "2026-04-09T16:22:11Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:22:29Z",
+      "resolved_at": "2026-04-09T16:22:59Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:23:19Z",
+      "resolved_at": "2026-04-09T16:23:42Z"
     }
   ],
   "blockers": [
@@ -1816,44 +2918,54 @@
     "Claude": 15,
     "Gemini": 30,
     "Codex": 30,
+    "Qwen": 15,
     "Copilot": 25
   },
   "workload_summary": {
     "Claude": {
-      "total": 3,
+      "total": 10,
       "active": 0,
       "blocked": 0,
-      "done": 2,
+      "done": 3,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 7
     },
     "Gemini": {
-      "total": 2,
+      "total": 8,
       "active": 0,
       "blocked": 0,
       "done": 2,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 6
     },
     "Codex": {
-      "total": 36,
-      "active": 0,
-      "blocked": 0,
-      "done": 36,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
-    },
-    "Copilot": {
-      "total": 11,
+      "total": 47,
       "active": 1,
       "blocked": 0,
-      "done": 9,
+      "done": 43,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 4
+    },
+    "Qwen": {
+      "total": 3,
+      "active": 2,
+      "blocked": 0,
+      "done": 1,
       "review": 0,
       "review_approved": 0,
       "todo": 2
+    },
+    "Copilot": {
+      "total": 14,
+      "active": 0,
+      "blocked": 0,
+      "done": 11,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 3
     }
   }
 }
