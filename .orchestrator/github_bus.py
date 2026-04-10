@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -172,6 +174,37 @@ def branch_has_diff(base: str, branch: str) -> bool:
         return False
 
 
+def run_gh_process(args: list[str], *, timeout_seconds: float) -> subprocess.CompletedProcess[str]:
+    # Avoid subprocess.run(..., timeout=...) here: if gh gets wedged in I/O,
+    # subprocess.run waits on teardown and can stall the supervisor heartbeat.
+    with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
+        process = subprocess.Popen(
+            ["gh", *args],
+            cwd=str(ROOT),
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            start_new_session=True,
+        )
+        try:
+            process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            raise exc
+
+        stdout_handle.seek(0)
+        stderr_handle.seek(0)
+        stdout = stdout_handle.read().decode("utf-8", errors="replace")
+        stderr = stderr_handle.read().decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(["gh", *args], process.returncode or 0, stdout, stderr)
+
+
 def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.CompletedProcess[str]:
     if not command_exists("gh"):
         raise GitHubBusError("GitHub CLI `gh` is not installed.")
@@ -182,7 +215,7 @@ def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.Complet
     except Exception:
         timeout_seconds = 8.0
     try:
-        proc = run_command(["gh", *args], cwd=ROOT, timeout=timeout_seconds)
+        proc = run_gh_process(args, timeout_seconds=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         message = f"GitHub CLI timed out after {int(timeout_seconds)}s while running: gh {' '.join(args)}"
         if allow_offline:
@@ -461,18 +494,18 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     try:
         if pr_ref and pr_ref.get("number"):
             number = int(pr_ref["number"])
-            run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *create_label_args(labels)])
+            run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
             pr = dict(pr_ref)
         else:
             found = find_existing_pr(repo, task["id"], branch)
             if found:
                 number = int(found["number"])
-                run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *label_args(labels)])
+                run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
                 pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
             else:
                 create_args = ["pr", "create", "--repo", repo, "--draft", "--title", title, "--body-file", str(body_file), "--base", base, "--head", branch]
                 if labels:
-                    create_args.extend(label_args(labels))
+                    create_args.extend(create_label_args(labels))
                 if (config.get("github_bus", {}) or {}).get("auto_request_reviewers", True):
                     for handle in reviewer_handles(config, task):
                         create_args.extend(["--reviewer", handle])
@@ -502,8 +535,17 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     return True
 
 
-def run_ai_status(command: str, target: str, message: str) -> None:
-    proc = run_command(["python3", "scripts/ai_status.py", command, target, message], cwd=ROOT)
+def run_ai_status(command: str, target: str, message: str, *, actor: str | None = None) -> None:
+    env = os.environ.copy()
+    if actor:
+        env["AI_NAME"] = actor
+    proc = subprocess.run(
+        ["python3", "scripts/ai_status.py", command, target, message],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
     if proc.returncode != 0:
         raise GitHubBusError(trim_text((proc.stderr or proc.stdout or "ai_status failed"), 600))
 
@@ -561,23 +603,50 @@ def apply_bus_command(
     task_id, target_task = resolve_task(status, command.target or (task or {}).get("id"), fallback_task=task)
     changed = False
     reply = ""
+    owner = str((target_task or task or {}).get("owner") or "").strip() or None
+    reviewer = str((target_task or task or {}).get("reviewer") or "").strip() or None
 
     if command.verb == "approve" and target_task:
         if target_task.get("status") == "review":
-            run_ai_status("done", task_id, f"GitHub approval bus approved via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.")
+            run_ai_status(
+                "approve",
+                task_id,
+                f"GitHub approval bus approved via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.",
+                actor=reviewer,
+            )
         else:
-            run_ai_status("reopen", task_id, f"GitHub approval bus approved via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}; resuming work.")
+            run_ai_status(
+                "reopen",
+                task_id,
+                f"GitHub approval bus approved via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}; resuming work.",
+                actor=owner or reviewer,
+            )
         reply = f"Applied `/approve` to `{task_id}`."
         changed = True
     elif command.verb == "deny" and target_task:
         if target_task.get("status") == "review":
-            run_ai_status("reopen", task_id, f"GitHub approval bus denied via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}; returning to implementation.")
+            run_ai_status(
+                "reopen",
+                task_id,
+                f"GitHub approval bus denied via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}; returning to implementation.",
+                actor=reviewer or owner,
+            )
         else:
-            run_ai_status("note", task_id, f"GitHub approval bus denial noted via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.")
+            run_ai_status(
+                "note",
+                task_id,
+                f"GitHub approval bus denial noted via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.",
+                actor=owner or reviewer,
+            )
         reply = f"Recorded `/deny` for `{task_id}`."
         changed = True
     elif command.verb == "retry" and target_task:
-        run_ai_status("reopen", task_id, f"GitHub retry requested via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.")
+        run_ai_status(
+            "reopen",
+            task_id,
+            f"GitHub retry requested via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.",
+            actor=owner or reviewer,
+        )
         queue_resume_for_task(config, target_task)
         reply = f"Queued retry for `{task_id}`."
         changed = True
@@ -765,21 +834,21 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
             state_value = str(review.get("state") or "").upper()
             body = trim_text(review.get("body"), 240)
             if state_value == "APPROVED":
-                run_ai_status("done", task["id"], f"GitHub PR approved via PR #{number} by @{actor}.")
+                run_ai_status("approve", task["id"], f"GitHub PR approved via PR #{number} by @{actor}.", actor=str(task.get("reviewer") or "").strip() or None)
                 write_activity_log(config, {"type": "github_review_approved", "task_id": task["id"], "message": f"PR #{number} approved by @{actor}.", "github_pr": number})
                 changed = True
             elif state_value == "CHANGES_REQUESTED":
                 detail = f"GitHub PR requested changes via PR #{number} by @{actor}."
                 if body:
                     detail += f" {body}"
-                run_ai_status("reopen", task["id"], detail)
+                run_ai_status("reopen", task["id"], detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
                 write_activity_log(config, {"type": "github_review_changes_requested", "task_id": task["id"], "message": detail, "github_pr": number})
                 changed = True
             elif state_value == "COMMENTED":
                 note = f"GitHub PR comment via PR #{number} by @{actor}."
                 if body:
                     note += f" {body}"
-                run_ai_status("note", task["id"], note)
+                run_ai_status("note", task["id"], note, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
                 changed = True
             seen.add(key)
     bus_state["processed_review_ids"] = list(seen)
@@ -830,19 +899,19 @@ def consume_webhook_events(config: dict[str, Any], bus_state: dict[str, Any], st
                     state_value = str(review.get("state") or "").upper()
                     body = trim_text(review.get("body"), 240)
                     if state_value == "APPROVED":
-                        run_ai_status("done", task_id, f"GitHub PR approved via webhook PR #{pr_number} by @{actor}.")
+                        run_ai_status("approve", task_id, f"GitHub PR approved via webhook PR #{pr_number} by @{actor}.", actor=str(task.get("reviewer") or "").strip() or None)
                         changed = True
                     elif state_value == "CHANGES_REQUESTED":
                         detail = f"GitHub PR requested changes via webhook PR #{pr_number} by @{actor}."
                         if body:
                             detail += f" {body}"
-                        run_ai_status("reopen", task_id, detail)
+                        run_ai_status("reopen", task_id, detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
                         changed = True
                     elif state_value == "COMMENTED":
                         note = f"GitHub PR comment via webhook PR #{pr_number} by @{actor}."
                         if body:
                             note += f" {body}"
-                        run_ai_status("note", task_id, note)
+                        run_ai_status("note", task_id, note, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
                         changed = True
                     break
         seen.add(delivery)
