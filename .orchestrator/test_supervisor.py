@@ -113,6 +113,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "schema": {
                 "tasks_path": "tasks",
                 "task_id_field": "id",
+                "status_field": "status",
                 "assignee_field": "owner",
                 "reviewer_field": "reviewer",
             },
@@ -133,6 +134,44 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             },
         }
         self.provider_report: dict[str, object] = {}
+
+    def test_build_request_uses_provider_model_preference_for_qwen_agent(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "agents": {
+                "qwen": {
+                    "id": "qwen",
+                    "display_name": "Qwen",
+                    "provider": "qwen",
+                    "adapter": "qwen",
+                }
+            },
+            "providers": {
+                "qwen": {
+                    "delivery_mode": "qwen",
+                    "model_preference": {
+                        "qwen": "qwen3-coder-plus",
+                    },
+                }
+            },
+        }
+
+        request = supervisor.build_request(
+            config,
+            {
+                "target_agent": "qwen",
+                "message": "wake",
+            },
+        )
+
+        self.assertEqual(request.agent_id, "qwen")
+        self.assertEqual(request.provider, "qwen")
+        self.assertEqual(request.metadata["model_preference"], "qwen3-coder-plus")
 
     def test_skips_stale_owned_dispatch_event_after_task_completion(self) -> None:
         queued_task = {
@@ -563,6 +602,255 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         self.assertEqual(saved_state["supervisor"]["pid"], os.getpid())
         self.assertIsNotNone(saved_state["supervisor"]["last_heartbeat_at"])
         self.assertEqual(saved_state["supervisor"]["started_at"], saved_state["supervisor"]["last_heartbeat_at"])
+
+
+class UnderutilizationSidecarDispatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+        (self.root / "sidecar_catalog.json").write_text('{"templates": []}\n', encoding="utf-8")
+        (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "sidecar_catalog": str(self.root / "sidecar_catalog.json"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running",
+                    "started",
+                    "waiting_approval",
+                    "manual_pending",
+                    "retry_backoff",
+                    "suspended_approval",
+                    "stalled",
+                    "fallback",
+                ],
+                "dependency_done_statuses": ["done"],
+            },
+            "underutilization_dispatch": {
+                "enabled": True,
+                "threshold_ratio": 0.5,
+                "continuous_window_seconds": 900,
+                "cooldown_seconds": 900,
+                "max_new_sidecars_per_wave": 2,
+                "max_active_sidecars_per_agent": 1,
+                "productive_worker_statuses": ["running", "waiting_approval", "suspended_approval", "retry_backoff"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"},
+                "qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"},
+            },
+        }
+
+    def test_waits_full_window_before_creating_sidecars(self) -> None:
+        state = {"queue": {"events": {}}, "workers": {}, "underutilization": {}}
+
+        with (
+            mock.patch.object(supervisor, "create_sidecar_task", side_effect=AssertionError("should not create before the window")),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertIsNotNone(state["underutilization"]["below_threshold_since"])
+        self.assertIsNone(state["underutilization"].get("last_sidecar_wave_at"))
+        write_activity_log.assert_not_called()
+
+    def test_creates_visible_sidecar_after_continuous_low_utilization_window(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": "TEL-001",
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                }
+            },
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+        }
+        parent_task = {
+            "id": "APP-001",
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "title": "Define BFF query surfaces",
+            "summary_zh": "整理 operator console 與 workbench 的 BFF query contract。",
+            "artifacts": ["services/control-plane/bff/"],
+            "last_update": "2026-04-10T00:05:00Z",
+        }
+        created_sidecar = {
+            "id": "APP-001-SIDECAR-BFF-HANDOFF",
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "todo",
+            "owner": "Qwen",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "title": "Prepare APP-001 BFF and frontend handoff packet",
+            "summary_zh": "平行支援 APP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+            "artifacts": ["support/sidecars/APP-001/APP-001-SIDECAR-BFF-HANDOFF.md"],
+            "task_class": "sidecar",
+            "auto_generated": True,
+            "helper_parent": "APP-001",
+            "helper_kind": "bff_handoff_packet",
+            "mutates_canonical": False,
+            "auto_created_by": "supervisor-underutilization",
+            "last_update": "2026-04-10T00:16:05Z",
+        }
+        status_before = {"tasks": [parent_task]}
+        status_after = {"tasks": [parent_task, created_sidecar]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[status_before, status_after]),
+            mock.patch.object(supervisor, "load_sidecar_catalog", return_value=[]),
+            mock.patch.object(supervisor, "create_sidecar_task", return_value=(True, "")) as create_sidecar_task,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:16:05Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        create_sidecar_task.assert_called_once()
+        kwargs = create_sidecar_task.call_args.kwargs
+        self.assertEqual(kwargs["sidecar_id"], "APP-001-SIDECAR-BFF-HANDOFF")
+        self.assertEqual(kwargs["owner"], "Qwen")
+        self.assertEqual(kwargs["reviewer"], "Claude")
+        self.assertEqual(kwargs["helper_parent"], "APP-001")
+        self.assertEqual(kwargs["helper_kind"], "bff_handoff_packet")
+        self.assertFalse(kwargs["mutates_canonical"])
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "APP-001-SIDECAR-BFF-HANDOFF")
+        self.assertEqual(queued_event["target_agent"], "Qwen")
+        self.assertEqual(queued_event["task"]["task_class"], "sidecar")
+        self.assertEqual(state["underutilization"]["last_sidecar_wave_at"], "2026-04-10T00:16:05Z")
+        self.assertIn("created 1 visible sidecar", state["underutilization"]["last_sidecar_wave_reason"])
+        self.assertIn("APP-001-SIDECAR-BFF-HANDOFF", state.get("tasks", {}))
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertIn("sidecar_task_created", activity_types)
+        self.assertIn("sidecar_wave_started", activity_types)
+
+    def test_resets_underutilization_timer_when_utilization_recovers(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-1": {"run_id": "run-1", "task_id": "REG-004", "agent_id": "codex", "provider": "codex", "status": "running"},
+                "run-2": {"run_id": "run-2", "task_id": "OSS-001", "agent_id": "gemini", "provider": "gemini", "status": "running"},
+            },
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+        }
+
+        changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertIsNone(state["underutilization"]["below_threshold_since"])
+
+    def test_cooldown_prevents_duplicate_sidecar_wave(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": "2026-04-10T00:10:00Z",
+                "last_sidecar_wave_reason": "already created a wave recently",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "create_sidecar_task", side_effect=AssertionError("cooldown should prevent new sidecars")),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:20:00Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertFalse(changed)
+        self.assertEqual(state["underutilization"]["last_sidecar_wave_reason"], "already created a wave recently")
+
+    def test_skips_duplicate_signature_when_matching_sidecar_already_exists(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+        }
+        parent_task = {
+            "id": "APP-001",
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "title": "Define BFF query surfaces",
+            "summary_zh": "整理 operator console 與 workbench 的 BFF query contract。",
+            "artifacts": ["services/control-plane/bff/"],
+            "last_update": "2026-04-10T00:05:00Z",
+        }
+        existing_sidecar = {
+            "id": "APP-001-SIDECAR-BFF-HANDOFF",
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "done",
+            "owner": "Qwen",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "title": "Prepare APP-001 BFF and frontend handoff packet",
+            "summary_zh": "已完成支援包。",
+            "artifacts": ["support/sidecars/APP-001/APP-001-SIDECAR-BFF-HANDOFF.md"],
+            "task_class": "sidecar",
+            "auto_generated": True,
+            "helper_parent": "APP-001",
+            "helper_kind": "bff_handoff_packet",
+            "mutates_canonical": False,
+            "auto_created_by": "supervisor-underutilization",
+            "last_update": "2026-04-10T00:07:00Z",
+        }
+        status = {"tasks": [parent_task, existing_sidecar]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_sidecar_catalog", return_value=[]),
+            mock.patch.object(supervisor, "create_sidecar_task", side_effect=AssertionError("duplicate signature should not create another sidecar")),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:16:05Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            state["underutilization"]["last_sidecar_wave_reason"],
+            "underutilized but no sidecar candidates matched the catalog or dynamic fallback",
+        )
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertEqual(activity_types, ["sidecar_wave_skipped"])
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):
@@ -1169,6 +1457,60 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["task_id"], "LP-003")
         self.assertEqual(kwargs["new_owner"], "Codex")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+    def test_reassigns_finalize_task_to_new_owner_after_repeated_failure(self) -> None:
+        config = {
+            **self.config,
+            "worker_reassignment": {
+                **self.config["worker_reassignment"],
+                "owner_fallbacks": {
+                    **self.config["worker_reassignment"]["owner_fallbacks"],
+                    "Claude": ["Qwen", "Grok", "Gemini"],
+                },
+                "reviewer_fallbacks": {
+                    **self.config["worker_reassignment"]["reviewer_fallbacks"],
+                    "Claude": ["Qwen", "Grok", "Gemini"],
+                },
+            },
+            "agents": {
+                **self.config["agents"],
+                "qwen": {"display_name": "Qwen"},
+            },
+        }
+        worker = {
+            "task_id": "RUN-001",
+            "agent_id": "claude",
+            "retry_count": 5,
+            "run_id": "claude-run-9",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "RUN-001",
+                    "status": "review_approved",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "You've hit your limit · resets 1pm (Asia/Taipei)",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Qwen")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "RUN-001")
+        self.assertEqual(kwargs["new_owner"], "Qwen")
+        self.assertEqual(kwargs["new_reviewer"], "Codex")
 
 
 if __name__ == "__main__":
