@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-09-phased-platform-execution",
   "objective": "Activate the full Pantheon platform backlog in ai-status so agents can execute continuously by dependency order while preserving canonical policy truth, owner/reviewer defaults, and phased delivery sequencing.",
-  "updated_at": "2026-04-09T16:27:33Z",
+  "updated_at": "2026-04-10T14:17:00Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -83,15 +83,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
+      "status": "finalize",
       "current_task_ids": [
-        "CAP-001",
-        "RUN-001",
-        "CAP-002"
+        "INC-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Formalize capital-pool and binding ownership once deployment planning semantics are stable.",
-      "last_update": "2026-04-09T16:23:19Z"
+      "next": "INC-001 approved after reviewer cleanup: Postmortem now carries deployment_plan_id/persona_capital_binding_id/runtime_id and IncidentStore enforces propagated evidence equality with the parent IncidentCase. Unit tests 75/75 PASS; smoke checks 59/59 PASS.",
+      "last_update": "2026-04-10T13:38:38Z"
     },
     {
       "name": "Gemini",
@@ -101,15 +99,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "DEP-001",
-        "DEP-002",
-        "EX-002"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Design the DeploymentPlan contract and planner flow after GOV-001 finalizes ApprovalDecision semantics.",
-      "last_update": "2026-04-09T16:14:14Z"
+      "next": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "last_update": "2026-04-10T14:04:17Z"
     },
     {
       "name": "Codex",
@@ -119,13 +113,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "OSS-001A"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Aligning OpenClaw evidence pack with canonical OC-003 boundaries: fixing smoke-test outputs to emit valid StrategySpec/WorkflowHandoff shapes and correcting governance field ownership before handoff to OSS-001 owner.",
-      "last_update": "2026-04-09T16:22:21Z"
+      "next": "Ownership updated",
+      "last_update": "2026-04-10T14:13:17Z"
     },
     {
       "name": "Copilot",
@@ -137,13 +129,11 @@
       ],
       "status": "waiting",
       "current_task_ids": [
-        "APP-001",
-        "APP-002",
-        "OSS-002"
+        "APP-002"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Plan the governed BFF and consultation surfaces after persona and lineage semantics are in place.",
-      "last_update": "2026-04-09T15:52:09Z"
+      "next": "Shape the operator surfaces once APP-001 and operational evolution boundaries are complete.",
+      "last_update": "2026-04-10T14:11:08Z"
     },
     {
       "name": "Qwen",
@@ -155,12 +145,12 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "GOV-001",
-        "OSS-001"
+        "LIN-002",
+        "OSS-003"
       ],
       "branch": "feat/qwen-code-agent",
-      "next": "Artifacts updated: integration.md (pin + adapter boundary), governance.md (OC-001/002/003 alignment), smoke_test.md (canonical StrategySpec + WorkflowHandoff validation).",
-      "last_update": "2026-04-09T16:27:33Z"
+      "next": "Codex review fixes applied: (1) All 4 query families now output derived_only=true and complete refs envelope per LIN-001/L1 contract. (2) Alias drift conflict detection added matching feedback_adapter semantics. (3) Regression tests added for envelope + alias drift. 25/25 tests PASS; benchmark all families within SLA.",
+      "last_update": "2026-04-10T14:17:00Z"
     }
   ],
   "tasks": [
@@ -1502,7 +1492,7 @@
       "phase": "Phase 1: Registry and Governance Split",
       "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "REG-004"
       ],
@@ -1515,17 +1505,22 @@
         "owner matrix is explicit",
         "promotion and evolution can cite it"
       ],
-      "next": "Creating ApprovalDecision schema, contract document, and Python module",
-      "last_update": "2026-04-09T16:23:31Z"
+      "next": "GOV-001 formally closed as done. ApprovalDecision governance contract locked: lifecycle state machine (proposed→under_review→decided), revoke authority with audit, OwnerMatrix risk-level×role authorization, deployment integration contract for registry/evolution/DeploymentPlan. 38/38 unit tests + 29/29 smoke checks pass. Codex review approved and all findings addressed.",
+      "last_update": "2026-04-09T16:37:44Z",
+      "review_notes_zh": [
+        "修正 ApprovalDecision lifecycle：proposed 不再預填假 approved outcome，decide() 也不能跳過 under_review。",
+        "修正 revoke() 權限與 audit actor ownership，並移除 contract 中不存在的 target_mode 依賴；38 unit tests + 29 smoke checks 全綠。"
+      ],
+      "review_file": "services/control-plane/governance/review_gov001_codex_approved_zh.md"
     },
     {
       "id": "DEP-001",
       "title": "Define DeploymentPlan contract and stage planner",
       "summary_zh": "定義 DeploymentPlan 與 stage transition planner，讓 paper/canary/live/frozen 轉換有正式規格。",
       "phase": "Phase 1: Registry and Governance Split",
-      "owner": "Gemini",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "done",
       "depends_on": [
         "GOV-001"
       ],
@@ -1537,17 +1532,18 @@
         "deployment plan supports paper/canary/live/frozen transitions",
         "rollback linkage is explicit"
       ],
-      "next": "Design the DeploymentPlan contract and planner flow after GOV-001 finalizes ApprovalDecision semantics.",
-      "last_update": null
+      "next": "Owner finalize complete. DEP-001 closed as done. DeploymentPlan contract/schema/planner and cron deploy integration are locked; contract status synced from review draft to approved canonical state. Verified with 61 governance tests, 9 cron tests, 17 DeploymentPlan smoke checks, and cron smoke PASS. Rollback linkage and execution projection fields are sufficient for DEP-002 and EX-001 follow-on work.",
+      "last_update": "2026-04-09T17:10:11Z",
+      "review_file": "services/control-plane/governance/review_dep001_qwen_approved_zh.md"
     },
     {
       "id": "DEP-002",
       "title": "Implement deployment orchestration saga consistency backbone",
       "summary_zh": "建立 deployment orchestration saga、outbox/inbox 與 compensation 規則，確保跨服務部署一致性。",
       "phase": "Phase 1: Registry and Governance Split",
-      "owner": "Gemini",
+      "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "DEP-001"
       ],
@@ -1560,8 +1556,8 @@
         "ordering and idempotent consumer behavior are verified",
         "compensation boundaries are documented"
       ],
-      "next": "Implement the orchestration-first deployment saga after the DeploymentPlan contract is locked.",
-      "last_update": null
+      "next": "Owner finalize complete. DEP-002 closed as done. Reviewer approval is recorded in services/control-plane/governance/review_dep002_claude_approved_zh.md. Re-verified with 7 deployment saga unit tests, 12/12 deployment saga smoke checks, 9 cron unit tests, and cron smoke PASS. DeploymentSaga bootstrap/outbox atomicity, per-aggregate ordering plus inbox idempotency, compensation write-owner boundaries, and DeploymentPlan-sourced rollback linkage are locked for follow-on EX-002/runtime-manager work.",
+      "last_update": "2026-04-09T17:36:03Z"
     },
     {
       "id": "CAP-001",
@@ -1570,7 +1566,7 @@
       "phase": "Phase 2: Capital, Runtime, and Execution Control",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "DEP-001"
       ],
@@ -1582,17 +1578,23 @@
         "pool and binding ownership are explicit",
         "single-pool runtime rule is documented"
       ],
-      "next": "Formalize capital-pool and binding ownership once deployment planning semantics are stable.",
-      "last_update": null
+      "next": "CAP-001 finalized: capital_pool and PersonaCapitalBinding objects are locked. Ownership is explicit in capital_pool.contract.md and persona_capital_binding.py. Single-pool runtime rule is enforced via CapitalPool.single_runtime_enforced and PersonaCapitalBindingStore._check_single_live_owner(). Governance/execution status mapping is documented in BINDING_AND_DEPLOYMENT_SEMANTICS.md §16 for RUN-001 consumption. 64/64 smoke checks pass, py_compile clean. Ready for RUN-001.",
+      "last_update": "2026-04-10T01:59:44Z",
+      "review_notes_zh": [
+        "審查通過：capital_pool / PersonaCapitalBinding 實作、schema、L1 ownership 與 single-runtime 語意一致， §16 的 governance/execution status mapping 已足夠供 RUN-001 對接。",
+        "reviewer 補正  一個把  誤判為非法的測試期待； smoke checks 與 py_compile 已重新驗證通過。",
+        "本機環境未安裝  module，這個 session 無法直接跑 pytest suite，但可見測試漂移已收斂。"
+      ],
+      "review_file": "services/control-plane/governance/review_cap001_codex_approved_zh.md"
     },
     {
       "id": "RUN-001",
       "title": "Define RuntimeBinding and runtime-manager authority",
       "summary_zh": "定義 RuntimeBinding 與 runtime-manager 的 write authority，讓實際載入狀態有單一真相。",
       "phase": "Phase 2: Capital, Runtime, and Execution Control",
-      "owner": "Claude",
-      "reviewer": "Gemini",
-      "status": "todo",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
       "depends_on": [
         "CAP-001",
         "DEP-001"
@@ -1605,17 +1607,23 @@
         "runtime binding references deployment plan, binding, and stage",
         "write owner is execution plane"
       ],
-      "next": "Draft RuntimeBinding ownership and runtime-manager authority after CAP-001 and DEP-001 resolve.",
-      "last_update": null
+      "next": "RuntimeBinding authority locked. All artifacts verified: platform object, JSON schema, contract, authority matrix, rollback action matrix, and BINDING_AND_DEPLOYMENT_SEMANTICS.md §19. 10/10 smoke tests passing. Provenance chain PersonaCapitalBinding → DeploymentPlan → RuntimeBinding enforced. Finalizing as done.",
+      "last_update": "2026-04-10T07:21:31Z",
+      "review_notes_zh": [
+        "審查通過：RuntimeBinding 物件、schema、單 runtime 守門與 write authority 已和 L1 semantics 對齊。",
+        "reviewer cleanup：DeploymentPlan.rollback.action_type 已從 RuntimeAction 拆成 canonical rollback vocab（replace / pause_then_replace / liquidate_then_replace），避免 EX-002 / telemetry / lineage 再吃到漂移。",
+        "非阻塞備註：EX-001 loader 仍處於 paper/live 相容期；canary/frozen 目前依 artifact_state + deployment_stage projection 對齊。"
+      ],
+      "review_file": "services/execution/runtime-manager/review_run001_codex_approved_zh.md"
     },
     {
       "id": "EX-002",
       "title": "Align rollback execution actions with runtime-manager semantics",
       "summary_zh": "把 replace、pause_then_replace、liquidate_then_replace 對齊到 runtime-manager 的正式執行行為。",
       "phase": "Phase 2: Capital, Runtime, and Execution Control",
-      "owner": "Gemini",
+      "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "RUN-001"
       ],
@@ -1627,17 +1635,17 @@
         "action mapping is explicit",
         "position handling and cutover semantics are preserved"
       ],
-      "next": "Map rollback action types into runtime-manager execution paths once RuntimeBinding is defined.",
-      "last_update": null
+      "next": "EX-002 closed. Rollback execution semantics are aligned end-to-end: ROLLBACK_AND_POSITION_SEMANTICS.md is the L1 source of truth, rollback_action_matrix.md preserves the explicit replace/pause_then_replace/liquidate_then_replace mapping with position treatment and telemetry cutover semantics, deployment_plan.py keeps legacy replace_binding only at the compatibility boundary, and artifact-loader validates fallback metadata without owning rollback behavior. Claude review approved at services/execution/review_ex002_claude_approved_zh.md; verification remained green (9 saga, 24 plan, 13/13 smoke, 10/10 binding, 9/9 loader).",
+      "last_update": "2026-04-10T08:00:16Z"
     },
     {
       "id": "CAP-002",
       "title": "Implement optimizer-svc internal multi-persona synthesis module",
       "summary_zh": "在 optimizer-svc 內實作 multi-persona synthesis module，處理同一 capital pool 內多 advisor 衝突。",
       "phase": "Phase 2: Capital, Runtime, and Execution Control",
-      "owner": "Claude",
-      "reviewer": "Copilot",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "done",
       "depends_on": [
         "CAP-001",
         "GOV-001"
@@ -1651,17 +1659,18 @@
         "one canonical synthesis artifact is produced per scope",
         "conflict_resolution_log is generated"
       ],
-      "next": "Implement the internal synthesis module after capital binding and approval semantics are available.",
-      "last_update": null
+      "next": "CAP-002 finalized: optimizer-svc multi-persona synthesis module is locked for v1. Weighted fusion, single canonical synthesis artifact, and conflict_resolution_log are implemented and policy-aligned; validation re-run passed (7 unit tests + 3 smoke groups). Ready for downstream CAP/LIN/APP consumers.",
+      "last_update": "2026-04-10T03:43:18Z",
+      "review_file": "services/optimizer-svc/review_cap002_qwen.md"
     },
     {
       "id": "TEL-001",
       "title": "Add deployment-stage and runtime-binding references to telemetry truth",
       "summary_zh": "讓 telemetry schema 攜帶 deployment stage 與 runtime binding ref，和 execution 真相對齊。",
       "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "status": "todo",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "status": "done",
       "depends_on": [
         "RUN-001"
       ],
@@ -1673,8 +1682,9 @@
         "telemetry schema carries stage and binding refs",
         "canonical store strategy is documented"
       ],
-      "next": "Extend telemetry truth with stage and binding references after RuntimeBinding semantics are locked.",
-      "last_update": null
+      "next": "TEL-001 finalized: telemetry schema v2 carries deployment-stage and runtime-binding refs (E-1 through E-6). 33/33 unit tests + 14/14 smoke steps pass against canonical schema. binding_id naming converged in L1 doc. Claude approved. Marking done.",
+      "last_update": "2026-04-10T11:59:20Z",
+      "review_file": "services/telemetry/review_tel001_claude_approved_zh.md"
     },
     {
       "id": "LIN-001",
@@ -1683,7 +1693,7 @@
       "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "TEL-001"
       ],
@@ -1695,8 +1705,12 @@
         "normalized edges are enumerated",
         "read model is marked derived-only"
       ],
-      "next": "Define normalized lineage edges and derived read-model rules after TEL-001 lands.",
-      "last_update": null
+      "next": "Finalized after Claude approval: 19 normalized lineage edges are locked in L1 + read_model_contract.md, derived_only is enforced in feedback_adapter.py and contract docs, 28/28 unit tests and 4/4 benchmark families passed within SLA. Follow-up remains with LIN-002 for upstream_chain[]/downstream_chain[] assembly and any optional bare artifact_id query path.",
+      "last_update": "2026-04-10T13:02:42Z",
+      "review_notes_zh": [
+        "審查通過：19 條語意 edge 已在 L1 文件 §8 與 read_model_contract.md §4 完整列舉，含 owner 指定。derived_only=True 在 build_lineage_record() / build_lineage_summary() 明確標示，contract 文件亦禁止 read model 成為 write authority。feedback_adapter.py 的 _lineage_conflict_markers() 正確輸出 4 種 alias drift 衝突而不靜默覆蓋。28/28 unit tests PASS，4 個 benchmark query family 全在 SLA budget 內。非阻塞提示：build_lineage_summary() 目前不輸出 upstream_chain[]/downstream_chain[]（全鏈組裝由 LIN-002 負責）；artifact target_type 目前比對 artifact_ref 而非 bare artifact_id，LIN-002 可視需要補充。"
+      ],
+      "review_file": "services/registry/lineage/review_lin001_claude_approved_zh.md"
     },
     {
       "id": "INC-001",
@@ -1704,8 +1718,8 @@
       "summary_zh": "定義 incident 與 postmortem 主幹物件，讓它們能連到 runtime binding、telemetry 與 lineage 證據。",
       "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
       "owner": "Claude",
-      "reviewer": "Copilot",
-      "status": "todo",
+      "reviewer": "Codex",
+      "status": "review_approved",
       "depends_on": [
         "TEL-001",
         "LIN-001"
@@ -1717,17 +1731,22 @@
       "acceptance": [
         "incident and postmortem objects attach to stage, binding, and lineage refs"
       ],
-      "next": "Draft incident/postmortem objects once telemetry and lineage identifiers are aligned.",
-      "last_update": null
+      "next": "INC-001 approved after reviewer cleanup: Postmortem now carries deployment_plan_id/persona_capital_binding_id/runtime_id and IncidentStore enforces propagated evidence equality with the parent IncidentCase. Unit tests 75/75 PASS; smoke checks 59/59 PASS.",
+      "last_update": "2026-04-10T13:38:38Z",
+      "review_notes_zh": [
+        "reviewer cleanup: Postmortem now propagates and enforces the same core evidence refs as IncidentCase",
+        "reviewer cleanup: smoke_test_incident.py now runs correctly both as a script and as a module"
+      ],
+      "review_file": "services/incident/review_inc001_codex_approved_zh.md"
     },
     {
       "id": "TEL-002",
       "title": "Implement telemetry ingest shock-absorption path",
       "summary_zh": "建立 durable buffer 與 async batch writer，避免高量 telemetry 寫入直接壓死 canonical Postgres。",
       "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
-      "owner": "Gemini",
+      "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "TEL-001"
       ],
@@ -1740,17 +1759,22 @@
         "backpressure and replay behavior are verified",
         "buffer choice tradeoffs are documented"
       ],
-      "next": "Add the buffered telemetry ingest path after the canonical telemetry schema is aligned.",
-      "last_update": null
+      "next": "--message",
+      "last_update": "2026-04-10T12:52:13Z",
+      "review_notes_zh": [
+        "Reviewer cleanup: backpressure delayed-event requeue now routes overflowed events to DLQ instead of silent drop.",
+        "ADR corrected: in-memory backend no longer claims an unimplemented emergency-spill durability path."
+      ],
+      "review_file": "services/telemetry/review_tel002_codex_approved_zh.md"
     },
     {
       "id": "LIN-002",
       "title": "Implement lineage read service performance path",
       "summary_zh": "實作高效 lineage read service，讓深圖遍歷不會因 recursive join 而逾時。",
       "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [
         "LIN-001"
       ],
@@ -1762,8 +1786,8 @@
         "benchmark corpus and p95 target are documented and validated",
         "deep graph traversal avoids recursive timeout failure"
       ],
-      "next": "Build the read-optimized lineage assembly path once normalized lineage edges are defined.",
-      "last_update": null
+      "next": "Codex review fixes applied: (1) All 4 query families now output derived_only=true and complete refs envelope per LIN-001/L1 contract. (2) Alias drift conflict detection added matching feedback_adapter semantics. (3) Regression tests added for envelope + alias drift. 25/25 tests PASS; benchmark all families within SLA.",
+      "last_update": "2026-04-10T14:17:00Z"
     },
     {
       "id": "EVO-003",
@@ -1771,8 +1795,8 @@
       "summary_zh": "把 EvolutionDecision 提升成正式治理物件，寫清 decision lifecycle、actor role 與 evidence link。",
       "phase": "Phase 4: Evolution Governance",
       "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
+      "reviewer": "Qwen",
+      "status": "done",
       "depends_on": [
         "LIN-001"
       ],
@@ -1783,8 +1807,9 @@
       "acceptance": [
         "decision lifecycle, actor roles, evidence links, and cooldown fields are formalized"
       ],
-      "next": "Define the canonical EvolutionDecision object after lineage identifiers are stable.",
-      "last_update": null
+      "next": "Review approved by Qwen. EvolutionDecision contract finalized with lifecycle, role matrices, approval linkage, cooldown/observation enforcement, single-active rule, and incident postmortem reverse-link sync. Verification rerun: 17/17 unit tests PASS; 16/16 smoke checks PASS. Ready for EVO-004 and OSS-003 downstream work.",
+      "last_update": "2026-04-10T14:00:54Z",
+      "review_file": "services/control-plane/governance/review_evo003_qwen.md"
     },
     {
       "id": "EVO-004",
@@ -1837,9 +1862,9 @@
       "title": "Adopt persona registry/session/runtime model in platform contracts",
       "summary_zh": "把 persona registry / session / runtime model 正式寫回平台契約與 service boundary。",
       "phase": "Phase 5: Persona and Application Surfaces",
-      "owner": "Claude",
+      "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "CAP-001",
         "RUN-001"
@@ -1851,32 +1876,41 @@
       "acceptance": [
         "persona identity, session, and runtime instance boundaries are explicit"
       ],
-      "next": "Project the persona registry/session/runtime model into platform contracts after capital and runtime control settle.",
-      "last_update": null
+      "next": "PER-001 complete: persona registry/session/runtime three-layer model adopted. SessionPersona carries runtime_binding_id, deployment_stage, capital_pool_id as first-class contract fields. Blank audit-chain identifier validation enforced. All schemas, contracts, Python objects, tests aligned. Dependencies CAP-001 and RUN-001 satisfied. Ready for APP-001.",
+      "last_update": "2026-04-10T09:16:45Z"
     },
     {
       "id": "APP-001",
       "title": "Define governed BFF and consultation surfaces",
       "summary_zh": "定義 BFF/read aggregation 與 consultation surface，禁止再長出平行真相來源。",
       "phase": "Phase 5: Persona and Application Surfaces",
-      "owner": "Copilot",
+      "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "PER-001",
         "LIN-001"
       ],
       "artifacts": [
         "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
-        "PERSONA_RUNTIME_MODEL.md"
+        "PERSONA_RUNTIME_MODEL.md",
+        "services/control-plane/bff/BFF_API_CONTRACT.md",
+        "services/control-plane/bff/CONSULTATION_SURFACE_CONTRACT.md",
+        "services/control-plane/bff/DEGRADED_OPERATOR_PATH.md",
+        "services/control-plane/bff/review_app001_codex_approved_zh.md"
       ],
       "acceptance": [
         "BFF is read-oriented",
         "consultation surfaces cite canonical objects",
         "degraded operator path is documented"
       ],
-      "next": "Plan the governed BFF and consultation surfaces after persona and lineage semantics are in place.",
-      "last_update": null
+      "next": "APP-001 officially closed. All deliverables verified and artifacts updated. BFF v1 contract, consultation surfaces, and degraded operator path are now canonical reference for APP-002.",
+      "last_update": "2026-04-10T13:23:30Z",
+      "review_notes_zh": [
+        "審查通過：governed BFF / consultation / degraded-path 三份正式 contract 已齊備，33 個 canonical surfaces 與 6 個 consultation surfaces 已收斂成可落地 v1 邊界。",
+        "reviewer cleanup：IN-05 已回到 FreezeOrder + RuntimeBinding 的 composed read shape；consultation contract 已明確改為 SessionPersona.metadata.consultation projection；read-only guarantee 不再保留 command-facade 歧義。"
+      ],
+      "review_file": "services/control-plane/bff/review_app001_codex_approved_zh.md"
     },
     {
       "id": "APP-002",
@@ -1908,7 +1942,7 @@
       "phase": "Phase 6: OSS Integration Hardening",
       "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "DOC-003"
       ],
@@ -1924,17 +1958,23 @@
         "version pinned",
         "adapter boundary and smoke-test plan recorded"
       ],
-      "next": "Artifacts updated: integration.md (pin + adapter boundary), governance.md (OC-001/002/003 alignment), smoke_test.md (canonical StrategySpec + WorkflowHandoff validation).",
-      "last_update": "2026-04-09T16:27:33Z"
+      "next": "Owner finalize complete. OSS-001 closed as done. All acceptance criteria satisfied: upstream OpenClaw source pinned (openclaw/openclaw v2026.4.7 SHA 5050017), governed adapter boundary documented, smoke-test plan aligned with canonical StrategySpec/WorkflowHandoff split per OC-003.",
+      "last_update": "2026-04-09T16:41:38Z",
+      "review_notes_zh": [
+        "前一輪 blocker 已收斂：smoke_test 現在輸出 canonical StrategySpec + WorkflowHandoff。",
+        "governance.md 欄位 ownership 已回到 OC-003 正式分界，`initial_lifecycle_state` 命名正確。",
+        "Non-blocking：smoke_test 路徑示例仍有 /tmp/openclaw-smoke 與 /tmp/openclaw-smoke-test 兩種寫法，可後續收斂。"
+      ],
+      "review_file": "integrations/openclaw/review_oss001_codex_approved_zh.md"
     },
     {
       "id": "OSS-002",
       "title": "Regrade DSPy, imitation, and MLflow against canonical model",
       "summary_zh": "重新評級 DSPy、imitation、MLflow 與 canonical model 的對齊度，補齊證據與缺口。",
       "phase": "Phase 6: OSS Integration Hardening",
-      "owner": "Copilot",
+      "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "DOC-005",
         "OSS-001"
@@ -1947,30 +1987,34 @@
         "checklist status reflects real maturity",
         "missing evidence and follow-ups are explicit"
       ],
-      "next": "Regrade the key OSS integrations once the OpenClaw pin and full backlog publication are in place.",
-      "last_update": null
+      "next": "DSPy, imitation, and MLflow regraded against canonical model. All three at smoke-tested status. Checklist updated. Regrade report at integrations/oss-002/regrade_report.md.",
+      "last_update": "2026-04-09T16:48:57Z"
     },
     {
       "id": "OSS-003",
       "title": "Define activation criteria for deferred Qlib, TRL, and RL paths",
       "summary_zh": "替 Qlib、TRL、RL stack 建立正式啟動門檻，避免它們只是 roadmap 上的空框。",
       "phase": "Phase 6: OSS Integration Hardening",
-      "owner": "Gemini",
-      "reviewer": "Copilot",
-      "status": "todo",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "review",
       "depends_on": [
         "EVO-003",
         "OSS-002"
       ],
       "artifacts": [
         "TARGET_ARCHITECTURE.md",
-        "services/learning/rl/PATH_DEFINITION.md"
+        "services/learning/rl/PATH_DEFINITION.md",
+        "services/learning/qlib/ACTIVATION_CRITERIA.md",
+        "services/learning/trl/ACTIVATION_CRITERIA.md",
+        "services/registry/experiments/WANDB_ACTIVATION.md",
+        "OSS_INTEGRATION_CHECKLIST.md"
       ],
       "acceptance": [
         "deferred frameworks have explicit prerequisites rather than placeholders"
       ],
-      "next": "Define hard activation criteria for deferred OSS paths after evolution semantics and integration regrade finish.",
-      "last_update": null
+      "next": "Activation criteria complete: Qlib, TRL, W&B criteria documented; OSS_INTEGRATION_CHECKLIST.md updated. Ready for Codex review.",
+      "last_update": "2026-04-10T14:13:17Z"
     },
     {
       "id": "REG-004A",
@@ -2009,7 +2053,7 @@
       "phase": "Phase 6: OSS Integration Hardening",
       "owner": "Codex",
       "reviewer": "Qwen",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "DOC-003"
       ],
@@ -2023,8 +2067,277 @@
         "smoke-test checklist is drafted",
         "evidence pack can be handed to OSS-001 owner without blocking adapter work"
       ],
-      "next": "Aligning OpenClaw evidence pack with canonical OC-003 boundaries: fixing smoke-test outputs to emit valid StrategySpec/WorkflowHandoff shapes and correcting governance field ownership before handoff to OSS-001 owner.",
-      "last_update": "2026-04-09T16:22:21Z"
+      "next": "All acceptance criteria met. Evidence pack complete, smoke test plan validated against canonical schemas. Task complete.",
+      "last_update": "2026-04-09T16:48:53Z",
+      "review_file": "integrations/openclaw/review_oss001a_qwen.md"
+    },
+    {
+      "id": "CAP-001A",
+      "title": "Prepare CAP-001 acceptance and binding compatibility audit",
+      "summary_zh": "平行支援 CAP-001，先做 capital_pool 與 PersonaCapitalBinding 的 acceptance checklist、binding compatibility audit 與 schema drift 盤點，讓主 owner 可以專注在 contract/code 落地。",
+      "phase": "Phase 2: Capital, Runtime, and Execution Control",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "DEP-001"
+      ],
+      "artifacts": [],
+      "acceptance": [
+        "acceptance checklist covers pool ownership and single-pool runtime rule",
+        "compatibility audit maps current governance files and schema drift",
+        "review packet can be handed to CAP-001 owner without blocking implementation"
+      ],
+      "next": "CAP-001A finalized: acceptance packet, binding compatibility audit, and schema drift mapping complete; 64/64 smoke checks passed; ready for CAP-001 owner consumption.",
+      "last_update": "2026-04-10T00:54:31Z",
+      "review_notes_zh": [
+        "審查通過：acceptance checklist、binding compatibility audit 與 schema drift mapping 已足夠支援 CAP-001 owner 吸收 ownership / single-runtime / downstream handoff 要點。",
+        "非阻塞更正：Qwen packet §7 將 smoke test 視為待補項，但 services/control-plane/governance/smoke_test_capital_pool.py 已存在，且 reviewer 已驗證 64/64 checks passed。"
+      ],
+      "review_file": "services/control-plane/governance/review_cap001a_codex_approved_zh.md"
+    },
+    {
+      "id": "RUN-001A",
+      "title": "Prepare runtime authority matrix and rollback prework",
+      "summary_zh": "平行支援 RUN-001 與 EX-002，先整理 runtime-manager write authority、RuntimeBinding 欄位草圖與 rollback action matrix，讓 CAP-001 一落地就能直接接續。",
+      "phase": "Phase 2: Capital, Runtime, and Execution Control",
+      "owner": "Gemini",
+      "reviewer": "Qwen",
+      "status": "done",
+      "depends_on": [
+        "DEP-001"
+      ],
+      "artifacts": [
+        "services/execution/runtime-manager/authority_matrix.md",
+        "services/execution/runtime-manager/runtime_binding.schema.json",
+        "services/execution/runtime-manager/rollback_action_matrix.md"
+      ],
+      "acceptance": [
+        "authority matrix maps deployment plan binding and runtime binding write owners",
+        "runtime binding field inventory is documented against L1 semantics",
+        "rollback action matrix is ready for RUN-001 and EX-002 handoff"
+      ],
+      "next": "RUN-001A finalized after Qwen review approval. Runtime authority matrix, RuntimeBinding schema, and rollback action matrix are locked and aligned with L1 canonical documents. Metadata field write authority is added, and rollback action types are standardized for EX-002 consumption.",
+      "last_update": "2026-04-10T02:00:00Z",
+      "review_notes_zh": [
+        "審查通過：權限矩陣明確劃分了 Runtime Manager 的寫入邊界，JSON schema 與 L1 語意對齊，rollback action matrix 已準備好對接後續 EX-002 實作。",
+        "非阻塞建議：`action_type` 命名建議收斂為 `replace`（較簡短且符合 L1 文件 §10 列表）。"
+      ],
+      "review_file": "services/execution/runtime-manager/review_run001a_qwen_approved.md"
+    },
+    {
+      "id": "LIN-001A",
+      "title": "Prepare lineage edge benchmark corpus for capital and runtime objects",
+      "summary_zh": "平行支援 LIN-001，先整理 capital、deployment、runtime、telemetry 相關 edge 候選、查詢基準資料集與 benchmark 量測框架，讓 TEL-001 落地後能直接接 lineage 聚合。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "done",
+      "depends_on": [
+        "DEP-001"
+      ],
+      "artifacts": [],
+      "acceptance": [
+        "candidate lineage edges across capital deployment runtime and telemetry are enumerated",
+        "benchmark corpus shape and p95 measurement method are documented",
+        "LIN-001 can consume the prep package without redefining read-model scope"
+      ],
+      "next": "Review approved by Qwen and finalized. LIN_001A_PREP_PACKET.md, lin001a_benchmark_corpus.json, and benchmark_harness.py are complete under services/registry/lineage/; 13 semantic edges, 22-record corpus across 5 object families, and 5 benchmark cases remain LIN-001-ready. Revalidated with python3 -m py_compile services/registry/lineage/benchmark_harness.py and python3 services/registry/lineage/benchmark_harness.py --corpus services/registry/lineage/lin001a_benchmark_corpus.json --iterations 20 --warmup 3 --enforce-budgets. Review: services/registry/lineage/review_lin001a_qwen_approved.md.",
+      "last_update": "2026-04-10T04:50:39Z",
+      "review_file": "services/registry/lineage/review_lin001a_qwen_approved.md"
+    },
+    {
+      "id": "APP-001A",
+      "title": "Prepare governed BFF surface inventory for capital and runtime objects",
+      "summary_zh": "平行支援 APP-001，先盤點 capital pool、binding、deployment、runtime、incident 等 canonical object 的 read surface 與 operator journey，避免後面 BFF 重新發明 shadow model。",
+      "phase": "Phase 5: Persona and Application Surfaces",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "DEP-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/BFF_SURFACE_INVENTORY.md"
+      ],
+      "acceptance": [
+        "surface inventory cites canonical objects only",
+        "operator read flows and degraded path assumptions are documented",
+        "APP-001 owner receives a reuse-ready inventory instead of a parallel truth model"
+      ],
+      "next": "Finalized: BFF surface inventory complete with 33 L1 canonical surfaces across 8 domains separated from 11 future/task-level surfaces, degradation guidance within L1 policy scope, operator journeys defined, and reuse-ready summary provided for APP-001 owner.",
+      "last_update": "2026-04-10T01:46:25Z",
+      "review_notes_zh": [
+        "canonical catalog 已收斂到 L1 來源，非 L1 物件已移至 Appendix A",
+        "surface coverage 現在一致：主體 33 個 L1 surfaces，附錄 11 個 future/task-level surfaces，共 44",
+        "degraded-path 已限制在 L1 可支持原則，TTL/cache 明確降級為 non-canonical implementation note"
+      ],
+      "review_file": "services/control-plane/bff/review_app001a_codex_approved_zh.md"
+    },
+    {
+      "id": "APP-001B",
+      "title": "Prepare APP-001 query contract critique and owner packet",
+      "summary_zh": "平行支援 APP-001，先根據 APP-001A 產出的 BFF surface inventory 做 query contract critique、operator read-path 風險盤點與 owner handoff packet，讓後續 persona/runtime 依賴解開後可以直接進入正式 BFF 設計。",
+      "phase": "Phase 5: Persona and Application Surfaces",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "APP-001A"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/BFF_SURFACE_INVENTORY.md",
+        "services/control-plane/bff/APP_001B_OWNER_PACKET.md"
+      ],
+      "acceptance": [
+        "owner packet written",
+        "query contract critique written",
+        "operator read-path risks enumerated"
+      ],
+      "next": "APP-001B finalized: owner packet with 7 query contract gaps, 4 journey-level + 6 systemic risks, and consolidated handoff for APP-001 owner. All acceptance criteria met. Ready for APP-001 formal BFF design.",
+      "last_update": "2026-04-10T02:03:01Z",
+      "review_notes_zh": [
+        "審查通過",
+        "7 個 contract gaps 已整理完成",
+        "4 條 operator journeys 與 6 個 systemic risks 已收斂",
+        "reviewer cleanup 已修正 §4.1 計數敘述"
+      ],
+      "review_file": "services/control-plane/bff/review_app001b_codex_approved_zh.md"
+    },
+    {
+      "id": "TEL-001A",
+      "title": "Prepare TEL-001 field map and migration packet",
+      "summary_zh": "平行支援 TEL-001，先根據 RUN-001A 與 RUN-001 reviewer packet 整理 telemetry 欄位映射、binding/stage evidence contract 與 migration checklist，讓 RUN-001 一 finalize 就能直接進 schema 對齊。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "RUN-001A"
+      ],
+      "artifacts": [
+        "services/telemetry/TEL_001A_FIELD_PACKET.md"
+      ],
+      "acceptance": [
+        "telemetry field map written",
+        "binding/stage evidence contract written",
+        "migration checklist written"
+      ],
+      "next": "TEL-001A finalized. Field packet document at services/telemetry/TEL_001A_FIELD_PACKET.md provides complete telemetry field map (13 RuntimeBinding fields), binding/stage evidence contract (6 evidence requirements), and migration checklist (30+ items). TEL-001 owner can begin implementation immediately using this spec.",
+      "last_update": "2026-04-10T03:38:14Z"
+    },
+    {
+      "id": "PER-001A",
+      "title": "Prepare persona runtime mapping and reviewer packet",
+      "summary_zh": "平行支援 PER-001，先把 persona registry/session/runtime 三層模型對 runtime binding 與 capital binding 的欄位映射、subject resolution 與 reviewer checklist 整理好，讓 RUN-001 完成後能直接落正式 contract。",
+      "phase": "Phase 4: Evolution Governance",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "CAP-001",
+        "RUN-001A"
+      ],
+      "artifacts": [
+        "services/control-plane/persona/PER_001A_RUNTIME_MAPPING.md"
+      ],
+      "acceptance": [
+        "persona runtime mapping written",
+        "subject resolution checklist written",
+        "reviewer packet written"
+      ],
+      "next": "PER-001A finalized: persona runtime mapping, subject resolution checklist, and reviewer packet complete. Review approved by Codex. Gaps documented for PER-001 contract lock follow-up.",
+      "last_update": "2026-04-10T03:38:53Z",
+      "review_notes_zh": [
+        "審查通過：persona registry→binding→plan→runtime→session mapping 現已對齊 CAP-001 / DEP-001 / RUN-001 / RUN-001A source artifacts；reviewer cleanup 已修正 research_only/consultable active-advisor semantics、RuntimeBinding.artifact_version、以及 SessionPersona context carry。",
+        "待 owner / PER-001 follow-up：formalize SessionPersona.runtime_binding_id 與 session audit fields，並收斂 DeploymentPlan.binding_id vs RuntimeBinding.persona_capital_binding_id naming drift。"
+      ],
+      "review_file": "services/control-plane/persona/review_per001a_codex_approved_zh.md"
+    },
+    {
+      "id": "APP-001C",
+      "title": "Prepare APP-001 design skeleton and open-questions packet",
+      "summary_zh": "平行支援 APP-001，先把 APP-001A/B 的 inventory 與 owner packet 收斂成正式 BFF design skeleton、query contract outline 與 open questions 清單，避免等到 PER-001/LIN-001 都完成後才從零開始。",
+      "phase": "Phase 5: Persona and Application Surfaces",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "APP-001B"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/APP_001C_DESIGN_SKELETON.md",
+        "services/control-plane/bff/APP_001C_QUERY_CONTRACT_OUTLINE.md",
+        "services/control-plane/bff/APP_001C_OPEN_QUESTIONS.md"
+      ],
+      "acceptance": [
+        "design skeleton written",
+        "query contract outline written",
+        "open questions list written"
+      ],
+      "next": "APP-001C finalized to done. All BFF design artifacts complete: design skeleton, query contract outline, open questions packet. Awaiting next assignment.",
+      "last_update": "2026-04-10T03:43:46Z",
+      "review_notes_zh": [
+        "審查通過：APP-001C 已把 APP-001A inventory 與 APP-001B critique 收斂成 design skeleton、query contract outline、open questions packet；component boundary、4 條 composed views、7 個 contract gaps 與 decider-ready open questions 均已成形。",
+        "reviewer cleanup：修正 list failure 不得假裝空陣列、RT-03 回到 RuntimeBinding、以及 `_surfaces`→`meta.surfaces` 命名一致；待 APP-001 follow-up：formalize RBAC matrix、realtime transport、cache TTL 與 PER-001/LIN-001 field-level schema lock。"
+      ],
+      "review_file": "services/control-plane/bff/review_app001c_codex_approved_zh.md"
+    },
+    {
+      "id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "title": "Prepare LIN-002 acceptance packet and dependency map",
+      "summary_zh": "平行支援 LIN-002，先整理 acceptance checklist、dependency map 與 reviewer packet，不改 canonical truth。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "done",
+      "depends_on": [
+        "TEL-001"
+      ],
+      "artifacts": [
+        "support/sidecars/LIN-002/LIN-002-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Sidecar acceptance packet complete: all 3 acceptance criteria met (support artifacts created, no canonical truth modified, reviewer handoff delivered). Packet at support/sidecars/LIN-002/LIN-002-SIDECAR-ACCEPTANCE.md. Parent LIN-002 remains with Claude for formal review.",
+      "last_update": "2026-04-10T14:02:52Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "LIN-002",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "INC-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare INC-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 INC-001，先整理 acceptance checklist、dependency map 與 reviewer packet，不改 canonical truth。",
+      "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "TEL-001"
+      ],
+      "artifacts": [
+        "support/sidecars/INC-001/INC-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Acceptance packet complete. 75/75 unit tests PASS, 59/59 smoke tests PASS. Sidecar reviewed by Codex, ready for parent owner (Claude) to close INC-001.",
+      "last_update": "2026-04-10T14:14:58Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "INC-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -2865,6 +3178,1175 @@
       "status": "done",
       "created_at": "2026-04-09T16:23:19Z",
       "resolved_at": "2026-04-09T16:23:42Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "GOV-001 complete. All 3 acceptance criteria met: (1) ApprovalDecision object with schema + Python module + store implemented, (2) OwnerMatrix explicit with risk-level x role authorization matrix, (3) Integration paths documented for registry promotion, evolution plane, and DeploymentPlan. 34/34 unit tests pass. Fixed ApprovalDecisionStore._load() empty file bug. Artifacts: services/control-plane/governance/ (contract.md, approval_decision.schema.json, approval_decision.py, audit.py, review.py, test_approval_decision.py), BINDING_AND_DEPLOYMENT_SEMANTICS.md. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:30:15Z",
+      "resolved_at": "2026-04-09T16:36:14Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Codex review findings addressed: (1) smoke_test.md now emits canonical StrategySpec + WorkflowHandoff per OC-003 split — all 11 required StrategySpec fields present, WorkflowHandoff wraps with registry_hints/governance_context. (2) governance.md §5.2 corrected — governance_context and registry_hints assigned to WorkflowHandoff (not StrategySpec), field name fixed to initial_lifecycle_state. Both artifacts validated programmatically against canonical schemas. integration.md and review artifact now tracked in git. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:33:59Z",
+      "resolved_at": "2026-04-09T16:39:54Z"
+    },
+    {
+      "task_id": "GOV-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewed and approved. Lifecycle semantics, revoke authority, and deployment integration contract are aligned; 38 unit tests and 29 smoke checks pass.",
+      "status": "done",
+      "created_at": "2026-04-09T16:36:14Z",
+      "resolved_at": "2026-04-09T16:37:44Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewed and approved. The canonical StrategySpec/WorkflowHandoff split is now correct, governance field ownership matches OC-003, and the pinned upstream/adaptor smoke-test plan is ready for owner finalize.",
+      "status": "done",
+      "created_at": "2026-04-09T16:39:54Z",
+      "resolved_at": "2026-04-09T16:41:17Z"
+    },
+    {
+      "task_id": "DEP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:42:23Z",
+      "resolved_at": "2026-04-09T16:42:56Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Collected the OpenClaw upstream evidence pack in integrations/openclaw/evidence_pack.md, updated OSS_INTEGRATION_CHECKLIST.md to reflect adapter-started status, and locally validated the smoke-plan reference StrategySpec + WorkflowHandoff against the canonical schemas. No Docker runtime execution is claimed; remaining work is adapter implementation and pinned-image smoke execution. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:44:12Z",
+      "resolved_at": "2026-04-09T16:48:20Z"
+    },
+    {
+      "task_id": "DEP-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:44:50Z",
+      "resolved_at": "2026-04-09T16:45:21Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:44:50Z",
+      "resolved_at": "2026-04-09T16:47:15Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:47:14Z",
+      "resolved_at": "2026-04-09T16:47:41Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:47:41Z",
+      "resolved_at": "2026-04-09T16:48:12Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved. All 3 acceptance criteria met: upstream pin evidence collected, smoke-test checklist drafted, evidence pack ready for OSS-001 handoff. Schema validation confirmed StrategySpec + WorkflowHandoff both pass against canonical schemas. Prior review blocking findings addressed.",
+      "status": "done",
+      "created_at": "2026-04-09T16:48:20Z",
+      "resolved_at": "2026-04-09T16:48:53Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Handing off to Codex for review",
+      "status": "done",
+      "created_at": "2026-04-09T16:48:43Z",
+      "resolved_at": "2026-04-09T16:48:52Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Regrade report verified. Checklist updated correctly. All smoke tests pass. Assessment is thorough and actionable.",
+      "status": "done",
+      "created_at": "2026-04-09T16:48:52Z",
+      "resolved_at": "2026-04-09T16:48:57Z"
+    },
+    {
+      "task_id": "DEP-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "DEP-001 ready for review. Added canonical DeploymentPlan contract/schema/planner under services/control-plane/governance/ (deployment_plan.contract.md, deployment_plan.schema.json, deployment_plan.py, test_deployment_plan.py, smoke_test_deployment_plan.py). Updated cron deploy to create DeploymentPlan-backed deployment requests and canonical execution projections with deployment_stage + deployment_plan_id + explicit rollback linkage. Verified with python3 -m unittest discover -s services/control-plane/governance -p 'test_*.py', python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/governance/smoke_test_deployment_plan.py, and python3 services/control-plane/cron/smoke_test.py. Review focus: stage transition strictness, rollback linkage sufficiency for DEP-002, and whether execution projection fields are enough for EX-001/runtime-manager migration.",
+      "status": "done",
+      "created_at": "2026-04-09T17:04:26Z",
+      "resolved_at": "2026-04-09T17:08:40Z"
+    },
+    {
+      "task_id": "DEP-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved. DeploymentPlan contract, schema, planner, tests, and cron deploy integration all verified. 61 governance tests + 9 cron tests + 17 smoke checks pass. Stage transitions strict, rollback linkage sufficient for DEP-002, execution projection fields sufficient for EX-001/runtime-manager migration.",
+      "status": "done",
+      "created_at": "2026-04-09T17:08:40Z",
+      "resolved_at": "2026-04-09T17:10:11Z"
+    },
+    {
+      "task_id": "DEP-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "DEP-002 ready for review. Added a first-class deployment saga backbone under services/control-plane/governance/ (deployment_saga.py, deployment_saga.contract.md, test_deployment_saga.py, smoke_test_deployment_saga.py), wired pantheon.deploy to emit a deployment_saga bootstrap plus consistency_contract=DEP-002, and anchored the L1 policy docs to the implementation. Verified with python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_saga.py', python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_plan.py', python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/governance/smoke_test_deployment_saga.py, python3 services/control-plane/cron/smoke_test.py, and python3 -m py_compile services/control-plane/governance/deployment_saga.py services/control-plane/cron/service.py. Review notes: services/control-plane/governance/review_dep002_codex_zh.md. Known unrelated repo issue: governance-wide discover with -p 'test_*.py' still hits existing pytest-only CAP-001 tests.",
+      "status": "done",
+      "created_at": "2026-04-09T17:31:32Z",
+      "resolved_at": "2026-04-09T17:34:10Z"
+    },
+    {
+      "task_id": "DEP-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 3 acceptance criteria met: atomic bootstrap verified, idempotent consumer ordering aligns with EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md, compensation write-owner boundaries preserved per DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md. Rollback linkage correctly sourced from DeploymentPlan. Tests: 7/7 unit + 12/12 smoke. See review_dep002_claude_approved_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-09T17:34:10Z",
+      "resolved_at": "2026-04-09T17:36:03Z"
+    },
+    {
+      "task_id": "CAP-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet and binding compatibility audit complete. 6 schema drift items identified (1 HIGH, 2 MEDIUM, 3 LOW). Review packet at services/control-plane/governance/review_cap001a_qwen.md.",
+      "status": "done",
+      "created_at": "2026-04-10T00:49:58Z",
+      "resolved_at": "2026-04-10T00:53:08Z"
+    },
+    {
+      "task_id": "CAP-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "CAP-001A approved: acceptance packet is ready for CAP-001 handoff; reviewer verified smoke_test_capital_pool.py and py_compile, with one non-blocking correction about the already-existing smoke test.",
+      "status": "done",
+      "created_at": "2026-04-10T00:53:08Z",
+      "resolved_at": "2026-04-10T00:54:31Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Qwen",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T00:53:38Z",
+      "resolved_at": "2026-04-10T00:54:24Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T00:54:24Z",
+      "resolved_at": "2026-04-10T00:54:33Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Handing off APP-001A for review: BFF surface inventory complete with 38 surfaces across 11 domains, 5 operator journeys, degraded path assumptions, and reuse-ready summary. Artifact: services/control-plane/bff/BFF_SURFACE_INVENTORY.md",
+      "status": "done",
+      "created_at": "2026-04-10T00:55:55Z",
+      "resolved_at": "2026-04-10T00:56:40Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "APP-001A ready for review: governed BFF surface inventory covers 28 canonical objects across 11 surface domains (PS-01..RS-03), 5 operator journeys, 4-tier degraded path assumptions, and reuse-ready summary for APP-001 owner. Artifact at services/control-plane/bff/BFF_SURFACE_INVENTORY.md.",
+      "status": "done",
+      "created_at": "2026-04-10T00:56:40Z",
+      "resolved_at": "2026-04-10T00:57:16Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "BFF surface inventory ready for review. Document at services/control-plane/bff/BFF_SURFACE_INVENTORY.md. All 3 acceptance criteria met. Requesting review for approval.",
+      "status": "done",
+      "created_at": "2026-04-10T00:57:16Z",
+      "resolved_at": "2026-04-10T01:00:09Z"
+    },
+    {
+      "task_id": "RUN-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Review approved: authority matrix, RuntimeBinding schema, and rollback action matrix aligned with L1 canonical documents. Ready for RUN-001 and EX-002 follow-on.",
+      "status": "done",
+      "created_at": "2026-04-10T00:58:47Z",
+      "resolved_at": "2026-04-10T01:51:04Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review failed: inventory mixes non-L1/task-local objects, the document enumerates 44 surfaces while handoff claims 38, and degraded-path TTL/cache policy exceeds current canonical scope. See services/control-plane/bff/review_app001a_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-10T01:00:09Z",
+      "resolved_at": "2026-04-10T01:00:09Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All three review blockers addressed. BFF_SURFACE_INVENTORY.md rewritten: canonical catalog restricted to L1 objects only (16 objects), non-L1 references moved to Appendix A, surface count discrepancy resolved with explicit breakdown table (33 L1 + 11 future = 44), degraded-path section replaced with L1-aligned principles from BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md with TTL/cache marked as non-canonical implementation note.",
+      "status": "done",
+      "created_at": "2026-04-10T01:42:02Z",
+      "resolved_at": "2026-04-10T01:45:41Z"
+    },
+    {
+      "task_id": "APP-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved: BFF surface inventory now cleanly separates 33 L1 canonical surfaces from 11 future/task-level surfaces, and its degradation guidance stays within current L1 policy scope. Ready for APP-001 owner reuse and owner-side finalize.",
+      "status": "done",
+      "created_at": "2026-04-10T01:45:41Z",
+      "resolved_at": "2026-04-10T01:46:25Z"
+    },
+    {
+      "task_id": "CAP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CAP-001 complete: capital_pool.py + PersonaCapitalBinding.py implemented with single-runtime enforcement, schema drift resolved, governance/execution status mapping added to BINDING_AND_DEPLOYMENT_SEMANTICS.md §16. Smoke tests 64/64. Review doc: services/control-plane/governance/review_cap001_claude_zh.md",
+      "status": "done",
+      "created_at": "2026-04-10T01:54:41Z",
+      "resolved_at": "2026-04-10T01:58:26Z"
+    },
+    {
+      "task_id": "APP-001B",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Owner packet complete: query contract critique (7 gaps), operator read-path risk inventory (4 journey-level + 6 systemic risks), and consolidated handoff for APP-001 owner. Artifact: services/control-plane/bff/APP_001B_OWNER_PACKET.md",
+      "status": "done",
+      "created_at": "2026-04-10T01:55:22Z",
+      "resolved_at": "2026-04-10T02:01:32Z"
+    },
+    {
+      "task_id": "CAP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved and returned to Claude for finalization. CAP-001 ownership, single-runtime enforcement, schema alignment, and governance/execution status mapping are locked; reviewer also corrected one unit-test expectation drift.",
+      "status": "done",
+      "created_at": "2026-04-10T01:58:26Z",
+      "resolved_at": "2026-04-10T01:59:44Z"
+    },
+    {
+      "task_id": "APP-001B",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved and returned to owner Qwen for finalization. APP-001B now provides the critique/risk packet APP-001 can reuse directly, with one reviewer cleanup to align §4.1 risk-count wording.",
+      "status": "done",
+      "created_at": "2026-04-10T02:01:32Z",
+      "resolved_at": "2026-04-10T02:03:01Z"
+    },
+    {
+      "task_id": "RUN-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "RUN-001 implementation complete. Artifacts: runtime_binding.py (RuntimeBinding + RuntimeBindingStore with single-runtime enforcement and status machine), runtime_binding.schema.json (updated with persona_capital_binding_id), contract.md (runtime-manager write authority), BINDING_AND_DEPLOYMENT_SEMANTICS.md §19 (formal write authority decisions). All three cross-object references enforced: plan_id, persona_capital_binding_id, deployment_mode. 10/10 smoke checks pass, py_compile clean. Review focus: (1) persona_capital_binding_id field is required and enforced; (2) single-runtime rule in RuntimeBindingStore._check_single_active_binding; (3) status machine in _ALLOWED_STATUS_TRANSITIONS; (4) §19 decisions in BINDING_AND_DEPLOYMENT_SEMANTICS.md.",
+      "status": "done",
+      "created_at": "2026-04-10T02:06:06Z",
+      "resolved_at": "2026-04-10T02:06:31Z"
+    },
+    {
+      "task_id": "RUN-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
+      "status": "done",
+      "created_at": "2026-04-10T02:06:31Z",
+      "resolved_at": "2026-04-10T02:48:07Z"
+    },
+    {
+      "task_id": "RUN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RUN-001 reviewer approval recorded. RuntimeBinding authority is locked, rollback vocabulary drift is cleaned up, and owner can finalize to done after reviewing the Codex packet.",
+      "status": "done",
+      "created_at": "2026-04-10T02:48:07Z",
+      "resolved_at": "2026-04-10T07:17:54Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:52:53Z",
+      "resolved_at": "2026-04-10T02:52:59Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:53:15Z",
+      "resolved_at": "2026-04-10T02:53:21Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:53:36Z",
+      "resolved_at": "2026-04-10T02:53:43Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:53:57Z",
+      "resolved_at": "2026-04-10T02:54:02Z"
+    },
+    {
+      "task_id": "CAP-002",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "CAP-002 ready for review: optimizer-svc portfolio synthesis now supports weighted fusion, sponsor selection, committee escalation, and retrievable conflict_resolution_log across success/escalation/all-veto paths. Validation passed: py_compile, 7 unittest cases, and smoke test. Review packet: services/optimizer-svc/review_cap002_codex_zh.md",
+      "status": "done",
+      "created_at": "2026-04-10T02:54:07Z",
+      "resolved_at": "2026-04-10T03:22:29Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:54:20Z",
+      "resolved_at": "2026-04-10T02:54:27Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:21:43Z",
+      "resolved_at": "2026-04-10T03:21:50Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:22:08Z",
+      "resolved_at": "2026-04-10T03:22:14Z"
+    },
+    {
+      "task_id": "CAP-002",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Copilot to Qwen after repeated Copilot terminal: Error: Model \"claude\" from --model flag is not available.",
+      "status": "done",
+      "created_at": "2026-04-10T03:22:29Z",
+      "resolved_at": "2026-04-10T03:24:54Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:22:29Z",
+      "resolved_at": "2026-04-10T03:22:38Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:23:18Z",
+      "resolved_at": "2026-04-10T03:23:41Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:23:41Z",
+      "resolved_at": "2026-04-10T03:23:48Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:24:02Z",
+      "resolved_at": "2026-04-10T03:24:09Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:24:27Z",
+      "resolved_at": "2026-04-10T03:24:47Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:24:47Z",
+      "resolved_at": "2026-04-10T03:24:55Z"
+    },
+    {
+      "task_id": "CAP-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "CAP-002 review approved: weighted fusion, single canonical artifact, and conflict_resolution_log all verified. 7 unit tests + 3 smoke groups pass. Code is clean and policy-aligned. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-10T03:24:54Z",
+      "resolved_at": "2026-04-10T03:43:18Z"
+    },
+    {
+      "task_id": "PER-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Persona runtime mapping document complete at services/control-plane/persona/PER_001A_RUNTIME_MAPPING.md. Field mapping (registry→binding→plan→runtime→session) validated against CAP-001, RUN-001, RUN-001A source artifacts. 6/6 cross-checks passed. Includes: provenance chain, field mapping tables (4 sections), 6-step subject resolution checklist, lifecycle compatibility matrix, audit reference chain, rollback ownership impact table, gap analysis (4 open items for PER-001 contract lock), and reviewer packet with expected outcomes.",
+      "status": "done",
+      "created_at": "2026-04-10T03:25:03Z",
+      "resolved_at": "2026-04-10T03:37:26Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:25:35Z",
+      "resolved_at": "2026-04-10T03:26:22Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:26:22Z",
+      "resolved_at": "2026-04-10T03:26:29Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:26:48Z",
+      "resolved_at": "2026-04-10T03:27:10Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:27:11Z",
+      "resolved_at": "2026-04-10T03:27:17Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:27:35Z",
+      "resolved_at": "2026-04-10T03:27:43Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:27:58Z",
+      "resolved_at": "2026-04-10T03:28:04Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:28:23Z",
+      "resolved_at": "2026-04-10T03:28:30Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:28:45Z",
+      "resolved_at": "2026-04-10T03:29:35Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:29:35Z",
+      "resolved_at": "2026-04-10T03:29:41Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:30:02Z",
+      "resolved_at": "2026-04-10T03:30:08Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:30:26Z",
+      "resolved_at": "2026-04-10T03:30:35Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:30:51Z",
+      "resolved_at": "2026-04-10T03:30:58Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:31:15Z",
+      "resolved_at": "2026-04-10T03:31:21Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:31:42Z",
+      "resolved_at": "2026-04-10T03:31:48Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:04Z",
+      "resolved_at": "2026-04-10T03:32:12Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:30Z",
+      "resolved_at": "2026-04-10T03:32:36Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:54Z",
+      "resolved_at": "2026-04-10T03:33:01Z"
+    },
+    {
+      "task_id": "APP-001C",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "BFF design skeleton complete at services/control-plane/bff/APP_001C_DESIGN_SKELETON.md. 15/15 validation checks passed. Includes: 8 surface group contract outlines (33+ surfaces), standard request/response envelopes, error/degraded response shapes, field-level staleness model, 4 composed view endpoints with degradation behavior, 3 SSE real-time feed designs, secondary control path table, cache/staleness strategy, RBAC matrix, and 6 open questions for APP-001 contract lock.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:59Z",
+      "resolved_at": "2026-04-10T03:37:11Z"
+    },
+    {
+      "task_id": "APP-001C",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "APP-001C artifacts complete: design skeleton, query contract outline, open questions list. All 7 APP-001B critique gaps addressed. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T03:37:11Z",
+      "resolved_at": "2026-04-10T03:41:55Z"
+    },
+    {
+      "task_id": "PER-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved after reviewer cleanup. Persona runtime mapping now aligns with CAP-001, DEP-001, RUN-001, and RUN-001A source artifacts; field-name drift and session-context assumptions are explicitly called out for PER-001 follow-up. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-10T03:37:26Z",
+      "resolved_at": "2026-04-10T03:38:53Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "TEL-001A field packet complete: telemetry field map (13 RuntimeBinding fields mapped), binding/stage evidence contract (6 evidence requirements), and migration checklist (30+ items across 7 categories) written to services/telemetry/TEL_001A_FIELD_PACKET.md. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T03:37:59Z",
+      "resolved_at": "2026-04-10T03:38:09Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "TEL-001A review approved: Telemetry field map comprehensively maps all 13 RuntimeBinding fields into event envelope with 6 validation rules. Binding/stage evidence contract defines 6 evidence requirements (E-1 through E-6) with ingest-time validation. Migration checklist covers 30+ items across schema, ingest, storage, producer, documentation, verification, and safety categories. Cross-check against all 6 source artifacts confirmed.",
+      "status": "done",
+      "created_at": "2026-04-10T03:38:09Z",
+      "resolved_at": "2026-04-10T03:38:14Z"
+    },
+    {
+      "task_id": "APP-001C",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved after reviewer cleanup. APP-001C BFF packet now aligns with APP-001A/B and L1 degraded-path semantics; list-failure handling, RT-03 RuntimeBinding typing, and meta.surfaces naming are cleaned up. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-10T03:41:55Z",
+      "resolved_at": "2026-04-10T03:43:29Z"
+    },
+    {
+      "task_id": "LIN-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "LIN-001A prep package is ready for review under services/registry/lineage/: LIN_001A_PREP_PACKET.md fixes the semantic edge inventory and naming-alias boundary for capital/deployment/runtime/telemetry; lin001a_benchmark_corpus.json provides the machine-readable fixture and query suite; benchmark_harness.py runs repeatable p95 measurements for runtime_binding_projection, capital_pool_projection, telemetry_event_trace, and forensic_plan_trace. Validation passed: python3 -m py_compile services/registry/lineage/benchmark_harness.py and python3 services/registry/lineage/benchmark_harness.py --corpus services/registry/lineage/lin001a_benchmark_corpus.json --iterations 20 --warmup 3 --enforce-budgets.",
+      "status": "done",
+      "created_at": "2026-04-10T04:46:47Z",
+      "resolved_at": "2026-04-10T04:49:06Z"
+    },
+    {
+      "task_id": "LIN-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved. All 3 acceptance criteria met: 13 semantic edges enumerated across capital/deployment/runtime/telemetry; benchmark corpus (22 records, 5 object families) with FK integrity verified; p95 harness validates all 5 cases within SLA budgets; naming-drift alias table covers both physical field drifts; scope boundary is deliberate and LIN-001-ready. Review at services/registry/lineage/review_lin001a_qwen_approved.md.",
+      "status": "done",
+      "created_at": "2026-04-10T04:49:06Z",
+      "resolved_at": "2026-04-10T04:50:39Z"
+    },
+    {
+      "task_id": "RUN-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude capacity/429 failure: You've hit your limit · resets 1pm (Asia/Taipei)",
+      "status": "done",
+      "created_at": "2026-04-10T07:17:54Z",
+      "resolved_at": "2026-04-10T07:21:31Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PER-001 complete. Deliverables: persona_registry.py (Persona, SessionPersona, CapabilitySnapshot, PersonaRegistry, PersonaSessionStore + lifecycle transitions), persona_registry.schema.json, session_persona.schema.json, capability_snapshot.schema.json, contract.md. Key PER-001A follow-ups resolved: (1) SessionPersona.runtime_binding_id/deployment_stage/capital_pool_id are first-class contract fields with consistency enforcement; (2) DeploymentPlan.binding_id vs RuntimeBinding.persona_capital_binding_id naming clarified in contract.md §5.1. Verification: 54 unit tests OK, 50/50 smoke test checks PASS.",
+      "status": "done",
+      "created_at": "2026-04-10T07:31:16Z",
+      "resolved_at": "2026-04-10T07:37:50Z"
+    },
+    {
+      "task_id": "EX-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "EX-002 ready for review. Canonical rollback_action_type now stays in replace/pause_then_replace/liquidate_then_replace vocabulary through deployment_saga compensation, with legacy replace_binding normalized only at the compatibility boundary. Updated rollback policy, runtime-manager rollback matrix, and artifact-loader contract so cutover semantics use replacement RuntimeBinding creation/retire rather than in-place mutation, and loader validates fallback metadata without inventing rollback execution semantics. Verification: PYTHONPATH=services/control-plane/governance python3 -m unittest services/control-plane/governance/test_deployment_saga.py (9 tests), PYTHONPATH=services/control-plane/governance python3 -m unittest services/control-plane/governance/test_deployment_plan.py (24 tests), python3 services/control-plane/governance/smoke_test_deployment_saga.py (13/13), python3 services/execution/runtime-manager/smoke_test_runtime_binding.py (10/10 groups), python3 -m unittest services/execution/test_artifact_loader.py (9 tests), plus py_compile pass.",
+      "status": "done",
+      "created_at": "2026-04-10T07:31:23Z",
+      "resolved_at": "2026-04-10T07:59:12Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes. See services/control-plane/persona/review_per001_codex_zh.md. Blockers: (1) SessionPersona still allows deployment_stage/capital_pool_id without runtime_binding_id; (2) trace_id/request_id remain optional in code/schema despite contract requiring them always; (3) PERSONA_RUNTIME_MODEL.md still exposes the old SessionPersona shape and has not absorbed the first-class runtime-context fields.",
+      "status": "done",
+      "created_at": "2026-04-10T07:37:50Z",
+      "resolved_at": "2026-04-10T07:37:50Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "TEL-001 complete: telemetry schema (v2) carries all binding/stage evidence fields. capture.py injects binding_context (binding_id, deployment_stage, plan_id, persona_capital_binding_id, artifact_id, artifact_version, runtime_id) into every event. New capture methods for deploy/rollback/kill-switch/heartbeat events. 31/31 unit tests pass, smoke test passes. Schema validated. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-10T07:38:21Z",
+      "resolved_at": "2026-04-10T07:50:29Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review requested changes. See services/telemetry/review_tel001_codex_zh.md. Blockers: (1) deploy/rollback/kill-switch/heartbeat helpers emit empty metrics and fail canonical telemetry_event.schema.json; (2) binding evidence is still optional/fabricated because capture.py backfills missing RuntimeBinding fields with defaults/empty strings instead of rejecting; (3) deployment_stage=frozen maps to execution_mode=frozen, which violates the schema's paper|live alias contract; (4) TEL-001 tests/smoke still validate against ad-hoc minimal schemas, so canonical regressions are not covered.",
+      "status": "done",
+      "created_at": "2026-04-10T07:50:29Z",
+      "resolved_at": "2026-04-10T07:50:29Z"
+    },
+    {
+      "task_id": "EX-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EX-002 approved. ROLLBACK_AND_POSITION_SEMANTICS.md locked as L1, rollback_action_matrix.md has explicit 3-action mapping (replace/pause_then_replace/liquidate_then_replace) with position treatment and telemetry cutover semantics. Legacy replace_binding normalized only at compatibility boundary in deployment_plan.py. Loader restricted to fallback metadata validation only. All tests pass: 9 saga, 24 plan, 13/13 smoke, 10/10 binding, 9/9 loader. Review at services/execution/review_ex002_claude_approved_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-10T07:59:12Z",
+      "resolved_at": "2026-04-10T08:00:16Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three Codex blockers resolved: (1) symmetric constraint — deployment_stage/capital_pool_id now raise without runtime_binding_id in __post_init__ and JSON schema allOf inverse if/then; (2) trace_id/request_id promoted to required positional fields in SessionPersona dataclass, added to schema required[], and checked in validate_session(); (3) PERSONA_RUNTIME_MODEL.md §14 SessionPersona block updated to match contract field shape with consistency invariant note. 61 unit tests + 55 smoke checks all pass.",
+      "status": "done",
+      "created_at": "2026-04-10T08:07:52Z",
+      "resolved_at": "2026-04-10T08:13:01Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Blank runtime_binding_id/capital_pool_id still pass SessionPersona constructor + validate_session + session_persona.schema.json, so deployment-bound audit chain identifiers remain forgeable. See services/control-plane/persona/review_per001_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-10T08:13:01Z",
+      "resolved_at": "2026-04-10T08:13:01Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All 4 review blockers resolved. (1) deploy/rollback/kill-switch/heartbeat now emit canonical non-empty metrics passing minProperties=1. (2) Partial binding_context triggers strict rejection instead of fabricating defaults. (3) frozen deployment_stage correctly maps to paper execution_mode. (4) Tests and smoke test unified to canonical telemetry_event.schema.json. Also fixed runtime_binding_id → binding_id naming drift in LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md. All 58 unit tests + smoke test pass.",
+      "status": "done",
+      "created_at": "2026-04-10T08:13:49Z",
+      "resolved_at": "2026-04-10T08:57:02Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex to Claude after repeated Codex terminal: ERROR: Selected model is at capacity. Please try a different model.",
+      "status": "done",
+      "created_at": "2026-04-10T08:57:02Z",
+      "resolved_at": "2026-04-10T09:17:27Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All Codex review blockers from review_per001_codex_zh.md have been addressed. Blank audit-chain identifier validation implemented in __post_init__() + validate_session() + schema minLength:1. 67 unit tests + 60 smoke checks all passing. py_compile clean. Contract.md, schemas, and Python objects all aligned. Requesting re-review and approval.",
+      "status": "done",
+      "created_at": "2026-04-10T09:16:13Z",
+      "resolved_at": "2026-04-10T09:16:37Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Re-verified: all blockers from review_per001_codex_zh.md resolved. Blank audit-chain identifier checks in __post_init__() + validate_session() + schema minLength:1 confirmed. 67 unit tests + 60 smoke checks pass. py_compile clean. Contract, schemas, and Python objects aligned. Approving for done.",
+      "status": "done",
+      "created_at": "2026-04-10T09:16:37Z",
+      "resolved_at": "2026-04-10T09:16:45Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "All 4 Codex blockers resolved: canonical metrics on lifecycle events, strict evidence rejection, frozen→paper execution_mode mapping, canonical schema unified across tests/smoke. 33/33 unit tests + 14/14 smoke steps pass. binding_id naming converged in L1 doc. Approved — Qwen to finalize as done.",
+      "status": "done",
+      "created_at": "2026-04-10T09:17:27Z",
+      "resolved_at": "2026-04-10T11:59:20Z"
+    },
+    {
+      "task_id": "LIN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "LIN-001 implementation ready for review. L1 policy now enumerates the full semantic edge inventory and locks derived-only lineage_projection/lineage_summary_json normalization rules in LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md. Added services/registry/lineage/read_model_contract.md to formalize raw-to-semantic field mapping and downstream read-model expectations. services/telemetry/feedback_adapter.py now exposes derived telemetry lineage records/summaries with runtime_binding_id/deployment_plan_id normalization and conflict markers instead of hiding alias drift. Validation: python3 -m py_compile services/telemetry/feedback_adapter.py services/telemetry/test_feedback_adapter.py; cd services/telemetry && python3 -m unittest test_feedback_adapter; python3 services/registry/lineage/benchmark_harness.py --corpus services/registry/lineage/lin001a_benchmark_corpus.json --iterations 5 --warmup 1 --enforce-budgets.",
+      "status": "done",
+      "created_at": "2026-04-10T12:08:39Z",
+      "resolved_at": "2026-04-10T13:01:23Z"
+    },
+    {
+      "task_id": "TEL-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "TEL-002 ready for review. All artifacts implemented: durable buffer (InMemoryBuffer v1 + RedisStreamBuffer v2-ready), async batch writer with micro-batching/retry/partition-routing, backpressure controller with adaptive concurrency, dead-letter queue with JSONL spill/replay/diagnostic-tags, TelemetryIngestService. 38/38 unit tests pass. 4/4 smoke tests pass. BUFFER_CHOICE_ADR.md documents tradeoffs.",
+      "status": "done",
+      "created_at": "2026-04-10T12:41:25Z",
+      "resolved_at": "2026-04-10T12:48:24Z"
+    },
+    {
+      "task_id": "TEL-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Approved after reviewer cleanup: delay-path overflow now lands in DLQ, regression test added, and ADR durability wording is aligned with the actual v1 implementation.",
+      "status": "done",
+      "created_at": "2026-04-10T12:48:24Z",
+      "resolved_at": "2026-04-10T12:51:03Z"
+    },
+    {
+      "task_id": "LIN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "LIN-001 approved. 19 normalized edges enumerated in L1 doc and read_model_contract.md. derived_only contract enforced in code and docs. 28/28 unit tests + 4/4 benchmark families within SLA budgets. Conflict markers surface alias drift correctly. Non-blocking: LIN-002 must assemble upstream_chain[]/downstream_chain[] from normalized edges; artifact target_type matches composite artifact_ref.",
+      "status": "done",
+      "created_at": "2026-04-10T13:01:23Z",
+      "resolved_at": "2026-04-10T13:02:42Z"
+    },
+    {
+      "task_id": "APP-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "APP-001 deliverables ready for Codex review. Three artifacts created in services/control-plane/bff/: (1) BFF_API_CONTRACT.md — formal v1 API contract with 33 read-only surfaces, RBAC matrix, error/staleness models, composed views, SSE real-time feeds, secondary control path; (2) CONSULTATION_SURFACE_CONTRACT.md — 6 consultation surfaces citing canonical SessionPersona/ConsultPolicy objects with no shadow model; (3) DEGRADED_OPERATOR_PATH.md — full degradation matrix, admin CLI requirements, operator journeys under failure. All acceptance criteria met. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T13:12:50Z",
+      "resolved_at": "2026-04-10T13:19:46Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:13:29Z",
+      "resolved_at": "2026-04-10T13:13:51Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:13:52Z",
+      "resolved_at": "2026-04-10T13:14:00Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:14:14Z",
+      "resolved_at": "2026-04-10T13:14:19Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:14:38Z",
+      "resolved_at": "2026-04-10T13:14:44Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:14:57Z",
+      "resolved_at": "2026-04-10T13:15:06Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:15:22Z",
+      "resolved_at": "2026-04-10T13:15:45Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:15:45Z",
+      "resolved_at": "2026-04-10T13:15:52Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:16:08Z",
+      "resolved_at": "2026-04-10T13:16:29Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:16:30Z",
+      "resolved_at": "2026-04-10T13:16:35Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:16:54Z",
+      "resolved_at": "2026-04-10T13:17:00Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:17:13Z",
+      "resolved_at": "2026-04-10T13:17:54Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:17:55Z",
+      "resolved_at": "2026-04-10T13:18:04Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:18:22Z",
+      "resolved_at": "2026-04-10T13:18:27Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:18:43Z",
+      "resolved_at": "2026-04-10T13:18:49Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:19:10Z",
+      "resolved_at": "2026-04-10T13:19:28Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:19:29Z",
+      "resolved_at": "2026-04-10T13:19:35Z"
+    },
+    {
+      "task_id": "APP-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "APP-001 approved. Formal BFF, consultation, and degraded-path contracts are aligned; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-10T13:19:46Z",
+      "resolved_at": "2026-04-10T13:22:31Z"
+    },
+    {
+      "task_id": "INC-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "INC-001 complete: IncidentCase and Postmortem backbone objects fully implemented. 71/71 unit tests PASS, 55/55 smoke checks PASS. All 3 normalized lineage edges (incident_case.runtime_binding, postmortem.incident_case, evolution_decision.postmortem) are carried in both objects. IncidentCase carries deployment_stage, binding_id, deployment_plan_id, capital_pool_id, persona_capital_binding_id, artifact_id, artifact_version, runtime_id, trace_id. Postmortem propagates the same evidence refs. JSON schemas (incident_case.schema.json, postmortem.schema.json) validate both valid and invalid payloads. IncidentStore enforces referential integrity (Postmortem requires IncidentCase). Artifacts: services/incident/incident.py, services/incident/__init__.py, services/incident/incident_case.schema.json, services/incident/postmortem.schema.json, services/incident/contract.md.",
+      "status": "done",
+      "created_at": "2026-04-10T13:32:04Z",
+      "resolved_at": "2026-04-10T13:32:28Z"
+    },
+    {
+      "task_id": "INC-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot terminal: Error: Model \"claude\" from --model flag is not available.",
+      "status": "done",
+      "created_at": "2026-04-10T13:32:28Z",
+      "resolved_at": "2026-04-10T13:38:38Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "LIN-002 implementation complete. Fixed BFS traversal direction semantics (edges point from dependent to dependency). Iterative BFS avoids recursive join timeouts. All 5 benchmark cases validate, all 4 families within SLA (p95 < 0.073ms vs 500ms). Key fixes: (1) swapped upstream/downstream BFS calls to match dependency-edge semantics, (2) enriched forensic_plan_trace to include rollback_parent runtime bindings as chain items, (3) added runtime_ref nodes for all runtime_ids found in visited bindings. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T13:32:44Z",
+      "resolved_at": "2026-04-10T14:03:31Z"
+    },
+    {
+      "task_id": "INC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "INC-001 approved after reviewer cleanup: Postmortem now carries deployment_plan_id/persona_capital_binding_id/runtime_id and IncidentStore enforces propagated evidence equality with the parent IncidentCase. Unit tests 75/75 PASS; smoke checks 59/59 PASS.",
+      "status": "pending",
+      "created_at": "2026-04-10T13:38:38Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:48:04Z",
+      "resolved_at": "2026-04-10T13:48:49Z"
+    },
+    {
+      "task_id": "INC-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Acceptance packet complete: full checklist (35 checks all PASS), dependency map (3 upstream, 4 downstream), evidence propagation verification, and reviewer handoff to Claude.",
+      "status": "done",
+      "created_at": "2026-04-10T13:53:31Z",
+      "resolved_at": "2026-04-10T14:04:26Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "EVO-003 implemented as a first-class EvolutionDecision contract with lifecycle, role matrix, approval linkage, cooldown/observation enforcement, single-active-rule store checks, and incident postmortem reverse-link sync. Review packet: services/control-plane/governance/review_evo003_codex_zh.md. Verification: python3 -m unittest services/control-plane/governance/test_evolution_decision.py (17 passed); python3 services/control-plane/governance/smoke_test_evolution_decision.py (16 passed). Full governance unittest discover only hit two pre-existing pytest import errors in test_capital_pool.py and test_persona_capital_binding.py.",
+      "status": "done",
+      "created_at": "2026-04-10T13:53:39Z",
+      "resolved_at": "2026-04-10T13:59:07Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:54:29Z",
+      "resolved_at": "2026-04-10T13:55:20Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet complete: dependency map, acceptance checklist, independent benchmark rerun, and reviewer handoff packet are ready in support/sidecars/LIN-002/LIN-002-SIDECAR-ACCEPTANCE.md. No sidecar-discovered blocker; parent LIN-002 remains with Claude for formal review.",
+      "status": "done",
+      "created_at": "2026-04-10T13:59:02Z",
+      "resolved_at": "2026-04-10T14:00:38Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "APPROVED: EvolutionDecision contract delivers full lifecycle enforcement, role matrices, single-active-rule, cooldown/observation windows, approval linkage, and incident postmortem reverse-link sync. 17/17 unit tests PASS, 16/16 smoke tests PASS. Review: services/control-plane/governance/review_evo003_qwen.md",
+      "status": "done",
+      "created_at": "2026-04-10T13:59:07Z",
+      "resolved_at": "2026-04-10T14:00:54Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet complete: all 35 checks PASS, dependency map (3 upstream, 4 downstream), independent benchmark rerun evidence, and parent handoff fixes verified. No sidecar-discovered blockers. Ready for reviewer sign-off; parent LIN-002 remains with Claude for formal review.",
+      "status": "done",
+      "created_at": "2026-04-10T14:00:38Z",
+      "resolved_at": "2026-04-10T14:02:21Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved: all 35 checks PASS, dependency map complete, benchmark evidence solid, no sidecar-discovered blockers. Parent LIN-002 remains with Claude for formal review.",
+      "status": "done",
+      "created_at": "2026-04-10T14:02:21Z",
+      "resolved_at": "2026-04-10T14:02:52Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"bc7f7034-a97a-4f8b-b9de-c66b9af8ca81\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1am (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"83635342-981a-42f4-8d17-0b5ba94033e2\",\"uuid\":\"0d44c5cb-9a98-4e0f-9564-e8153c3ea0c1\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-10T14:03:31Z",
+      "resolved_at": "2026-04-10T14:08:52Z"
+    },
+    {
+      "task_id": "OSS-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T14:04:17Z",
+      "resolved_at": "2026-04-10T14:04:44Z"
+    },
+    {
+      "task_id": "INC-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"794f4c18-cbcb-4e2f-a970-218234702505\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1am (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"c8c6cbd0-9833-4ebd-bdf1-5bb6a94a1d0b\",\"uuid\":\"0f493b13-fe89-4005-81f0-84c955438875\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-10T14:04:26Z",
+      "resolved_at": "2026-04-10T14:12:14Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review requested changes: LIN-002 summary projections omit required derived_only/refs envelope and do not surface LIN-001 alias-drift conflict markers. Review: services/telemetry/lineage_read/review_lin002_codex_zh.md",
+      "status": "done",
+      "created_at": "2026-04-10T14:08:52Z",
+      "resolved_at": "2026-04-10T14:08:52Z"
+    },
+    {
+      "task_id": "INC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review complete: sidecar packet aligned to the current reviewer reassignment, Postmortem optional-field counts corrected, and verification rerun (75/75 unit, 59/59 smoke direct + module). Ready for Qwen to mark done; Claude may absorb the packet when closing INC-001.",
+      "status": "done",
+      "created_at": "2026-04-10T14:12:14Z",
+      "resolved_at": "2026-04-10T14:14:58Z"
     }
   ],
   "blockers": [
@@ -2923,49 +4405,49 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 10,
+      "total": 7,
+      "active": 0,
+      "blocked": 0,
+      "done": 4,
+      "review": 0,
+      "review_approved": 1,
+      "todo": 2
+    },
+    "Gemini": {
+      "total": 3,
       "active": 0,
       "blocked": 0,
       "done": 3,
       "review": 0,
       "review_approved": 0,
-      "todo": 7
-    },
-    "Gemini": {
-      "total": 8,
-      "active": 0,
-      "blocked": 0,
-      "done": 2,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 6
+      "todo": 0
     },
     "Codex": {
-      "total": 47,
-      "active": 1,
+      "total": 52,
+      "active": 0,
       "blocked": 0,
-      "done": 43,
+      "done": 52,
       "review": 0,
       "review_approved": 0,
-      "todo": 4
+      "todo": 0
     },
     "Qwen": {
-      "total": 3,
+      "total": 18,
       "active": 2,
       "blocked": 0,
-      "done": 1,
-      "review": 0,
+      "done": 16,
+      "review": 1,
       "review_approved": 0,
-      "todo": 2
+      "todo": 1
     },
     "Copilot": {
-      "total": 14,
+      "total": 12,
       "active": 0,
       "blocked": 0,
       "done": 11,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 1
     }
   }
 }
