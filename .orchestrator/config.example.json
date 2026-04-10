@@ -353,7 +353,7 @@
         "extra_args": []
       },
       "model_preference": {
-        "default": "claude",
+        "default": null,
         "grok": null,
         "supported": [
           "claude"

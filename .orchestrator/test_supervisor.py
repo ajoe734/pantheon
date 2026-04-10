@@ -173,6 +173,84 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(request.provider, "qwen")
         self.assertEqual(request.metadata["model_preference"], "qwen3-coder-plus")
 
+    def test_build_request_skips_default_model_for_primary_copilot_agent(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "agents": {
+                "copilot": {
+                    "id": "copilot",
+                    "display_name": "Copilot",
+                    "provider": "copilot",
+                    "adapter": "copilot_local",
+                }
+            },
+            "providers": {
+                "copilot": {
+                    "delivery_mode": "copilot_local",
+                    "model_preference": {
+                        "default": None,
+                        "grok": "grok-code-fast-1",
+                    },
+                }
+            },
+        }
+
+        request = supervisor.build_request(
+            config,
+            {
+                "target_agent": "copilot",
+                "message": "wake",
+            },
+        )
+
+        self.assertEqual(request.agent_id, "copilot")
+        self.assertEqual(request.provider, "copilot")
+        self.assertNotIn("model_preference", request.metadata)
+
+    def test_build_request_keeps_agent_specific_model_for_copilot_alias(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "agents": {
+                "grok": {
+                    "id": "grok",
+                    "display_name": "Copilot (legacy alias)",
+                    "provider": "copilot",
+                    "adapter": "copilot_local",
+                }
+            },
+            "providers": {
+                "copilot": {
+                    "delivery_mode": "copilot_local",
+                    "model_preference": {
+                        "default": None,
+                        "grok": "grok-code-fast-1",
+                    },
+                }
+            },
+        }
+
+        request = supervisor.build_request(
+            config,
+            {
+                "target_agent": "grok",
+                "message": "wake",
+            },
+        )
+
+        self.assertEqual(request.agent_id, "grok")
+        self.assertEqual(request.provider, "copilot")
+        self.assertEqual(request.metadata["model_preference"], "grok-code-fast-1")
+
     def test_skips_stale_owned_dispatch_event_after_task_completion(self) -> None:
         queued_task = {
             "id": "BUS-VAL-001",
