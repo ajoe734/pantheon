@@ -4,6 +4,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import os
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -335,6 +336,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
             mock.patch.object(supervisor, "build_request", return_value=request) as build_request,
             mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", delivery)) as start_worker,
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True) as sync_dispatched_task_status,
         ):
             changed = supervisor.process_queue(self.config, state, self.provider_report)
 
@@ -344,6 +346,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(record["run_id"], "run-123")
         build_request.assert_called_once_with(self.config, queue_payload)
         start_worker.assert_called_once()
+        sync_dispatched_task_status.assert_called_once_with(self.config, queue_payload)
 
     def test_dispatcher_can_requeue_same_task_after_previous_failure(self) -> None:
         current_task = {
@@ -611,6 +614,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
             mock.patch.object(supervisor, "start_worker_for_request", side_effect=AssertionError("duplicate queue event should not start another worker")),
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True) as sync_dispatched_task_status,
         ):
             changed = supervisor.process_queue(self.config, state, self.provider_report)
 
@@ -618,6 +622,83 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         record = state["queue"]["events"]["evt-current"]
         self.assertEqual(record["status"], "started")
         self.assertEqual(record["run_id"], "gemini-run-1")
+        sync_dispatched_task_status.assert_called_once_with(self.config, queue_payload)
+
+
+class DispatchStatusSyncTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / "scripts").mkdir(parents=True, exist_ok=True)
+        (self.root / "scripts" / "ai_status.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+        self.status_path = self.root / "ai-status.json"
+        self.status_path.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "APP-002-W1-FRONT-HANDOFF",
+                            "status": "todo",
+                            "owner": "Copilot",
+                            "reviewer": "Codex",
+                            "depends_on": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "paths": {
+                "status_file": str(self.status_path),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+            },
+            "agents": {
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+        }
+
+    def test_sync_dispatched_task_status_starts_owned_todo_task(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+
+        with mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock:
+            changed = supervisor.sync_dispatched_task_status(self.config, event)
+
+        self.assertTrue(changed)
+        command = run_mock.call_args.args[0]
+        self.assertEqual(command[2], "start")
+        self.assertEqual(command[3], "APP-002-W1-FRONT-HANDOFF")
+        self.assertIn("Supervisor auto-started", command[4])
+        self.assertEqual(run_mock.call_args.kwargs["env"]["AI_NAME"], "Copilot")
+
+    def test_sync_dispatched_task_status_skips_review_dispatch(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "reason": "review_ready_dispatch",
+        }
+
+        with mock.patch.object(supervisor.subprocess, "run") as run_mock:
+            changed = supervisor.sync_dispatched_task_status(self.config, event)
+
+        self.assertFalse(changed)
+        run_mock.assert_not_called()
 
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
@@ -680,6 +761,178 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         self.assertEqual(saved_state["supervisor"]["pid"], os.getpid())
         self.assertIsNotNone(saved_state["supervisor"]["last_heartbeat_at"])
         self.assertEqual(saved_state["supervisor"]["started_at"], saved_state["supervisor"]["last_heartbeat_at"])
+
+    def test_run_once_prioritizes_discussion_planning_dispatch(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {},
+            "watcher": {},
+            "ready_dispatcher": {},
+            "providers": {},
+            "agents": {},
+        }
+        initial_state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "approvals": {},
+            "supervisor": {
+                "pid": 61209,
+                "started_at": "2026-04-05T12:44:57Z",
+                "last_heartbeat_at": "2026-04-06T04:17:26Z",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
+            mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "run_scan", return_value=False),
+            mock.patch.object(supervisor, "sync_coordination_files", return_value=False),
+            mock.patch.object(supervisor, "poll_workers", return_value=False),
+            mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
+            mock.patch.object(supervisor, "prune_event_queue", return_value=False),
+            mock.patch.object(supervisor, "load_discussion_planning_state", return_value={"status": "active", "planning_mode": "discussion_planning", "readouts": {}}),
+            mock.patch.object(supervisor, "dispatch_discussion_planning", return_value=True) as dispatch_discussion_planning,
+            mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=False) as dispatch_ready_tasks,
+            mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False) as dispatch_underutilization_sidecars,
+            mock.patch.object(supervisor, "process_queue", return_value=False),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "trim_worker_history"),
+            mock.patch.object(supervisor, "trim_seen_events"),
+            mock.patch.object(supervisor, "save_runtime_state"),
+        ):
+            supervisor.run_once(config, watch=True, replay=False)
+
+        dispatch_discussion_planning.assert_called_once()
+        dispatch_ready_tasks.assert_not_called()
+        dispatch_underutilization_sidecars.assert_not_called()
+
+
+class DiscussionPlanningDispatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "paths": {
+                "event_queue": str(self.root / "event-queue.jsonl"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running",
+                    "started",
+                    "waiting_approval",
+                    "manual_pending",
+                    "retry_backoff",
+                    "suspended_approval",
+                    "stalled",
+                    "fallback",
+                ],
+            },
+            "agents": {
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"},
+            },
+            "providers": {
+                "claude": {"delivery_mode": "claude_cli"},
+                "gemini": {"delivery_mode": "gemini"},
+                "codex": {"delivery_mode": "codex"},
+                "copilot": {"delivery_mode": "copilot_local"},
+                "qwen": {"delivery_mode": "qwen"},
+            },
+        }
+
+    def test_dispatch_discussion_planning_queues_pending_readouts(self) -> None:
+        planning_state = {
+            "session_id": "phase1-2026-04-11",
+            "status": "active",
+            "planning_mode": "discussion_planning",
+            "summary": "Plan the Pantheon backend completion wave.",
+            "baton_owner": "Codex",
+            "next_reviewer": "Qwen",
+            "current_round": 0,
+            "consensus_status": "draft",
+            "readouts": {
+                "Claude": {"status": "pending"},
+                "Codex": {"status": "pending"},
+                "Gemini": {"status": "pending"},
+                "Qwen": {"status": "pending"},
+                "Copilot": {"status": "pending"},
+            },
+        }
+        state = {"queue": {"events": {}}, "workers": {}, "seen_event_keys": {}}
+
+        with mock.patch.object(supervisor, "selected_shared_files", return_value=[self.root / "shared.md"]):
+            changed = supervisor.dispatch_discussion_planning(self.config, state, planning_state)
+
+        self.assertTrue(changed)
+        rows = [
+            json.loads(line)
+            for line in (self.root / "event-queue.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(rows), 5)
+        codex_event = next(row for row in rows if row["target_display_name"] == "Codex")
+        self.assertEqual(codex_event["reason"], "discussion_planning_baton_dispatch")
+        self.assertIn("starter-draft.md", "\n".join(codex_event["target_files"]))
+        claude_event = next(row for row in rows if row["target_display_name"] == "Claude")
+        self.assertIn("consensus-packet.md", "\n".join(claude_event["target_files"]))
+
+    def test_planning_worker_matches_assignment_without_taskboard_entry(self) -> None:
+        worker = {
+            "task_id": "phase1-2026-04-11-backend-completion",
+            "agent_id": "codex",
+            "request_snapshot": {
+                "reason": "discussion_planning_baton_dispatch",
+                "metadata": {
+                    "planning": {
+                        "session_id": "phase1-2026-04-11-backend-completion",
+                        "mode": "discussion_planning",
+                    }
+                },
+            },
+        }
+
+        self.assertTrue(supervisor.worker_matches_current_assignment(self.config, worker, {}))
+        self.assertFalse(supervisor.higher_priority_ready_task_exists(self.config, worker, {}))
+
+    def test_coordination_worker_matches_assignment_without_taskboard_entry(self) -> None:
+        worker = {
+            "task_id": "F-042",
+            "agent_id": "codex",
+            "request_snapshot": {
+                "reason": "coordination:ui-done",
+                "metadata": {
+                    "coordination": {
+                        "feature_id": "F-042",
+                        "worker_kind": "front-sync-worker",
+                        "payload_type": "ui-done",
+                    }
+                },
+            },
+        }
+
+        self.assertTrue(supervisor.worker_matches_current_assignment(self.config, worker, {}))
+        self.assertFalse(supervisor.higher_priority_ready_task_exists(self.config, worker, {}))
 
 
 class UnderutilizationSidecarDispatchTests(unittest.TestCase):
