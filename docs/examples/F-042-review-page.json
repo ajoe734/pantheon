@@ -1,0 +1,78 @@
+{
+  "data": {
+    "deployment_plan": {
+      "id": "plan-F-042",
+      "stage": "paper",
+      "artifact_id": "artifact-042",
+      "approval_decision_id": "approval-042",
+      "approval_decision": {
+        "id": "approval-042",
+        "outcome": "approved",
+        "reviewer": "governance",
+        "decided_at": "2026-04-11T07:55:00Z",
+        "risk_level": "low",
+        "state": "decided"
+      }
+    },
+    "approval_decision": {
+      "id": "approval-042",
+      "outcome": "approved",
+      "reviewer": "governance",
+      "decided_at": "2026-04-11T07:55:00Z",
+      "risk_level": "low",
+      "state": "decided"
+    },
+    "capital_pool": {
+      "id": "pool-main",
+      "status": "ready"
+    },
+    "bindings": [
+      {
+        "id": "binding-042",
+        "persona_id": "persona-alpha",
+        "capital_pool_id": "pool-main"
+      }
+    ],
+    "runtime_binding": {
+      "id": "runtime-042",
+      "deployment_stage": "none",
+      "status": "idle"
+    },
+    "allowedActions": {
+      "canPromoteToPaper": true
+    },
+    "latestRun": {
+      "progress": 0.82
+    },
+    "review": {
+      "riskSummary": "No unresolved severity-1 or severity-2 incidents.",
+      "governanceOutcome": "approved",
+      "decisionState": "decided",
+      "decidedAt": "2026-04-11T07:55:00Z",
+      "reviewer": "governance"
+    }
+  },
+  "meta": {
+    "snapshot_at": "2026-04-11T08:00:00Z",
+    "surfaces": {
+      "deployment_plan": {
+        "status": "ok"
+      },
+      "approval_decision": {
+        "status": "ok"
+      },
+      "allowedActions": {
+        "status": "ok"
+      },
+      "latestRun": {
+        "status": "ok"
+      },
+      "review": {
+        "status": "ok"
+      },
+      "runtime_binding": {
+        "status": "ok"
+      }
+    }
+  }
+}

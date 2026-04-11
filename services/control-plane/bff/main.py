@@ -583,26 +583,38 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
     pool = read_store.get_capital_pool(plan.get("capital_pool_id"))
     bindings = read_store.get_bindings_for_pool(plan.get("capital_pool_id"))
     runtime_binding = read_store.get_runtime_binding(plan.get("runtime_binding_id"))
+    approval_decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
     rollbacks = read_store.get_rollbacks(
         runtime_binding.get("runtime_id") if runtime_binding else None
     )
+    allowed_actions = read_store.get_allowed_actions(plan_id)
+    latest_run = read_store.get_latest_run(plan_id)
+    review = read_store.get_review_summary(plan_id)
 
     snapshot_at = utc_now()
 
+    deployment_plan_payload = {
+        "id": plan.get("id"),
+        "stage": plan.get("stage"),
+        "artifact_id": plan.get("artifact_id"),
+        "approval_decision_id": plan.get("approval_decision_id"),
+    }
+    for optional_key in ["current_stage", "target_stage", "status", "artifact_version", "transition_type"]:
+        if plan.get(optional_key) is not None:
+            deployment_plan_payload[optional_key] = plan.get(optional_key)
+    if approval_decision:
+        deployment_plan_payload["approval_decision"] = approval_decision
+
     data = {
-        "deployment_plan": {
-            "id": plan.get("id"),
-            "stage": plan.get("stage"),
-            "artifact_id": plan.get("artifact_id"),
-            "approval_decision_id": plan.get("approval_decision_id"),
-        },
+        "deployment_plan": deployment_plan_payload,
+        "approval_decision": approval_decision or {},
         "capital_pool": pool or {},
         "bindings": bindings,
         "runtime_binding": runtime_binding or {},
         "rollbacks": rollbacks,
-        "allowedActions": read_store.get_allowed_actions(plan_id),
-        "latestRun": read_store.get_latest_run(plan_id),
-        "review": read_store.get_review_summary(plan_id),
+        "allowedActions": allowed_actions,
+        "latestRun": latest_run,
+        "review": review,
     }
 
     return {
@@ -611,10 +623,14 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
             "snapshot_at": snapshot_at,
             "surfaces": {
                 "deployment_plan": _surface_status(),
+                "approval_decision": _surface_status(),
                 "capital_pool": _surface_status(),
                 "bindings": _surface_status(),
                 "runtime_binding": _surface_status(),
                 "rollbacks": _surface_status(),
+                "allowedActions": _surface_status(),
+                "latestRun": _surface_status(),
+                "review": _surface_status(),
             },
         },
     }
@@ -838,6 +854,104 @@ async def get_incident_response(
             "active_freeze_orders": ks["active_freeze_orders"],
             "safe_mode_status": ks["safe_mode_status"],
         },
+    }
+
+    return {
+        "data": data,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": surfaces,
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Persona Management composed view (Wave 4 — PS-02, CP-03, CP-04, PS-03, PS-05)
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/api/v1/operator/persona-management/{persona_id}")
+async def get_persona_management(
+    persona_id: str,
+    snapshot: str = "preferred",
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Composed view for persona lifecycle management.
+    Composes: PS-02 (persona detail + bindings), CP-03/CP-04 (capital pool bindings),
+              PS-03 (persona sessions), PS-05 (teaching sessions).
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    # PS-02: Persona detail
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    surfaces = {}
+
+    # PS-02: Persona bindings (bindings where this persona is the owner)
+    persona_bindings = read_store.get_bindings_for_persona(persona_id)
+    if persona_bindings is not None:
+        surfaces["persona_bindings"] = {"status": "ok"}
+    else:
+        persona_bindings = []
+        surfaces["persona_bindings"] = {
+            "status": "degraded",
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+
+    # CP-04: Enrich each binding with its capital pool detail
+    enriched_bindings = []
+    for binding in persona_bindings:
+        binding_detail = dict(binding)
+        pool = read_store.get_capital_pool(binding.get("capital_pool_id"))
+        if pool:
+            binding_detail["capital_pool"] = pool
+        enriched_bindings.append(binding_detail)
+
+    if enriched_bindings:
+        surfaces["capital_pool_bindings"] = {"status": "ok"}
+    else:
+        surfaces["capital_pool_bindings"] = {
+            "status": "degraded",
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+
+    # PS-03: Active sessions for this persona
+    sessions = read_store.get_sessions_for_persona(persona_id)
+    if sessions is not None:
+        surfaces["persona_sessions"] = {"status": "ok"}
+    else:
+        sessions = []
+        surfaces["persona_sessions"] = {
+            "status": "degraded",
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+
+    # PS-05: Teaching sessions for this persona
+    teaching_sessions = read_store.get_teaching_sessions_for_persona(persona_id)
+    if teaching_sessions is not None:
+        surfaces["teaching_sessions"] = {"status": "ok"}
+    else:
+        teaching_sessions = []
+        surfaces["teaching_sessions"] = {
+            "status": "degraded",
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+
+    data = {
+        "persona": persona,
+        "bindings": enriched_bindings,
+        "sessions": sessions,
+        "teaching_sessions": teaching_sessions,
     }
 
     return {
