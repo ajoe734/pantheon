@@ -893,14 +893,23 @@ async def get_post_incident_review(
     evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)
     surfaces["evolution_decisions"] = {"status": "ok"}
 
-    # LN-01: Lineage (simplified — production queries lineage adapter)
-    lineage_edges = []  # v1: empty; production fetches from lineage service
-    surfaces["lineage"] = {"status": "ok", "note": "Lineage data available on request"}
+    # LN-01: Lineage edges — fetch by artifact_id from incident
+    artifact_id = incident.get("artifact_id")
+    lineage_edges = read_store.list_lineage_edges(artifact_id=artifact_id) if artifact_id else []
+    if lineage_edges:
+        surfaces["lineage"] = {"status": "ok"}
+    else:
+        surfaces["lineage"] = {
+            "status": "degraded",
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+            "note": "No lineage edges found for this artifact",
+        }
 
-    # TL-03: Telemetry performance
-    telemetry_runtime_id = incident.get("affected_persona_id")
-    telemetry_summary = read_store.get_telemetry_summary(telemetry_runtime_id) if telemetry_runtime_id else None
-    if telemetry_summary:
+    # TL-03: Telemetry performance — use artifact_id (not runtime_id or summary)
+    telemetry_performance = None
+    if artifact_id:
+        telemetry_performance = read_store.get_telemetry_performance(artifact_id)
+    if telemetry_performance:
         surfaces["telemetry_performance"] = {"status": "ok"}
     else:
         surfaces["telemetry_performance"] = {
@@ -913,7 +922,7 @@ async def get_post_incident_review(
         "postmortem": postmortem,
         "evolution_decisions": evolution_decisions,
         "lineage_edges": lineage_edges,
-        "telemetry_performance": telemetry_summary,
+        "telemetry_performance": telemetry_performance,
     }
 
     return {
@@ -1022,7 +1031,7 @@ async def list_rollbacks(
 
 
 # --------------------------------------------------------------------------- #
-# Lineage Surfaces (Wave 3 — LN-01)
+# Lineage Surfaces (Wave 3 — LN-01 – LN-03)
 # --------------------------------------------------------------------------- #
 
 
@@ -1045,9 +1054,111 @@ async def list_lineage(
     }
 
 
+@app.get("/api/v1/lineage/edges/{edge_id}")
+async def get_lineage_edge(
+    edge_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """LN-02: Lineage Edge Detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    edge = read_store.get_lineage_edge(edge_id)
+    if not edge:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Lineage edge not found",
+            f"Lineage edge {edge_id} does not exist",
+        )
+
+    return {
+        "data": edge,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/lineage/graph")
+async def get_lineage_graph(
+    root_type: Optional[str] = None,
+    root_id: Optional[str] = None,
+    depth: int = 3,
+    authorization: Optional[str] = Header(default=None),
+):
+    """LN-03: Lineage Graph from a root artifact with configurable depth."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    # Clamp depth to allowed range (§4.3)
+    depth = max(1, min(depth, 10))
+
+    edges = read_store.get_lineage_graph(root_type=root_type, root_id=root_id, depth=depth)
+    return {
+        "data": edges,
+        "meta": {
+            "total": len(edges),
+            "depth": depth,
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
 # --------------------------------------------------------------------------- #
-# Telemetry Performance (Wave 3 — TL-03)
+# Telemetry Surfaces (Wave 3 — TL-01 – TL-03)
 # --------------------------------------------------------------------------- #
+
+
+@app.get("/api/v1/telemetry")
+async def list_telemetry(
+    pool_id: Optional[str] = None,
+    artifact_id: Optional[str] = None,
+    time_range: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """TL-01: Telemetry Event List with optional filters."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    events = read_store.list_telemetry_events(
+        pool_id=pool_id, artifact_id=artifact_id, time_range=time_range,
+    )
+    return {
+        "data": events,
+        "meta": {
+            "total": len(events),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/telemetry/{runtime_id}/summary")
+async def get_telemetry_summary(
+    runtime_id: str,
+    time_range: Optional[str] = None,
+    aggregate_by: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """TL-02: Telemetry Summary for a runtime."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    summary = read_store.get_telemetry_summary(runtime_id)
+    if not summary:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Telemetry summary not found",
+            f"No telemetry summary for runtime {runtime_id}",
+        )
+
+    return {
+        "data": summary,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
 
 
 @app.get("/api/v1/telemetry/{artifact_id}/performance")
