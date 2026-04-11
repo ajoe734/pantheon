@@ -1,0 +1,24 @@
+feature_id: F-042
+type: contract-ready
+status: published
+published_at: "2026-04-12T00:00:00Z"
+description: "F-042 Promotion Review contract-ready handoff. BFF contract, example payload, screen spec, and Lovable task packet are all published."
+artifacts:
+  bff_contract: docs/bff/F-042-promotion-review.md
+  screen_spec: docs/screens/F-042-promotion-review.md
+  example_payload: docs/examples/F-042-review-page.json
+  lovable_ui_task: .coordination/responses/F-042-lovable-ui-task.yaml
+  lovable_prompt: .coordination/responses/F-042-lovable-prompt.md
+endpoints:
+  - GET /api/v1/operator/deployment-review/{plan_id}
+  - POST /api/v1/operator/commands
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+  - front_sync_guide
+acceptance_met:
+  - contract_ready_published: true
+  - lovable_ui_task_published: true
+  - front_repo_receives_handoff_bundle: true
