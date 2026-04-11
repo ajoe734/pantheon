@@ -1,0 +1,16 @@
+feature_id: F-042
+source_repo: front-ai-trading-system
+source_branch: main
+screen: promotion-review
+type: bff-gap
+blocking: true
+
+summary: Promotion Review UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: allowedActions.canPromoteToPaper
+    reason: CTA visibility cannot be rendered safely without backend authority
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

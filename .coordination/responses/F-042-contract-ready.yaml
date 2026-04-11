@@ -1,5 +1,7 @@
 feature_id: F-042
 type: contract-ready
+source_repo: pantheon
+screen: promotion-review
 status: published
 published_at: "2026-04-12T00:00:00Z"
 description: "F-042 Promotion Review contract-ready handoff. BFF contract, example payload, screen spec, and Lovable task packet are all published."
@@ -18,6 +20,12 @@ handoff_bundle:
   - lovable_ui_task
   - example_payload
   - front_sync_guide
+front_actions_required:
+  - build the Promotion Review page shell and state rendering
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - do not invent endpoint fields beyond this handoff packet
+  - render approval decision and governance outcome from backend-shaped fields
 acceptance_met:
   - contract_ready_published: true
   - lovable_ui_task_published: true
