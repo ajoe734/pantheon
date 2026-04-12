@@ -1,11 +1,11 @@
 # RL Integration Path Definition
 
 **Task**: LP-005  
-**Owner**: Grok  
+**Owner**: Copilot  
 **Reviewer**: Codex  
 **Scope**: Define FinRL/RLlib + Ray Tune integration when sequential RL is justified  
-**Status**: Draft  
-**Last Updated**: 2026-04-06
+**Status**: Accepted  
+**Last Updated**: 2026-04-10
 
 ---
 
@@ -523,10 +523,10 @@ Is supervised alpha exhausted (Sharpe stable for 3+ months)?
 
 ---
 
-**Document Status**: Ready for Codex review (Reviewer: Codex)  
-**Review Checklist**:
-- [ ] Entry criteria alignment with TARGET_ARCHITECTURE
-- [ ] Ray Tune workflow is realistic and matches RLlib conventions
-- [ ] Registry integration is feasible with existing REG-001 infrastructure
-- [ ] LEAN execution contract is implementable
-- [ ] Success criteria are verifiable
+**Document Status**: LP-005 accepted; reused by OSS-003 as the deferred RL activation gate  
+**Review Outcome**:
+- [x] Entry criteria align with TARGET_ARCHITECTURE and keep RL behind the supervised-first path
+- [x] Ray Tune workflow is scoped as a realistic RLlib search path rather than an already-integrated runtime
+- [x] Registry integration is feasible within existing REG-001 / REG-003 / EX-001 boundaries
+- [x] LEAN execution contract is implementable through artifact-loader mediation rather than direct URI loading
+- [x] Success criteria are verifiable from the documented gate sequence and artifact envelope

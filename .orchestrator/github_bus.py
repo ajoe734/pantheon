@@ -28,8 +28,11 @@ from common import (
     write_activity_log,
     write_json,
 )
+from coordination_file_watcher import queue_coordination_dispatch
+from cross_repo_issue_mapper import coordination_issue_body, coordination_issue_labels, coordination_issue_title
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
+from multi_repo_registry import coordination_enabled, matching_repo_id, repository_slug, resolve_worker_kind
 from runtime_state import enqueue_event
 from watch_events import render_wakeup_message
 
@@ -66,6 +69,7 @@ def default_bus_state() -> dict[str, Any]:
         "processed_comment_ids": [],
         "processed_webhook_deliveries": [],
         "tasks": {},
+        "coordination": {},
     }
 
 
@@ -78,6 +82,7 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
     merged.setdefault("processed_webhook_deliveries", [])
+    merged.setdefault("coordination", {})
     return merged
 
 
@@ -94,6 +99,12 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         ):
             pruned_tasks[task_id] = entry
     state["tasks"] = pruned_tasks
+    pruned_coordination: dict[str, Any] = {}
+    for key, entry in (state.get("coordination") or {}).items():
+        issue = (entry or {}).get("issue") or {}
+        if any((issue.get("number"), issue.get("url"), entry.get("last_hash"))):
+            pruned_coordination[key] = entry
+    state["coordination"] = pruned_coordination
     state["last_sync_at"] = utc_now()
     state["processed_review_ids"] = state.get("processed_review_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
@@ -261,6 +272,22 @@ def task_bus_entry(bus_state: dict[str, Any], task_id: str) -> dict[str, Any]:
     )
 
 
+def coordination_bus_key(repo: str, feature_id: str) -> str:
+    return f"{repo}:{feature_id}"
+
+
+def coordination_bus_entry(bus_state: dict[str, Any], repo: str, feature_id: str) -> dict[str, Any]:
+    return bus_state.setdefault("coordination", {}).setdefault(
+        coordination_bus_key(repo, feature_id),
+        {
+            "repo": repo,
+            "feature_id": feature_id,
+            "issue": None,
+            "last_hash": None,
+        },
+    )
+
+
 def task_signature(task: dict[str, Any], fields: list[str]) -> str:
     payload = {field: task.get(field) for field in fields}
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
@@ -335,6 +362,46 @@ def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, A
     if isinstance(data, list) and data:
         return data[0]
     return None
+
+
+def find_existing_coordination_issue(repo: str, feature_id: str) -> dict[str, Any] | None:
+    data = gh_json(
+        [
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--search",
+            f'"[CoordBus] {feature_id}" in:title',
+            "--json",
+            "number,title,url,state,labels",
+        ]
+    )
+    if isinstance(data, list) and data:
+        return data[0]
+    return None
+
+
+def issue_mutation_with_label_fallback(command: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return run_gh(command)
+    except GitHubBusError as exc:
+        message = str(exc).lower()
+        if "label" not in message:
+            raise
+        rebuilt: list[str] = []
+        skip_next = False
+        for item in command:
+            if skip_next:
+                skip_next = False
+                continue
+            if item in {"--label", "--add-label"}:
+                skip_next = True
+                continue
+            rebuilt.append(item)
+        return run_gh(rebuilt)
 
 
 def upsert_ops_issue(config: dict[str, Any], bus_state: dict[str, Any], repo: str, task: dict[str, Any], reason: str, details: str) -> bool:
@@ -416,6 +483,80 @@ def close_ops_issue(config: dict[str, Any], entry: dict[str, Any], task_id: str,
             "task_id": task_id,
             "message": reason,
             "github_url": issue_ref.get("url"),
+        },
+    )
+    return True
+
+
+def coordination_counterpart_links(bus_state: dict[str, Any], feature_id: str, current_repo: str) -> list[str]:
+    links: list[str] = []
+    for key, entry in (bus_state.get("coordination") or {}).items():
+        if not key.endswith(f":{feature_id}"):
+            continue
+        if entry.get("repo") == current_repo:
+            continue
+        issue = (entry or {}).get("issue") or {}
+        if issue.get("url"):
+            links.append(str(issue["url"]))
+    return links
+
+
+def upsert_coordination_issue(config: dict[str, Any], bus_state: dict[str, Any], repo: str, feature: dict[str, Any]) -> bool:
+    feature_id = str(feature.get("feature_id") or "").strip()
+    if not feature_id:
+        return False
+    entry = coordination_bus_entry(bus_state, repo, feature_id)
+    issue_ref = entry.get("issue")
+    title = coordination_issue_title(feature)
+    labels = coordination_issue_labels(config, feature)
+    body = coordination_issue_body(
+        feature,
+        repo_slug=repo,
+        counterpart_links=coordination_counterpart_links(bus_state, feature_id, repo),
+    )
+    issue_hash = json.dumps({"title": title, "body": body, "labels": labels}, ensure_ascii=False, sort_keys=True)
+    if entry.get("last_hash") == issue_hash and issue_ref:
+        return False
+
+    body_file = ensure_temp_body(body)
+    try:
+        if issue_ref and issue_ref.get("number"):
+            number = int(issue_ref["number"])
+            issue_mutation_with_label_fallback(
+                ["issue", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)]
+            )
+            issue = dict(issue_ref)
+        else:
+            found = find_existing_coordination_issue(repo, feature_id)
+            if found:
+                number = int(found["number"])
+                issue_mutation_with_label_fallback(
+                    ["issue", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)]
+                )
+                issue = {"number": number, "url": found.get("url"), "title": title}
+            else:
+                proc = issue_mutation_with_label_fallback(
+                    ["issue", "create", "--repo", repo, "--title", title, "--body-file", str(body_file), *create_label_args(labels)]
+                )
+                url = (proc.stdout or "").strip().splitlines()[-1]
+                issue = {"number": parse_number_from_url(url), "url": url, "title": title}
+    finally:
+        body_file.unlink(missing_ok=True)
+
+    entry["issue"] = {
+        "number": issue.get("number"),
+        "url": issue.get("url"),
+        "title": title,
+        "state": "open",
+    }
+    entry["last_hash"] = issue_hash
+    write_activity_log(
+        config,
+        {
+            "type": "github_coordination_issue_synced",
+            "task_id": feature_id,
+            "message": f"GitHub coordination issue synced for {feature_id} in {repo}.",
+            "github_url": entry["issue"].get("url"),
         },
     )
     return True
@@ -599,6 +740,7 @@ def apply_bus_command(
     *,
     task: dict[str, Any] | None = None,
     issue_number: int | None = None,
+    runtime_state: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     task_id, target_task = resolve_task(status, command.target or (task or {}).get("id"), fallback_task=task)
     changed = False
@@ -660,16 +802,73 @@ def apply_bus_command(
         reply = f"Cleared cached GitHub sync hashes for `{task_id}`; it will be re-synced on the next poll."
         changed = True
     elif command.verb == "status":
-        reply = task_summary_line(target_task or task or {"id": task_id or "-", "status": "unknown", "owner": "-", "reviewer": "-", "next": "-"})
+        feature = coordination_feature_summary(runtime_state or {}, command.args[-1] if command.args else task_id or "")
+        if feature and not target_task:
+            reply = (
+                f"Feature `{feature.get('feature_id')}` is `{feature.get('status')}`; "
+                f"labels={','.join(feature.get('state_labels') or []) or '-'}, "
+                f"worker=`{feature.get('worker_kind') or '-'}`, next={trim_text(feature.get('next_step') or '-', 120)}"
+            )
+        else:
+            reply = task_summary_line(target_task or task or {"id": task_id or "-", "status": "unknown", "owner": "-", "reviewer": "-", "next": "-"})
+    elif command.verb == "dispatch" and len(command.args) >= 2:
+        worker_kind = resolve_worker_kind(command.args[0])
+        feature_id = command.args[1]
+        if not worker_kind:
+            reply = f"Unknown worker alias `{command.args[0]}`."
+        else:
+            changed = queue_coordination_command(
+                config,
+                feature_id=feature_id,
+                payload_type="dispatch-request",
+                worker_kind=worker_kind,
+                actor=actor,
+                issue_number=issue_number,
+            )
+            reply = f"Queued `{worker_kind}` for `{feature_id}`." if changed else f"Did not queue `{worker_kind}` for `{feature_id}`."
+    elif command.verb == "needs-runtime" and command.args:
+        feature_id = command.args[0]
+        changed = queue_coordination_command(
+            config,
+            feature_id=feature_id,
+            payload_type="needs-runtime",
+            worker_kind="runtime-worker",
+            actor=actor,
+            issue_number=issue_number,
+        )
+        reply = f"Queued runtime escalation for `{feature_id}`." if changed else f"Did not queue runtime escalation for `{feature_id}`."
+    elif command.verb == "contract-ready" and command.args:
+        feature_id = command.args[0]
+        changed = queue_coordination_command(
+            config,
+            feature_id=feature_id,
+            payload_type="contract-ready",
+            worker_kind="front-sync-worker",
+            actor=actor,
+            issue_number=issue_number,
+        )
+        reply = f"Queued contract-ready replay for `{feature_id}`." if changed else f"Did not queue contract-ready replay for `{feature_id}`."
+    elif command.verb == "approve-engine" and command.args:
+        feature_id = command.args[0]
+        changed = queue_coordination_command(
+            config,
+            feature_id=feature_id,
+            payload_type="dispatch-request",
+            worker_kind="engine-worker",
+            actor=actor,
+            issue_number=issue_number,
+        )
+        reply = f"Queued engine worker for `{feature_id}`." if changed else f"Did not queue engine worker for `{feature_id}`."
     else:
         reply = f"Unsupported or incomplete command `{command.raw}`."
 
     if changed:
+        fallback_task_id = command.args[-1] if command.args else None
         write_activity_log(
             config,
             {
                 "type": "github_issue_command_applied" if issue_number else "github_remote_command_applied",
-                "task_id": task_id if target_task else (task or {}).get("id"),
+                "task_id": task_id if target_task else (task or {}).get("id") or fallback_task_id,
                 "message": f"Applied GitHub command `{command.raw}` from @{actor}.",
                 "github_issue": issue_number,
             },
@@ -704,10 +903,92 @@ def process_issue_command(
     return changed
 
 
+def process_coordination_issue_command(
+    config: dict[str, Any],
+    bus_state: dict[str, Any],
+    status: dict[str, Any],
+    repo: str,
+    issue_number: int,
+    command: GitHubCommand,
+    actor: str,
+    runtime_state: dict[str, Any],
+) -> bool:
+    changed, reply_text = apply_bus_command(
+        config,
+        bus_state,
+        status,
+        repo,
+        command,
+        actor,
+        issue_number=issue_number,
+        runtime_state=runtime_state,
+    )
+    reply = f"{COMMENT_MARKER}\n{reply_text}"
+    if reply:
+        post_issue_comment(repo, issue_number, reply)
+    return changed
+
+
 def task_summary_line(task: dict[str, Any]) -> str:
     return (
         f"Task `{task.get('id')}` is `{task.get('status')}`; "
         f"owner=`{task.get('owner')}`, reviewer=`{task.get('reviewer')}`, next={trim_text(task.get('next') or '-', 120)}"
+    )
+
+
+def coordination_feature_summary(runtime_state: dict[str, Any], feature_id: str) -> dict[str, Any] | None:
+    return (((runtime_state.get("coordination") or {}).get("features") or {}).get(feature_id) if runtime_state else None)
+
+
+def coordination_command_payload(feature_id: str, payload_type: str, worker_kind: str | None, actor: str, issue_number: int | None) -> dict[str, Any]:
+    return {
+        "feature_id": feature_id,
+        "type": payload_type,
+        "worker_kind": worker_kind,
+        "source_repo": "pantheon",
+        "summary": f"GitHub coordination command from @{actor}",
+        "requested_by": actor,
+        "human_approved": payload_type == "dispatch-request" and worker_kind == "engine-worker",
+        "dispatch_nonce": f"{actor}:{issue_number or 'relay'}:{utc_now()}",
+    }
+
+
+def queue_coordination_command(
+    config: dict[str, Any],
+    *,
+    feature_id: str,
+    payload_type: str,
+    worker_kind: str | None,
+    actor: str,
+    issue_number: int | None,
+) -> bool:
+    payload = coordination_command_payload(feature_id, payload_type, worker_kind, actor, issue_number)
+    effective_worker_kind = worker_kind
+    if payload_type == "needs-runtime":
+        effective_worker_kind = "runtime-worker"
+    if payload_type == "dispatch-request" and effective_worker_kind is None:
+        return False
+    if payload_type == "needs-engine":
+        effective_worker_kind = "engine-worker"
+    if payload_type == "contract-ready":
+        effective_worker_kind = "front-sync-worker"
+        payload["type"] = "dispatch-request"
+        payload["worker_kind"] = effective_worker_kind
+    if payload_type == "needs-runtime":
+        payload["worker_kind"] = effective_worker_kind
+    if payload_type == "needs-engine":
+        payload["worker_kind"] = effective_worker_kind
+        payload["human_approved"] = False
+    if payload_type == "dispatch-request" and effective_worker_kind == "engine-worker":
+        payload["human_approved"] = True
+
+    return queue_coordination_dispatch(
+        config,
+        worker_kind=effective_worker_kind or "",
+        feature_id=feature_id,
+        payload=payload,
+        source_path=None,
+        reason=payload.get("type") or "dispatch-request",
     )
 
 
@@ -807,6 +1088,50 @@ def poll_issue_comments(config: dict[str, Any], bus_state: dict[str, Any], statu
     return changed
 
 
+def poll_coordination_issue_comments(
+    config: dict[str, Any],
+    bus_state: dict[str, Any],
+    status: dict[str, Any],
+    runtime_state: dict[str, Any],
+) -> bool:
+    changed = False
+    seen = set(bus_state.get("processed_comment_ids", []))
+    allowed = allowed_logins(config)
+    for entry in (bus_state.get("coordination") or {}).values():
+        repo = str(entry.get("repo") or "").strip()
+        issue_ref = (entry or {}).get("issue") or {}
+        number = issue_ref.get("number")
+        if not repo or not number:
+            continue
+        comments = gh_json(["api", f"repos/{repo}/issues/{number}/comments?per_page=100"])
+        if not isinstance(comments, list):
+            continue
+        for comment in comments:
+            comment_id = comment.get("id")
+            if comment_id is None:
+                continue
+            key = comment_key("issue", comment_id)
+            if key in seen:
+                continue
+            body = comment.get("body") or ""
+            if COMMENT_MARKER in body:
+                seen.add(key)
+                continue
+            actor = ((comment.get("user") or {}).get("login") or "").strip()
+            if allowed and actor not in allowed:
+                seen.add(key)
+                continue
+            command = parse_command(body)
+            if not command:
+                seen.add(key)
+                continue
+            process_coordination_issue_command(config, bus_state, status, repo, int(number), command, actor, runtime_state)
+            seen.add(key)
+            changed = True
+    bus_state["processed_comment_ids"] = list(seen)
+    return changed
+
+
 def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:
     changed = False
     seen = set(bus_state.get("processed_review_ids", []))
@@ -855,7 +1180,13 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
     return changed
 
 
-def consume_webhook_events(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:
+def consume_webhook_events(
+    config: dict[str, Any],
+    bus_state: dict[str, Any],
+    status: dict[str, Any],
+    repo: str,
+    runtime_state: dict[str, Any],
+) -> bool:
     path = config_path(config, "github_webhook_events")
     if not path.exists():
         return False
@@ -883,6 +1214,22 @@ def consume_webhook_events(config: dict[str, Any], bus_state: dict[str, Any], st
                         break
                 if task and issue_number:
                     changed = process_issue_command(config, bus_state, status, repo, int(issue_number), task, command, actor) or changed
+                elif issue_number:
+                    for entry in (bus_state.get("coordination") or {}).values():
+                        issue_ref = (entry or {}).get("issue") or {}
+                        if issue_ref.get("number") != issue_number:
+                            continue
+                        changed = process_coordination_issue_command(
+                            config,
+                            bus_state,
+                            status,
+                            str(entry.get("repo") or repo),
+                            int(issue_number),
+                            command,
+                            actor,
+                            runtime_state,
+                        ) or changed
+                        break
         elif kind == "pull_request_review":
             review = payload.get("review") or {}
             pr = payload.get("pull_request") or {}
@@ -938,7 +1285,13 @@ def push_cloud_relay_digest(config: dict[str, Any], status: dict[str, Any], runt
     push_status_digest(config, digest)
 
 
-def consume_cloud_relay_commands(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:
+def consume_cloud_relay_commands(
+    config: dict[str, Any],
+    bus_state: dict[str, Any],
+    status: dict[str, Any],
+    repo: str,
+    runtime_state: dict[str, Any],
+) -> bool:
     changed = False
     for item in pull_commands(config):
         command = parse_command(item.get("command") or "")
@@ -947,7 +1300,7 @@ def consume_cloud_relay_commands(config: dict[str, Any], bus_state: dict[str, An
         actor = item.get("actor") or "relay"
         task_id = command.target
         task = next((entry for entry in status.get("tasks", []) if entry.get("id") == task_id), None) if task_id else None
-        command_changed, _ = apply_bus_command(config, bus_state, status, repo, command, actor, task=task, issue_number=None)
+        command_changed, _ = apply_bus_command(config, bus_state, status, repo, command, actor, task=task, issue_number=None, runtime_state=runtime_state)
         changed = command_changed or changed
     return changed
 
@@ -1002,6 +1355,31 @@ def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dic
     return changed
 
 
+def sync_coordination_outbound(config: dict[str, Any], bus_state: dict[str, Any], runtime_state: dict[str, Any]) -> bool:
+    if not coordination_enabled(config):
+        return False
+    changed = False
+    features = ((runtime_state.get("coordination") or {}).get("features") or {})
+    for feature in features.values():
+        for repo_id in feature.get("issue_repo_ids", []) or []:
+            slug = repository_slug(config, repo_id)
+            if not slug:
+                continue
+            try:
+                changed = upsert_coordination_issue(config, bus_state, slug, feature) or changed
+            except GitHubBusError as exc:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "github_coordination_issue_failed",
+                        "task_id": feature.get("feature_id"),
+                        "message": trim_text(str(exc), 600),
+                        "github_repo": slug,
+                    },
+                )
+    return changed
+
+
 def should_skip_for_offline_backoff(config: dict[str, Any], bus_state: dict[str, Any]) -> bool:
     offline_until = _parse_iso(bus_state.get("offline_until"))
     if not offline_until:
@@ -1043,14 +1421,17 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
     try:
         changed = False
         changed = sync_outbound(config, bus_state, status, runtime_state, repo) or changed
+        changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
         status = load_status(config)
-        changed = consume_webhook_events(config, bus_state, status, repo) or changed
+        changed = consume_webhook_events(config, bus_state, status, repo, runtime_state) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
         status = load_status(config)
         changed = poll_issue_comments(config, bus_state, status, repo) or changed
         status = load_status(config)
-        changed = consume_cloud_relay_commands(config, bus_state, status, repo) or changed
+        changed = poll_coordination_issue_comments(config, bus_state, status, runtime_state) or changed
+        status = load_status(config)
+        changed = consume_cloud_relay_commands(config, bus_state, status, repo, runtime_state) or changed
         status = load_status(config)
         push_cloud_relay_digest(config, status, runtime_state, bus_state)
         bus_state["offline_until"] = None

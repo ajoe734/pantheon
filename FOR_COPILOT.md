@@ -8,6 +8,11 @@ Read these files first:
 1. `AI_COLLABORATION_GUIDE.md`
 2. `current-work.md`
 3. `ai-status.json`
+4. `TARGET_ARCHITECTURE.md`
+5. `CANONICAL_DOCUMENT_MAP.md`
+6. `ROADMAP.md`
+7. `DEVELOPMENT_WORKBREAKDOWN.md`
+8. the L1 policy file that matches your task
 
 Dashboard:
 
@@ -26,7 +31,6 @@ Capability lane:
 - critique
 
 Current sprint work lives in `ai-status.json`.
-
 Do not trust static task names inside this brief over the live task board.
 If this file and `ai-status.json` disagree, `ai-status.json` wins.
 
@@ -87,5 +91,6 @@ Prefer these areas unless the task explicitly says otherwise:
 - strategy-spec and workflow handoff reviews
 - document/spec critique
 - external-source-oriented tasks
+- BFF, consultation, and OSS evidence-gathering work
 
 Do not silently change another agent's active implementation area; use status handoff or blocker flow.

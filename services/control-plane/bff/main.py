@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import sys
+import time
 import uuid
-from typing import Any, Dict, List, Optional
+from collections import deque
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -437,6 +441,349 @@ async def health():
         "service": "operator-bff",
         "version": "0.2.0",
         "timestamp": utc_now(),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Read surfaces (Wave 4 - Remaining Catalog List/Detail)
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/api/v1/personas")
+async def list_personas(
+    lifecycle_state: Optional[str] = None,
+    mandate: Optional[str] = None,
+    strategy_family: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """PS-01: Persona List with optional filters."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    personas = read_store.list_personas(
+        lifecycle_state=lifecycle_state,
+        mandate=mandate,
+        strategy_family=strategy_family,
+    )
+    return {
+        "data": personas,
+        "meta": {
+            "total": len(personas),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/personas/{persona_id}")
+async def get_persona_detail(persona_id: str, authorization: Optional[str] = Header(default=None)):
+    """PS-02: Persona Detail with bindings."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    bindings = read_store.get_bindings_for_persona(persona_id) or []
+    payload = dict(persona)
+    payload["bindings"] = bindings
+
+    return {
+        "data": payload,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/personas/{persona_id}/sessions")
+async def list_persona_sessions(
+    persona_id: str,
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """PS-03: Persona Sessions list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    sessions = read_store.list_sessions_for_persona(persona_id, status=status) or []
+    return {
+        "data": sessions,
+        "meta": {
+            "total": len(sessions),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/sessions/{session_id}")
+async def get_session_detail(session_id: str, authorization: Optional[str] = Header(default=None)):
+    """PS-04: Session detail with capability snapshot."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Session not found",
+            f"Session {session_id} does not exist",
+        )
+
+    snapshot = read_store.get_capability_snapshot(session.get("capability_snapshot_id"))
+    if snapshot is None:
+        snapshot = read_store.get_capability_snapshot_for_persona(session.get("persona_id"))
+
+    payload = dict(session)
+    if snapshot:
+        payload["capability_snapshot"] = snapshot
+
+    return {
+        "data": payload,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/personas/{persona_id}/teaching")
+async def list_persona_teaching_sessions(
+    persona_id: str,
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """PS-05: Teaching sessions list for a persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    sessions = read_store.list_teaching_sessions_for_persona(persona_id, status=status) or []
+    return {
+        "data": sessions,
+        "meta": {
+            "total": len(sessions),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/personas/{persona_id}/capabilities")
+async def get_persona_capabilities(
+    persona_id: str, authorization: Optional[str] = Header(default=None),
+):
+    """PS-06: Capability snapshot for a persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+    if not snapshot:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Capability snapshot not found",
+            f"Capability snapshot for persona {persona_id} does not exist",
+        )
+
+    return {
+        "data": snapshot,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/capital-pools")
+async def list_capital_pools(
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CP-01: Capital pool list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref)
+    return {
+        "data": pools,
+        "meta": {
+            "total": len(pools),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/bindings")
+async def list_bindings(
+    capital_pool_id: Optional[str] = None,
+    role: Optional[str] = None,
+    validity: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CP-03: Persona capital binding list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    bindings = read_store.list_bindings(
+        capital_pool_id=capital_pool_id,
+        role=role,
+        validity=validity,
+    )
+    return {
+        "data": bindings,
+        "meta": {
+            "total": len(bindings),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/deployment-plans")
+async def list_deployment_plans(
+    stage: Optional[str] = None,
+    target_pool_id: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """DP-01: Deployment plan list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    plans = read_store.list_deployment_plans(stage=stage, target_pool_id=target_pool_id)
+    return {
+        "data": plans,
+        "meta": {
+            "total": len(plans),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/approval-decisions")
+async def list_approval_decisions(
+    outcome: Optional[str] = None,
+    reviewer: Optional[str] = None,
+    time_range: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """DP-03: Approval decision list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    decisions = read_store.list_approval_decisions(
+        outcome=outcome,
+        reviewer=reviewer,
+        time_range=time_range,
+    )
+    return {
+        "data": decisions,
+        "meta": {
+            "total": len(decisions),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/approval-decisions/{decision_id}")
+async def get_approval_decision_detail(
+    decision_id: str, authorization: Optional[str] = Header(default=None),
+):
+    """DP-04: Approval decision detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    decision = read_store.get_approval_decision(decision_id)
+    if not decision:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Approval decision not found",
+            f"Approval decision {decision_id} does not exist",
+        )
+
+    return {
+        "data": decision,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/runtime-bindings")
+async def list_runtime_bindings(
+    deployment_mode: Optional[str] = None,
+    version: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """RT-01: Runtime binding list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    bindings = read_store.list_runtime_bindings(
+        deployment_mode=deployment_mode,
+        version=version,
+    )
+    return {
+        "data": bindings,
+        "meta": {
+            "total": len(bindings),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/runtimes/{runtime_id}/status")
+async def get_runtime_status(
+    runtime_id: str, authorization: Optional[str] = Header(default=None),
+):
+    """RT-03: Runtime status detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
+    if not runtime_binding:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Runtime not found",
+            f"Runtime {runtime_id} does not exist",
+        )
+
+    return {
+        "data": runtime_binding,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
     }
 
 
@@ -947,11 +1294,23 @@ async def get_persona_management(
             "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
         }
 
+    # Backend-shaped allowed actions (acceptance: backend_shaped_persona_actions)
+    allowed_actions = read_store.get_persona_allowed_actions(persona_id)
+    if allowed_actions is not None:
+        surfaces["allowed_actions"] = {"status": "ok"}
+    else:
+        allowed_actions = {}
+        surfaces["allowed_actions"] = {
+            "status": "degraded",
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+
     data = {
         "persona": persona,
         "bindings": enriched_bindings,
         "sessions": sessions,
         "teaching_sessions": teaching_sessions,
+        "allowedActions": allowed_actions,
     }
 
     return {
@@ -1552,6 +1911,214 @@ async def degraded_control_guidance():
         status_code=status_code,
         content={"data": guidance, "meta": {"staleness": _meta_staleness()}},
     )
+
+
+# --------------------------------------------------------------------------- #
+# SSE Real-Time Feeds (Wave 5 — APP-002-W5-SSE-LIVE)
+# --------------------------------------------------------------------------- #
+
+# In-process event buffers per stream type.
+# Each buffer is a deque of (event_id, event_dict) tuples, keeping the last N events.
+_MAX_EVENTS = 500
+
+_runtime_events: deque = deque(maxlen=_MAX_EVENTS)
+_incident_events: deque = deque(maxlen=_MAX_EVENTS)
+_kill_switch_events: deque = deque(maxlen=_MAX_EVENTS)
+
+# Subscribers (asyncio.Queue) for each stream type
+_runtime_subscribers: list[asyncio.Queue] = []
+_incident_subscribers: list[asyncio.Queue] = []
+_kill_switch_subscribers: list[asyncio.Queue] = []
+
+
+def _make_event_id(prefix: str = "evt") -> str:
+    return f"{prefix}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+
+
+def _sse_format(event: dict) -> str:
+    """Format a full event dict as an SSE message block."""
+    return (
+        f"id: {event['id']}\n"
+        f"event: {event['type']}\n"
+        f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    )
+
+
+def _publish_event(buffer: deque, subscribers: list[asyncio.Queue], event_type: str, data: dict) -> str:
+    """Publish an event to the buffer and notify all subscribers."""
+    event_id = _make_event_id()
+    event = {
+        "id": event_id,
+        "type": event_type,
+        "timestamp": utc_now(),
+        "data": data,
+    }
+    buffer.append((event_id, event))
+    # Notify subscribers
+    for q in list(subscribers):
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+    return event_id
+
+
+def _replay_from(buffer: deque, last_event_id: Optional[str]) -> list[dict]:
+    """Replay events from the buffer starting after last_event_id."""
+    if not last_event_id:
+        return [evt for _, evt in buffer]
+    found = False
+    result = []
+    for eid, evt in buffer:
+        if found:
+            result.append(evt)
+        elif eid == last_event_id:
+            found = True
+    if not found:
+        # Client requested an event ID we no longer have — return full buffer
+        return [evt for _, evt in buffer]
+    return result
+
+
+async def _sse_stream(
+    buffer: deque,
+    subscribers: list[asyncio.Queue],
+    last_event_id: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
+    """Async generator that yields SSE-formatted events."""
+    q: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    subscribers.append(q)
+    try:
+        # Replay historical events first
+        for evt in _replay_from(buffer, last_event_id):
+            yield _sse_format(evt)
+
+        # Then stream new events as they arrive
+        while True:
+            try:
+                evt = await asyncio.wait_for(q.get(), timeout=30.0)
+                yield _sse_format(evt)
+            except asyncio.TimeoutError:
+                # Send a comment to keep the connection alive
+                yield ": heartbeat\n\n"
+    finally:
+        # Unsubscribe on client disconnect
+        if q in subscribers:
+            subscribers.remove(q)
+
+
+@app.get("/api/v1/runtime/{runtime_id}/events/stream")
+async def stream_runtime_events(
+    runtime_id: str,
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """RT-SSE: Server-Sent Events stream for runtime state changes.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    BFF_API_CONTRACT.md §11.2
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return StreamingResponse(
+        _sse_stream(_runtime_events, _runtime_subscribers, last_event_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/v1/incidents/stream")
+async def stream_incident_events(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """IN-SSE: Server-Sent Events stream for active incident events.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    BFF_API_CONTRACT.md §11.2
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return StreamingResponse(
+        _sse_stream(_incident_events, _incident_subscribers, last_event_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/v1/kill-switch/updates")
+async def stream_kill_switch_events(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """KS-SSE: Server-Sent Events stream for kill-switch state changes.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    BFF_API_CONTRACT.md §11.2
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return StreamingResponse(
+        _sse_stream(_kill_switch_events, _kill_switch_subscribers, last_event_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# SSE Publish Helpers (for internal use / testing / admin injection)
+# --------------------------------------------------------------------------- #
+
+@app.post("/api/v1/internal/sse/publish")
+async def publish_sse_event(
+    event_type: str = Query(..., description="Event type: runtime_state_changed, incident_created, etc."),
+    runtime_id: Optional[str] = Query(default=None),
+    incident_id: Optional[str] = Query(default=None),
+    payload: Dict[str, Any] = {},
+    authorization: Optional[str] = Header(default=None),
+):
+    """Internal helper to publish SSE events for testing and integration.
+
+    In production, events would be published by downstream services via
+    an internal message bus. This endpoint is a convenience for smoke tests.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if event_type.startswith("runtime"):
+        event_id = _publish_event(
+            _runtime_events, _runtime_subscribers, event_type,
+            {"runtime_id": runtime_id, **payload},
+        )
+    elif event_type.startswith("incident"):
+        event_id = _publish_event(
+            _incident_events, _incident_subscribers, event_type,
+            {"incident_id": incident_id, **payload},
+        )
+    elif event_type.startswith("kill_switch"):
+        event_id = _publish_event(
+            _kill_switch_events, _kill_switch_subscribers, event_type,
+            payload,
+        )
+    else:
+        raise _bff_error(400, ErrorCode.INVALID_REQUEST, "Unknown event type", f"Event type {event_type} not recognized")
+
+    return {"event_id": event_id, "status": "published"}
 
 
 if __name__ == "__main__":

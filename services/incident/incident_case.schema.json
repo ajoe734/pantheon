@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon IncidentCase",
+  "description": "Canonical incident record. Attaches to RuntimeBinding, deployment stage, and lineage evidence. Write authority: Incident domain only. Formal lineage edge: incident_case.runtime_binding (binding_id → RuntimeBinding).",
+  "type": "object",
+  "required": [
+    "incident_id",
+    "title",
+    "status",
+    "severity",
+    "created_at",
+    "binding_id",
+    "deployment_stage",
+    "deployment_plan_id",
+    "capital_pool_id",
+    "persona_capital_binding_id",
+    "artifact_id",
+    "artifact_version",
+    "runtime_id",
+    "trace_id"
+  ],
+  "properties": {
+    "incident_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this incident (UUID recommended)."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short human-readable title for the incident."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "investigating", "resolved", "closed"],
+      "description": "Current lifecycle status of the incident."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low"],
+      "description": "Impact severity of the incident."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the incident was created (UTC ISO-8601)."
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the incident was resolved. Required when status is resolved or closed."
+    },
+    "binding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "RuntimeBinding reference — formal lineage edge incident_case.runtime_binding. The active or recently-retired binding at time of incident."
+    },
+    "deployment_stage": {
+      "type": "string",
+      "enum": ["paper", "canary", "live", "frozen"],
+      "description": "Deployment stage at time of incident (denormalized from RuntimeBinding)."
+    },
+    "deployment_plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "DeploymentPlan reference — the plan that triggered the binding under which this incident occurred."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CapitalPool reference — the pool whose assets were affected."
+    },
+    "persona_capital_binding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PersonaCapitalBinding reference — the governance admissibility proof linking the binding back to the persona."
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The governed artifact that was executing when the incident occurred."
+    },
+    "artifact_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The specific version of the artifact under execution."
+    },
+    "runtime_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The LEAN runtime / container / worker process that was active."
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Trace identifier linking this incident to the telemetry event chain. Required by L1 traceability rules."
+    },
+    "telemetry_event_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IDs of TelemetryEvents that triggered or are evidence for this incident."
+    },
+    "evidence_summary": {
+      "type": "string",
+      "description": "Human-readable summary of the evidence collected at time of incident creation."
+    },
+    "lineage_ref": {
+      "type": "string",
+      "description": "Composite lineage reference (e.g. '{artifact_id}@{artifact_version}') for quick resolution."
+    }
+  },
+  "additionalProperties": false
+}

@@ -2,8 +2,8 @@
 
 **Purpose**: Define and govern the integration path for sequential RL (FinRL/RLlib + Ray Tune) in Pantheon.
 
-**Status**: LP-005 in progress  
-**Owner**: Grok  
+**Status**: LP-005 done  
+**Owner**: Copilot  
 **Reviewer**: Codex
 
 ---
@@ -181,15 +181,15 @@ The RL training flow requires implementation of support infrastructure. The conc
 
 ---
 
-**Document Status**: Revised to address Codex review comments  
+**Document Status**: LP-005 accepted and aligned to the canonical registry / execution path  
 **Reviewer**: Codex  
 **Approval Criteria**:
 - [x] Lifecycle vocabulary aligned with registry contract (draft/candidate/paper/live)
 - [x] RL artifact model aligned with REG-001/REG-003/EX-001 governance metadata
 - [x] RS-003 role clarified as upstream research gate (not post-training policy gate)
 - [x] Non-existent script and example file references removed
-- [ ] Entry criteria alignment with TARGET_ARCHITECTURE confirmed
-- [ ] Ray Tune workflow matches RLlib conventions
-- [ ] Registry integration is feasible with REG-001
-- [ ] LEAN execution contract is implementable via EX-001
-- [ ] All links and references are valid
+- [x] Entry criteria alignment with TARGET_ARCHITECTURE confirmed
+- [x] Ray Tune workflow matches RLlib conventions closely enough for a deferred-path contract
+- [x] Registry integration is feasible with REG-001
+- [x] LEAN execution contract is implementable via EX-001
+- [x] All links and references are valid

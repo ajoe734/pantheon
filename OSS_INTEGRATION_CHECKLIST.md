@@ -1,6 +1,6 @@
 # OSS Integration Checklist
 
-Last updated: 2026-04-02
+Last updated: 2026-04-10
 Status: execution checklist for upstream OSS components referenced by the OpenClaw target architecture
 
 ## Purpose
@@ -25,6 +25,7 @@ Do not treat a component as integrated just because we wrote contracts around it
 - `version-pinned`
 - `dependency-added`
 - `adapter-started`
+- `criteria-defined` (deferred framework with explicit entry criteria documented)
 - `smoke-tested`
 - `governed`
 
@@ -32,16 +33,16 @@ Do not treat a component as integrated just because we wrote contracts around it
 
 | Component | Upstream Type | Current Status | What still needs to happen |
 |---|---|---|---|
-| `OpenClaw` | upstream repo/runtime | `not-started` | pin the upstream repo reference, decide integration mode, map its workflow/runtime outputs into local `StrategySpec` and permission contracts |
-| `DSPy` | Python package/framework | `not-started` | add dependency, pin version, build persona optimization adapter, define prompt/artifact handoff to registry, run smoke test |
-| `TRL` | Python package/framework | `not-started` | defer until governed preference loop exists, then pin version, wrap preference-learning I/O, and smoke test a non-live path |
-| `Qlib` | Python package/framework | `not-started` | add package or worker image, pin version, define alpha-output adapter, run experiment smoke test, link outputs to registry |
-| `FinRL` | upstream repo/package | `not-started` | defer until RL path is justified, then package it separately and map governed policy outputs into registry artifacts |
-| `RLlib` | Python package/framework | `not-started` | only after RL path is approved; pin version and prove governed training/eval loop works |
+| `OpenClaw` | upstream repo/runtime | `adapter-started` | Upstream repo, pin, governance overlay, and smoke-test plan are now recorded in `integrations/openclaw/`. Next: implement the `openclaw-gateway-adapter`, add the real runtime dependency path, and execute the pinned-image smoke test. |
+| `DSPy` | Python package/framework | `smoke-tested` | v2.4.5 pinned; full adapter with governed I/O; smoke test passes; add `integration.md` and `governance.md` per canonical checklist format (see integrations/oss-002/regrade_report.md) |
+| `TRL` | Python package/framework | `criteria-defined` | activation criteria documented in `services/learning/trl/ACTIVATION_CRITERIA.md`; entry criteria require ≥200 FB-002 events, ≥100 preference pairs, active imitation baseline, and downstream consumer ready; TRL artifacts remain non-executable governed models (`draft` → `candidate` → `approved`), not `paper/live` execution states; next: pin version, build pair-construction pipeline, smoke test DPO training |
+| `Qlib` | Python package/framework | `criteria-defined` | activation criteria documented in `services/learning/qlib/ACTIVATION_CRITERIA.md`; entry criteria require baseline StrategySpec, 2+ years data, supervised-learning-appropriate problem; LightGBM-first workflow defined; registry target shape now uses canonical `artifact_state` plus deployment staging; next: pin version, build data pipeline adapter, smoke test single model |
+| `FinRL` | upstream repo/package | `criteria-defined` | deferred until RL path is justified; entry criteria documented in `services/learning/rl/PATH_DEFINITION.md` §1 (supervised alpha exhausted, sequential decision dependency, 2+ years intraday data); next: verify RL entry criteria met, then package and map governed policy outputs |
+| `RLlib` | Python package/framework | `criteria-defined` | deferred until RL path is approved; entry criteria and full workflow documented in `services/learning/rl/PATH_DEFINITION.md`; next: approve RL path, pin version, prove governed training/eval loop |
 | `Ray Tune` | Python package/framework | `version-pinned` | adapter path still missing; define governed search outputs and smoke test integration with selected learning path |
-| `imitation` | Python package/framework | `not-started` | pin version, map `FB-001` trajectory schema into imitation dataset inputs, run BC smoke test, route outputs into registry |
-| `MLflow` | backend/service/package | `source-selected` | Selected MLflow 2.11.0; Next: select deployment mode (GCP Managed vs GKE), define registry-mapping rules |
-| `W&B` | backend/service/package | `not-started` | optional alternative to MLflow; define registry metadata mapping, alias strategy, and smoke test artifact promotion metadata |
+| `imitation` | Python package/framework | `smoke-tested` | v1.0.1 pinned; full BC adapter with governed trajectory filtering; smoke test passes; add `integration.md` and `governance.md` per canonical checklist format (see integrations/oss-002/regrade_report.md) |
+| `MLflow` | backend/service/package | `smoke-tested` | v3.10.1 pinned (updated from 2.11.0); full registry↔experiment adapter; smoke test passes; add `integration.md` and `governance.md` per canonical checklist format (see integrations/oss-002/regrade_report.md) |
+| `W&B` | backend/service/package | `criteria-defined` | activation criteria documented in `services/registry/experiments/WANDB_ACTIVATION.md`; W&B is an optional alternative backend to MLflow requiring stable MLflow integration first, explicit operator need, adapter generalization beyond the current MLflow-first `RegistryExperimentAdapter`, and canonical `artifact_state` / `deployment_stage` support; next: pin SDK version, generalize adapter surface, implement W&B backend, and prove metadata equivalence |
 
 ## Required Evidence Per Component
 

@@ -41,6 +41,8 @@ Text form:
 
 The shared-state files remain canonical. Queue, approval, and worker session files under `.orchestrator/` are transient control-plane state.
 
+The supervisor now also understands cross-repo delivery handoffs through `.coordination/*.yaml` and can mirror them into GitHub coordination issues while keeping Pantheon as the runtime authority.
+
 ## Start The System
 
 Run the full local orchestrator:
@@ -97,6 +99,12 @@ GitHub approval bus docs:
 
 ```bash
 sed -n '1,220p' docs/github-approval-bus.md
+```
+
+Delivery coordination bus docs:
+
+```bash
+sed -n '1,260p' docs/delivery-coordination-bus.md
 ```
 
 ## Claude Path

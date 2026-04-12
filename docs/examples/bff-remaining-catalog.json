@@ -1,0 +1,364 @@
+{
+  "personas": {
+    "request": "/api/v1/personas",
+    "response": {
+      "data": [
+        {
+          "id": "persona-alpha",
+          "name": "Alpha Persona",
+          "lifecycle_state": "active",
+          "mandate": "systematic_crypto_trading",
+          "strategy_family": "momentum",
+          "created_at": "2026-03-01T00:00:00Z",
+          "last_active_at": "2026-04-11T10:00:00Z"
+        }
+      ],
+      "meta": {
+        "total": 1,
+        "staleness": null
+      }
+    }
+  },
+  "persona_detail": {
+    "request": "/api/v1/personas/persona-alpha",
+    "response": {
+      "data": {
+        "id": "persona-alpha",
+        "name": "Alpha Persona",
+        "lifecycle_state": "active",
+        "mandate": "systematic_crypto_trading",
+        "strategy_family": "momentum",
+        "created_at": "2026-03-01T00:00:00Z",
+        "last_active_at": "2026-04-11T10:00:00Z",
+        "bindings": [
+          {
+            "id": "binding-042",
+            "persona_id": "persona-alpha",
+            "capital_pool_id": "pool-main",
+            "role": "primary",
+            "validity": "active",
+            "status": "active",
+            "allowed_deployment_scope": "paper"
+          }
+        ]
+      },
+      "meta": {
+        "staleness": null
+      }
+    }
+  },
+  "persona_sessions": {
+    "request": "/api/v1/personas/persona-alpha/sessions",
+    "response": {
+      "data": [
+        {
+          "id": "sess-001",
+          "session_id": "sess-001",
+          "persona_id": "persona-alpha",
+          "session_type": "interactive",
+          "status": "active",
+          "started_at": "2026-04-11T08:00:00Z",
+          "capability_snapshot_id": "cap-001",
+          "trace_id": "trace-sess-001",
+          "request_id": "req-sess-001",
+          "runtime_binding_id": "runtime-042",
+          "deployment_stage": "paper",
+          "capital_pool_id": "pool-main",
+          "last_heartbeat_at": "2026-04-11T11:55:00Z",
+          "tools_enabled": [
+            "signal_read",
+            "artifact_load",
+            "telemetry_query"
+          ],
+          "pool_scope": "pool-main"
+        },
+        {
+          "id": "sess-002",
+          "session_id": "sess-002",
+          "persona_id": "persona-alpha",
+          "session_type": "interactive",
+          "status": "idle",
+          "started_at": "2026-04-10T14:00:00Z",
+          "capability_snapshot_id": "cap-001",
+          "trace_id": "trace-sess-002",
+          "request_id": "req-sess-002",
+          "runtime_binding_id": "runtime-042",
+          "deployment_stage": "paper",
+          "capital_pool_id": "pool-main",
+          "last_heartbeat_at": "2026-04-10T18:00:00Z",
+          "tools_enabled": [
+            "signal_read",
+            "artifact_load"
+          ],
+          "pool_scope": "pool-main"
+        }
+      ],
+      "meta": {
+        "total": 2,
+        "staleness": null
+      }
+    }
+  },
+  "session_detail": {
+    "request": "/api/v1/sessions/sess-001",
+    "response": {
+      "data": {
+        "id": "sess-001",
+        "session_id": "sess-001",
+        "persona_id": "persona-alpha",
+        "session_type": "interactive",
+        "status": "active",
+        "started_at": "2026-04-11T08:00:00Z",
+        "capability_snapshot_id": "cap-001",
+        "trace_id": "trace-sess-001",
+        "request_id": "req-sess-001",
+        "runtime_binding_id": "runtime-042",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-main",
+        "last_heartbeat_at": "2026-04-11T11:55:00Z",
+        "tools_enabled": [
+          "signal_read",
+          "artifact_load",
+          "telemetry_query"
+        ],
+        "pool_scope": "pool-main",
+        "capability_snapshot": {
+          "snapshot_id": "cap-001",
+          "persona_id": "persona-alpha",
+          "effective_tools": [
+            "signal_read",
+            "artifact_load",
+            "telemetry_query"
+          ],
+          "effective_skills": [
+            "risk_review",
+            "incident_triage"
+          ],
+          "effective_workflows": [
+            "promotion_review",
+            "incident_response"
+          ],
+          "restrictions": [
+            "no_live_trade_without_approval"
+          ],
+          "generated_at": "2026-04-11T07:55:00Z",
+          "source_refs": [
+            "persona:persona-alpha",
+            "policy:risk-policy-main"
+          ]
+        }
+      },
+      "meta": {
+        "staleness": null
+      }
+    }
+  },
+  "persona_teaching": {
+    "request": "/api/v1/personas/persona-alpha/teaching",
+    "response": {
+      "data": [
+        {
+          "id": "teach-001",
+          "session_id": "teach-001",
+          "persona_id": "persona-alpha",
+          "opened_by": "operator-oncall",
+          "mode": "trainer",
+          "status": "completed",
+          "started_at": "2026-04-09T09:00:00Z",
+          "completed_at": "2026-04-09T09:45:00Z",
+          "current_control_state": "released",
+          "topic": "drawdown_threshold_tuning",
+          "operator_id": "operator-oncall",
+          "outcomes": [
+            "Adjusted drawdown threshold from 10% to 8% for pool-main",
+            "Added queue-depth alerting for promotion gate"
+          ],
+          "session_artifacts": [
+            "artifact-042"
+          ]
+        }
+      ],
+      "meta": {
+        "total": 1,
+        "staleness": null
+      }
+    }
+  },
+  "persona_capabilities": {
+    "request": "/api/v1/personas/persona-alpha/capabilities",
+    "response": {
+      "data": {
+        "snapshot_id": "cap-001",
+        "persona_id": "persona-alpha",
+        "effective_tools": [
+          "signal_read",
+          "artifact_load",
+          "telemetry_query"
+        ],
+        "effective_skills": [
+          "risk_review",
+          "incident_triage"
+        ],
+        "effective_workflows": [
+          "promotion_review",
+          "incident_response"
+        ],
+        "restrictions": [
+          "no_live_trade_without_approval"
+        ],
+        "generated_at": "2026-04-11T07:55:00Z",
+        "source_refs": [
+          "persona:persona-alpha",
+          "policy:risk-policy-main"
+        ]
+      },
+      "meta": {
+        "staleness": null
+      }
+    }
+  },
+  "capital_pools": {
+    "request": "/api/v1/capital-pools",
+    "response": {
+      "data": [
+        {
+          "id": "pool-main",
+          "name": "Primary Capital Pool",
+          "status": "ready",
+          "owner_id": "ops-team",
+          "owner_type": "control-plane",
+          "single_runtime_enforced": true,
+          "risk_policy_ref": "risk-policy-main"
+        }
+      ],
+      "meta": {
+        "total": 1,
+        "staleness": null
+      }
+    }
+  },
+  "bindings": {
+    "request": "/api/v1/bindings",
+    "response": {
+      "data": [
+        {
+          "id": "binding-042",
+          "persona_id": "persona-alpha",
+          "capital_pool_id": "pool-main",
+          "role": "primary",
+          "validity": "active",
+          "status": "active",
+          "allowed_deployment_scope": "paper"
+        }
+      ],
+      "meta": {
+        "total": 1,
+        "staleness": null
+      }
+    }
+  },
+  "deployment_plans": {
+    "request": "/api/v1/deployment-plans",
+    "response": {
+      "data": [
+        {
+          "id": "plan-F-042",
+          "plan_id": "plan-F-042",
+          "stage": "paper",
+          "current_stage": "none",
+          "target_stage": "paper",
+          "artifact_id": "artifact-042",
+          "artifact_version": "v1.4.2",
+          "approval_decision_id": "approval-042",
+          "capital_pool_id": "pool-main",
+          "binding_ids": [
+            "binding-042"
+          ],
+          "runtime_binding_id": "runtime-042",
+          "status": "approved",
+          "transition_type": "activate"
+        }
+      ],
+      "meta": {
+        "total": 1,
+        "staleness": null
+      }
+    }
+  },
+  "approval_decisions": {
+    "request": "/api/v1/approval-decisions",
+    "response": {
+      "data": [
+        {
+          "id": "approval-042",
+          "outcome": "approved",
+          "state": "decided",
+          "reviewer": "governance",
+          "decided_at": "2026-04-11T07:55:00Z",
+          "risk_level": "low"
+        }
+      ],
+      "meta": {
+        "total": 1,
+        "staleness": null
+      }
+    }
+  },
+  "approval_decision_detail": {
+    "request": "/api/v1/approval-decisions/approval-042",
+    "response": {
+      "data": {
+        "id": "approval-042",
+        "outcome": "approved",
+        "state": "decided",
+        "reviewer": "governance",
+        "decided_at": "2026-04-11T07:55:00Z",
+        "risk_level": "low"
+      },
+      "meta": {
+        "staleness": null
+      }
+    }
+  },
+  "runtime_bindings": {
+    "request": "/api/v1/runtime-bindings",
+    "response": {
+      "data": [
+        {
+          "id": "runtime-042",
+          "runtime_id": "runtime-042",
+          "deployment_stage": "paper",
+          "status": "idle",
+          "plan_id": "plan-F-042",
+          "capital_pool_id": null,
+          "artifact_id": "artifact-042",
+          "artifact_version": "v2.1.0",
+          "persona_capital_binding_id": null
+        }
+      ],
+      "meta": {
+        "total": 1,
+        "staleness": null
+      }
+    }
+  },
+  "runtime_status": {
+    "request": "/api/v1/runtimes/runtime-042/status",
+    "response": {
+      "data": {
+        "id": "runtime-042",
+        "runtime_id": "runtime-042",
+        "deployment_stage": "paper",
+        "status": "idle",
+        "plan_id": "plan-F-042",
+        "capital_pool_id": null,
+        "artifact_id": "artifact-042",
+        "artifact_version": "v2.1.0",
+        "persona_capital_binding_id": null
+      },
+      "meta": {
+        "staleness": null
+      }
+    }
+  }
+}

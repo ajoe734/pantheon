@@ -1,0 +1,216 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon ApprovalDecision",
+  "description": "First-class governance object that records whether an artifact / strategy / allocation is approved for the next lifecycle step. Shared by promotion and evolution planes.",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "target_type",
+    "target_id",
+    "target_version",
+    "decision_state",
+    "created_at"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string",
+      "description": "Unique identifier for this approval decision."
+    },
+    "target_type": {
+      "type": "string",
+      "enum": [
+        "registry_entry",
+        "strategy_spec",
+        "model_artifact",
+        "allocation_policy",
+        "persona_capital_binding",
+        "evolution_proposal"
+      ],
+      "description": "The type of object being approved. Must match a valid governance target."
+    },
+    "target_id": {
+      "type": "string",
+      "description": "The ID of the target object (e.g., registry_id, evolution_proposal_id)."
+    },
+    "target_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "The version of the target object at the time of this decision."
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "rejected",
+        "approved_with_conditions"
+      ],
+      "description": "The outcome of the approval decision. Required once the object reaches decided."
+    },
+    "decision_state": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "under_review",
+        "decided",
+        "superseded",
+        "revoked"
+      ],
+      "description": "Lifecycle state of this decision object itself."
+    },
+    "actor_role": {
+      "type": "string",
+      "enum": [
+        "governance_reviewer",
+        "risk_owner",
+        "governance_committee",
+        "automated_gate"
+      ],
+      "description": "The role of the actor making this decision. Must be authorized for the target type and risk level."
+    },
+    "actor_id": {
+      "type": "string",
+      "description": "Identifier of the actor (persona_id, operator_id, or system component) that made this decision."
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable rationale for the decision. Required once the object reaches decided."
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Conditions that must be satisfied for approved_with_conditions decisions. Empty or absent for approved/rejected."
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "default": "low",
+      "description": "Risk level of the target. Determines which actor_role is authorized to decide."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "evaluator_result",
+              "critic_finding",
+              "drift_report",
+              "telemetry_summary",
+              "audit_log_entry",
+              "manual_review_ticket"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "object",
+            "properties": {
+              "backend": {
+                "type": "string",
+                "enum": ["object_store", "gcs", "db", "inline"]
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "description": "Evidence referenced to support this decision."
+    },
+    "superseded_by": {
+      "type": "string",
+      "description": "decision_id of a newer decision that supersedes this one."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when this decision was created (proposed state)."
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when the decision was finalized (decided state)."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional expiration timestamp. After this time, the decision is no longer valid for promotion."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "description": "Optional: the capital pool this approval applies to. If absent, approval is pool-agnostic."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "Optional: the persona this approval applies to. If absent, approval is persona-agnostic."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata for downstream consumers."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "approved_with_conditions"
+          }
+        },
+        "required": ["decision"]
+      },
+      "then": {
+        "required": ["conditions"],
+        "properties": {
+          "conditions": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_state": {
+            "enum": [
+              "under_review",
+              "decided",
+              "revoked"
+            ]
+          }
+        },
+        "required": ["decision_state"]
+      },
+      "then": {
+        "required": ["actor_role", "actor_id"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_state": {
+            "const": "decided"
+          }
+        },
+        "required": ["decision_state"]
+      },
+      "then": {
+        "required": ["decision", "rationale", "decided_at"]
+      }
+    }
+  ]
+}

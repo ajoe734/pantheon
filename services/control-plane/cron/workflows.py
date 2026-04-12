@@ -70,18 +70,18 @@ RETRAIN_WORKFLOW = WorkflowDefinition(
 DEPLOY_WORKFLOW = WorkflowDefinition(
     workflow_id="pantheon.deploy",
     schedule="*/15 * * * *",
-    description="Promote approved registry entries for deployment only through the promotion gate.",
-    upstream_entrypoint="deployment.promote",
+    description="Create governed DeploymentPlans for approved registry entries and emit execution projections.",
+    upstream_entrypoint="deployment.plan",
     handoff_type=None,
-    from_stage="registry_promotion",
+    from_stage="registry_approved",
     to_stage="execution_projection",
     execution_context="paper",
     policy_id="oc002.cron.deploy",
     allowed_tool_classes=("deployment", "status"),
     artifact_type="execution_bundle",
-    initial_lifecycle_state="candidate",
+    initial_lifecycle_state="approved",
     approval_required=True,
-    required_payload_keys=("registry_entry", "target_state"),
+    required_payload_keys=("registry_entry", "target_stage", "capital_pool_id"),
     uses_promotion_gate=True,
 )
 

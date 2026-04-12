@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon SessionPersona",
+  "description": "Session persona object — the control-layer record that binds a persona identity to a concrete task context and freezes effective capabilities at session start.",
+  "type": "object",
+  "required": [
+    "session_id",
+    "persona_id",
+    "session_type",
+    "status",
+    "started_at",
+    "capability_snapshot_id",
+    "trace_id",
+    "request_id"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "description": "Unique identifier for this session."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "The persona this session belongs to."
+    },
+    "session_type": {
+      "type": "string",
+      "enum": [
+        "interactive",
+        "trainer",
+        "research_task",
+        "consult",
+        "committee",
+        "red_team",
+        "background_job"
+      ],
+      "description": "Type of session."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "terminated",
+        "degraded",
+        "quarantined",
+        "audit_replay"
+      ],
+      "description": "Session lifecycle status."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Session start time (UTC ISO-8601)."
+    },
+    "capability_snapshot_id": {
+      "type": "string",
+      "description": "The CapabilitySnapshot frozen at session start. Immutable for the session lifetime."
+    },
+    "context_bundle_ref": {
+      "type": "string",
+      "description": "Reference to the context bundle for this session (replay/audit anchor)."
+    },
+    "task_ref": {
+      "type": "string",
+      "description": "Reference to the task being executed in this session."
+    },
+    "runtime_binding_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "The active RuntimeBinding at session start. Required for deployment-bound sessions (interactive, background_job); null for research/consult/red_team sessions. This is the first-class link between session context and the Execution Plane — do not push this into context_bundle_ref metadata."
+    },
+    "deployment_stage": {
+      "type": ["string", "null"],
+      "enum": ["paper", "canary", "live", "frozen", null],
+      "description": "Deployment stage of the RuntimeBinding at session start. Set iff runtime_binding_id is set. Carries the deployment_mode from RuntimeBinding as a first-class session audit field."
+    },
+    "capital_pool_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Capital pool the session is acting against. Set iff runtime_binding_id is set. Together with runtime_binding_id and deployment_stage, completes the session audit chain: Persona → SessionPersona → RuntimeBinding → DeploymentPlan → PersonaCapitalBinding."
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "Distributed trace identifier for audit correlation."
+    },
+    "request_id": {
+      "type": "string",
+      "description": "Idempotency / correlation identifier."
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Session end time (UTC ISO-8601). Null while active."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary session metadata."
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": { "runtime_binding_id": { "type": "string" } },
+        "required": ["runtime_binding_id"]
+      },
+      "then": {
+        "required": ["deployment_stage", "capital_pool_id"],
+        "properties": {
+          "deployment_stage": { "type": "string" },
+          "capital_pool_id": { "type": "string" }
+        }
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": ["deployment_stage"],
+            "properties": { "deployment_stage": { "type": "string" } }
+          },
+          {
+            "required": ["capital_pool_id"],
+            "properties": { "capital_pool_id": { "type": "string" } }
+          }
+        ]
+      },
+      "then": {
+        "required": ["runtime_binding_id"],
+        "properties": { "runtime_binding_id": { "type": "string" } }
+      }
+    }
+  ]
+}

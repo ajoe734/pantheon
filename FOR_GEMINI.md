@@ -8,6 +8,11 @@ Read these files first:
 1. `AI_COLLABORATION_GUIDE.md`
 2. `current-work.md`
 3. `ai-status.json`
+4. `TARGET_ARCHITECTURE.md`
+5. `CANONICAL_DOCUMENT_MAP.md`
+6. `ROADMAP.md`
+7. `DEVELOPMENT_WORKBREAKDOWN.md`
+8. the L1 policy file that matches your task
 
 Dashboard:
 
@@ -25,18 +30,8 @@ Capability lane:
 - worker operations
 
 Current sprint work lives in `ai-status.json`.
-
 Do not trust static task names inside this brief over the live task board.
 If this file and `ai-status.json` disagree, `ai-status.json` wins.
-
-Primary dependency:
-
-- wait for `P1-001` SignalStoreClient contract before locking your downstream schema
-
-You are also the default reviewer for:
-
-- `P1-001`
-- `P3-001`
 
 ## Required lifecycle
 
@@ -97,5 +92,6 @@ Prefer these areas unless the task explicitly says otherwise:
 - `.github/workflows/`
 - `infra/`
 - runtime packaging or deployment support files
+- telemetry and OSS packaging/pinning work
 
 If a change crosses into execution or control-plane logic, record it as a blocker or handoff first.

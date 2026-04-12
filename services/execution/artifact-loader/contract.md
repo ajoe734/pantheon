@@ -17,8 +17,19 @@ Its job is not to decide promotion. Its job is to:
 - reject artifacts whose promotion state is not allowed for the current execution mode
 - verify checksum and metadata shape before artifact body load proceeds
 - hand approved artifact payloads into the execution runtime
+- prove that a live artifact carries governed fallback metadata, without deciding how rollback should execute
 
 This contract defines the loader-facing metadata and behavior.
+
+Compatibility note after `REG-004`:
+
+- canonical registry state is now `artifact_state`
+- canonical deployment placement is now `deployment_stage`
+- the current loader contract still consumes the legacy execution envelope with `promotion_state`
+- until the loader metadata migration lands, this document should be read as the current compatibility
+  contract, not the canonical definition of registry lifecycle semantics
+- rollback execution semantics (`replace`, `pause_then_replace`, `liquidate_then_replace`) remain owned by
+  `DeploymentPlan.rollback.action_type` and the Runtime Manager; the loader validates fallback metadata only
 
 Reference implementation paths:
 
@@ -85,8 +96,23 @@ Before artifact body load proceeds, the loader must validate:
 3. `checksum` is present
 4. `strategy_id` and `version` are present
 5. for `live`, rollback metadata exists
+6. loader does **not** interpret rollback action semantics; it only verifies that the fallback artifact reference
+   needed by Runtime Manager exists in metadata
 
 If any check fails, artifact load must stop before execution uses the payload.
+
+### 4.1 Rollback Responsibility Split
+
+For `live` artifacts, the loader is responsible for ensuring that the execution envelope contains a governed
+fallback target (`metadata.rollback.target_registry_id`, `target_version`).
+
+The loader is **not** responsible for:
+
+- deciding whether the runtime should `replace`, `pause_then_replace`, or `liquidate_then_replace`
+- mutating `RuntimeBinding`
+- timing the telemetry cutover
+
+Those decisions belong to `DeploymentPlan.rollback.action_type` and the Runtime Manager contract.
 
 ---
 
@@ -122,3 +148,4 @@ Review should confirm:
 - paper/live rejection rules are explicit
 - the metadata schema path is canonical and not duplicated
 - transport assumptions remain LEAN-native and governance-safe
+- loader rollback validation is limited to fallback metadata and does not invent parallel runtime semantics

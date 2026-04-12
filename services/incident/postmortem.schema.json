@@ -1,0 +1,149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon Postmortem",
+  "description": "Canonical postmortem record. Attached to an IncidentCase via the formal lineage edge postmortem.incident_case (incident_id → IncidentCase). Propagates binding and lineage evidence for direct querying. Write authority: Incident domain only.",
+  "type": "object",
+  "required": [
+    "postmortem_id",
+    "title",
+    "status",
+    "created_at",
+    "incident_id",
+    "binding_id",
+    "deployment_stage",
+    "deployment_plan_id",
+    "capital_pool_id",
+    "persona_capital_binding_id",
+    "artifact_id",
+    "artifact_version",
+    "runtime_id",
+    "trace_id",
+    "root_cause"
+  ],
+  "properties": {
+    "postmortem_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this postmortem (UUID recommended)."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short human-readable title for the postmortem."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "review", "approved", "published"],
+      "description": "Lifecycle status of the postmortem document."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the postmortem was created (UTC ISO-8601)."
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the postmortem was published. Required when status is published."
+    },
+    "incident_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "IncidentCase reference — formal lineage edge postmortem.incident_case."
+    },
+    "binding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "RuntimeBinding reference propagated from the parent IncidentCase."
+    },
+    "deployment_stage": {
+      "type": "string",
+      "enum": ["paper", "canary", "live", "frozen"],
+      "description": "Deployment stage at time of incident (propagated from IncidentCase)."
+    },
+    "deployment_plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "DeploymentPlan reference propagated from the parent IncidentCase."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CapitalPool reference propagated from the parent IncidentCase."
+    },
+    "persona_capital_binding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PersonaCapitalBinding reference propagated from the parent IncidentCase."
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Artifact reference propagated from the parent IncidentCase."
+    },
+    "artifact_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Artifact version propagated from the parent IncidentCase."
+    },
+    "runtime_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Runtime identifier propagated from the parent IncidentCase."
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Trace identifier propagated from the parent IncidentCase."
+    },
+    "root_cause": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Root cause analysis of the incident."
+    },
+    "contributing_factors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of factors that contributed to the incident."
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ts", "description"],
+        "properties": {
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the timeline event."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actor": {
+            "type": "string",
+            "description": "Who or what performed the action."
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Ordered timeline of events during the incident."
+    },
+    "action_items": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Follow-up action items identified during postmortem analysis."
+    },
+    "author_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IDs of the authors who contributed to this postmortem."
+    },
+    "linked_evolution_decision_id": {
+      "type": "string",
+      "description": "EvolutionDecision reference set by EVO-003 (evolution_decision.postmortem edge). Null until an EvolutionDecision links back to this postmortem."
+    }
+  },
+  "additionalProperties": false
+}

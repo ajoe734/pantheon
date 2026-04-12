@@ -61,6 +61,19 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^cd .+ && python3 -m unittest(\s|$)"),
     re.compile(r"^python3 -m unittest discover(\s|$)"),
     re.compile(r"^cd .+ && python3 -m unittest discover(\s|$)"),
+    re.compile(r"^python3 -m pytest(\s|$)"),
+    re.compile(r"^cd .+ && python3 -m pytest(\s|$)"),
+    re.compile(r"^pytest(\s|$)"),
+    re.compile(r"^cd .+ && pytest(\s|$)"),
+    re.compile(r"^apt(?:-get)? install(?:\s+-\S+)*\s+python3-pytest(?=\s|$)"),
+    re.compile(r"^npm test(\s|$)"),
+    re.compile(r"^cd .+ && npm test(\s|$)"),
+    re.compile(r"^npm run test(\s|$)"),
+    re.compile(r"^cd .+ && npm run test(\s|$)"),
+    re.compile(r"^cargo test(\s|$)"),
+    re.compile(r"^cd .+ && cargo test(\s|$)"),
+    re.compile(r"^go test(\s|$)"),
+    re.compile(r"^cd .+ && go test(\s|$)"),
     re.compile(r"^python3 -m py_compile(\s|$)"),
     re.compile(r"^cd .+ && python3 -m py_compile(\s|$)"),
     re.compile(r"^python3 (?:[A-Za-z0-9_./-]+/)?smoke_test\.py(?:\s|$)"),
@@ -127,7 +140,25 @@ UNSAFE_PYTHON_ONE_LINER_MARKERS = (
 STATUS_SYNC_BASH_PATTERNS = (
     re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*(?:bash\s+)?scripts/ai-status\.sh(?:\s|$)"),
     re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*python3\s+scripts/ai_status\.py(?:\s|$)"),
+    re.compile(r"^cd\s+.+\s+&&\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*python3\s+scripts/ai_status\.py(?:\s|$)"),
+    re.compile(r"^cd\s+.+\s+&&\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*(?:bash\s+)?scripts/ai-status\.sh(?:\s|$)"),
 )
+
+SAFE_PYTEST_VERIFY_PATTERNS = (
+    re.compile(r"^python3 -m pytest(\s|$)"),
+    re.compile(r"^pytest(\s|$)"),
+    re.compile(r"^pip3? show pytest(\s|$)"),
+)
+
+
+def _matches_workspace_script(path_token: str, relative_path: str) -> bool:
+    candidate = Path(path_token)
+    expected = ROOT / relative_path
+    try:
+        resolved = candidate.resolve(strict=False) if candidate.is_absolute() else (ROOT / candidate).resolve(strict=False)
+    except OSError:
+        return False
+    return resolved == expected.resolve(strict=False)
 
 
 def parse_args() -> argparse.Namespace:
@@ -170,6 +201,8 @@ def classify_command(shell_command: str) -> str:
         return "allow"
     if _is_safe_python_one_liner(shell_command):
         return "allow"
+    if _is_safe_pytest_install_command(shell_command):
+        return "allow"
     if _is_safe_workspace_mkdir_command(shell_command):
         return "allow"
     for pattern in DENY_BASH_PATTERNS:
@@ -199,17 +232,31 @@ def _is_safe_status_sync_command(shell_command: str) -> bool:
         parts = shlex.split(command)
     except ValueError:
         return any(pattern.search(command) for pattern in STATUS_SYNC_BASH_PATTERNS)
+    if "&&" in parts:
+        try:
+            amp_index = parts.index("&&")
+        except ValueError:
+            amp_index = -1
+        if amp_index == 2 and parts[0] == "cd":
+            cd_target = parts[1]
+            if not _paths_within_workspace([Path(cd_target)]):
+                return False
+            parts = parts[amp_index + 1 :]
     index = 0
     while index < len(parts) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", parts[index]):
         index += 1
     if index >= len(parts):
         return False
     remaining = parts[index:]
-    if len(remaining) >= 2 and remaining[0] == "python3" and remaining[1] == "scripts/ai_status.py":
+    if len(remaining) >= 2 and remaining[0] == "python3" and (
+        remaining[1] == "scripts/ai_status.py" or _matches_workspace_script(remaining[1], "scripts/ai_status.py")
+    ):
         return True
-    if len(remaining) >= 2 and remaining[0] == "bash" and remaining[1] == "scripts/ai-status.sh":
+    if len(remaining) >= 2 and remaining[0] == "bash" and (
+        remaining[1] == "scripts/ai-status.sh" or _matches_workspace_script(remaining[1], "scripts/ai-status.sh")
+    ):
         return True
-    if remaining[0] == "scripts/ai-status.sh":
+    if remaining[0] == "scripts/ai-status.sh" or _matches_workspace_script(remaining[0], "scripts/ai-status.sh"):
         return True
     return any(pattern.search(command) for pattern in STATUS_SYNC_BASH_PATTERNS)
 
@@ -222,6 +269,52 @@ def _is_safe_workspace_mkdir_command(shell_command: str) -> bool:
     if not raw_paths:
         return False
     return _paths_within_workspace([Path(item) for item in raw_paths])
+
+
+def _is_pytest_package_spec(token: str) -> bool:
+    return bool(re.match(r"^pytest(?:[=<>!~].+)?$", token))
+
+
+def _is_safe_pytest_install_command(shell_command: str) -> bool:
+    command = shell_command.strip()
+    if not command:
+        return False
+
+    segments = [segment.strip() for segment in command.split("&&")]
+    if not segments:
+        return False
+
+    install_fragment = segments[0].split("|", 1)[0].strip()
+    try:
+        tokens = shlex.split(install_fragment)
+    except ValueError:
+        return False
+
+    package_tokens: list[str]
+    if tokens[:4] == ["python3", "-m", "pip", "install"]:
+        package_tokens = tokens[4:]
+    elif tokens[:2] in (["pip", "install"], ["pip3", "install"]):
+        package_tokens = tokens[2:]
+    else:
+        return False
+
+    package_specs = [
+        token
+        for token in package_tokens
+        if not token.startswith("-") and not re.match(r"^\d?>&\d+$", token)
+    ]
+    if not package_specs or not all(_is_pytest_package_spec(token) for token in package_specs):
+        return False
+
+    for remainder in segments[1:]:
+        remainder = remainder.strip()
+        if not remainder:
+            continue
+        if any(pattern.search(remainder) for pattern in SAFE_PYTEST_VERIFY_PATTERNS):
+            continue
+        return False
+
+    return True
 
 
 def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:

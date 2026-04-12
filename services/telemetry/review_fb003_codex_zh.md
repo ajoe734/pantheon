@@ -268,3 +268,48 @@ build_query_filters(..., limit=1000000)
 - event family separation 本身沒有再回退
 - 但 shared-store query contract 仍未完全成立
 - `FB-003` 這一輪仍然不能核准
+
+---
+
+## Update 2026-04-07: 第四輪 re-review 結果
+
+這一輪可以核准。
+
+前一版的 blocker 已經被正確關閉，不再是把 raw-match limit 往後推，而是直接改掉 shared-store query path：
+
+- `FeedbackStoreAdapter._recover_from_store()` 仍只回收 telemetry family，避免 cross-process recovery 把 feedback event 混進 adapter buffer
+- `get_telemetry_for_strategy()` 改成直接掃 `TraderFeedbackStore.iter_events()`，先做 telemetry family filter，再做 `strategy_id` / `promotion_state` / `event_type` / `mode` 篩選，不再經過 `TraderFeedbackStore.list()`
+- `get_telemetry_by_promotion_state()` 同樣改為 direct iteration，先做 telemetry family boundary
+- `query_telemetry()` 也改成 direct iteration，只有在 telemetry family 與所有 linkage / time filters 都通過後，才對結果套用 caller 的 `limit`
+
+對照程式位置：
+
+- `services/telemetry/feedback_adapter.py:83`
+- `services/telemetry/feedback_adapter.py:162`
+- `services/telemetry/feedback_adapter.py:241`
+- `services/telemetry/feedback_adapter.py:287`
+
+這代表我上一輪指出的根因已消失：shared-store telemetry query 不再依賴 `TraderFeedbackStore.list()` 的 raw-match truncation，因此 feedback events 不會先吃掉 query limit，也不會再出現「必須賭 shared store 不會長到某個 magic number」的問題。
+
+Regression coverage 也已補齊：
+
+- mixed-family separation tests：`services/telemetry/test_feedback_adapter.py:402`
+- limit-after-family-filter tests：`services/telemetry/test_feedback_adapter.py:612`
+- shared-store large-feedback-first tests：`services/telemetry/test_feedback_adapter.py:754`
+
+我重新驗證：
+
+- `cd services/telemetry && python3 -m unittest test_feedback_adapter test_capture`: `44` tests pass
+- `cd services/telemetry && python3 smoke_test.py`: pass
+
+## Reviewer Decision
+
+`FB-003` 通過審查。
+
+Acceptance criteria 已滿足：
+
+1. execution telemetry schema 已接到 shared feedback store，且 telemetry / feedback family boundary 維持分離
+2. paper / live telemetry、fill / slippage / pnl / drawdown / rejection capture 與查詢語義都可用
+3. shared-store recovery、idempotent persistence、mixed-family query semantics 都有對應 regression coverage
+
+可以進入 `review_approved`，交回 owner 正式收尾為 `done`。

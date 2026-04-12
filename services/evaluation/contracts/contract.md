@@ -3,7 +3,7 @@
 **Task:** EV-001  
 **Owner:** Copilot  
 **Reviewer:** Codex  
-**Status:** DRAFT — contracts for evaluator and critic outputs
+**Status:** APPROVED for v1 implementation
 
 ---
 
@@ -441,7 +441,7 @@ Structured advice for promoters and operators.
   "critic_id": "critic_alpha_v1",
   "critic_version": "1.0.0",
   "critique_timestamp": "2026-04-06T15:00:00Z",
-  "critique_trigger": "borderline_score",
+  "critique_trigger": "risk_flagged",
   "evaluation_context": {
     "referenced_evaluation_id": "eval-strat_xyz-v1-3-0",
     "evaluator_overall_score": 0.83
@@ -449,7 +449,7 @@ Structured advice for promoters and operators.
   "findings": [
     {
       "finding_id": "f1",
-      "category": "replication_quality",
+      "category": "execution_fidelity",
       "severity": "low",
       "description": "Replication fidelity is strong at 0.94",
       "evidence": ["94% of backtests matched implementation behavior"],
@@ -460,7 +460,7 @@ Structured advice for promoters and operators.
   "key_risks": [
     {
       "rank": 1,
-      "risk_type": "market_regime",
+      "risk_type": "market_regime_sensitivity",
       "risk_level": "low",
       "description": "Performance based on elevated volatility during backtest",
       "likelihood": "low",
@@ -476,7 +476,7 @@ Structured advice for promoters and operators.
       "Operator confidence in signal quality"
     ]
   },
-  "rationale": "Score of 0.83 is above the candidate-to-paper threshold (0.75). Replication quality is excellent. Identified risks are low and addressable through normal paper validation."
+  "rationale": "Score of 0.83 is above the candidate-to-paper threshold (0.75). Replication quality is excellent. The remaining concern is mild market-regime sensitivity, which is addressable through the normal paper validation window."
 }
 ```
 
@@ -486,13 +486,15 @@ Structured advice for promoters and operators.
 
 Evaluator and critic outputs are themselves governed artifacts. They flow through the registry as follows:
 
+These entries extend the REG-001 artifact type set as non-executable reference artifacts. They participate in lineage and audit, but are not eligible for EX-001 paper/live loading.
+
 ### 5.1 Evaluator Result Registration
 
 ```
 evaluator_output
   ├── artifact_type: "evaluation_result"
-  ├── promotion_state: "candidate" (for use in promotion decisions)
-  ├── lifecycle: follows standard draft → candidate → paper → live
+  ├── registry lifecycle_state: "candidate" while active
+  ├── non-executable: may later move to "retired" when superseded
   ├── lineage: 
   │   ├── target_artifact_id: registry_id of the strategy being evaluated
   │   └── source_run_ids: [evaluator run id]
@@ -504,7 +506,8 @@ evaluator_output
 ```
 critic_output
   ├── artifact_type: "critique_result"
-  ├── promotion_state: "candidate" (reference material for decisions)
+  ├── registry lifecycle_state: "candidate" while active
+  ├── non-executable: may later move to "retired" when superseded
   ├── lineage:
   │   ├── target_artifact_id: registry_id of artifact being critiqued
   │   ├── referenced_evaluation_ids: [evaluation result ids used]
@@ -534,19 +537,20 @@ Evaluators may retrieve:
 Query interface:
 
 ```python
-telemetry = feedback_store.get_telemetry_for_strategy(
+telemetry = feedback_adapter.get_telemetry_for_strategy(
     strategy_id="strat_xyz",
-    artifact_type="strategy_spec",
     promotion_state="candidate",
-    execution_mode="paper",
-    event_types=["pnl_snapshot", "drawdown_snapshot", "slippage_observation"]
+    mode="paper"
 )
 
-feedback = feedback_store.get_feedback_events_for_strategy(
+feedback_filters = build_query_filters(
     strategy_id="strat_xyz",
-    event_types=["rationale"],
-    time_range=("2026-04-01", "2026-04-06")
+    event_type="rationale",
+    created_after="2026-04-01T00:00:00Z",
+    created_before="2026-04-06T23:59:59Z",
+    limit=100,
 )
+feedback = trader_feedback_store.list(feedback_filters)
 ```
 
 ### 6.2 Evaluator Isolation

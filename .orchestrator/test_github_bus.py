@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import tempfile
 import subprocess
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import github_bus
@@ -183,6 +185,79 @@ class GitHubBusProcessTests(unittest.TestCase):
 
         killpg.assert_called_once_with(4321, github_bus.signal.SIGKILL)
         self.assertEqual(fake_process.wait_calls, [1.0, 0.2])
+
+
+class GitHubCoordinationCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        root = Path(self.tmpdir.name)
+        self.pantheon = root / "pantheon"
+        (self.pantheon / "docs-site").mkdir(parents=True, exist_ok=True)
+        (self.pantheon / "ai-status.json").write_text('{"tasks":[],"handoffs":[]}\n', encoding="utf-8")
+        (self.pantheon / "current-work.md").write_text("# current work\n", encoding="utf-8")
+        (self.pantheon / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
+        (self.pantheon / "docs-site" / "index.html").write_text("<html></html>\n", encoding="utf-8")
+        self.config = {
+            "paths": {
+                "status_file": str(self.pantheon / "ai-status.json"),
+                "activity_log": str(self.pantheon / "ai-activity-log.jsonl"),
+                "current_work": str(self.pantheon / "current-work.md"),
+                "dashboard": str(self.pantheon / "docs-site" / "index.html"),
+                "event_queue": str(self.pantheon / ".orchestrator" / "event-queue.jsonl"),
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex", "adapter": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude", "adapter": "claude_cli"},
+            },
+            "coordination": {
+                "enabled": True,
+                "worker_routes": {
+                    "pantheon-bff-worker": {"target_agent": "Codex"},
+                    "engine-worker": {"target_agent": "Claude", "requires_human_approval": True},
+                },
+            },
+        }
+        self.bus_state = {"tasks": {}, "coordination": {}}
+        self.status = {"tasks": []}
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_dispatch_command_queues_coordination_event(self) -> None:
+        command = GitHubCommand(verb="dispatch", target="pantheon-bff", raw="/dispatch pantheon-bff F-042", args=("pantheon-bff", "F-042"))
+        changed, reply = github_bus.apply_bus_command(
+            self.config,
+            self.bus_state,
+            self.status,
+            "ajoe734/pantheon",
+            command,
+            "ajoe734",
+            runtime_state={"coordination": {"features": {"F-042": {"feature_id": "F-042"}}}},
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(reply, "Queued `pantheon-bff-worker` for `F-042`.")
+        queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "pantheon-bff-worker")
+
+    def test_approve_engine_command_bypasses_manual_gate(self) -> None:
+        command = GitHubCommand(verb="approve-engine", target="F-042", raw="/approve-engine F-042", args=("F-042",))
+        changed, reply = github_bus.apply_bus_command(
+            self.config,
+            self.bus_state,
+            self.status,
+            "ajoe734/pantheon",
+            command,
+            "ajoe734",
+            runtime_state={"coordination": {"features": {"F-042": {"feature_id": "F-042"}}}},
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(reply, "Queued engine worker for `F-042`.")
+        queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "engine-worker")
 
 
 if __name__ == "__main__":

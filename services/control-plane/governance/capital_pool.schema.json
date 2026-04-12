@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon CapitalPool",
+  "type": "object",
+  "required": [
+    "pool_id",
+    "name",
+    "owner_id",
+    "owner_type",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "pool_id": {
+      "type": "string",
+      "description": "Immutable unique identifier for this capital pool."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable display name."
+    },
+    "description": {
+      "type": "string"
+    },
+    "owner_id": {
+      "type": "string",
+      "description": "ID of the entity (org / fund / desk) that owns this pool."
+    },
+    "owner_type": {
+      "type": "string",
+      "enum": ["org", "fund", "desk", "operator"],
+      "description": "Type of the owning entity."
+    },
+    "currency": {
+      "type": "string",
+      "description": "ISO 4217 currency code. Default USD.",
+      "default": "USD"
+    },
+    "budget": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Allocated budget in pool currency units."
+    },
+    "risk_policy_ref": {
+      "type": "string",
+      "description": "Reference to the active risk policy document or ID."
+    },
+    "single_runtime_enforced": {
+      "type": "boolean",
+      "description": "When true, at most one live RuntimeBinding may exist for this pool at any time. Default true.",
+      "default": true
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "suspended", "archived"],
+      "description": "Lifecycle status of this pool."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary consumer metadata."
+    }
+  },
+  "additionalProperties": false
+}

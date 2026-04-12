@@ -1,0 +1,404 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon EvolutionDecision",
+  "description": "First-class evolution-governance object that records lifecycle, review ownership, evidence links, cooldown windows, and execution metadata for threshold-triggered follow-up actions.",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "target_type",
+    "target_id",
+    "target_version",
+    "action_type",
+    "decision_state",
+    "risk_level",
+    "created_at",
+    "created_by_role",
+    "created_by_id",
+    "rationale"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string"
+    },
+    "target_type": {
+      "type": "string",
+      "enum": [
+        "strategy_spec",
+        "alpha_template",
+        "candidate_artifact",
+        "allocation_policy_artifact",
+        "persona",
+        "persona_capital_binding",
+        "capital_pool"
+      ]
+    },
+    "target_id": {
+      "type": "string"
+    },
+    "target_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "revalidate",
+        "retrain",
+        "require_more_data",
+        "flag_for_review",
+        "reduce_budget",
+        "tighten_risk_policy",
+        "mutate_persona_route_policy",
+        "mutate_consult_policy",
+        "freeze",
+        "retire",
+        "split_persona",
+        "merge_persona",
+        "remove_live_owner_role",
+        "restrict_pool_eligibility",
+        "force_risk_off",
+        "revive"
+      ]
+    },
+    "decision_state": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "reviewed",
+        "approved",
+        "executed",
+        "rejected",
+        "canceled",
+        "superseded"
+      ]
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by_role": {
+      "type": "string",
+      "enum": [
+        "evolution_controller",
+        "reviewer_on_duty",
+        "reviewer",
+        "risk_owner",
+        "governance_committee",
+        "operator",
+        "automated_gate"
+      ]
+    },
+    "created_by_id": {
+      "type": "string"
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approval_decision_id": {
+      "type": "string"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ref_type",
+          "ref_id"
+        ],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "evaluator_result",
+              "critic_finding",
+              "drift_report",
+              "telemetry_summary",
+              "audit_log_entry",
+              "manual_review_ticket"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "threshold_snapshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "policy_source",
+          "signal_type",
+          "metric_name",
+          "comparator",
+          "observed_value",
+          "threshold_value"
+        ],
+        "properties": {
+          "policy_source": {
+            "type": "string"
+          },
+          "signal_type": {
+            "type": "string",
+            "enum": [
+              "performance_degradation",
+              "execution_drift",
+              "feature_drift",
+              "human_correction",
+              "governance_incident",
+              "manual_review"
+            ]
+          },
+          "metric_name": {
+            "type": "string"
+          },
+          "comparator": {
+            "type": "string",
+            "enum": [
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "eq",
+              "neq"
+            ]
+          },
+          "observed_value": {},
+          "threshold_value": {},
+          "window": {
+            "type": "string"
+          },
+          "breached": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "review_chain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "step_type",
+          "actor_role",
+          "actor_id",
+          "timestamp"
+        ],
+        "properties": {
+          "step_type": {
+            "type": "string",
+            "enum": [
+              "reviewed",
+              "approved",
+              "rejected",
+              "canceled",
+              "executed"
+            ]
+          },
+          "actor_role": {
+            "type": "string",
+            "enum": [
+              "evolution_controller",
+              "reviewer_on_duty",
+              "reviewer",
+              "risk_owner",
+              "governance_committee",
+              "operator",
+              "automated_gate"
+            ]
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "linked_postmortem_id": {
+      "type": "string"
+    },
+    "linked_incident_id": {
+      "type": "string"
+    },
+    "capital_pool_id": {
+      "type": "string"
+    },
+    "persona_id": {
+      "type": "string"
+    },
+    "target_stage": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "canary",
+        "live",
+        "frozen"
+      ]
+    },
+    "cooldown_started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cooldown_ends_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observation_window_started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observation_window_ends_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "execution_result": {
+      "type": "object",
+      "required": [
+        "status",
+        "plane",
+        "executed_at"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "submitted",
+            "succeeded",
+            "failed",
+            "noop"
+          ]
+        },
+        "plane": {
+          "type": "string",
+          "enum": [
+            "governance",
+            "deployment",
+            "runtime",
+            "research"
+          ]
+        },
+        "executed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "execution_ref_id": {
+          "type": "string"
+        },
+        "outcome_summary": {
+          "type": "string"
+        }
+      }
+    },
+    "superseded_by": {
+      "type": "string"
+    },
+    "supersedes_decision_id": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action_type": {
+            "const": "freeze"
+          }
+        },
+        "required": [
+          "action_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "target_stage"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_state": {
+            "enum": [
+              "reviewed",
+              "approved",
+              "rejected",
+              "executed"
+            ]
+          }
+        },
+        "required": [
+          "decision_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approval_decision_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_state": {
+            "const": "executed"
+          }
+        },
+        "required": [
+          "decision_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "execution_result",
+          "cooldown_started_at",
+          "cooldown_ends_at",
+          "observation_window_started_at",
+          "observation_window_ends_at"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision_state": {
+            "const": "superseded"
+          }
+        },
+        "required": [
+          "decision_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "superseded_by"
+        ]
+      }
+    }
+  ]
+}

@@ -139,7 +139,12 @@ jsonschema.validate(critic_output, schema)
    - Evaluators do NOT write to feedback store (only read)
    - Evaluation/critique results go to registry, not feedback store
 
-5. **Traceability is mandatory**
+5. **Registry entries are non-executable reference artifacts**
+   - `evaluation_result` and `critique_result` are governed registry artifact types
+   - They carry lineage and audit metadata, but are not eligible for EX-001 paper/live loading
+   - In v1 they normally remain `candidate` until superseded or `retired`
+
+6. **Traceability is mandatory**
    - Every score component must be traceable to source data
    - Auditable_fields must support compliance reviews
    - Links to preference models, data windows, and feature schemas
@@ -242,7 +247,7 @@ jsonschema.validate(critic_output, schema)
 - ✓ Registry handoff fields included (§5 contract.md)
 - ✓ JSON schemas for validation (evaluator_result.schema.json, critic_result.schema.json)
 - ⏳ Implementation checklist provided (this README)
-- ⏳ Awaiting Codex review and REG-002/REG-003 integration
+- ✓ Codex review issues resolved; ready for owner finalize and downstream REG-002/REG-003 integration
 
 **Next Phase**: REG-002 / REG-003 promotion gate logic consumes evaluator/critic outputs
 

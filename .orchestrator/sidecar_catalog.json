@@ -1,0 +1,51 @@
+{
+  "templates": [
+    {
+      "template_id": "phase3_acceptance_packet",
+      "kind": "acceptance_packet",
+      "parent_phase_match": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+      "activation_dependencies": [
+        "TEL-001"
+      ],
+      "title_template": "Prepare {{parent_task_id}} acceptance packet and dependency map",
+      "summary_zh_template": "平行支援 {{parent_task_id}}，先整理 acceptance checklist、dependency map 與 reviewer packet，不改 canonical truth。",
+      "artifact_targets": [
+        "support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"
+      ],
+      "reviewer_policy": "parent_owner",
+      "mutates_canonical": false
+    },
+    {
+      "template_id": "app001_bff_handoff_packet",
+      "kind": "bff_handoff_packet",
+      "parent_task_ids": [
+        "APP-001"
+      ],
+      "activation_dependencies": [
+        "PER-001"
+      ],
+      "title_template": "Prepare {{parent_task_id}} BFF and frontend handoff packet",
+      "summary_zh_template": "平行支援 {{parent_task_id}}，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "artifact_targets": [
+        "support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"
+      ],
+      "reviewer_policy": "parent_owner",
+      "mutates_canonical": false
+    },
+    {
+      "template_id": "phase6_review_packet",
+      "kind": "review_packet",
+      "parent_phase_match": "Phase 6: OSS Integration Hardening",
+      "activation_dependencies": [
+        "OSS-002"
+      ],
+      "title_template": "Prepare {{parent_task_id}} review packet and evidence summary",
+      "summary_zh_template": "平行支援 {{parent_task_id}}，先整理 review packet、evidence summary 與 activation checklist，不改 canonical truth。",
+      "artifact_targets": [
+        "support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"
+      ],
+      "reviewer_policy": "parent_owner",
+      "mutates_canonical": false
+    }
+  ]
+}

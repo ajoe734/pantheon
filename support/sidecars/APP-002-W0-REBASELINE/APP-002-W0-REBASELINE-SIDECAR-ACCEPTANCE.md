@@ -52,7 +52,7 @@ The parent task's acceptance criteria are:
 ## 2. Dependency Map
 
 ```
-Wave 0: APP-002-W0-REBASELINE (in_progress — Codex)
+Wave 0: APP-002-W0-REBASELINE (review — Codex)
   └─ No dependencies (root of execution tree)
 
 Wave 1:

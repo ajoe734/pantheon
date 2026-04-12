@@ -1,0 +1,597 @@
+"""
+ApprovalDecision — Governance Contract
+
+First-class governance object that records whether an artifact / strategy /
+allocation is approved for the next lifecycle step. Shared by promotion and
+evolution planes.
+
+Public API
+----------
+ApprovalDecision      — dataclass with lifecycle-aware validation
+ApprovalDecisionStore — in-memory store (filesystem/JSON persistence)
+validate_decision()   — standalone structural validation helper
+OwnerMatrix           — risk-level → actor_role authorization matrix
+
+Schema
+------
+The canonical JSON schema lives at:
+    services/control-plane/governance/approval_decision.schema.json
+"""
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+class DecisionOutcome(str, Enum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    APPROVED_WITH_CONDITIONS = "approved_with_conditions"
+
+
+class DecisionState(str, Enum):
+    PROPOSED = "proposed"
+    UNDER_REVIEW = "under_review"
+    DECIDED = "decided"
+    SUPERSEDED = "superseded"
+    REVOKED = "revoked"
+
+
+class ActorRole(str, Enum):
+    GOVERNANCE_REVIEWER = "governance_reviewer"
+    RISK_OWNER = "risk_owner"
+    GOVERNANCE_COMMITTEE = "governance_committee"
+    AUTOMATED_GATE = "automated_gate"
+
+
+class TargetType(str, Enum):
+    REGISTRY_ENTRY = "registry_entry"
+    STRATEGY_SPEC = "strategy_spec"
+    MODEL_ARTIFACT = "model_artifact"
+    ALLOCATION_POLICY = "allocation_policy"
+    PERSONA_CAPITAL_BINDING = "persona_capital_binding"
+    EVOLUTION_PROPOSAL = "evolution_proposal"
+
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class EvidenceRefType(str, Enum):
+    EVALUATOR_RESULT = "evaluator_result"
+    CRITIC_FINDING = "critic_finding"
+    DRIFT_REPORT = "drift_report"
+    TELEMETRY_SUMMARY = "telemetry_summary"
+    AUDIT_LOG_ENTRY = "audit_log_entry"
+    MANUAL_REVIEW_TICKET = "manual_review_ticket"
+
+
+# ---------------------------------------------------------------------------
+# Owner Matrix
+# ---------------------------------------------------------------------------
+
+OWNER_MATRIX: Dict[RiskLevel, List[ActorRole]] = {
+    RiskLevel.LOW: [ActorRole.GOVERNANCE_REVIEWER, ActorRole.AUTOMATED_GATE],
+    RiskLevel.MEDIUM: [ActorRole.GOVERNANCE_REVIEWER, ActorRole.RISK_OWNER],
+    RiskLevel.HIGH: [ActorRole.RISK_OWNER, ActorRole.GOVERNANCE_COMMITTEE],
+    RiskLevel.CRITICAL: [ActorRole.GOVERNANCE_COMMITTEE],
+}
+REVOKE_ROLES = {ActorRole.RISK_OWNER, ActorRole.GOVERNANCE_COMMITTEE}
+
+
+class OwnerMatrix:
+    """Encapsulates the risk-level → actor_role authorization matrix."""
+
+    @staticmethod
+    def is_authorized(role: ActorRole, risk: RiskLevel) -> bool:
+        """Return True if *role* is authorized to decide at *risk* level."""
+        return role in OWNER_MATRIX.get(risk, [])
+
+    @staticmethod
+    def minimum_roles_for(risk: RiskLevel) -> List[ActorRole]:
+        """Return the list of authorized roles for a given risk level."""
+        return list(OWNER_MATRIX.get(risk, []))
+
+
+# ---------------------------------------------------------------------------
+# Evidence Reference
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EvidenceRef:
+    ref_type: EvidenceRefType | str
+    ref_id: str
+    storage_ref: Optional[Dict[str, str]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {"ref_type": self.ref_type, "ref_id": self.ref_id}
+        if self.storage_ref:
+            result["storage_ref"] = self.storage_ref
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EvidenceRef":
+        return cls(
+            ref_type=data["ref_type"],
+            ref_id=data["ref_id"],
+            storage_ref=data.get("storage_ref"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# ApprovalDecision
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ApprovalDecision:
+    """A first-class governance approval decision."""
+
+    decision_id: str
+    target_type: TargetType | str
+    target_id: str
+    target_version: str
+    decision: Optional[DecisionOutcome | str]
+    decision_state: DecisionState | str
+    actor_role: Optional[ActorRole | str]
+    actor_id: Optional[str]
+    rationale: Optional[str]
+    created_at: str
+    decided_at: Optional[str]
+    conditions: List[str] = field(default_factory=list)
+    risk_level: RiskLevel | str = RiskLevel.LOW
+    evidence_refs: List[EvidenceRef] = field(default_factory=list)
+    superseded_by: Optional[str] = None
+    expires_at: Optional[str] = None
+    capital_pool_id: Optional[str] = None
+    persona_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    # -- factory helpers -----------------------------------------------------
+
+    @classmethod
+    def create_proposed(
+        cls,
+        decision_id: str,
+        target_type: TargetType | str,
+        target_id: str,
+        target_version: str,
+        risk_level: RiskLevel | str = RiskLevel.LOW,
+        capital_pool_id: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> "ApprovalDecision":
+        """Create a new decision in the *proposed* state."""
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return cls(
+            decision_id=decision_id,
+            target_type=target_type,
+            target_id=target_id,
+            target_version=target_version,
+            decision=None,
+            decision_state=DecisionState.PROPOSED,
+            actor_role=None,
+            actor_id=None,
+            rationale=None,
+            created_at=now,
+            decided_at=None,
+            risk_level=risk_level,
+            capital_pool_id=capital_pool_id,
+            persona_id=persona_id,
+        )
+
+    def accept_review(self, actor_role: ActorRole | str, actor_id: str) -> None:
+        """Transition from *proposed* to *under_review*."""
+        if self.decision_state != DecisionState.PROPOSED:
+            raise ValueError(
+                f"Can only accept review from 'proposed' state, got '{self.decision_state}'"
+            )
+        if not OwnerMatrix.is_authorized(
+            ActorRole(actor_role), RiskLevel(self.risk_level)
+        ):
+            raise ValueError(
+                f"Role '{actor_role}' not authorized for risk level '{self.risk_level}'"
+            )
+        self.decision_state = DecisionState.UNDER_REVIEW
+        self.actor_role = actor_role
+        self.actor_id = actor_id
+
+    def decide(
+        self,
+        outcome: DecisionOutcome | str,
+        rationale: str,
+        actor_id: Optional[str] = None,
+        conditions: Optional[List[str]] = None,
+        evidence_refs: Optional[List[EvidenceRef]] = None,
+    ) -> None:
+        """Finalize the decision (→ *decided*)."""
+        if self.decision_state != DecisionState.UNDER_REVIEW:
+            raise ValueError(
+                f"Can only decide from 'under_review', got '{self.decision_state}'"
+            )
+        if outcome == DecisionOutcome.APPROVED_WITH_CONDITIONS:
+            if not conditions:
+                raise ValueError(
+                    "'approved_with_conditions' requires at least one condition"
+                )
+            self.conditions = conditions
+        if evidence_refs:
+            self.evidence_refs = evidence_refs
+        self.decision = outcome
+        self.decision_state = DecisionState.DECIDED
+        self.rationale = rationale
+        self.decided_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if actor_id:
+            self.actor_id = actor_id
+
+    def revoke(self, actor_role: ActorRole | str, actor_id: str) -> None:
+        """Revoke a decided decision."""
+        if self.decision_state != DecisionState.DECIDED:
+            raise ValueError("Can only revoke a 'decided' decision")
+        normalized_role = ActorRole(actor_role)
+        if normalized_role not in REVOKE_ROLES:
+            raise ValueError(
+                f"Role '{actor_role}' is not allowed to revoke a decided approval"
+            )
+        self.decision_state = DecisionState.REVOKED
+        self.actor_role = normalized_role
+        self.actor_id = actor_id
+
+    def supersede(self, superseded_by: str) -> None:
+        """Mark this decision as superseded by a newer one."""
+        self.superseded_by = superseded_by
+        self.decision_state = DecisionState.SUPERSEDED
+
+    # -- validation ----------------------------------------------------------
+
+    def validate(self) -> List[str]:
+        """Return a list of validation errors (empty = valid)."""
+        errors: List[str] = []
+
+        if not self.decision_id:
+            errors.append("decision_id is required")
+        if not self.target_id:
+            errors.append("target_id is required")
+        if not self.target_version:
+            errors.append("target_version is required")
+        if self.decision_state in (
+            DecisionState.UNDER_REVIEW,
+            DecisionState.DECIDED,
+            DecisionState.REVOKED,
+        ):
+            if not self.actor_role:
+                errors.append("actor_role is required once review has started")
+            if not self.actor_id:
+                errors.append("actor_id is required once review has started")
+
+        if self.decision_state == DecisionState.DECIDED and not self.decision:
+            errors.append("decision is required for decided decisions")
+        if self.decision_state == DecisionState.DECIDED and not self.rationale:
+            errors.append("rationale is required for decided decisions")
+
+        # Role authorization
+        try:
+            role = ActorRole(self.actor_role)
+            risk = RiskLevel(self.risk_level)
+            if self.decision_state in (DecisionState.UNDER_REVIEW, DecisionState.DECIDED):
+                if not OwnerMatrix.is_authorized(role, risk):
+                    errors.append(
+                        f"Role '{role.value}' not authorized for risk level '{risk.value}'"
+                    )
+        except ValueError:
+            pass  # enum validation caught elsewhere
+
+        # Conditions required for approved_with_conditions
+        if self.decision == DecisionOutcome.APPROVED_WITH_CONDITIONS:
+            if not self.conditions:
+                errors.append(
+                    "'approved_with_conditions' requires at least one condition"
+                )
+
+        # decided_at required for decided state
+        if self.decision_state == DecisionState.DECIDED and not self.decided_at:
+            errors.append("decided_at is required for 'decided' state")
+
+        return errors
+
+    # -- serialization -------------------------------------------------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = asdict(self)
+        # Convert enums to string values
+        result["target_type"] = (
+            self.target_type.value
+            if isinstance(self.target_type, TargetType)
+            else self.target_type
+        )
+        result["decision"] = (
+            self.decision.value
+            if isinstance(self.decision, DecisionOutcome)
+            else self.decision
+        )
+        result["decision_state"] = (
+            self.decision_state.value
+            if isinstance(self.decision_state, DecisionState)
+            else self.decision_state
+        )
+        result["actor_role"] = (
+            self.actor_role.value
+            if isinstance(self.actor_role, ActorRole)
+            else self.actor_role
+        )
+        result["risk_level"] = (
+            self.risk_level.value
+            if isinstance(self.risk_level, RiskLevel)
+            else self.risk_level
+        )
+        result["evidence_refs"] = [
+            ref.to_dict() if isinstance(ref, EvidenceRef) else ref
+            for ref in self.evidence_refs
+        ]
+        return result
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ApprovalDecision":
+        evidence_refs = [
+            EvidenceRef.from_dict(r) if isinstance(r, dict) else r
+            for r in data.get("evidence_refs", [])
+        ]
+        return cls(
+            decision_id=data["decision_id"],
+            target_type=data["target_type"],
+            target_id=data["target_id"],
+            target_version=data["target_version"],
+            decision=data.get("decision"),
+            decision_state=data["decision_state"],
+            actor_role=data.get("actor_role"),
+            actor_id=data.get("actor_id"),
+            rationale=data.get("rationale"),
+            created_at=data["created_at"],
+            decided_at=data.get("decided_at"),
+            conditions=data.get("conditions", []),
+            risk_level=data.get("risk_level", RiskLevel.LOW),
+            evidence_refs=evidence_refs,
+            superseded_by=data.get("superseded_by"),
+            expires_at=data.get("expires_at"),
+            capital_pool_id=data.get("capital_pool_id"),
+            persona_id=data.get("persona_id"),
+            metadata=data.get("metadata"),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "ApprovalDecision":
+        return cls.from_dict(json.loads(json_str))
+
+
+# ---------------------------------------------------------------------------
+# Standalone JSON validation (schema-based)
+# ---------------------------------------------------------------------------
+
+_SCHEMA_PATH = Path(__file__).parent / "approval_decision.schema.json"
+
+
+def validate_decision_json(data: Dict[str, Any]) -> List[str]:
+    """Validate a decision dict against ApprovalDecision structural rules."""
+    errors: List[str] = []
+
+    required = [
+        "decision_id",
+        "target_type",
+        "target_id",
+        "target_version",
+        "decision_state",
+        "created_at",
+    ]
+    for key in required:
+        if key not in data or data[key] is None:
+            errors.append(f"Missing required field: {key}")
+
+    valid_target_types = [t.value for t in TargetType]
+    if data.get("target_type") and data["target_type"] not in valid_target_types:
+        errors.append(
+            f"Invalid target_type: {data['target_type']}. "
+            f"Must be one of {valid_target_types}"
+        )
+
+    valid_decisions = [d.value for d in DecisionOutcome]
+    if data.get("decision") and data["decision"] not in valid_decisions:
+        errors.append(
+            f"Invalid decision: {data['decision']}. Must be one of {valid_decisions}"
+        )
+
+    valid_states = [s.value for s in DecisionState]
+    if data.get("decision_state") and data["decision_state"] not in valid_states:
+        errors.append(
+            f"Invalid decision_state: {data['decision_state']}. "
+            f"Must be one of {valid_states}"
+        )
+
+    valid_roles = [r.value for r in ActorRole]
+    if data.get("actor_role") and data["actor_role"] not in valid_roles:
+        errors.append(
+            f"Invalid actor_role: {data['actor_role']}. Must be one of {valid_roles}"
+        )
+
+    valid_risks = [r.value for r in RiskLevel]
+    if data.get("risk_level") and data["risk_level"] not in valid_risks:
+        errors.append(
+            f"Invalid risk_level: {data['risk_level']}. Must be one of {valid_risks}"
+        )
+
+    state = data.get("decision_state")
+    if state in (
+        DecisionState.UNDER_REVIEW,
+        DecisionState.DECIDED,
+        DecisionState.REVOKED,
+    ):
+        if not data.get("actor_role"):
+            errors.append("actor_role is required once review has started")
+        if not data.get("actor_id"):
+            errors.append("actor_id is required once review has started")
+
+    if state == DecisionState.DECIDED:
+        if not data.get("decision"):
+            errors.append("decision is required for 'decided' state")
+        if not data.get("rationale"):
+            errors.append("rationale is required for 'decided' state")
+        if not data.get("decided_at"):
+            errors.append("decided_at is required for 'decided' state")
+
+    # approved_with_conditions requires conditions
+    if data.get("decision") == DecisionOutcome.APPROVED_WITH_CONDITIONS:
+        if not data.get("conditions") or len(data["conditions"]) == 0:
+            errors.append(
+                "'approved_with_conditions' requires at least one condition"
+            )
+
+    # Role authorization
+    if data.get("actor_role") and data.get("risk_level") and state in (
+        DecisionState.UNDER_REVIEW,
+        DecisionState.DECIDED,
+    ):
+        try:
+            role = ActorRole(data["actor_role"])
+            risk = RiskLevel(data["risk_level"])
+            if not OwnerMatrix.is_authorized(role, risk):
+                errors.append(
+                    f"Role '{role.value}' not authorized for risk level '{risk.value}'"
+                )
+        except ValueError:
+            pass
+
+    return errors
+
+
+def validate_decision(decision: ApprovalDecision) -> List[str]:
+    """Validate an ApprovalDecision instance."""
+    return decision.validate()
+
+
+# ---------------------------------------------------------------------------
+# In-Memory Store
+# ---------------------------------------------------------------------------
+
+class ApprovalDecisionStore:
+    """Simple in-memory store for ApprovalDecision objects.
+
+    Persists to JSON file on each write operation.
+    """
+
+    def __init__(self, storage_path: Optional[str] = None):
+        self._storage_path = Path(storage_path) if storage_path else None
+        self._decisions: Dict[str, ApprovalDecision] = {}
+        if self._storage_path and self._storage_path.exists():
+            self._load()
+
+    def put(self, decision: ApprovalDecision) -> None:
+        """Store or update a decision."""
+        self._decisions[decision.decision_id] = decision
+        self._save()
+
+    def get(self, decision_id: str) -> Optional[ApprovalDecision]:
+        """Retrieve a decision by ID."""
+        return self._decisions.get(decision_id)
+
+    def find_by_target(
+        self, target_type: str, target_id: str
+    ) -> List[ApprovalDecision]:
+        """Find all decisions for a given target."""
+        return [
+            d
+            for d in self._decisions.values()
+            if d.target_id == target_id
+            and (
+                d.target_type == target_type
+                or (isinstance(d.target_type, TargetType) and d.target_type.value == target_type)
+            )
+        ]
+
+    def find_latest_approved(
+        self, target_type: str, target_id: str
+    ) -> Optional[ApprovalDecision]:
+        """Return the most recent decided approval for a target."""
+        candidates = [
+            d
+            for d in self.find_by_target(target_type, target_id)
+            if d.decision_state == DecisionState.DECIDED
+            and d.decision
+            in (DecisionOutcome.APPROVED, DecisionOutcome.APPROVED_WITH_CONDITIONS)
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda d: d.decided_at, reverse=True)
+        return candidates[0]
+
+    def list_all(self) -> List[ApprovalDecision]:
+        """Return all decisions."""
+        return list(self._decisions.values())
+
+    def _save(self) -> None:
+        if not self._storage_path:
+            return
+        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            did: d.to_dict() for did, d in self._decisions.items()
+        }
+        self._storage_path.write_text(json.dumps(data, indent=2))
+
+    def _load(self) -> None:
+        if not self._storage_path or not self._storage_path.exists():
+            return
+        text = self._storage_path.read_text()
+        if not text or not text.strip():
+            # Empty or newly created storage file — start with empty state
+            return
+        raw = json.loads(text)
+        for did, data in raw.items():
+            self._decisions[did] = ApprovalDecision.from_dict(data)
+
+
+# ---------------------------------------------------------------------------
+# Audit log integration helper
+# ---------------------------------------------------------------------------
+
+def to_audit_event(
+    decision: ApprovalDecision, event_type: str
+) -> Dict[str, Any]:
+    """Convert a decision to an audit log event payload.
+
+    *event_type* should be one of:
+      - approval_decision_created
+      - approval_decision_state_changed
+      - approval_decision_revoked
+    """
+    return {
+        "event_type": event_type,
+        "decision_id": decision.decision_id,
+        "target_type": (
+            decision.target_type.value
+            if isinstance(decision.target_type, TargetType)
+            else decision.target_type
+        ),
+        "target_id": decision.target_id,
+        "decision": (
+            decision.decision.value
+            if isinstance(decision.decision, DecisionOutcome)
+            else decision.decision
+        ),
+        "actor_id": decision.actor_id,
+        "actor_role": (
+            decision.actor_role.value
+            if isinstance(decision.actor_role, ActorRole)
+            else decision.actor_role
+        ),
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }

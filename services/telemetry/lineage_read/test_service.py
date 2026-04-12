@@ -401,6 +401,69 @@ class TestSummaryEnvelopeContract(unittest.TestCase):
             f"Expected alias drift markers not found. Got: {codes}",
         )
 
+    def test_telemetry_event_trace_target_carried_refs_appear_in_values(self):
+        """Verify that trace_id/strategy_id/registry_id from the target event
+        itself (not just chain items) appear in refs values — not merely keys."""
+        target_refs_corpus = {
+            "metadata": {"task_id": "LIN-002-TARGET-REFS"},
+            "node_sets": {
+                "capital_pools": [
+                    {"pool_id": "pool-1", "single_runtime_enforced": True,
+                     "created_at": "2026-04-10T00:00:00Z"}
+                ],
+                "persona_capital_bindings": [
+                    {"binding_id": "pb-1", "capital_pool_id": "pool-1",
+                     "created_at": "2026-04-10T00:00:00Z"}
+                ],
+                "deployment_plans": [
+                    {
+                        "plan_id": "plan-1", "capital_pool_id": "pool-1",
+                        "binding_id": "pb-1", "artifact_id": "art-1",
+                        "artifact_version": "1.0.0",
+                        "created_at": "2026-04-10T00:00:00Z",
+                    }
+                ],
+                "runtime_bindings": [
+                    {
+                        "binding_id": "rb-1", "capital_pool_id": "pool-1",
+                        "plan_id": "plan-1", "persona_capital_binding_id": "pb-1",
+                        "artifact_id": "art-1", "artifact_version": "1.0.0",
+                        "runtime_id": "rt-1", "status": "active",
+                        "effective_at": "2026-04-10T00:00:00Z",
+                    }
+                ],
+                "telemetry_events": [
+                    {
+                        "event_id": "evt-target-refs",
+                        "event_type": "deploy_completed",
+                        "binding_id": "rb-1",
+                        "plan_id": "plan-1",
+                        "capital_pool_id": "pool-1",
+                        "persona_capital_binding_id": "pb-1",
+                        "artifact_id": "art-1",
+                        "artifact_version": "1.0.0",
+                        "runtime_id": "rt-1",
+                        "trace_id": "trace-xyz",
+                        "strategy_id": "strat-abc",
+                        "registry_id": "reg-def",
+                        "event_produced_at": "2026-04-10T00:00:01Z",
+                    }
+                ],
+            },
+            "query_families": [],
+            "benchmark_cases": [],
+        }
+        svc = LineageReadService()
+        svc.load_corpus(target_refs_corpus)
+        result = svc.query("telemetry_event_trace", event_id="evt-target-refs")
+        refs = result["refs"]
+        self.assertIn("trace-xyz", refs["trace_ids"],
+                      f"trace_ids should contain target event's trace_id, got {refs['trace_ids']}")
+        self.assertIn("strat-abc", refs["strategy_ids"],
+                      f"strategy_ids should contain target event's strategy_id, got {refs['strategy_ids']}")
+        self.assertIn("reg-def", refs["registry_ids"],
+                      f"registry_ids should contain target event's registry_id, got {refs['registry_ids']}")
+
 
 if __name__ == "__main__":
     unittest.main()

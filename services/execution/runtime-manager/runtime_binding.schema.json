@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon RuntimeBinding",
+  "description": "The canonical state of an active or historical artifact loading onto a specific runtime instance. Write authority: Execution Plane (Runtime Manager) only.",
+  "type": "object",
+  "required": [
+    "binding_id",
+    "runtime_id",
+    "capital_pool_id",
+    "artifact_id",
+    "artifact_version",
+    "deployment_mode",
+    "effective_at",
+    "status",
+    "plan_id",
+    "persona_capital_binding_id"
+  ],
+  "properties": {
+    "binding_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this specific binding instance."
+    },
+    "runtime_id": {
+      "type": "string",
+      "description": "Identifier for the actual LEAN instance, container, or worker process."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "description": "The capital pool this binding is servicing."
+    },
+    "artifact_id": {
+      "type": "string",
+      "description": "The ID of the approved artifact being executed."
+    },
+    "artifact_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "The specific version of the artifact."
+    },
+    "deployment_mode": {
+      "type": "string",
+      "enum": ["paper", "canary", "live", "frozen"],
+      "description": "The actual execution stage of the runtime (equivalent to 'stage' in L1 docs)."
+    },
+    "effective_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when this binding became active."
+    },
+    "retired_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when this binding was replaced or terminated. Required when status is retired or failed."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "retired", "failed", "pending_pause", "paused"],
+      "description": "Current operational status of the binding."
+    },
+    "plan_id": {
+      "type": "string",
+      "description": "Reference to the DeploymentPlan that triggered this binding. Required — no binding may exist without a backing DeploymentPlan."
+    },
+    "persona_capital_binding_id": {
+      "type": "string",
+      "description": "Reference to the PersonaCapitalBinding that authorises the deployment scope. Required — provides the governance admissibility proof linking runtime state back to the governing binding."
+    },
+    "rollback_parent": {
+      "type": "string",
+      "description": "binding_id of the RuntimeBinding that this binding replaced via rollback (if applicable)."
+    },
+    "rollback_action_type": {
+      "type": "string",
+      "enum": ["replace", "pause_then_replace", "liquidate_then_replace"],
+      "description": "The specific rollback strategy used if this was a rollback transition."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional runtime-specific metadata (e.g., node_name, process_id).",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,74 @@
+{
+  "registry_id": "opt-strat_xyz-imitation-v1-0-0",
+  "artifact_type": "optimizer_result",
+  "strategy_id": "strat_xyz",
+  "optimizer_id": "imitation_bc_optimizer_v1",
+  "optimizer_version": "1.0.0",
+  "optimizer_method": "imitation_bc",
+  "optimization_timestamp": "2026-04-07T10:30:00Z",
+  "optimization_objective": "behavioral_cloning_accuracy",
+  "trigger": "manual",
+  "run_id": "imitation_run_2026_04_07_001",
+  "source_artifact": {
+    "registry_id": null,
+    "artifact_type": "model_artifact",
+    "version": null,
+    "lifecycle_state": null,
+    "checksum": null
+  },
+  "governance_inputs": {
+    "feedback_events": {
+      "event_types": ["approve", "edit"],
+      "count": 24,
+      "window_start": "2026-03-15T00:00:00Z",
+      "window_end": "2026-04-06T23:59:59Z",
+      "store_path": "/data/feedback_store"
+    }
+  },
+  "optimization_run_config": {
+    "backend": "imitation_bc",
+    "observation_dim": 8,
+    "action_labels": ["buy", "sell", "hold"],
+    "num_epochs": 50,
+    "batch_size": 32,
+    "learning_rate": 1e-3,
+    "seed": 99,
+    "extra_params": {}
+  },
+  "output_artifacts": [
+    {
+      "candidate_registry_id": "model_artifact_strat_xyz_imitation_v1.0.0",
+      "artifact_type": "model_artifact",
+      "version": "1.0.0",
+      "lifecycle_state": "candidate",
+      "checksum": "sha256:imitation_checksum_abc...",
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "optimizers/imitation_bc_optimizer_v1/model_artifact/strat_xyz/1.0.0/artifact.bin"
+      },
+      "metrics_snapshot": {
+        "behavioral_cloning_accuracy": 0.82,
+        "approval_rate_match": 0.78,
+        "num_trajectories": 2,
+        "num_transitions": 4
+      }
+    }
+  ],
+  "metrics": {
+    "objective": "behavioral_cloning_accuracy",
+    "before": null,
+    "after": {
+      "artifact_id": "model_artifact_strat_xyz_imitation_v1.0.0",
+      "value": 0.82,
+      "measured_at": "2026-04-07T10:30:00Z"
+    },
+    "improvement_delta": null,
+    "secondary_metrics": {
+      "approval_rate_match": {
+        "before": null,
+        "after": 0.78
+      }
+    }
+  },
+  "rationale": "First-run imitation policy for strat_xyz. 24 operator-approved trajectories used for BC training. No prior incumbent — this is the initial candidate. Requires evaluation before paper promotion."
+}
