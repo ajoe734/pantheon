@@ -143,6 +143,13 @@ def _route_payload(config: dict[str, Any], payload: dict[str, Any]) -> tuple[str
     return worker_kind, worker_route(config, worker_kind)
 
 
+def _payload_is_resolved(payload: dict[str, Any]) -> bool:
+    if payload.get("resolved_at"):
+        return True
+    status = str(payload.get("status") or "").strip().lower()
+    return status in {"resolved", "completed", "done"}
+
+
 def queue_coordination_dispatch(
     config: dict[str, Any],
     *,
@@ -363,6 +370,8 @@ def sync_coordination_files(config: dict[str, Any], state: dict[str, Any]) -> bo
                 if not worker_kind or not route:
                     continue
                 if mirror_only:
+                    continue
+                if _payload_is_resolved(payload):
                     continue
                 if current_type in ENGINE_MANUAL_TYPES and not payload.get("human_approved"):
                     continue

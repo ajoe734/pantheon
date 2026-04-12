@@ -219,6 +219,33 @@ class CoordinationWatcherTests(unittest.TestCase):
         queue = load_jsonl(Path(self.config["paths"]["event_queue"]))
         self.assertEqual(queue, [])
 
+    def test_resolved_request_is_recorded_but_not_dispatched(self) -> None:
+        request = self.front / ".coordination" / "requests" / "F-042-bff-gap.yaml"
+        request.write_text(
+            "\n".join(
+                [
+                    "feature_id: F-042",
+                    "source_repo: front-ai-trading-system",
+                    "source_branch: main",
+                    "screen: promotion-review",
+                    "type: bff-gap",
+                    'summary: "Resolved: command payload schema now published."',
+                    'resolved_at: "2026-04-12T09:14:05+08:00"',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        state: dict[str, object] = {}
+        changed = sync_coordination_files(self.config, state)
+
+        self.assertTrue(changed)
+        feature = state["coordination"]["features"]["F-042"]
+        self.assertEqual(feature["latest_request"]["type"], "bff-gap")
+        queue = load_jsonl(Path(self.config["paths"]["event_queue"]))
+        self.assertEqual(queue, [])
+
 
 if __name__ == "__main__":
     unittest.main()

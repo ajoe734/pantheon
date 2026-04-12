@@ -75,6 +75,11 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
+WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
+    re.compile(r"^(?:result|error|audit):\s+Optional\[Dict\[str,\s*Any\]\]\s*=\s*None$", re.IGNORECASE),
+    re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
+    re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
+)
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
@@ -866,6 +871,8 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         if not stripped:
             continue
         if '"ts":' in stripped and '"type":' in stripped:
+            continue
+        if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
             continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
             return stripped
@@ -2193,6 +2200,25 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
                         "message": "Discussion planning worker exited.",
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "completed")
+                changed = True
+                continue
+            if worker_is_coordination_dispatch(worker):
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                clear_task_failure_streak(state, worker=worker)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": "Coordination worker exited after completing its handoff step.",
                         "worker_run_id": worker["run_id"],
                         "pr_url": worker.get("pr_url"),
                         "session_url": worker.get("session_url"),
