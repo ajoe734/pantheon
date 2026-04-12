@@ -934,6 +934,83 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
         self.assertTrue(supervisor.worker_matches_current_assignment(self.config, worker, {}))
         self.assertFalse(supervisor.higher_priority_ready_task_exists(self.config, worker, {}))
 
+    def test_detect_worker_failure_ignores_code_snippet_error_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "worker.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "class CommandStatusResponse(BaseModel):",
+                        "    result: Optional[Dict[str, Any]] = None",
+                        "    error: Optional[Dict[str, Any]] = None",
+                        "    audit: Optional[Dict[str, Any]] = None",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            worker = {"log_path": str(log_path)}
+            self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_dead_coordination_worker_is_completed_without_taskboard_entry(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "ready_dispatcher": {},
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+            },
+        }
+        state = {
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": "F-042",
+                    "provider": "codex",
+                    "agent_id": "codex",
+                    "status": "running",
+                    "queue_event_id": "evt-1",
+                    "pid": 999999,
+                    "last_event_at": "2026-04-06T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "coordination:ui-done",
+                        "metadata": {
+                            "coordination": {
+                                "feature_id": "F-042",
+                                "worker_kind": "front-sync-worker",
+                                "payload_type": "ui-done",
+                            }
+                        },
+                    },
+                }
+            },
+        }
+        status = {"tasks": []}
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "completed")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+
 
 class UnderutilizationSidecarDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
