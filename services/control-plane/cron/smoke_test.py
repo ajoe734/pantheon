@@ -86,24 +86,36 @@ def run_smoke_tests() -> list[tuple[str, bool]]:
     deploy_result = orchestrator.run(
         "pantheon.deploy",
         {
-            "target_state": "live",
-            "approver": "risk-committee",
+            "target_stage": "live",
+            "capital_pool_id": "pool-001",
+            "approval_decision": {
+                "decision_id": "approval-001",
+                "target_id": "reg-strat-openalex-001-1.2.0",
+                "target_version": "1.2.0",
+                "decision_state": "decided",
+                "decision": "approved",
+                "capital_pool_id": "pool-001",
+                "persona_id": "persona-ops",
+            },
             "registry_entry": {
                 "registry_id": "reg-strat-openalex-001-1.2.0",
                 "artifact_type": "model_artifact",
                 "strategy_id": "strat-openalex-001",
                 "version": "1.2.0",
                 "checksum": "sha256:abc123def4567890",
-                "lifecycle_state": "paper",
-                "approver": None,
+                "artifact_state": "approved",
+                "approval_decision_id": "approval-001",
+                "approved_at": "2026-04-09T12:00:00Z",
+                "deployment_summary": {
+                    "current_stage": "canary"
+                },
                 "evaluation_summary": {
                     "risk_review_passed": True,
                     "sharpe_ratio": 1.42,
                 },
                 "lineage": {
-                    "source_run_id": "registry-paper-001",
+                    "source_run_ids": ["registry-paper-001"],
                 },
-                "replication_success": True,
                 "metadata": {
                     "rollback": {
                         "target_registry_id": "reg-strat-openalex-001-1.1.0",
@@ -116,7 +128,16 @@ def run_smoke_tests() -> list[tuple[str, bool]]:
     )
     print("\nDEPLOY RESULT")
     print(json.dumps(deploy_result.to_dict(), indent=2))
-    results.append(("deploy", deploy_result.registry_entry is not None and deploy_result.registry_entry["lifecycle_state"] == "live"))
+    results.append(
+        (
+            "deploy",
+            deploy_result.registry_entry is not None
+            and deploy_result.registry_entry["deployment_summary"]["current_stage"] == "live"
+            and deploy_result.deployment_request["deployment_contract"] == "DEP-001"
+            and deploy_result.deployment_request["consistency_contract"] == "DEP-002"
+            and deploy_result.deployment_request["deployment_saga"]["outbox_event"]["event"]["sequence_no"] == 1,
+        )
+    )
 
     return results
 

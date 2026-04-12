@@ -9,6 +9,7 @@ class GitHubCommand:
     verb: str
     target: str | None
     raw: str
+    args: tuple[str, ...] = ()
 
 
 SUPPORTED_COMMANDS = {
@@ -18,6 +19,10 @@ SUPPORTED_COMMANDS = {
     "resume",
     "recheck",
     "status",
+    "dispatch",
+    "needs-runtime",
+    "contract-ready",
+    "approve-engine",
 }
 
 
@@ -33,5 +38,6 @@ def parse_command(comment_body: str) -> GitHubCommand | None:
     verb = parts[0].strip().lower()
     if verb not in SUPPORTED_COMMANDS:
         return None
-    target = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
-    return GitHubCommand(verb=verb, target=target, raw=first_line)
+    args = tuple(parts[1].strip().split()) if len(parts) > 1 and parts[1].strip() else ()
+    target = args[0] if args else None
+    return GitHubCommand(verb=verb, target=target, raw=first_line, args=args)

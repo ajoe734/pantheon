@@ -685,10 +685,17 @@ def _build_refs_from_chains(
     upstream_chain: list[dict[str, Any]],
     downstream_chain: list[dict[str, Any]],
     graph: LineageGraph,
+    *,
+    target_node: Optional[GraphNode] = None,
 ) -> dict[str, Any]:
     """
     Build the canonical refs envelope by scanning all chain items and their
     connected graph nodes.
+
+    When ``target_node`` is supplied (e.g. the telemetry event for
+    ``telemetry_event_trace``), its own semantic fields are also merged into
+    the refs so that target-carried values like ``trace_id``, ``strategy_id``,
+    and ``registry_id`` are never silently dropped.
 
     This produces the exact key set required by the LIN-001 summary projection
     contract:
@@ -704,76 +711,34 @@ def _build_refs_from_chains(
     artifact_refs_set: set[str] = set()
     trace_ids: set[str] = set()
 
+    # -- Include target node's own semantic refs before scanning chain items --
+    if target_node is not None:
+        _merge_refs_from_node(
+            target_node.node_type, target_node.node_id, target_node.data,
+            graph,
+            strategy_ids, registry_ids, runtime_binding_ids,
+            deployment_plan_ids, capital_pool_ids,
+            persona_capital_binding_ids, artifact_refs_set, trace_ids,
+        )
+
     all_items = list(upstream_chain) + list(downstream_chain)
 
     for item in all_items:
         itype = item.get("type", "")
         iid = item.get("id", "")
 
-        if itype == NODE_RUNTIME_BINDING:
-            runtime_binding_ids.add(iid)
-            bnode = graph.get_node(NODE_RUNTIME_BINDING, iid)
-            if bnode:
-                d = bnode.data
-                if d.get("capital_pool_id"):
-                    capital_pool_ids.add(d["capital_pool_id"])
-                if d.get("plan_id"):
-                    deployment_plan_ids.add(d["plan_id"])
-                if d.get("persona_capital_binding_id"):
-                    persona_capital_binding_ids.add(d["persona_capital_binding_id"])
-                if d.get("artifact_id") and d.get("artifact_version"):
-                    artifact_refs_set.add(_artifact_ref(d["artifact_id"], d["artifact_version"]))
+        # Skip items already consumed via target_node (avoid double-counting
+        # the same node when it also appears in the chain)
+        if target_node and itype == target_node.node_type and iid == target_node.node_id:
+            continue
 
-        elif itype == NODE_DEPLOYMENT_PLAN:
-            deployment_plan_ids.add(iid)
-            pnode = graph.get_node(NODE_DEPLOYMENT_PLAN, iid)
-            if pnode:
-                d = pnode.data
-                if d.get("capital_pool_id"):
-                    capital_pool_ids.add(d["capital_pool_id"])
-                if d.get("binding_id"):
-                    persona_capital_binding_ids.add(d["binding_id"])
-                if d.get("artifact_id") and d.get("artifact_version"):
-                    artifact_refs_set.add(_artifact_ref(d["artifact_id"], d["artifact_version"]))
-
-        elif itype == NODE_CAPITAL_POOL:
-            capital_pool_ids.add(iid)
-
-        elif itype == NODE_PERSONA_BINDING:
-            persona_capital_binding_ids.add(iid)
-            pbnode = graph.get_node(NODE_PERSONA_BINDING, iid)
-            if pbnode and pbnode.data.get("capital_pool_id"):
-                capital_pool_ids.add(pbnode.data["capital_pool_id"])
-
-        elif itype == NODE_TELEMETRY_EVENT:
-            enode = graph.get_node(NODE_TELEMETRY_EVENT, iid)
-            if enode:
-                d = enode.data
-                if d.get("binding_id") or d.get("runtime_binding_id"):
-                    runtime_binding_ids.add(d.get("runtime_binding_id") or d.get("binding_id", ""))
-                if d.get("plan_id") or d.get("deployment_plan_id"):
-                    deployment_plan_ids.add(d.get("deployment_plan_id") or d.get("plan_id", ""))
-                if d.get("capital_pool_id"):
-                    capital_pool_ids.add(d["capital_pool_id"])
-                if d.get("persona_capital_binding_id"):
-                    persona_capital_binding_ids.add(d["persona_capital_binding_id"])
-                if d.get("artifact_id") and d.get("artifact_version"):
-                    artifact_refs_set.add(_artifact_ref(d["artifact_id"], d["artifact_version"]))
-                if d.get("trace_id"):
-                    trace_ids.add(d["trace_id"])
-                if d.get("strategy_id"):
-                    strategy_ids.add(d["strategy_id"])
-                if d.get("registry_id"):
-                    registry_ids.add(d["registry_id"])
-
-        elif itype == "artifact_ref":
-            artifact_refs_set.add(iid)
-
-        elif itype == "runtime_ref":
-            # Resolve runtime_ref back to binding(s)
-            for bnode in graph.nodes_by_type(NODE_RUNTIME_BINDING):
-                if bnode.data.get("runtime_id") == iid:
-                    runtime_binding_ids.add(bnode.node_id)
+        _merge_refs_from_node(
+            itype, iid, None,
+            graph,
+            strategy_ids, registry_ids, runtime_binding_ids,
+            deployment_plan_ids, capital_pool_ids,
+            persona_capital_binding_ids, artifact_refs_set, trace_ids,
+        )
 
     return {
         "strategy_ids": sorted(strategy_ids),
@@ -785,6 +750,82 @@ def _build_refs_from_chains(
         "artifact_refs": sorted(artifact_refs_set),
         "trace_ids": sorted(trace_ids),
     }
+
+
+def _merge_refs_from_node(
+    node_type: str,
+    node_id: str,
+    data: Optional[dict[str, Any]],
+    graph: LineageGraph,
+    strategy_ids: set[str],
+    registry_ids: set[str],
+    runtime_binding_ids: set[str],
+    deployment_plan_ids: set[str],
+    capital_pool_ids: set[str],
+    persona_capital_binding_ids: set[str],
+    artifact_refs_set: set[str],
+    trace_ids: set[str],
+) -> None:
+    """Merge semantic refs from a single node into the accumulator sets."""
+    if data is None:
+        node = graph.get_node(node_type, node_id)
+        if node is None:
+            return
+        data = node.data
+
+    if node_type == NODE_RUNTIME_BINDING:
+        runtime_binding_ids.add(node_id)
+        if data.get("capital_pool_id"):
+            capital_pool_ids.add(data["capital_pool_id"])
+        if data.get("plan_id"):
+            deployment_plan_ids.add(data["plan_id"])
+        if data.get("persona_capital_binding_id"):
+            persona_capital_binding_ids.add(data["persona_capital_binding_id"])
+        if data.get("artifact_id") and data.get("artifact_version"):
+            artifact_refs_set.add(_artifact_ref(data["artifact_id"], data["artifact_version"]))
+
+    elif node_type == NODE_DEPLOYMENT_PLAN:
+        deployment_plan_ids.add(node_id)
+        if data.get("capital_pool_id"):
+            capital_pool_ids.add(data["capital_pool_id"])
+        if data.get("binding_id"):
+            persona_capital_binding_ids.add(data["binding_id"])
+        if data.get("artifact_id") and data.get("artifact_version"):
+            artifact_refs_set.add(_artifact_ref(data["artifact_id"], data["artifact_version"]))
+
+    elif node_type == NODE_CAPITAL_POOL:
+        capital_pool_ids.add(node_id)
+
+    elif node_type == NODE_PERSONA_BINDING:
+        persona_capital_binding_ids.add(node_id)
+        if data.get("capital_pool_id"):
+            capital_pool_ids.add(data["capital_pool_id"])
+
+    elif node_type == NODE_TELEMETRY_EVENT:
+        if data.get("binding_id") or data.get("runtime_binding_id"):
+            runtime_binding_ids.add(data.get("runtime_binding_id") or data.get("binding_id", ""))
+        if data.get("plan_id") or data.get("deployment_plan_id"):
+            deployment_plan_ids.add(data.get("deployment_plan_id") or data.get("plan_id", ""))
+        if data.get("capital_pool_id"):
+            capital_pool_ids.add(data["capital_pool_id"])
+        if data.get("persona_capital_binding_id"):
+            persona_capital_binding_ids.add(data["persona_capital_binding_id"])
+        if data.get("artifact_id") and data.get("artifact_version"):
+            artifact_refs_set.add(_artifact_ref(data["artifact_id"], data["artifact_version"]))
+        if data.get("trace_id"):
+            trace_ids.add(data["trace_id"])
+        if data.get("strategy_id"):
+            strategy_ids.add(data["strategy_id"])
+        if data.get("registry_id"):
+            registry_ids.add(data["registry_id"])
+
+    elif node_type == "artifact_ref":
+        artifact_refs_set.add(node_id)
+
+    elif node_type == "runtime_ref":
+        for bnode in graph.nodes_by_type(NODE_RUNTIME_BINDING):
+            if bnode.data.get("runtime_id") == node_id:
+                runtime_binding_ids.add(bnode.node_id)
 
 
 def _enrich_runtime_binding_projection(
@@ -813,7 +854,10 @@ def _enrich_runtime_binding_projection(
             if item.get("type") == NODE_TELEMETRY_EVENT
         ]
 
-    refs = _build_refs_from_chains(result.upstream_chain, result.downstream_chain, graph)
+    refs = _build_refs_from_chains(
+        result.upstream_chain, result.downstream_chain, graph,
+        target_node=binding_node,
+    )
 
     return {
         "target_type": result.target_type,
@@ -881,7 +925,10 @@ def _enrich_capital_pool_projection(
                 "id": ",".join(active_binding_ids),
             })
 
-    refs = _build_refs_from_chains(result.upstream_chain, result.downstream_chain, graph)
+    refs = _build_refs_from_chains(
+        result.upstream_chain, result.downstream_chain, graph,
+        target_node=pool_node,
+    )
 
     return {
         "target_type": result.target_type,
@@ -965,7 +1012,10 @@ def _enrich_telemetry_event_trace(
                         "right": target_av,
                     })
 
-    refs = _build_refs_from_chains(result.upstream_chain, result.downstream_chain, graph)
+    refs = _build_refs_from_chains(
+        result.upstream_chain, result.downstream_chain, graph,
+        target_node=event_node,
+    )
 
     return {
         "target_type": result.target_type,
@@ -1062,7 +1112,10 @@ def _enrich_forensic_plan_trace(
     rb_count = len([i for i in result.downstream_chain if i.get("type") == NODE_RUNTIME_BINDING])
     evt_count = len([i for i in result.downstream_chain if i.get("type") == NODE_TELEMETRY_EVENT])
 
-    refs = _build_refs_from_chains(result.upstream_chain, result.downstream_chain, graph)
+    refs = _build_refs_from_chains(
+        result.upstream_chain, result.downstream_chain, graph,
+        target_node=plan_node,
+    )
 
     return {
         "target_type": result.target_type,

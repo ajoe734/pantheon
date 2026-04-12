@@ -3,5 +3,8 @@ __pycache__/
 
 .codex/
 .vscode/
+.orchestrator/config.local.json
 .orchestrator/backups/
 .orchestrator/logs/
+.orchestrator/planning-state.json
+docs-site/planning-state.json

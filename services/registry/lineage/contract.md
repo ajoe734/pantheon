@@ -21,6 +21,15 @@ metadata to support:
 
 This contract defines the execution-facing metadata shape for promoted artifacts.
 
+Compatibility note after `REG-004`:
+
+- canonical registry state is now `artifact_state`
+- canonical runtime placement is now `deployment_stage`
+- this document still describes the legacy execution-facing metadata envelope that current `REG-002` /
+  `EX-001` code emits via `promotion_state`
+- follow-on migration work will move this envelope to `artifact_state + deployment_stage` without
+  making this file the source of truth for registry lifecycle semantics
+
 Machine-readable schema:
 
 - `services/registry/lineage/promoted_artifact_metadata.schema.json`

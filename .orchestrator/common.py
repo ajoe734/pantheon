@@ -17,6 +17,12 @@ ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
+PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
+PLANNING_SHARED_FILES = [
+    ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "README.md",
+    ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "planning-session.json",
+    ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "pantheon-backend-completion-checklist.md",
+]
 
 
 def utc_now() -> str:
@@ -209,7 +215,7 @@ def spawn_background_process(
 
 
 def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "id": task.get(schema["task_id_field"]),
         "status": task.get(schema["status_field"]),
         "owner": task.get(schema["assignee_field"]),
@@ -218,6 +224,17 @@ def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any
         "next": task.get(schema.get("next_field", "next")),
         "last_update": task.get(schema.get("last_update_field", "last_update")),
     }
+    for key in (
+        "task_class",
+        "auto_generated",
+        "helper_parent",
+        "helper_kind",
+        "mutates_canonical",
+        "auto_created_by",
+    ):
+        if key in task:
+            payload[key] = task.get(key)
+    return payload
 
 
 def load_status(config: dict[str, Any]) -> dict[str, Any]:
@@ -230,6 +247,11 @@ def selected_shared_files(config: dict[str, Any]) -> list[Path]:
         path = config.get("paths", {}).get(key)
         if path:
             files.append(config_path(config, key))
+    planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
+    if str(planning_state.get("status") or "") in {"active", "human_required"}:
+        for path in PLANNING_SHARED_FILES:
+            if path.exists():
+                files.append(path)
     return files
 
 

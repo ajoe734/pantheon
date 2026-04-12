@@ -1,7 +1,10 @@
 # Work Rebaseline
 
-Last updated: 2026-04-02
-Status: corrected work breakdown after clarifying that several architecture boxes refer to real upstream OSS projects
+Last updated: 2026-04-09
+Status: historical rebasing note after clarifying that several architecture boxes refer to real upstream OSS projects
+Tier: L3 Supporting Design & Migration
+Scope: historical task-interpretation reset and audit rationale from the pre-canonical-tier cutover period
+Conflict rule: this file explains why the old work model changed, but active planning truth now lives in `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, and the L1 policy set
 
 ## 1. Why This Rebaseline Exists
 
@@ -189,4 +192,3 @@ No task that names an upstream OSS component should be treated as fully complete
 - dependency or repo path added
 - local adapter boundary defined
 - smoke test exists or is explicitly planned
-

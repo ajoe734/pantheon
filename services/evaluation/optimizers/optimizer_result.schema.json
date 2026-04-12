@@ -1,0 +1,334 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/optimizer-result/v1",
+  "title": "OptimizerResult",
+  "description": "Provenance artifact from a governed optimizer run that produces candidate artifacts",
+  "type": "object",
+  "required": [
+    "registry_id",
+    "artifact_type",
+    "strategy_id",
+    "optimizer_id",
+    "optimizer_version",
+    "optimizer_method",
+    "optimization_timestamp",
+    "optimization_objective",
+    "trigger",
+    "source_artifact",
+    "governance_inputs",
+    "optimization_run_config",
+    "output_artifacts",
+    "metrics"
+  ],
+  "properties": {
+    "registry_id": {
+      "type": "string",
+      "description": "Unique id for this optimizer_result entry in the registry"
+    },
+    "artifact_type": {
+      "type": "string",
+      "enum": ["optimizer_result"],
+      "description": "Always optimizer_result for optimizer run provenance artifacts"
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Stable family id of the strategy or policy being optimized"
+    },
+    "optimizer_id": {
+      "type": "string",
+      "description": "Stable id of the optimizer system (e.g., dspy_persona_optimizer_v1)"
+    },
+    "optimizer_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the optimizer implementation"
+    },
+    "optimizer_method": {
+      "type": "string",
+      "enum": [
+        "dspy_bootstrap_fewshot",
+        "imitation_bc",
+        "trl_ppo",
+        "rllib_ppo",
+        "finrl_ppo",
+        "stub"
+      ],
+      "description": "Optimization algorithm used"
+    },
+    "optimization_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp when the optimization run completed"
+    },
+    "optimization_objective": {
+      "type": "string",
+      "description": "The metric or outcome being optimized (e.g., intent_accuracy, sharpe_ratio)"
+    },
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "evaluation_recommendation",
+        "scheduled",
+        "manual",
+        "feedback_threshold",
+        "drift_detected"
+      ],
+      "description": "What initiated this optimization run"
+    },
+    "source_artifact": {
+      "type": "object",
+      "description": "The input artifact that was used as the optimization starting point",
+      "properties": {
+        "registry_id": {
+          "type": ["string", "null"],
+          "description": "Registry id of the source artifact; null for first-run artifacts with no prior incumbent"
+        },
+        "artifact_type": {
+          "type": "string",
+          "enum": [
+            "prompt_bundle",
+            "model_artifact",
+            "strategy_spec",
+            "feature_set",
+            "signal_snapshot"
+          ],
+          "description": "Type of the source artifact"
+        },
+        "version": {
+          "type": ["string", "null"],
+          "description": "Version of the source artifact; null for first-run artifacts"
+        },
+        "lifecycle_state": {
+          "type": ["string", "null"],
+          "enum": ["candidate", "paper", null],
+          "description": "Lifecycle state of the source artifact at time of run. Must be candidate or paper."
+        },
+        "checksum": {
+          "type": ["string", "null"],
+          "description": "Checksum of the source artifact for reproducibility"
+        }
+      },
+      "required": ["artifact_type"],
+      "additionalProperties": false
+    },
+    "governance_inputs": {
+      "type": "object",
+      "description": "Governed data sources consumed during the optimization run",
+      "properties": {
+        "feedback_events": {
+          "type": "object",
+          "description": "FB-002 trader feedback events consumed",
+          "properties": {
+            "event_types": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["approve", "edit", "reject", "rationale"]
+              }
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "window_start": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "window_end": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "store_path": {
+              "type": "string"
+            }
+          }
+        },
+        "telemetry_events": {
+          "type": "object",
+          "description": "FB-003 execution telemetry events consumed",
+          "properties": {
+            "event_types": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "window_start": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "window_end": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
+        "evaluation_results_referenced": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Registry ids of evaluation_result artifacts consulted before this run"
+        },
+        "preference_model_used": {
+          "type": "object",
+          "description": "Preference model artifact used for reward shaping, if any",
+          "properties": {
+            "model_artifact_id": { "type": "string" },
+            "model_version": { "type": "string" },
+            "lifecycle_state": {
+              "type": "string",
+              "enum": ["paper"],
+              "description": "Must be paper per LP-004 governance requirements"
+            }
+          },
+          "required": ["model_artifact_id", "model_version", "lifecycle_state"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "optimization_run_config": {
+      "type": "object",
+      "description": "Hyperparameters and configuration used for this run",
+      "minProperties": 1,
+      "properties": {
+        "max_iterations": { "type": "integer" },
+        "seed": { "type": "integer" },
+        "backend": { "type": "string" },
+        "metric": { "type": "string" },
+        "trainset_size": { "type": "integer" },
+        "valset_size": { "type": "integer" },
+        "extra_params": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "output_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "description": "All governed artifacts produced by this optimization run",
+      "items": {
+        "type": "object",
+        "required": [
+          "candidate_registry_id",
+          "artifact_type",
+          "version",
+          "lifecycle_state",
+          "checksum",
+          "storage_ref"
+        ],
+        "properties": {
+          "candidate_registry_id": {
+            "type": "string",
+            "description": "Registry id of the new candidate artifact"
+          },
+          "artifact_type": {
+            "type": "string",
+            "enum": [
+              "prompt_bundle",
+              "model_artifact",
+              "strategy_spec",
+              "feature_set",
+              "signal_snapshot",
+              "execution_bundle"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+$"
+          },
+          "lifecycle_state": {
+            "type": "string",
+            "enum": ["candidate"],
+            "description": "Must always be candidate; optimizers never self-promote to paper or live"
+          },
+          "checksum": { "type": "string" },
+          "storage_ref": {
+            "type": "object",
+            "required": ["backend", "path"],
+            "properties": {
+              "backend": {
+                "type": "string",
+                "enum": ["object_store", "gcs", "db", "inline"]
+              },
+              "path": { "type": "string" }
+            }
+          },
+          "metrics_snapshot": {
+            "type": "object",
+            "description": "Objective and secondary metric values for this output artifact",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["objective", "after"],
+      "description": "Before/after metric comparison for the optimization objective",
+      "properties": {
+        "objective": {
+          "type": "string",
+          "description": "Name of the primary optimization objective"
+        },
+        "before": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "Objective metric for the source artifact",
+              "properties": {
+                "artifact_id": { "type": "string" },
+                "value": { "type": "number" },
+                "measured_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            },
+            { "type": "null" }
+          ],
+          "description": "Objective metric for the source artifact; null for first-run artifacts with no prior incumbent"
+        },
+        "after": {
+          "type": "object",
+          "required": ["artifact_id", "value", "measured_at"],
+          "description": "Objective metric for the best output artifact",
+          "properties": {
+            "artifact_id": { "type": "string" },
+            "value": { "type": "number" },
+            "measured_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
+        "improvement_delta": {
+          "type": ["number", "null"],
+          "description": "after.value - before.value; null for first-run where before is unavailable"
+        },
+        "secondary_metrics": {
+          "type": "object",
+          "description": "Additional tracked metrics keyed by metric name",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "before": { "type": ["number", "null"] },
+              "after": { "type": "number" }
+            },
+            "required": ["after"]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Human-readable explanation of why this run was triggered and what it achieved"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Optimizer run identifier for cross-referencing with execution logs"
+    }
+  },
+  "additionalProperties": false
+}

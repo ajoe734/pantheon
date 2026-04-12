@@ -7,7 +7,7 @@
     "artifact_type",
     "strategy_id",
     "version",
-    "lifecycle_state",
+    "artifact_state",
     "lineage",
     "storage_ref",
     "checksum"
@@ -24,7 +24,10 @@
         "feature_set",
         "prompt_bundle",
         "signal_snapshot",
-        "execution_bundle"
+        "execution_bundle",
+        "evaluation_result",
+        "critique_result",
+        "optimizer_result"
       ]
     },
     "strategy_id": {
@@ -34,13 +37,12 @@
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
-    "lifecycle_state": {
+    "artifact_state": {
       "type": "string",
       "enum": [
         "draft",
         "candidate",
-        "paper",
-        "live",
+        "approved",
         "retired"
       ]
     },
@@ -100,15 +102,46 @@
     "evaluation_summary": {
       "type": "object"
     },
-    "approver": {
+    "approval_decision_id": {
       "type": "string"
     },
-    "promoted_at": {
+    "approver": {
+      "type": "string",
+      "$comment": "Temporary compatibility actor hint. GOV-001 will move approval authority into ApprovalDecision."
+    },
+    "approved_at": {
       "type": "string",
       "format": "date-time"
     },
     "rollback_target": {
       "type": "string"
+    },
+    "deployment_summary": {
+      "type": "object",
+      "properties": {
+        "current_stage": {
+          "type": "string",
+          "enum": [
+            "none",
+            "paper",
+            "canary",
+            "live",
+            "frozen"
+          ]
+        },
+        "deployment_plan_id": {
+          "type": "string"
+        },
+        "runtime_binding_id": {
+          "type": "string"
+        },
+        "last_transition_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true,
+      "$comment": "Derived deployment read model only. Deployment stage authority lives outside the registry entry."
     },
     "metadata": {
       "type": "object"

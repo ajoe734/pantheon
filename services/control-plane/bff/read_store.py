@@ -116,6 +116,10 @@ class CanonicalSnapshotAdapter:
         self._cache_meta[dataset] = (cache_key, stat)
         return True, normalized
 
+    def list_records(self, dataset: str) -> tuple[bool, List[Dict[str, Any]]]:
+        available, records = self._load_dataset(dataset)
+        return available, list(records.values())
+
     def deployment_plan(self, plan_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         available, records = self._load_dataset("deployment_plans")
         return available, records.get(plan_id)
@@ -199,7 +203,12 @@ def _default_read_data() -> Dict[str, Any]:
         "capital_pools": {
             "pool-main": {
                 "id": "pool-main",
+                "name": "Primary Capital Pool",
                 "status": "ready",
+                "owner_id": "ops-team",
+                "owner_type": "control-plane",
+                "single_runtime_enforced": True,
+                "risk_policy_ref": "risk-policy-main",
             }
         },
         "bindings": {
@@ -207,6 +216,10 @@ def _default_read_data() -> Dict[str, Any]:
                 "id": "binding-042",
                 "persona_id": "persona-alpha",
                 "capital_pool_id": "pool-main",
+                "role": "primary",
+                "validity": "active",
+                "status": "active",
+                "allowed_deployment_scope": "paper",
             }
         },
         "personas": {
@@ -223,30 +236,62 @@ def _default_read_data() -> Dict[str, Any]:
         "sessions": {
             "sess-001": {
                 "id": "sess-001",
+                "session_id": "sess-001",
                 "persona_id": "persona-alpha",
+                "session_type": "interactive",
                 "status": "active",
                 "started_at": "2026-04-11T08:00:00Z",
+                "capability_snapshot_id": "cap-001",
+                "trace_id": "trace-sess-001",
+                "request_id": "req-sess-001",
+                "runtime_binding_id": "runtime-042",
+                "deployment_stage": "paper",
+                "capital_pool_id": "pool-main",
                 "last_heartbeat_at": "2026-04-11T11:55:00Z",
                 "tools_enabled": ["signal_read", "artifact_load", "telemetry_query"],
                 "pool_scope": "pool-main",
             },
             "sess-002": {
                 "id": "sess-002",
+                "session_id": "sess-002",
                 "persona_id": "persona-alpha",
+                "session_type": "interactive",
                 "status": "idle",
                 "started_at": "2026-04-10T14:00:00Z",
+                "capability_snapshot_id": "cap-001",
+                "trace_id": "trace-sess-002",
+                "request_id": "req-sess-002",
+                "runtime_binding_id": "runtime-042",
+                "deployment_stage": "paper",
+                "capital_pool_id": "pool-main",
                 "last_heartbeat_at": "2026-04-10T18:00:00Z",
                 "tools_enabled": ["signal_read", "artifact_load"],
                 "pool_scope": "pool-main",
             },
         },
+        "capability_snapshots": {
+            "cap-001": {
+                "snapshot_id": "cap-001",
+                "persona_id": "persona-alpha",
+                "effective_tools": ["signal_read", "artifact_load", "telemetry_query"],
+                "effective_skills": ["risk_review", "incident_triage"],
+                "effective_workflows": ["promotion_review", "incident_response"],
+                "restrictions": ["no_live_trade_without_approval"],
+                "generated_at": "2026-04-11T07:55:00Z",
+                "source_refs": ["persona:persona-alpha", "policy:risk-policy-main"],
+            },
+        },
         "teaching_sessions": {
             "teach-001": {
                 "id": "teach-001",
+                "session_id": "teach-001",
                 "persona_id": "persona-alpha",
+                "opened_by": "operator-oncall",
+                "mode": "trainer",
                 "status": "completed",
                 "started_at": "2026-04-09T09:00:00Z",
                 "completed_at": "2026-04-09T09:45:00Z",
+                "current_control_state": "released",
                 "topic": "drawdown_threshold_tuning",
                 "operator_id": "operator-oncall",
                 "outcomes": [
@@ -260,9 +305,12 @@ def _default_read_data() -> Dict[str, Any]:
             "runtime-042": {
                 "id": "runtime-042",
                 "runtime_id": "runtime-042",
+                "deployment_mode": "paper",
                 "deployment_stage": "none",
                 "status": "idle",
                 "plan_id": "plan-F-042",
+                "artifact_id": "artifact-042",
+                "artifact_version": "v2.1.0",
             }
         },
         "rollbacks": {
@@ -593,6 +641,133 @@ class ReadSurfaceStore:
             and plan_status not in {"rejected", "aborted", "failed", "executed"}
         )
 
+    # ------------------------------------------------------------------ #
+    # Catalog list surfaces (PS/CP/DP/RT)
+    # ------------------------------------------------------------------ #
+
+    def list_personas(
+        self,
+        lifecycle_state: Optional[str] = None,
+        mandate: Optional[str] = None,
+        strategy_family: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        personas = list(self._data.get("personas", {}).values())
+        if lifecycle_state:
+            personas = [p for p in personas if p.get("lifecycle_state") == lifecycle_state]
+        if mandate:
+            personas = [p for p in personas if p.get("mandate") == mandate]
+        if strategy_family:
+            personas = [p for p in personas if p.get("strategy_family") == strategy_family]
+        return sorted(personas, key=lambda x: x.get("created_at", ""), reverse=True)
+
+    def list_capital_pools(
+        self,
+        status: Optional[str] = None,
+        risk_policy_ref: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, raw_pools = self._canonical.list_records("capital_pools")
+        if available:
+            pools = [self._project_canonical_capital_pool(pool) for pool in raw_pools]
+        else:
+            pools = list(self._data.get("capital_pools", {}).values())
+        if status:
+            pools = [p for p in pools if p.get("status") == status]
+        if risk_policy_ref:
+            pools = [p for p in pools if p.get("risk_policy_ref") == risk_policy_ref]
+        return sorted(pools, key=lambda x: x.get("id", ""))
+
+    def list_bindings(
+        self,
+        capital_pool_id: Optional[str] = None,
+        role: Optional[str] = None,
+        validity: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, raw_bindings = self._canonical.list_records("persona_bindings")
+        if available:
+            bindings = [self._project_canonical_binding(binding) for binding in raw_bindings]
+        else:
+            bindings = list(self._data.get("bindings", {}).values())
+        if capital_pool_id:
+            bindings = [b for b in bindings if b.get("capital_pool_id") == capital_pool_id]
+        if role:
+            bindings = [b for b in bindings if b.get("role") == role]
+        if validity:
+            bindings = [b for b in bindings if b.get("validity") == validity]
+        return sorted(bindings, key=lambda x: x.get("id", ""))
+
+    def list_deployment_plans(
+        self,
+        stage: Optional[str] = None,
+        target_pool_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, raw_plans = self._canonical.list_records("deployment_plans")
+        if available:
+            runtime_by_plan: Dict[str, Dict[str, Any]] = {}
+            runtime_available, raw_runtime = self._canonical.list_records("runtime_bindings")
+            if runtime_available:
+                for runtime in raw_runtime:
+                    plan_id = str(runtime.get("plan_id") or runtime.get("deployment_plan_id") or "")
+                    if plan_id:
+                        runtime_by_plan[plan_id] = runtime
+            plans = []
+            for raw in raw_plans:
+                plan_id = str(raw.get("plan_id") or raw.get("id") or "")
+                runtime_binding = runtime_by_plan.get(plan_id)
+                runtime_binding_id = None
+                if runtime_binding:
+                    runtime_binding_id = str(runtime_binding.get("binding_id") or runtime_binding.get("id") or "")
+                plans.append(self._project_canonical_deployment_plan(raw, runtime_binding_id))
+        else:
+            plans = list(self._data.get("deployment_plans", {}).values())
+        if stage:
+            plans = [p for p in plans if str(p.get("stage") or "").lower() == stage.lower()]
+        if target_pool_id:
+            plans = [
+                p for p in plans
+                if str(p.get("capital_pool_id") or p.get("target_pool_id") or "") == target_pool_id
+            ]
+        return sorted(plans, key=lambda x: x.get("id", ""))
+
+    def list_approval_decisions(
+        self,
+        outcome: Optional[str] = None,
+        reviewer: Optional[str] = None,
+        time_range: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, raw_decisions = self._canonical.list_records("approval_decisions")
+        if available:
+            decisions = [self._project_canonical_approval_decision(decision) for decision in raw_decisions]
+        else:
+            decisions = list(self._data.get("approval_decisions", {}).values())
+        if outcome:
+            decisions = [d for d in decisions if str(d.get("outcome") or "").lower() == outcome.lower()]
+        if reviewer:
+            decisions = [d for d in decisions if d.get("reviewer") == reviewer]
+        # time_range filtering deferred in v1
+        return sorted(decisions, key=lambda x: x.get("decided_at", ""), reverse=True)
+
+    def list_runtime_bindings(
+        self,
+        deployment_mode: Optional[str] = None,
+        version: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, raw_bindings = self._canonical.list_records("runtime_bindings")
+        if available:
+            bindings = [self._project_canonical_runtime_binding(binding) for binding in raw_bindings]
+        else:
+            bindings = list(self._data.get("runtime_bindings", {}).values())
+        if deployment_mode:
+            bindings = [
+                b for b in bindings
+                if str(b.get("deployment_stage") or b.get("deployment_mode") or "").lower() == deployment_mode.lower()
+            ]
+        if version:
+            bindings = [
+                b for b in bindings
+                if str(b.get("artifact_version") or b.get("version") or "") == version
+            ]
+        return sorted(bindings, key=lambda x: x.get("id", ""))
+
     def get_deployment_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
         available, raw = self._canonical.deployment_plan(plan_id)
         if available:
@@ -666,6 +841,21 @@ class ReadSurfaceStore:
         if available:
             return self._project_canonical_runtime_binding(raw) if raw else None
         return self._data.get("runtime_bindings", {}).get(binding_id)
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not runtime_id:
+            return None
+        available, raw_bindings = self._canonical.list_records("runtime_bindings")
+        if available:
+            for raw in raw_bindings:
+                raw_runtime_id = str(raw.get("runtime_id") or raw.get("binding_id") or raw.get("id") or "")
+                if raw_runtime_id == runtime_id:
+                    return self._project_canonical_runtime_binding(raw)
+            return None
+        for binding in self._data.get("runtime_bindings", {}).values():
+            if str(binding.get("runtime_id") or binding.get("id") or "") == runtime_id:
+                return binding
+        return None
 
     def get_rollbacks(self, runtime_id: Optional[str]) -> List[Dict[str, Any]]:
         if not runtime_id:
@@ -921,6 +1111,23 @@ class ReadSurfaceStore:
             if s.get("persona_id") == persona_id
         ]
 
+    def list_sessions_for_persona(
+        self,
+        persona_id: Optional[str],
+        status: Optional[str] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        sessions = self.get_sessions_for_persona(persona_id)
+        if sessions is None:
+            return None
+        if status:
+            sessions = [s for s in sessions if s.get("status") == status]
+        return sessions
+
+    def get_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        return self._data.get("sessions", {}).get(session_id)
+
     def get_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """PS-05: Return teaching sessions for a persona.
 
@@ -932,3 +1139,75 @@ class ReadSurfaceStore:
             s for s in self._data.get("teaching_sessions", []).values()
             if s.get("persona_id") == persona_id
         ]
+
+    def list_teaching_sessions_for_persona(
+        self,
+        persona_id: Optional[str],
+        status: Optional[str] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        sessions = self.get_teaching_sessions_for_persona(persona_id)
+        if sessions is None:
+            return None
+        if status:
+            sessions = [s for s in sessions if s.get("status") == status]
+        return sessions
+
+    def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not snapshot_id:
+            return None
+        return self._data.get("capability_snapshots", {}).get(snapshot_id)
+
+    def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        for snapshot in self._data.get("capability_snapshots", {}).values():
+            if snapshot.get("persona_id") == persona_id:
+                return snapshot
+        return None
+
+    def get_persona_allowed_actions(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Derive allowed actions for a persona based on lifecycle state and session status.
+
+        Returns None when the persona cannot be verified (degraded mode).
+        """
+        if not persona_id:
+            return None
+        persona = self.get_persona(persona_id)
+        if not persona:
+            return None
+
+        lifecycle_state = persona.get("lifecycle_state", "unknown")
+        sessions = self.get_sessions_for_persona(persona_id) or []
+        active_sessions = [s for s in sessions if s.get("status") == "active"]
+
+        actions: Dict[str, Any] = {}
+
+        # Persona lifecycle-based actions
+        if lifecycle_state == "draft":
+            actions["canActivate"] = True
+            actions["canEdit"] = True
+            actions["canDelete"] = True
+        elif lifecycle_state == "active":
+            actions["canActivate"] = False
+            actions["canEdit"] = True
+            actions["canDelete"] = False
+            actions["canRetire"] = True
+            actions["canPause"] = len(active_sessions) == 0
+        elif lifecycle_state == "retired":
+            actions["canActivate"] = False
+            actions["canEdit"] = False
+            actions["canDelete"] = False
+            actions["canRetire"] = False
+            actions["canPause"] = False
+
+        # Session-based actions
+        if active_sessions:
+            actions["canTerminateSession"] = True
+            actions["canPauseSession"] = True
+
+        # Teaching session inference
+        teaching_sessions = self.get_teaching_sessions_for_persona(persona_id) or []
+        if teaching_sessions:
+            actions["canViewTeachingHistory"] = True
+
+        return actions

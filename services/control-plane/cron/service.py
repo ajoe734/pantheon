@@ -4,18 +4,29 @@ import copy
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from models import OpenClawRuntimePin, WorkflowDefinition, WorkflowRunResult, utc_now
 from openclaw_client import OpenClawCronClient
 from schema_validation import validate_workflow_handoff
 from workflows import get_workflow_definition
 
-_PROMOTION_GATE_DIR = Path(__file__).resolve().parents[2] / "registry" / "promotion"
-if str(_PROMOTION_GATE_DIR) not in sys.path:
-    sys.path.insert(0, str(_PROMOTION_GATE_DIR))
+_GOVERNANCE_DIR = Path(__file__).resolve().parents[1] / "governance"
+if str(_GOVERNANCE_DIR) not in sys.path:
+    sys.path.insert(0, str(_GOVERNANCE_DIR))
 
-from gate import PromotionError, PromotionGate, PromotionState  # noqa: E402
+from deployment_plan import (  # noqa: E402
+    DeploymentPlanError,
+    DeploymentScale,
+    DeploymentStage,
+    RollbackRef,
+    RuntimeAction,
+    ScheduleWindow,
+    StagePlanner,
+)
+from deployment_saga import DeploymentSagaOrchestrator  # noqa: E402
+
+PromotionError = DeploymentPlanError
 
 
 def _compact_dict(payload: dict[str, Any]) -> dict[str, Any]:
@@ -29,10 +40,15 @@ class CronOrchestrator:
         self,
         client: OpenClawCronClient | None = None,
         runtime_pin: OpenClawRuntimePin | None = None,
-        promotion_gate_factory: Callable[[], PromotionGate] = PromotionGate,
+        stage_planner_factory: Callable[[], StagePlanner] = StagePlanner,
+        saga_orchestrator_factory: Callable[[], DeploymentSagaOrchestrator] = DeploymentSagaOrchestrator,
+        promotion_gate_factory: Callable[[], StagePlanner] | None = None,
     ):
         self.client = client or OpenClawCronClient(runtime_pin=runtime_pin)
-        self.promotion_gate_factory = promotion_gate_factory
+        # `promotion_gate_factory` is kept as a compatibility alias while callers
+        # migrate to canonical DeploymentPlan terminology.
+        self.stage_planner_factory = promotion_gate_factory or stage_planner_factory
+        self.saga_orchestrator_factory = saga_orchestrator_factory
 
     def run(self, workflow_id: str, payload: dict[str, Any], dry_run: bool = True) -> WorkflowRunResult:
         workflow = get_workflow_definition(workflow_id)
@@ -194,28 +210,75 @@ class CronOrchestrator:
         upstream_response: dict[str, Any],
     ) -> WorkflowRunResult:
         entry = copy.deepcopy(payload["registry_entry"])
-        target_state = PromotionState(payload["target_state"])
-        approver = payload.get("approver")
+        target_stage_raw = payload.get("target_stage") or payload.get("target_state")
+        if not target_stage_raw:
+            raise DeploymentPlanError("Deploy payload requires target_stage")
 
-        gate = self.promotion_gate_factory()
-        updated_entry = gate.promote(entry, target_state, approver=approver)
-        execution_projection = None
-        if hasattr(gate, "build_execution_projection"):
-            projection = gate.build_execution_projection(updated_entry)
-            execution_projection = {
-                "metadata_key": projection.metadata_key,
-                "artifact_key": projection.artifact_key,
-                "metadata": projection.metadata,
-            }
+        planner = self.stage_planner_factory()
+        target_stage = DeploymentStage(target_stage_raw)
+        approval_decision = payload.get("approval_decision")
+        approval_decision_id = (
+            payload.get("approval_decision_id")
+            or entry.get("approval_decision_id")
+            or (approval_decision or {}).get("decision_id")
+        )
+        if not approval_decision_id:
+            raise DeploymentPlanError(
+                "Deploy payload requires approval_decision_id or registry_entry.approval_decision_id"
+            )
+
+        plan = planner.create_plan(
+            plan_id=payload.get("plan_id", f"deployment-plan-{uuid.uuid4()}"),
+            approval_decision_id=approval_decision_id,
+            approval_decision=approval_decision,
+            registry_entry=entry,
+            capital_pool_id=payload["capital_pool_id"],
+            target_stage=target_stage,
+            current_stage=payload.get("current_stage"),
+            created_by=payload.get("created_by", workflow.workflow_id),
+            sponsor_persona_id=payload.get("sponsor_persona_id"),
+            runtime_config_ref=payload.get("runtime_config_ref"),
+            binding_id=payload.get("binding_id"),
+            schedule_window=_coerce_schedule_window(payload.get("schedule_window")),
+            scale=_coerce_scale(payload.get("scale")),
+            rollback=_resolve_rollback_ref(payload, entry),
+            pre_checks=payload.get("pre_checks"),
+            post_checks=payload.get("post_checks"),
+            metadata=payload.get("metadata"),
+            supersedes_plan_id=payload.get("supersedes_plan_id"),
+        )
+        projection = planner.build_execution_projection(plan, entry)
+        saga_bootstrap = self.saga_orchestrator_factory().bootstrap(
+            plan,
+            trace_id=dispatch_request.get("request_id", f"deploy-trace-{uuid.uuid4()}"),
+            metadata={
+                "workflow_id": workflow.workflow_id,
+                "source_task_id": payload.get("source_task_id"),
+            },
+        )
+        execution_projection = {
+            "metadata_key": projection.metadata_key,
+            "artifact_key": projection.artifact_key,
+            "metadata": projection.metadata,
+        }
+        updated_entry = planner.normalize_registry_entry(entry)
+        updated_entry["deployment_summary"] = {
+            "current_stage": target_stage.value,
+            "deployment_plan_id": plan.plan_id,
+            "last_transition_at": plan.created_at,
+        }
 
         deployment_request = {
+            "plan": plan.to_dict(),
             "strategy_id": updated_entry["strategy_id"],
             "version": updated_entry["version"],
-            "target_state": updated_entry["lifecycle_state"],
-            "execution_context": "live" if updated_entry["lifecycle_state"] == "live" else workflow.execution_context,
+            "target_stage": target_stage.value,
+            "execution_context": _execution_context_for_stage(target_stage),
             "artifact_loader_contract": "EX-001",
-            "promotion_gate": "REG-002",
+            "deployment_contract": "DEP-001",
+            "consistency_contract": "DEP-002",
             "execution_projection": execution_projection,
+            "deployment_saga": saga_bootstrap.to_dict(),
         }
 
         return WorkflowRunResult(
@@ -225,7 +288,59 @@ class CronOrchestrator:
             registry_entry=updated_entry,
             deployment_request=deployment_request,
             notes=[
-                "Deploy is promotion-gated before any execution projection is emitted.",
+                "Deploy creates a first-class DeploymentPlan before any execution projection is emitted.",
+                "Deploy bootstraps a DeploymentSaga and first outbox event atomically with the saga aggregate.",
+                "Rollback linkage is explicit on every active-stage DeploymentPlan.",
                 "No direct LEAN call is allowed from cron deploy.",
             ],
         )
+
+
+def _execution_context_for_stage(target_stage: DeploymentStage) -> str:
+    if target_stage == DeploymentStage.PAPER:
+        return "paper"
+    if target_stage in {DeploymentStage.CANARY, DeploymentStage.LIVE}:
+        return "live"
+    return "status"
+
+
+def _coerce_schedule_window(value: Any) -> ScheduleWindow | None:
+    if isinstance(value, Mapping):
+        return ScheduleWindow.from_dict(value)
+    return None
+
+
+def _coerce_scale(value: Any) -> DeploymentScale | None:
+    if isinstance(value, Mapping):
+        return DeploymentScale.from_dict(value)
+    return None
+
+
+def _resolve_rollback_ref(payload: Mapping[str, Any], entry: Mapping[str, Any]) -> RollbackRef | None:
+    explicit = payload.get("rollback")
+    if isinstance(explicit, Mapping):
+        return RollbackRef.from_dict(explicit)
+
+    action_type = payload.get("rollback_action", RuntimeAction.REPLACE_BINDING.value)
+    metadata = entry.get("metadata")
+    if isinstance(metadata, Mapping):
+        rollback = metadata.get("rollback")
+        if isinstance(rollback, Mapping):
+            return RollbackRef(
+                target_artifact_id=str(rollback["target_registry_id"]),
+                target_version=str(rollback["target_version"]),
+                action_type=action_type,
+                reason=rollback.get("reason"),
+                verified_at=rollback.get("verified_at"),
+            )
+
+        if metadata.get("rollback_target_registry_id") and entry.get("rollback_target"):
+            return RollbackRef(
+                target_artifact_id=str(metadata["rollback_target_registry_id"]),
+                target_version=str(entry["rollback_target"]),
+                action_type=action_type,
+                reason=metadata.get("rollback_reason"),
+                verified_at=metadata.get("rollback_verified_at"),
+            )
+
+    return None

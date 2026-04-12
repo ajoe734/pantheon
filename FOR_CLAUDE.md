@@ -8,6 +8,11 @@ Read these files first:
 1. `AI_COLLABORATION_GUIDE.md`
 2. `current-work.md`
 3. `ai-status.json`
+4. `TARGET_ARCHITECTURE.md`
+5. `CANONICAL_DOCUMENT_MAP.md`
+6. `ROADMAP.md`
+7. `DEVELOPMENT_WORKBREAKDOWN.md`
+8. the L1 policy file that matches your task
 
 Dashboard:
 
@@ -24,16 +29,8 @@ Capability lane:
 - governance review
 
 Current sprint work lives in `ai-status.json`.
-
 Do not trust static task names inside this brief over the live task board.
 If this file and `ai-status.json` disagree, `ai-status.json` wins.
-
-Do not start implementation that depends on missing upstream contracts until:
-
-- `P1-001` SignalStoreClient contract is available
-- `P2-001` signal JSON schema is available
-
-Until then, you can still prepare skeletons, contract notes, and review criteria.
 
 ## Required lifecycle
 
@@ -92,6 +89,7 @@ Prefer these areas unless the task explicitly says otherwise:
 
 - `services/execution/`
 - `services/control-plane/`
+- governance, runtime, and rollback semantics
 
 If you need a change in another agent's area:
 

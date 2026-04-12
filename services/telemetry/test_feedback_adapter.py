@@ -903,5 +903,130 @@ class TestAdapterSchemaCompliance(unittest.TestCase):
                 self.assertNotIn(event["event_type"], {"approve", "edit", "reject", "rationale"})
 
 
+class TestLineageReadModel(unittest.TestCase):
+    """LIN-001 regression tests for telemetry-derived lineage normalization."""
+
+    def test_query_lineage_records_normalizes_semantic_refs(self):
+        """Telemetry raw fields must normalize to semantic read-model fields."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-lineage-1",
+            "event_type": "deploy_completed",
+            "created_at": "2026-04-10T01:02:03Z",
+            "execution_mode": "live",
+            "binding_id": "rb-001",
+            "runtime_id": "runtime-001",
+            "capital_pool_id": "pool-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "1.2.3",
+            "deployment_stage": "canary",
+            "plan_id": "plan-001",
+            "persona_capital_binding_id": "pcb-001",
+            "trace_id": "trace-001",
+            "target": {
+                "strategy_id": "strat-lineage",
+                "registry_id": "reg-001",
+                "promotion_state": "live",
+                "lineage_ref": "approval-001",
+            },
+            "metrics": {"action": "deploy_completed"},
+        }
+        adapter.ingest_telemetry_event(event, "strat-lineage", "live")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-001")
+        self.assertEqual(len(records), 1)
+
+        record = records[0]
+        self.assertTrue(record["derived_only"])
+        self.assertEqual(record["runtime_binding_id"], "rb-001")
+        self.assertEqual(record["deployment_plan_id"], "plan-001")
+        self.assertEqual(record["persona_capital_binding_id"], "pcb-001")
+        self.assertEqual(record["deployment_stage"], "canary")
+        self.assertEqual(record["artifact_ref"], "artifact-001@1.2.3")
+        self.assertEqual(record["lineage_ref"], "approval-001")
+        self.assertEqual(record["conflict_markers"], [])
+
+    def test_query_lineage_records_accepts_alias_fields_from_shared_store(self):
+        """Legacy/semantic alias fields should still normalize into one read record."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_file = Path(tmpdir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+
+            adapter.feedback_store.append(
+                {
+                    "event_id": "evt-lineage-legacy",
+                    "event_type": "heartbeat",
+                    "created_at": "2026-04-10T02:00:00Z",
+                    "execution_mode": "live",
+                    "runtime_binding_id": "rb-legacy-001",
+                    "deployment_plan_id": "plan-legacy-001",
+                    "runtime_id": "runtime-legacy",
+                    "capital_pool_id": "pool-legacy",
+                    "persona_capital_binding_id": "pcb-legacy-001",
+                    "artifact_id": "artifact-legacy",
+                    "artifact_version": "9.9.9",
+                    "environment": "live",
+                    "trace_id": "trace-legacy",
+                    "target": {
+                        "strategy_id": "strat-legacy",
+                        "registry_id": "reg-legacy",
+                        "promotion_state": "live",
+                    },
+                    "metrics": {"heartbeat": 1},
+                }
+            )
+
+            records = adapter.query_lineage_records("runtime_binding", "rb-legacy-001")
+            self.assertEqual(len(records), 1)
+
+            record = records[0]
+            self.assertEqual(record["runtime_binding_id"], "rb-legacy-001")
+            self.assertEqual(record["deployment_plan_id"], "plan-legacy-001")
+            self.assertEqual(record["deployment_stage"], "live")
+            self.assertEqual(record["artifact_ref"], "artifact-legacy@9.9.9")
+
+    def test_build_lineage_summary_reports_alias_conflicts(self):
+        """Derived summaries must surface alias drift instead of hiding it."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-lineage-conflict",
+            "event_type": "rollback_completed",
+            "created_at": "2026-04-10T03:00:00Z",
+            "execution_mode": "live",
+            "binding_id": "rb-raw-001",
+            "runtime_binding_id": "rb-semantic-001",
+            "runtime_id": "runtime-conflict",
+            "capital_pool_id": "pool-conflict",
+            "artifact_id": "artifact-conflict",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "live",
+            "environment": "paper",
+            "plan_id": "plan-raw-001",
+            "deployment_plan_id": "plan-semantic-001",
+            "persona_capital_binding_id": "pcb-conflict-001",
+            "target": {
+                "strategy_id": "strat-conflict",
+                "registry_id": "reg-conflict",
+                "promotion_state": "live",
+                "artifact_version": "2.0.0",
+            },
+            "metrics": {"action": "rollback_completed"},
+        }
+        adapter.ingest_telemetry_event(event, "strat-conflict", "live")
+
+        summary = adapter.build_lineage_summary("runtime_binding", "rb-semantic-001")
+        self.assertTrue(summary["derived_only"])
+        self.assertEqual(summary["record_count"], 1)
+        self.assertEqual(summary["refs"]["runtime_binding_ids"], ["rb-semantic-001"])
+        self.assertEqual(summary["refs"]["deployment_plan_ids"], ["plan-semantic-001"])
+        self.assertEqual(summary["event_type_counts"], {"rollback_completed": 1})
+
+        conflict_codes = {marker["code"] for marker in summary["conflict_markers"]}
+        self.assertIn("runtime_binding_alias_mismatch", conflict_codes)
+        self.assertIn("deployment_plan_alias_mismatch", conflict_codes)
+        self.assertIn("deployment_stage_alias_mismatch", conflict_codes)
+        self.assertIn("artifact_version_target_mismatch", conflict_codes)
+
+
 if __name__ == "__main__":
     unittest.main()

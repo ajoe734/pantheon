@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-09-phased-platform-execution",
   "objective": "Activate the full Pantheon platform backlog in ai-status so agents can execute continuously by dependency order while preserving canonical policy truth, owner/reviewer defaults, and phased delivery sequencing.",
-  "updated_at": "2026-04-12T01:25:38Z",
+  "updated_at": "2026-04-12T02:20:27Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -83,10 +83,8 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
       "next": "Supervisor auto-started APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF after successful dispatch.",
       "last_update": "2026-04-11T23:07:46Z"
@@ -3233,7 +3231,7 @@
       "phase": "Phase 5: APP-002 Execution Wave 4",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": [
         "APP-002-W4-PERSONA-MGMT"
       ],
@@ -3245,14 +3243,15 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-04-11T23:07:46Z",
+      "next": "Stale Claude approval lane cleaned up. Codex created the missing sidecar handoff packet, reran the W4 catalog test successfully, and absorbed this auto-generated helper without needing a separate worker run.",
+      "last_update": "2026-04-12T02:20:27Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "APP-002-W4-REMAINING-CATALOG",
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "terminal_outcome": "superseded"
     },
     {
       "id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
@@ -6948,12 +6947,12 @@
   "workload_summary": {
     "Claude": {
       "total": 6,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
-      "done": 5,
+      "done": 6,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 3,

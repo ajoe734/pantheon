@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon DeploymentPlan",
+  "type": "object",
+  "required": [
+    "plan_id",
+    "approval_decision_id",
+    "artifact_id",
+    "artifact_version",
+    "artifact_type",
+    "strategy_id",
+    "capital_pool_id",
+    "current_stage",
+    "target_stage",
+    "transition_type",
+    "runtime_action",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "plan_id": {
+      "type": "string"
+    },
+    "approval_decision_id": {
+      "type": "string"
+    },
+    "artifact_id": {
+      "type": "string"
+    },
+    "artifact_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "artifact_type": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "capital_pool_id": {
+      "type": "string"
+    },
+    "current_stage": {
+      "type": "string",
+      "enum": ["none", "paper", "canary", "live", "frozen"]
+    },
+    "target_stage": {
+      "type": "string",
+      "enum": ["paper", "canary", "live", "frozen"]
+    },
+    "transition_type": {
+      "type": "string",
+      "enum": ["activate", "promote", "rollback", "freeze", "resume"]
+    },
+    "runtime_action": {
+      "type": "string",
+      "enum": [
+        "deploy_new_binding",
+        "replace_binding",
+        "freeze_binding",
+        "resume_binding",
+        "pause_then_replace",
+        "liquidate_then_replace"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "approved", "executing", "executed", "aborted", "rejected", "failed"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "sponsor_persona_id": {
+      "type": "string"
+    },
+    "runtime_config_ref": {
+      "type": "string"
+    },
+    "binding_id": {
+      "type": "string"
+    },
+    "schedule_window": {
+      "type": "object",
+      "required": ["start_at"],
+      "properties": {
+        "start_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scale": {
+      "type": "object",
+      "required": ["capital_scale_pct", "gross_scale_pct"],
+      "properties": {
+        "capital_scale_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "gross_scale_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "ramp_schedule": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rollback": {
+      "type": "object",
+      "required": ["target_artifact_id", "target_version", "action_type"],
+      "properties": {
+        "target_artifact_id": {
+          "type": "string"
+        },
+        "target_version": {
+          "type": "string"
+        },
+        "action_type": {
+          "type": "string",
+          "enum": ["replace", "pause_then_replace", "liquidate_then_replace"]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "verified_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pre_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "post_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "supersedes_plan_id": {
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "target_stage": {
+            "enum": ["paper", "canary", "live"]
+          }
+        }
+      },
+      "then": {
+        "required": ["rollback"]
+      }
+    }
+  ]
+}

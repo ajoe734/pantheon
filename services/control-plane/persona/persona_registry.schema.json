@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon Persona",
+  "description": "Registry persona object — the static, governance truth for a persona's identity, mandate, and policy references.",
+  "type": "object",
+  "required": [
+    "persona_id",
+    "name",
+    "mandate",
+    "lifecycle_state",
+    "created_at"
+  ],
+  "properties": {
+    "persona_id": {
+      "type": "string",
+      "description": "Immutable unique identifier for this persona."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable display name."
+    },
+    "mandate": {
+      "type": "string",
+      "description": "Operating mandate — strategy scope and constraints for this persona."
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "research_only",
+        "consultable",
+        "paper_owner",
+        "live_owner",
+        "frozen",
+        "retired"
+      ],
+      "description": "Current governance lifecycle state."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp (UTC ISO-8601)."
+    },
+    "strategy_family": {
+      "type": "string",
+      "description": "Optional strategy family tag (e.g. momentum, mean_reversion)."
+    },
+    "workspace_ref": {
+      "type": "string",
+      "description": "Reference to this persona's private workspace."
+    },
+    "tool_profile_id": {
+      "type": "string",
+      "description": "Reference to the persona's tool profile. Resolved at session time into a CapabilitySnapshot."
+    },
+    "route_policy_id": {
+      "type": "string",
+      "description": "Reference to the route policy document. Resolved at session time."
+    },
+    "consult_policy_id": {
+      "type": "string",
+      "description": "Reference to the consult policy document. Enforced at session creation."
+    },
+    "owner": {
+      "type": "string",
+      "description": "Governance operator who owns this persona record."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "suspended", "archived"],
+      "description": "Administrative status of this persona record.",
+      "default": "active"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp (UTC ISO-8601)."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary governance metadata."
+    }
+  },
+  "additionalProperties": false
+}

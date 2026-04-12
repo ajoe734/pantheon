@@ -126,6 +126,8 @@ When this spike becomes implementation, create:
 
 ## Remaining Open Questions
 
-- Which exact upstream release should be the first production pin?
-- Should OpenClaw hand outputs to this repo over files, HTTP, or queue messages?
-- Which workflow family should be the first smoke test: research intake, approval, or deployment?
+All open questions have been resolved in `integrations/openclaw/integration.md` §7:
+
+- **Pinned release**: `v2026.4.7` (SHA `5050017`) — resolved by OSS-001
+- **Transport**: Deferred to adapter implementation phase — integration.md §7 tracks this
+- **First smoke test workflow**: research-intake (ingest) — defined in smoke_test.md §3 Step 2

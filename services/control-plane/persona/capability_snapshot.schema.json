@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon CapabilitySnapshot",
+  "description": "Effective capability set computed once at session start. Immutable for the session lifetime — policy changes in the registry do not affect an in-flight session.",
+  "type": "object",
+  "required": [
+    "snapshot_id",
+    "persona_id",
+    "generated_at"
+  ],
+  "properties": {
+    "snapshot_id": {
+      "type": "string",
+      "description": "Unique identifier for this snapshot."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "Persona this snapshot was computed for."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the snapshot was computed (UTC ISO-8601)."
+    },
+    "effective_tools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of tool names/IDs allowed in this session.",
+      "default": []
+    },
+    "effective_skills": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of skill names/IDs allowed in this session.",
+      "default": []
+    },
+    "effective_workflows": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of workflow names/IDs allowed in this session.",
+      "default": []
+    },
+    "restrictions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of explicit restrictions applied to this session.",
+      "default": []
+    },
+    "source_refs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Policy document refs used to compute this snapshot (route_policy, consult_policy, RBAC rules).",
+      "default": []
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary metadata."
+    }
+  },
+  "additionalProperties": false
+}

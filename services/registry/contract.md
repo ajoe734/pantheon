@@ -1,9 +1,9 @@
 # Strategy and Model Registry Contract
 
-**Task:** REG-001  
+**Task:** REG-001 foundation, updated by REG-004  
 **Owner:** Codex  
-**Reviewer:** Gemini  
-**Status:** DRAFT — skeleton ready for registry and promotion review
+**Reviewer:** Claude  
+**Status:** DRAFT — canonical registry semantics now split artifact governance from deployment stage
 
 ---
 
@@ -15,11 +15,17 @@ It exists so that:
 
 - strategy evolution is versioned
 - lineage is traceable
-- promotion state is explicit
-- rollback is possible
-- LEAN execution never loads an unapproved artifact
+- artifact governance maturity is explicit
+- rollback defaults are explicit
+- LEAN execution never loads an artifact that is not governance-approved
 
-This contract defines the registry object model before implementation details or storage backend choices are finalized.
+`REG-004` changes one important rule from the earlier registry draft:
+
+- `artifact_state` is the registry lifecycle
+- `deployment_stage` is a separate deployment/runtime concern
+
+The registry may reference deployment facts, but it must not collapse deployment stage into the
+artifact lifecycle again.
 
 Machine-readable entry schema:
 
@@ -39,39 +45,75 @@ The registry must support more than one artifact class.
 | `prompt_bundle` | persona optimization output such as DSPy program |
 | `signal_snapshot` | versioned signal or allocation snapshot |
 | `execution_bundle` | deployable package that execution consumes |
+| `evaluation_result` | evaluator-produced advisory assessment payload |
+| `critique_result` | critic-produced rationale and risk assessment payload |
+| `optimizer_result` | optimizer-run provenance artifact (EV-002) |
 
-Not every artifact is executable, but every artifact uses the same lifecycle vocabulary.
+Not every artifact is executable, but every artifact uses the same governance vocabulary.
+Not every artifact traverses every deployment stage.
+
+- executable artifacts may be deployed to `paper`, `canary`, or `live` only after they are `approved`
+- reference artifacts such as `evaluation_result`, `critique_result`, and `optimizer_result` are governed but non-executable, and in v1 normally remain `candidate` or `approved` until superseded or explicitly `retired`
 
 ---
 
-## 3. Lifecycle States
+## 3. Canonical Artifact State
 
-Minimum states:
+The registry lifecycle is now:
 
-| State | Meaning |
+| `artifact_state` | Meaning |
 |---|---|
 | `draft` | created but not yet replication-ready |
-| `candidate` | passed initial normalization or replication gate |
-| `paper` | approved for paper execution |
-| `live` | approved for live execution |
-| `retired` | no longer valid for promotion or loading |
+| `candidate` | passed normalization or replication gate and is ready for governance review |
+| `approved` | governance approved the artifact for possible deployment |
+| `retired` | no longer valid for approval, deployment planning, or new loading |
 
-### Allowed transitions
+### Allowed artifact-state transitions
 
 ```text
 draft -> candidate
-candidate -> paper
-paper -> live
-live -> retired
-paper -> retired
+candidate -> approved
+approved -> retired
 candidate -> retired
+draft -> retired
 ```
 
-Rollback is not a new state. It is a transition to a previously approved entry referenced by `rollback_target`.
+Rules:
+
+- `approved` replaces the older registry meaning that was previously encoded as `paper` or `live`
+- rollback is not an `artifact_state` transition
+- rollback means re-binding runtime to a different already `approved` artifact through deployment/runtime objects
 
 ---
 
-## 4. Registry Entry Model
+## 4. Deployment Stage Is Separate
+
+Pantheon tracks actual deployment separately from registry state.
+
+Canonical `deployment_stage` values are:
+
+- `none`
+- `paper`
+- `canary`
+- `live`
+- `frozen`
+
+Ownership rules:
+
+- registry owns `artifact_state`
+- governance/deployment own `DeploymentPlan`
+- execution owns `RuntimeBinding`
+- any deployment-stage summary attached to a registry view is derived and non-authoritative
+
+Consequences:
+
+- `paper`, `canary`, and `live` no longer appear in the registry lifecycle enum
+- an artifact may be `approved` while still at deployment stage `none`
+- `frozen` is a deployment/runtime condition, not a registry state
+
+---
+
+## 5. Registry Entry Model
 
 Each registry entry must contain these fields:
 
@@ -81,20 +123,38 @@ Each registry entry must contain these fields:
 | `artifact_type` | yes | one of the artifact types in §2 |
 | `strategy_id` | yes | stable strategy family identifier |
 | `version` | yes | semantic version for the artifact entry |
-| `lifecycle_state` | yes | `draft`, `candidate`, `paper`, `live`, `retired` |
+| `artifact_state` | yes | `draft`, `candidate`, `approved`, `retired` |
 | `lineage` | yes | source runs, parent entries, or upstream artifacts |
 | `storage_ref` | yes | where the artifact bytes or payload live |
 | `checksum` | yes | integrity check for the artifact payload |
 | `producer_run_id` | no | training, optimization, or ingest run id |
 | `evaluation_summary` | no | evaluator outputs and scores |
-| `approver` | no | who approved promotion |
-| `promoted_at` | no | when current lifecycle state was granted |
-| `rollback_target` | no | prior approved version safe to revert to |
+| `approval_decision_id` | no | canonical approval object ref once `GOV-001` lands |
+| `approved_at` | no | when the artifact entered `approved` state |
+| `approver` | no | temporary compatibility actor hint until `ApprovalDecision` is first-class |
+| `rollback_target` | no | prior approved version safe to rebind during deployment rollback |
+| `deployment_summary` | no | derived read-model view of current stage / binding refs; not authoritative |
 | `metadata` | no | non-governing supplemental fields |
+
+Notes:
+
+- once `GOV-001` lands, `approval_decision_id` becomes the canonical authority for `approved`
+- `deployment_summary` may cache the latest deployment read model, but registry writers must not treat it as source truth
+
+### Suggested `deployment_summary` shape
+
+If a read model is embedded with a registry entry, the summary should be treated as read-only and may contain:
+
+| Field | Required | Description |
+|---|---|---|
+| `current_stage` | no | `none`, `paper`, `canary`, `live`, or `frozen` |
+| `deployment_plan_id` | no | current or last applied `DeploymentPlan` |
+| `runtime_binding_id` | no | active `RuntimeBinding` when present |
+| `last_transition_at` | no | last deployment-stage transition time |
 
 ---
 
-## 5. Lineage Requirements
+## 6. Lineage Requirements
 
 `lineage` is required because the registry is not just storage. It is audit and causality.
 
@@ -107,67 +167,58 @@ Minimum lineage subfields:
 | `source_dataset_refs` | no | dataset or feature store references |
 | `source_strategy_spec_id` | no | originating StrategySpec when applicable |
 
-If an artifact reaches `paper` or `live`, lineage must not be empty.
+If an artifact reaches `approved`, lineage must not be empty.
 
 ---
 
-## 6. Execution Projection
+## 7. Execution Projection and Deployment View
 
-`EX-001` requires a lean execution-facing metadata document in Object Store.
+`EX-001` still needs a LEAN-facing metadata document in Object Store, but the canonical target
+projection is now deployment-aware.
 
-That `metadata.json` is a projection of registry state, not a separate source of truth.
+That `metadata.json` remains a projection of registry + deployment truth, not a separate source of truth.
 
-Minimum execution projection fields:
+### Canonical target fields for loader-facing metadata
 
-| Registry field | Execution projection field |
+| Source of truth | Projected field |
 |---|---|
-| `strategy_id` | `strategy_id` |
-| `version` | `version` |
-| `lifecycle_state` | `promotion_state` |
-| `checksum` | `checksum` |
-| `promoted_at` | `approved_at` |
-| `lineage` | `lineage` |
+| registry `strategy_id` | `strategy_id` |
+| registry `version` | `version` |
+| registry `artifact_state` | `artifact_state` |
+| deployment/runtime read model | `deployment_stage` |
+| registry `checksum` | `checksum` |
+| registry `approved_at` | `approved_at` |
+| registry `lineage` | `lineage` |
 
-This keeps registry governance and EX-001 artifact loading aligned.
+### Canonical loader-facing rules
 
-`REG-003` tightens this projection with a canonical promoted-artifact metadata schema:
+The projection must make these checks possible without extra registry calls:
 
-- `services/registry/lineage/promoted_artifact_metadata.schema.json`
-- compatibility alias: `artifact_metadata_schema.json`
+- runtime loading requires `artifact_state=approved`
+- `paper` mode may only load artifacts with `deployment_stage=paper`
+- `canary` mode may only load artifacts with `deployment_stage=canary`
+- `live` mode may only load artifacts with `deployment_stage=live`
+- `candidate`, `retired`, `none`, and `frozen` must be rejected for new execution loads
 
-### v1 Object Store projection requirements
+### Compatibility window
 
-To stay compatible with the current `EX-001` draft, the registry must be able to
-materialize the following keys:
+Current `REG-002` / `REG-003` / `EX-001` code paths still emit legacy `lifecycle_state` and
+`promotion_state` fields. During the migration window:
+
+- `lifecycle_state` and `promotion_state` are legacy compatibility fields only
+- new registry contracts must treat `artifact_state` / `deployment_stage` as canonical
+- follow-on tasks `GOV-001`, `DEP-001`, and execution-side contract updates will migrate the code path to the new projection envelope
+
+### v1 Object Store key continuity
+
+To avoid breaking the current path shape, the canonical Object Store keys remain:
 
 - `openclaw/registry/{strategy_id}/{version}/metadata.json`
 - `openclaw/registry/{strategy_id}/{version}/artifact.bin`
 
-And the projected `metadata.json` must satisfy these minimum rules:
-
-| Field | Requirement |
-|---|---|
-| `strategy_id` | required string |
-| `version` | required semantic version string (`x.y.z`) |
-| `promotion_state` | required enum: `candidate`, `paper`, `live`, `retired` |
-| `checksum` | required sha256 or equivalent strong checksum |
-| `approved_at` | optional RFC3339 timestamp |
-| `lineage` | optional object, but should be present for `paper` and `live` entries |
-
-### Loader-facing rejection semantics
-
-The registry projection must make these loader checks possible without extra registry calls:
-
-- `paper` mode may only load artifacts with `promotion_state=paper`
-- `live` mode may only load artifacts with `promotion_state=live`
-- `candidate` and `retired` must be rejected before artifact body load proceeds
-
-This is important because LEAN execution should validate governance state from the
-projected metadata and should not need to know the registry backend.
-
 ---
 
-## 7. Minimal Operations
+## 8. Minimal Operations
 
 The storage backend is still open, but the logical operations are not.
 
@@ -176,31 +227,32 @@ The storage backend is still open, but the logical operations are not.
 | `register(entry)` | create a new `draft` or `candidate` entry |
 | `get(registry_id)` | read one entry |
 | `list_by_strategy(strategy_id)` | enumerate versions within a strategy family |
-| `promote(registry_id, target_state)` | transition an entry through governed lifecycle checks |
-| `resolve_live(strategy_id)` | return the currently live entry for a strategy |
-| `resolve_paper(strategy_id)` | return the currently paper-approved entry |
+| `advance_artifact_state(registry_id, target_state)` | transition an entry through governed artifact-state checks |
+| `resolve_latest_approved(strategy_id)` | return the newest approved entry for a strategy |
+| `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
+
+`resolve_deployment_view()` is a composed read path, not a registry-only write authority.
 
 ---
 
-## 8. Open Items Held for Later Lock
+## 9. Open Items Held for Later Lock
 
-This skeleton is intentionally ahead of `OC-003`.
-Before final lock, REG-001 must absorb:
+This contract is now aligned to the canonical architecture, but several follow-on objects still need to land:
 
-- StrategySpec handoff fields from `OC-003`
-- evaluator output shape from `EV-001`
-- promotion gate enforcement details from `REG-002`
-- finalized promoted-artifact lineage and rollback requirements from `REG-003`
-- any finalized Object Store metadata requirements from `EX-001`
+- `ApprovalDecision` schema and write authority from `GOV-001`
+- `DeploymentPlan` contract and stage planner from `DEP-001`
+- migration of `REG-002` / `REG-003` / `EX-001` metadata from `promotion_state` to `artifact_state + deployment_stage`
+- experiment-backend mirroring updates in `LP-003`
+- any additional canary/frozen runtime requirements once runtime-manager semantics are locked
 
-That is why this task is a contract skeleton first, not the final lifecycle implementation.
+That is why this task is still contract-first rather than a full implementation migration.
 
 ---
 
-## 9. Review Focus
+## 10. Review Focus
 
-Gemini should review this contract for:
+Claude should review this contract for:
 
-- compatibility with EX-001 artifact metadata projection
-- whether the lifecycle states are sufficient for artifact loader checks
-- whether storage and checksum fields are specific enough for Object Store based loading
+- whether `artifact_state` and `deployment_stage` are now unambiguously separated
+- whether derived deployment summaries are clearly marked non-authoritative
+- whether the compatibility window is explicit enough for downstream migration work

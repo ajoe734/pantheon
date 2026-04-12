@@ -236,11 +236,26 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         raise RuntimeError("Unable to resolve wake-up template path")
     shared_files = serialize_shared_files(selected_shared_files(config))
     target_files = event.get("task", {}).get("artifacts") or []
+    task_payload = event.get("task", {}) or {}
+    sidecar_guardrails = ""
+    if str(task_payload.get("task_class") or "").lower() == "sidecar":
+        helper_parent = str(task_payload.get("helper_parent") or "").strip() or "(unknown parent)"
+        helper_kind = str(task_payload.get("helper_kind") or "").strip() or "support_slice"
+        sidecar_guardrails = (
+            "\n這是一個 sidecar support slice，不是主線 canonical 實作。\n"
+            f"- Parent Task: {helper_parent}\n"
+            f"- Helper Kind: {helper_kind}\n"
+            "- 只允許建立或更新支援性材料與 handoff packet。\n"
+            "- 不要修改 L1 canonical truth、核心 contract 真相、或主要 runtime/registry/governance 實作。\n"
+            "- 盡量把輸出限制在上面列出的相關檔案；若需新增檔案，只能新增 support artifact。\n"
+            "- 完成後請交接給指定 reviewer，由 parent owner 決定是否吸收進主線。\n"
+        )
     variables = {
         "shared_files": shared_files,
         "task_id": event.get("task_id") or "(none)",
         "reason": event.get("reason") or "wakeup",
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
+        "sidecar_guardrails": sidecar_guardrails.rstrip(),
     }
     return render_template(template_path, variables).strip() + "\n"
 

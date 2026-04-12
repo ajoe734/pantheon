@@ -14,6 +14,7 @@ CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
 CLAUDE_LOCAL_EXAMPLE_PATH = ROOT / ".claude" / "settings.local.example.json"
 GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
+QWEN_SETTINGS_PATH = Path.home() / ".qwen" / "settings.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 
@@ -43,6 +44,10 @@ def _claude_local_settings() -> dict[str, Any]:
 
 def _gemini_settings() -> dict[str, Any]:
     return load_json(GEMINI_SETTINGS_PATH, default={}) or {}
+
+
+def _qwen_settings() -> dict[str, Any]:
+    return load_json(QWEN_SETTINGS_PATH, default={}) or {}
 
 
 def _truthy_env(name: str) -> bool:
@@ -164,6 +169,25 @@ def _copilot_auth_ready(gh_binary: str | None) -> bool:
     return any(os.environ.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"))
 
 
+def _configured_value(settings: dict[str, Any], key: str, env_name: str | None = None) -> str | None:
+    direct = str(settings.get(key) or "").strip()
+    if direct:
+        return direct
+    source_name = str(settings.get(f"{key}_env") or settings.get(f"{key}_ENV") or env_name or "").strip()
+    if source_name:
+        value = os.environ.get(source_name)
+        return str(value).strip() if value else None
+    return None
+
+
+def _qwen_saved_auth_ready(binary: str | None) -> bool:
+    if not binary:
+        return False
+    result = run_command([binary, "auth", "status"])
+    output = ((result.stdout or "") + (result.stderr or "")).lower()
+    return bool(output) and "no authentication method configured" not in output
+
+
 def _custom_agents_info() -> dict[str, Any]:
     copilot_path, version = _find_extension("github.copilot-chat")
     reference_path = None
@@ -220,14 +244,41 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(gh pr create *)",
         "Bash(bash scripts/ai-status.sh *)",
         "Bash(AI_NAME=* bash scripts/ai-status.sh *)",
+        "Bash(AI_NAME=* bash */scripts/ai-status.sh *)",
+        "Bash(bash */scripts/ai-status.sh *)",
         "Bash(python3 scripts/ai_status.py *)",
+        "Bash(python3 */scripts/ai_status.py *)",
+        "Bash(cd * && python3 scripts/ai_status.py *)",
+        "Bash(cd * && python3 */scripts/ai_status.py *)",
+        "Bash(cd * && bash scripts/ai-status.sh *)",
+        "Bash(cd * && bash */scripts/ai-status.sh *)",
         "Bash(python3 -m unittest discover *)",
         "Bash(cd * && python3 -m unittest discover *)",
+        "Bash(python3 -m pytest*)",
+        "Bash(cd * && python3 -m pytest*)",
+        "Bash(pytest*)",
+        "Bash(cd * && pytest*)",
+        "Bash(apt-get install*python3-pytest*)",
+        "Bash(apt install*python3-pytest*)",
+        "Bash(python3 -m pip install*pytest*)",
+        "Bash(pip install*pytest*)",
+        "Bash(pip3 install*pytest*)",
+        "Bash(npm test*)",
+        "Bash(cd * && npm test*)",
+        "Bash(npm run test*)",
+        "Bash(cd * && npm run test*)",
+        "Bash(cargo test*)",
+        "Bash(cd * && cargo test*)",
+        "Bash(go test*)",
+        "Bash(cd * && go test*)",
         "Bash(python3 -m py_compile *)",
         "Bash(cd * && python3 -m py_compile *)",
         "Bash(python3 */smoke_test.py*)",
         "Bash(cd * && python3 smoke_test.py*)",
         "Bash(AI_NAME=* python3 scripts/ai_status.py *)",
+        "Bash(AI_NAME=* python3 */scripts/ai_status.py *)",
+        "Bash(AI_NAME=* cd * && python3 scripts/ai_status.py *)",
+        "Bash(AI_NAME=* cd * && python3 */scripts/ai_status.py *)",
     ]
     ask = [
         "Bash(curl *)",
@@ -359,6 +410,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     copilot_path, copilot_version = _find_extension("github.copilot-chat")
     claude_local = _claude_local_settings()
     gemini_settings = _gemini_settings()
+    qwen_settings = _qwen_settings()
     gemini_auth_ready = _gemini_auth_ready(gemini_settings)
     gemini_auth_type = _gemini_selected_auth_type(gemini_settings)
     custom_agents = _custom_agents_info()
@@ -369,6 +421,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_gemini = desired_gemini_settings(config)
     codex_binary = command_exists("codex")
     gemini_binary = command_exists("gemini")
+    qwen_binary = command_exists("qwen")
     claude_binary = command_exists("claude")
     copilot_binary = command_exists("copilot")
     gh_binary = command_exists("gh")
@@ -377,9 +430,20 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     claude_auth_ready = _claude_auth_ready(claude_binary)
     copilot_auth_ready = _copilot_auth_ready(gh_binary)
     copilot_settings = config.get("providers", {}).get("copilot", {})
+    qwen_runtime = config.get("providers", {}).get("qwen", {}).get("qwen", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
+    qwen_version = (run_command([qwen_binary, "--version"]).stdout or "").strip() if qwen_binary else None
+    qwen_auth_type = str(
+        qwen_runtime.get("auth_type") or qwen_settings.get("security", {}).get("auth", {}).get("selectedType") or ""
+    ).strip()
+    qwen_model = _configured_value(qwen_runtime, "model", "OPENAI_MODEL") or str(qwen_settings.get("model", {}).get("name") or "").strip() or None
+    qwen_openai_api_key = _configured_value(qwen_runtime, "openai_api_key", "OPENAI_API_KEY")
+    qwen_openai_base_url = _configured_value(qwen_runtime, "openai_base_url", "OPENAI_BASE_URL")
+    qwen_saved_auth = _qwen_saved_auth_ready(qwen_binary)
+    qwen_auth_ready = qwen_saved_auth or (qwen_auth_type == "openai" and bool(qwen_openai_api_key))
     claude_installed = bool(claude_path or claude_local or (ROOT / ".claude").exists())
     gemini_installed = bool(gemini_path or gemini_binary)
+    qwen_installed = bool(qwen_binary)
     codex_installed = bool(openai_path or codex_binary)
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
@@ -561,6 +625,46 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 "notes": [
                     "Verified CLI flags from the locally installed Codex CLI help output.",
                     "No verified persistent approval config keys were found in local extension metadata, so auto-approve is applied per orchestrated run rather than globally.",
+                ],
+            },
+            "qwen": {
+                "installed": qwen_installed,
+                "host_layer": "Official Qwen Code CLI",
+                "delivery_mode": config.get("providers", {}).get("qwen", {}).get("delivery_mode", "qwen"),
+                "approval_mode": str(qwen_runtime.get("approval_mode") or "yolo"),
+                "persistent_allow_supported": False,
+                "default_auto_approve_supported": bool(qwen_binary and qwen_auth_ready),
+                "full_access_supported": bool(qwen_binary and qwen_auth_ready),
+                "per_tool_allow_supported": bool(qwen_binary and qwen_auth_ready),
+                "local_cli_worker_supported": bool(qwen_binary and qwen_auth_ready),
+                "vscode_link_supported": False,
+                "cloud_agent_supported": False,
+                "supports_auto_approve": bool(qwen_binary and qwen_auth_ready),
+                "supports_defer_resume": bool(qwen_binary),
+                "auth_ready": qwen_auth_ready,
+                "supported_models": [qwen_model] if qwen_model else [],
+                "selected_model": qwen_model,
+                "applied": bool(qwen_binary),
+                "verified": "verified" if (qwen_binary and qwen_auth_ready) else ("partial" if qwen_binary else "unavailable"),
+                "version": qwen_version,
+                "paths": {
+                    "binary": qwen_binary,
+                    "settings": str(QWEN_SETTINGS_PATH),
+                },
+                "settings": {
+                    "security.auth.selectedType": qwen_settings.get("security", {}).get("auth", {}).get("selectedType"),
+                    "runtime.auth_type": qwen_runtime.get("auth_type"),
+                    "runtime.model": qwen_runtime.get("model"),
+                    "runtime.model_env": qwen_runtime.get("model_env"),
+                    "runtime.openai_api_key_env": qwen_runtime.get("openai_api_key_env"),
+                    "runtime.openai_base_url_env": qwen_runtime.get("openai_base_url_env"),
+                    "runtime.approval_mode": qwen_runtime.get("approval_mode"),
+                    "runtime.channel": qwen_runtime.get("channel"),
+                    "resolved.openai_base_url": qwen_openai_base_url,
+                },
+                "notes": [
+                    "Qwen is wired as a standalone provider via the official `qwen` CLI rather than through Copilot model routing.",
+                    "Run `qwen auth qwen-oauth` for the official free tier, or set `providers.qwen.qwen.auth_type=openai` plus OPENAI-compatible env vars for a custom endpoint.",
                 ],
             },
             "copilot": {

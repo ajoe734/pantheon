@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon PersonaCapitalBinding",
+  "type": "object",
+  "required": [
+    "binding_id",
+    "persona_id",
+    "capital_pool_id",
+    "role",
+    "allowed_deployment_scope",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "binding_id": {
+      "type": "string",
+      "description": "Immutable unique identifier for this binding."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "The persona being bound."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "description": "The capital pool being bound to."
+    },
+    "role": {
+      "type": "string",
+      "enum": ["advisor", "paper_owner", "live_owner"],
+      "description": "The role this persona plays within the pool."
+    },
+    "allowed_deployment_scope": {
+      "type": "string",
+      "enum": ["none", "paper", "canary", "live"],
+      "description": "Upper bound on the deployment stage this binding authorises. Not the current deployment state."
+    },
+    "mandate": {
+      "type": "string",
+      "description": "Human-readable mandate or objective for this binding."
+    },
+    "budget": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Capital budget in pool currency units allocated under this binding."
+    },
+    "effective_from": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Inclusive start of the binding validity window."
+    },
+    "effective_to": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Exclusive end of the binding validity window. Null means open-ended."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "active", "suspended", "revoked", "expired"],
+      "description": "Lifecycle status of this binding."
+    },
+    "approval_decision_id": {
+      "type": "string",
+      "description": "ApprovalDecision that authorised this binding (required before activation)."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "string",
+      "description": "Actor who created this binding."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary consumer metadata."
+    }
+  },
+  "additionalProperties": false
+}

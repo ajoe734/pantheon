@@ -12,6 +12,8 @@ This document provides implementation guidance for integrating evaluators and cr
 3. Promotion gate (REG-002) decision flow
 4. Preference model (LP-004) consumption
 
+The code snippets below are interface sketches, not imports of a canonical registry client in this repo. REG-001 currently defines logical registry operations and `storage_ref`-backed entries, so examples use pseudocode for the registry backend and object-store reads/writes.
+
 ---
 
 ## 1. Evaluator + Feedback Store Integration
@@ -28,7 +30,7 @@ adapter = FeedbackStoreAdapter(feedback_store_path="/data/feedback_store")
 # Query 1: Get all telemetry for a strategy in paper execution mode
 telemetry_events = adapter.get_telemetry_for_strategy(
     strategy_id="strat_xyz",
-    execution_mode="paper"
+    mode="paper"
 )
 # Returns: [
 #   {"event_id": "t1", "event_type": "pnl_snapshot", "metrics": {"pnl": 1.5}},
@@ -45,8 +47,8 @@ telemetry_by_state = adapter.get_telemetry_by_promotion_state(
 telemetry_filtered = adapter.query_telemetry(
     strategy_id="strat_xyz",
     promotion_state="candidate",
-    created_at_after="2026-04-01T00:00:00Z",
-    created_at_before="2026-04-06T23:59:59Z"
+    created_after="2026-04-01T00:00:00Z",
+    created_before="2026-04-06T23:59:59Z"
 )
 ```
 
@@ -60,8 +62,9 @@ telemetry = adapter.get_telemetry_for_strategy("strat_xyz")
 # Result: [pnl_snapshot, drawdown_snapshot, slippage_observation]
 # Should NOT include: [approve, edit, reject, rationale]
 
-# WRONG: If adapter returns mixed event families
-mixed_results = adapter.query("strategy_id=strat_xyz")
+# WRONG: If a caller bypasses the adapter and scans the shared store without
+# enforcing the telemetry event-family boundary first
+mixed_results = shared_store.list(build_query_filters(strategy_id="strat_xyz"))
 # Result should NOT be: [pnl_snapshot, approve, edit, drawdown_snapshot, reject]
 ```
 
@@ -137,9 +140,15 @@ This ensures reproducibility and auditability. A future evaluator run can re-que
 Evaluator outputs are governed artifacts stored in the registry.
 
 ```python
-from services.registry.registry_client import RegistryClient
-
-registry = RegistryClient()
+# Pseudocode: registry implements REG-001 logical operations and stores
+# the JSON payload referenced by storage_ref in object storage.
+registry = registry_backend
+object_store = object_store_backend
+target_artifact_id = "strat_xyz_v1.3.0"
+evaluation_result_path = (
+    "evaluation_results/evaluator_primary_v1/"
+    f"{target_artifact_id}/2026-04-07T14-30-00Z.json"
+)
 
 evaluation_result = {
     "artifact_type": "evaluation_result",
@@ -148,20 +157,33 @@ evaluation_result = {
     # ... (full evaluation_result from contract §3.7)
 }
 
-# Register the evaluation result
+# Persist the payload, then register a governed reference entry for it.
+object_store.write_json(evaluation_result_path, evaluation_result)
+
 entry = registry.register(
-    artifact_type="evaluation_result",
-    content=evaluation_result,
-    strategy_id="strat_xyz",
-    version="1.0.0",  # Version of this evaluation snapshot
-    lineage={
-        "parent_registry_ids": ["strat_xyz_v1.3.0"],  # Target artifact
-        "source_run_ids": ["evaluator_run_2026_04_07_001"],
-        "source_evaluator_id": "evaluator_primary_v1"
-    },
-    storage_ref={
-        "backend": "object_store",
-        "path": f"evaluation_results/evaluator_primary_v1/{target_artifact_id}/2026-04-07T14-30-00Z.json"
+    {
+        "registry_id": "eval-strat_xyz-v1-3-0",
+        "artifact_type": "evaluation_result",
+        "strategy_id": "strat_xyz",
+        "version": "1.0.0",
+        "lifecycle_state": "candidate",
+        "lineage": {
+            "parent_registry_ids": ["strat_xyz_v1.3.0"],
+            "source_run_ids": ["evaluator_run_2026_04_07_001"],
+            "source_strategy_spec_id": "strat_xyz_v1.3.0"
+        },
+        "storage_ref": {
+            "backend": "object_store",
+            "path": evaluation_result_path
+        },
+        "checksum": "sha256:def456...",
+        "metadata": {
+            "target_artifact_id": "strat_xyz_v1.3.0",
+            "target_artifact_type": "strategy_spec",
+            "target_promotion_state": "candidate",
+            "evaluator_id": "evaluator_primary_v1",
+            "evaluator_version": "1.0.0"
+        }
     }
 )
 
@@ -174,18 +196,18 @@ print(f"Evaluation registered: {entry['registry_id']}")
 Promotion gates and operators can retrieve evaluations.
 
 ```python
-# Get latest evaluation for a strategy
-evaluations = registry.list_by_strategy(
-    strategy_id="strat_xyz",
-    artifact_type="evaluation_result",
-    limit=5,
-    order_by="created_at DESC"
-)
+# Get evaluation registry entries for a strategy
+evaluations = [
+    entry
+    for entry in registry.list_by_strategy("strat_xyz")
+    if entry["artifact_type"] == "evaluation_result"
+]
 
-# Find evaluation for specific target artifact
-target_eval = registry.get(registry_id="eval-strat_xyz-v1-3-0")
-print(f"Overall score: {target_eval['content']['overall_score']}")
-print(f"Recommendation: {target_eval['content']['recommendation']}")
+# Resolve the payload from storage_ref when you need the scored result body.
+target_eval_entry = registry.get(registry_id="eval-strat_xyz-v1-3-0")
+target_eval = object_store.read_json(target_eval_entry["storage_ref"]["path"])
+print(f"Overall score: {target_eval['overall_score']}")
+print(f"Recommendation: {target_eval['recommendation']}")
 ```
 
 ### 2.3 Evaluation Result Lineage
@@ -233,26 +255,29 @@ class PromotionGateCritic:
         # Get target artifact
         target = self.registry.get(registry_id=target_artifact_id)
         
-        # Get latest evaluation
-        evals = self.registry.list_by_strategy(
-            strategy_id=target["strategy_id"],
-            artifact_type="evaluation_result",
-            limit=1,
-            order_by="created_at DESC"
-        )
-        evaluation = evals[0] if evals else None
+        # Get latest evaluation entry
+        eval_entries = [
+            entry
+            for entry in self.registry.list_by_strategy(target["strategy_id"])
+            if entry["artifact_type"] == "evaluation_result"
+        ]
+        evaluation_entry = eval_entries[0] if eval_entries else None
         
-        if not evaluation:
+        if not evaluation_entry:
             return None  # No evaluation to critique
         
+        evaluation = self.object_store.read_json(
+            evaluation_entry["storage_ref"]["path"]
+        )
+        
         # Determine if score is borderline
-        score = evaluation["content"]["overall_score"]
+        score = evaluation["overall_score"]
         if 0.4 < score < 0.6:
             # Score is borderline, generate critique
             critique = {
                 "critique_trigger": "borderline_score",
                 "evaluation_context": {
-                    "referenced_evaluation_id": evaluation["registry_id"],
+                    "referenced_evaluation_id": evaluation_entry["registry_id"],
                     "evaluator_overall_score": score
                 },
                 "findings": self.analyze_score_components(evaluation),
@@ -269,6 +294,11 @@ class PromotionGateCritic:
 Critics register their findings in the registry.
 
 ```python
+critique_result_path = (
+    "critique_results/critic_alpha_v1/"
+    "strat_xyz_v1.3.0/2026-04-07T15-00-00Z.json"
+)
+
 critic_result = {
     "artifact_type": "critique_result",
     "strategy_id": "strat_xyz",
@@ -281,15 +311,32 @@ critic_result = {
     # ... (full critique from contract §4.7)
 }
 
+object_store.write_json(critique_result_path, critic_result)
+
 entry = registry.register(
-    artifact_type="critique_result",
-    content=critic_result,
-    strategy_id="strat_xyz",
-    version="1.0.0",
-    lineage={
-        "parent_registry_ids": ["strat_xyz_v1.3.0"],
-        "source_run_ids": ["critic_run_2026_04_07_001"],
-        "referenced_evaluation_ids": ["eval-strat_xyz-v1-3-0"]
+    {
+        "registry_id": "crit-strat_xyz-v1-3-0",
+        "artifact_type": "critique_result",
+        "strategy_id": "strat_xyz",
+        "version": "1.0.0",
+        "lifecycle_state": "candidate",
+        "lineage": {
+            "parent_registry_ids": ["strat_xyz_v1.3.0"],
+            "source_run_ids": ["critic_run_2026_04_07_001"]
+        },
+        "storage_ref": {
+            "backend": "object_store",
+            "path": critique_result_path
+        },
+        "checksum": "sha256:ghi789...",
+        "metadata": {
+            "target_artifact_id": "strat_xyz_v1.3.0",
+            "target_artifact_type": "strategy_spec",
+            "target_promotion_state": "candidate",
+            "critic_id": "critic_alpha_v1",
+            "critic_version": "1.0.0",
+            "referenced_evaluation_ids": ["eval-strat_xyz-v1-3-0"]
+        }
     }
 )
 ```
@@ -334,8 +381,8 @@ class PreferenceModelAwareEvaluator:
         
         for model in models:
             # Check if this is a preference model for the right operator
-            if (model["content"].get("model_family") == "preference_model" and
-                model["content"].get("training_operator_id") == training_operator_id and
+            if (model.get("metadata", {}).get("model_family") == "preference_model" and
+                model.get("metadata", {}).get("training_operator_id") == training_operator_id and
                 model["lifecycle_state"] == "paper"):
                 return model
         
@@ -361,37 +408,49 @@ class PreferenceModelAwareEvaluator:
 Evaluators construct feature vectors from the artifact and registry state.
 
 ```python
-def build_preference_model_features(self, artifact, registry_client):
+def build_preference_model_features(self, artifact_entry, object_store, registry_client):
     """Construct feature vector for preference model prediction."""
+    artifact_payload = object_store.read_json(artifact_entry["storage_ref"]["path"])
     
     # Artifact-based features
     days_since_creation = (
         datetime.now(timezone.utc) - 
-        datetime.fromisoformat(artifact["created_at"])
+        datetime.fromisoformat(artifact_entry["created_at"])
     ).days
     
     # Registry-based features (from prior evaluations)
-    prior_evals = registry_client.list_by_strategy(
-        strategy_id=artifact["strategy_id"],
-        artifact_type="evaluation_result"
-    )
+    prior_eval_entries = [
+        entry
+        for entry in registry_client.list_by_strategy(artifact_entry["strategy_id"])
+        if entry["artifact_type"] == "evaluation_result"
+    ]
+    prior_evals = [
+        object_store.read_json(entry["storage_ref"]["path"])
+        for entry in prior_eval_entries
+    ]
     
-    prior_sharpes = [e["content"]["score_components"]["sharpe_ratio"]["value"] 
-                     for e in prior_evals if "sharpe_ratio" in e["content"]["score_components"]]
+    prior_sharpes = [
+        e["score_components"]["sharpe_ratio"]["value"]
+        for e in prior_evals
+        if "sharpe_ratio" in e["score_components"]
+    ]
     
     # Feedback-based features
-    operator_approve_rate = self.feedback_store.get_operator_approval_rate(
-        operator_id=artifact.get("operator_id")
+    # approval_rate_from_feedback_events() is a local helper that derives
+    # approval rate from FB-001 trader_feedback events.
+    operator_approve_rate = approval_rate_from_feedback_events(
+        store=self.feedback_store,
+        operator_id=artifact_entry.get("operator_id")
     )
     
     return {
-        "artifact_type": artifact["artifact_type"],
+        "artifact_type": artifact_entry["artifact_type"],
         "days_since_creation": days_since_creation,
-        "prior_promotion_state": artifact.get("lifecycle_state"),
+        "prior_promotion_state": artifact_entry.get("lifecycle_state"),
         "operator_approve_rate": operator_approve_rate,
         "mean_sharpe": statistics.mean(prior_sharpes) if prior_sharpes else None,
-        "sector_concentration": artifact["content"].get("sector_concentration", 0.5),
-        "num_positions": artifact["content"].get("num_positions", 0)
+        "sector_concentration": artifact_payload.get("sector_concentration", 0.5),
+        "num_positions": artifact_payload.get("num_positions", 0)
     }
 ```
 
@@ -471,16 +530,16 @@ def promote_artifact(registry_id, target_state):
     artifact = self.registry.get(registry_id=registry_id)
     
     # Get latest evaluation
-    evals = self.registry.list_by_strategy(
-        strategy_id=artifact["strategy_id"],
-        artifact_type="evaluation_result",
-        limit=1
-    )
+    eval_entries = [
+        entry
+        for entry in self.registry.list_by_strategy(artifact["strategy_id"])
+        if entry["artifact_type"] == "evaluation_result"
+    ]
     
-    if not evals:
+    if not eval_entries:
         raise ValueError(f"No evaluation for {registry_id}")
     
-    evaluation = evals[0]["content"]
+    evaluation = self.object_store.read_json(eval_entries[0]["storage_ref"]["path"])
     
     # Check if score meets minimum threshold
     if evaluation["overall_score"] < PROMOTION_THRESHOLD:
@@ -524,7 +583,8 @@ def promote_artifact(registry_id, target_state):
 
 ### End-to-End Tests
 
-- [ ] Candidate strategy flows through: evaluator → registry → promotion gate → live
+- [ ] Candidate strategy flows through: evaluator → registry → promotion gate → paper
+- [ ] Paper-approved strategy flows through: evaluator → registry → promotion gate → live
 - [ ] Borderline score triggers: evaluator → critic → registry → operator review
 - [ ] Preference model is queried and tracked in evaluation_data_snapshot
 - [ ] Operator can view evaluation score, recommendation, and critique findings
@@ -547,7 +607,8 @@ def promote_artifact(registry_id, target_state):
 
 - `contract.md` – Full evaluator and critic contract
 - `services/telemetry/feedback_adapter.py` – FB-003 feedback store adapter
-- `services/registry/registry_client.py` – REG-001 registry client
+- `services/registry/contract.md` – REG-001 logical registry operations and entry model
+- `services/registry/registry_entry_schema.json` – REG-001 machine-readable registry entry schema
 - `services/feedback/schema/contract.md` – FB-001 feedback event families
 - `services/learning/trl/EV-001_INTEGRATION.md` – Preference model integration
 - `TARGET_ARCHITECTURE.md` – System architecture

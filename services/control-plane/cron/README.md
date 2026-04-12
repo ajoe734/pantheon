@@ -9,7 +9,8 @@ OpenClaw rewrite.
 - upstream source: `https://github.com/openclaw/openclaw`
 - integration mode: separate runtime / service dependency
 - local responsibility: define versionable workflow manifests, attach governance
-  context, validate workflow handoffs, and route deploys through the promotion gate
+  context, validate workflow handoffs, and route deploys through canonical
+  `DeploymentPlan` planning
 
 ## Workflow Catalog
 
@@ -18,13 +19,13 @@ OpenClaw rewrite.
 | `pantheon.ingest` | Discover approved research inputs and emit governed intake handoffs | `research` | `research_package` handoff |
 | `pantheon.review` | Package candidate review into an approval request instead of auto-approving | `paper` | `approval_request` handoff |
 | `pantheon.retrain` | Trigger batch retraining from governed feedback / datasets | `research` | `registry_submission` handoff |
-| `pantheon.deploy` | Promote approved registry entries toward paper / live deployment | `paper` or `live` | promotion-gated deployment request |
+| `pantheon.deploy` | Create a governed `DeploymentPlan` for `paper`, `canary`, `live`, or `frozen` | `paper`, `live`, or `status` | deployment-plan-backed deployment request |
 
 ## Governance Guarantees
 
 - cron workflows always use `channel=cron` / `role=system`
 - only declared tool classes are exposed to each workflow
-- deploy never calls LEAN directly; it must pass `services/registry/promotion/gate.py`
+- deploy never calls LEAN directly; it must create a first-class DeploymentPlan and execution projection first
 - review creates approval packages, but does not self-approve
 - manifests are explicit JSON envelopes that can be pinned, audited, and replayed
 
@@ -52,5 +53,6 @@ python3 services/control-plane/cron/cli.py --workflow pantheon.ingest --payload-
 
 - `OC-001`: provides the deny-first permission model used by the workflow catalog
 - `OC-003`: provides `StrategySpec` and `WorkflowHandoff` schemas validated here
-- `REG-002`: deploy calls the promotion gate before emitting any deployment request
+- `GOV-001`: deploy requires `ApprovalDecision` alignment before planning
+- `DEP-001`: deploy creates `DeploymentPlan` before emitting any deployment request
 - `RS-001`: ingest produces governed intake handoffs that research workflows can consume

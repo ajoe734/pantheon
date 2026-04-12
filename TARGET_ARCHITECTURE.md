@@ -1,279 +1,197 @@
-# OpenClaw Target Architecture
+# Pantheon Target Architecture
 
-Last updated: 2026-04-01 (v1.1 Refined)
-Status: target-state architecture for the governed OpenClaw evolution platform
+Last updated: 2026-04-09
+Status: canonical platform architecture for Pantheon
+Tier: L1 Platform Architecture & Policy
+Scope: cross-plane architecture, lifecycle model, object ownership, and end-to-end governed flow
+Conflict rule: this overview defers to narrower L1 policy files for runtime, persona, deployment, rollback, lineage, telemetry, and evolution details
 
-## 1. Core Principle
+## 1. Identity and Top-Level Rule
 
-OpenClaw should orchestrate workflows.
-The evolution plane should learn from trader feedback, telemetry, and research.
-LEAN should only execute approved policy artifacts.
+Pantheon is the system we are building.
+`OpenClaw` is an upstream OSS runtime substrate that Pantheon integrates through governed adapters.
 
-Important interpretation rule:
+The platform must never allow a persona, worker, or runtime to mutate live behavior directly from short-term market feedback.
+Every change must pass through governed research, approval, deployment planning, runtime binding, telemetry, and evolution review.
 
-when this document names a real upstream OSS project, that name means an external framework or repo to integrate unless we explicitly say we are replacing it locally.
+## 2. Canonical Lifecycle Model
 
-The system must never allow a persona to rewrite live behavior directly because of short-term PnL swings.
-All strategy or model changes must pass through:
+Pantheon separates governance maturity from runtime deployment.
 
-`discover -> normalize -> replicate -> approve -> candidate -> paper -> live`
+### Artifact State
 
-## 2. Responsibility Split
-
-### OpenClaw
-
-OpenClaw is the process and governance layer.
-
-It is responsible for:
-
-- personas
-- tool and skill selection
-- allowlist and denylist controls
-- cron-driven ingestion, review, retraining, and deployment workflows
-- human approvals
-- policy and operational boundaries
-
-OpenClaw is not the learning framework and is not the execution engine.
-
-### Evolution Plane
-
-The evolution plane is where feedback becomes controlled improvement.
-
-It owns:
-
-- trader feedback capture
-- trading telemetry capture
-- web research ingestion
-- trajectory and preference storage
-- evaluators and critics
-- optimizers
-- strategy and model registry
-- promotion state for candidate, paper, and live
-
-### Research / Learning
-
-這層負責產出或改進 Policy。我們將「可學習物件」拆分為三類，各司其職：
-
-1. **Persona Policy**: 負責任務解讀、工具選擇與論文寫作。
-   - 工具：**DSPy** (結構化優化)、**TRL** (人類偏好回饋 SFT/DPO)。
-   - 核心：不輕易 fine-tune，先透過優化 prompt 與 weights 來演化。
-2. **Alpha Policy**: 負責信號、特徵、標籤與投組規則。
-   - 工具：**Qlib** (Meta-controller/Task Mgmt)、**FinRL/RLlib** (Sequential RL)。
-3. **Trader Imitation**: 負責學習人類交易員的操作風格。
-   - 工具：**imitation** (BC, DAgger)。
-   - 核心：將人類軌跡轉為 state -> action -> outcome。
-
-### Execution
-
-Execution should stay narrow and controlled.
-
-It owns:
-
-- signal and policy artifacts
-- promotion-aware artifact loading
-- LEAN runtime execution
-- broker interaction
-
-Execution consumes approved artifacts.
-It does not discover research, optimize prompts, or self-modify live strategies.
-
-## 3. Target Flow
-
-### A. Research and Learning Intake
-
-1. OpenClaw cron or approved tool workflows ingest papers, repos, and notes.
-2. Material is normalized into a `StrategySpec`, dataset reference, or experiment proposal.
-3. First-pass replication is run in research frameworks.
-4. Only successful candidates are registered.
-
-### B. Evaluation and Registry
-
-1. Research outputs are evaluated against explicit metrics.
-2. Evaluators and critics produce scores, failure notes, and rationale.
-3. Optimizers generate updated prompts, hyperparameters, or policies.
-4. Versioned outputs are written to the strategy and model registry.
-
-### C. Promotion Gate
-
-Every promoted unit must move through explicit stages:
-
-1. `candidate`
-2. `paper`
-3. `live`
-
-Promotion rules:
-
-- candidate requires replication success
-- paper requires risk and operational review
-- live requires approval and rollback metadata
-
-### D. Live Execution
-
-1. Registry publishes the approved artifact or signal snapshot.
-2. Signal or policy artifacts are loaded by LEAN.
-3. LEAN executes with portfolio, risk, and broker logic.
-4. Telemetry returns to the evolution plane.
-
-## 4. Learning Objects
-
-### Persona Policy
-
-Definition:
-
-- how a persona interprets tasks
-- how it chooses tools
-- how it gathers evidence
-- how it writes thesis or operational output
-
-Preferred frameworks:
-
-- DSPy for structured program optimization
-- TRL when trader approve/edit/reject feedback must become preference learning
-- LangGraph only if stronger checkpointing, pause, resume, or HITL orchestration becomes necessary
-
-### Alpha Policy
-
-Definition:
-
-- signals
-- factors
-- labels
-- parameters
-- portfolio rules
-
-Preferred frameworks:
-
-- Qlib for supervised alpha and experiment management
-- FinRL or RLlib for sequential decision policies
-- Ray Tune for search and hyperparameter optimization
-
-### Trader Imitation
-
-Definition:
-
-- learning how a human trader acts from state, features, actions, and outcomes
-
-Preferred frameworks:
-
-- imitation for BC first
-- DAgger when iterative human correction is needed
-- GAIL or AIRL when behavior distribution matters
-- TRL or DPO only for text preference layers, not direct order imitation
-
-## 5. Registry and Artifact Model
-
-The registry is a first-class system, not an afterthought.
-
-It must version:
-
-- strategy specs
-- model artifacts
-- feature sets
-- prompts or DSPy programs
-- evaluation results
-- promotion state
-- rollback targets
-
-Minimum registry states:
+Canonical `artifact_state` values are:
 
 - `draft`
 - `candidate`
-- `paper`
-- `live`
+- `approved`
 - `retired`
 
-Minimum registry metadata:
+### Deployment Stage
 
-- version
-- lineage
-- data sources
-- training or optimization run id
-- evaluator summary
-- approver
-- promoted_at
-- rollback_target
+Canonical `deployment_stage` values are:
 
-## 6. Governance Requirements
+- `none`
+- `paper`
+- `canary`
+- `live`
+- `frozen`
 
-The governed architecture depends on explicit controls.
+Rules:
 
-Required controls:
+- `artifact_state` describes whether an artifact is governable and promotable.
+- `deployment_stage` describes where an approved artifact is actually bound and running.
+- `canary` is a first-class deployment stage, not a replacement artifact state.
+- `lineage read model` is derived only; normalized edges remain the source of truth.
 
-- personas cannot directly mutate live strategy
-- tool permissions must be constrained by allowlist and denylist
-- cron jobs must be separated from live execution permissions
-- deployment must require promotion state checks
-- live strategy swaps must be reversible
-- all high-risk transitions require audit records
+## 3. Responsibility Split
 
-## 7. GCP and Runtime View
+### OpenClaw-Compatible Runtime
 
-Target runtime split:
+The upstream runtime owns:
 
-- OpenClaw services on GCP managed services or containers
-- research and training jobs on containerized workers
-- registry backed by a versioned artifact system
-- LEAN runtime deployed separately as execution workers
-- telemetry and feedback stored independently from execution state
+- persona/session execution substrate
+- tool invocation runtime
+- workflow/cron execution substrate
+- agent checkpointing or session persistence when delegated to upstream runtime
 
-Deployment principle:
+Pantheon owns:
 
-the same artifact promoted in the registry is the artifact executed by LEAN
+- permissions and deny-first policy
+- workflow handoff shape
+- governance checks before deployment-capable actions
+- mapping runtime outputs into Pantheon objects and lineage
 
-## 8. What This Means for the Current Repo
+### Research and Learning Plane
 
-The current repo has only the foundation of this architecture.
+This plane discovers and refines governed candidates.
 
-The named OSS boxes in this document are not just labels.
-Most of them represent upstream projects that still need real dependency or repo integration work.
+It owns:
 
-Already present:
+- source ingestion
+- normalization into `StrategySpec` or governed proposals
+- replication gates
+- evaluator and optimizer inputs/outputs
+- OSS learning-framework adapters such as DSPy, imitation, Qlib, TRL, and RL paths
 
-- collaboration operating system
-- signal-store contract
-- signal schema work
-- control-plane skeletons
-- dashboard and status tracking
+### Registry and Governance Plane
 
-Still missing:
+This plane decides what may progress.
 
-- evolution plane
-- registry
-- promotion gate
-- feedback store
-- evaluator and optimizer layer
-- DSPy or imitation integration
-- LEAN artifact loader and paper/live separation
-- upstream OpenClaw integration
-- upstream research and learning framework integration for the named OSS tools
+It owns:
 
-## 8.1 Upstream OSS Interpretation
+- governed artifact registration
+- artifact lineage edges
+- `ApprovalDecision`
+- `DeploymentPlan`
+- paper/canary/live gate semantics
+- rollback target metadata and approval records
 
-Treat these as upstream integrations by default:
+### Capital, Runtime, and Execution Plane
 
-- `OpenClaw`
-- `DSPy`
-- `TRL`
-- `Qlib`
-- `FinRL`
-- `RLlib`
-- `Ray Tune`
-- `imitation`
-- `MLflow`
-- `W&B`
+This plane decides where approved artifacts run.
 
-Local work in this repo should focus on:
+It owns:
 
-- adapters
-- contracts
-- config
-- governance wrappers
-- packaging
-- smoke tests
+- `capital_pool`
+- `PersonaCapitalBinding`
+- `RuntimeBinding`
+- runtime-manager semantics
+- artifact loading into LEAN
+- broker and position-affecting execution behavior
 
-It should not silently drift into accidental re-implementation of those frameworks.
+### Telemetry, Incident, and Evolution Plane
 
-## 9. Non-Negotiable Guardrail
+This plane turns operating evidence into controlled follow-up actions.
 
-OpenClaw may discover, critique, optimize, and recommend.
-It may not directly self-edit live behavior outside the registry and promotion gate.
+It owns:
+
+- execution telemetry and trader feedback capture
+- normalized lineage edges from runtime to telemetry
+- incident/postmortem records
+- `EvolutionDecision`
+- threshold-based freeze, rollback, retrain, and review triggers
+
+## 4. Core Canonical Objects
+
+These objects form the minimum cross-plane backbone:
+
+- `StrategySpec`
+- `ArtifactRecord`
+- `ApprovalDecision`
+- `DeploymentPlan`
+- `PersonaCapitalBinding`
+- `RuntimeBinding`
+- `TelemetryEvent`
+- `EvolutionDecision`
+
+Ownership rules:
+
+- registry/governance own `ArtifactRecord` and `ApprovalDecision`
+- governance/promotion own `DeploymentPlan`
+- capital/runtime own `PersonaCapitalBinding` and `RuntimeBinding`
+- telemetry services own normalized event writes
+- lineage read model aggregates but does not own truth
+
+## 5. End-to-End Governed Flow
+
+1. Approved ingest workflows collect papers, repos, notes, and operator input.
+2. Research services normalize material into `StrategySpec`, dataset references, or experiment proposals.
+3. Replication and evaluation determine whether outputs become `candidate` artifacts.
+4. Governance review may advance candidates into `approved`.
+5. Deployment planning chooses `paper`, `canary`, `live`, or `frozen` stage transitions.
+6. Runtime manager writes `RuntimeBinding` and LEAN loads only the approved artifact projection.
+7. Telemetry and feedback write normalized operational evidence with deployment-stage and binding references.
+8. Evolution review decides whether to freeze, rollback, retrain, mutate, or retire.
+
+## 6. Preferred Framework Roles
+
+- `OpenClaw`: upstream runtime substrate for persona/workflow execution
+- `DSPy`: persona policy optimization
+- `imitation`: trader behavior cloning
+- `MLflow`: experiment tracking backbone
+- `Qlib`: first deferred learning path to activate for supervised alpha research, gated by `services/learning/qlib/ACTIVATION_CRITERIA.md`
+- `TRL`: governed preference-learning workflows only after FB-002 volume, imitation baseline, and a downstream consumer exist, gated by `services/learning/trl/ACTIVATION_CRITERIA.md`
+- `FinRL` / `RLlib` / `Ray Tune`: optional RL path only after Qlib has plateaued and the problem is genuinely sequential, gated by `services/learning/rl/PATH_DEFINITION.md`
+
+Named OSS projects always mean real integrations unless a local replacement is explicitly stated.
+
+## 7. Current Repo Interpretation
+
+This repo already contains substantial contract and adapter work, but the architecture cutover in this document is primarily semantic and planning-level.
+
+Already established:
+
+- collaboration operating system and dashboard
+- research ingest / normalize / replicate chain
+- registry, promotion, and artifact-loader contracts
+- feedback, telemetry, evaluator, optimizer, and several OSS adapters
+
+Still to be completed as platform truth:
+
+- artifact-state / deployment-stage split throughout contracts
+- explicit `ApprovalDecision`, `DeploymentPlan`, `PersonaCapitalBinding`, and `RuntimeBinding` ownership
+- telemetry and lineage edge alignment
+- runtime-manager and capital-pool control surface
+- incident, postmortem, BFF, and consultation surfaces
+
+## 8. Detailed Policy References
+
+Use these L1 files when working below architecture-overview level:
+
+- `OPENCLAW_RUNTIME_CONTRACT.md`
+- `PERSONA_RUNTIME_MODEL.md`
+- `BINDING_AND_DEPLOYMENT_SEMANTICS.md`
+- `PAPER_CANARY_LIVE_POLICY.md`
+- `ROLLBACK_AND_POSITION_SEMANTICS.md`
+- `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`
+- `EVOLUTION_REVIEW_AND_THRESHOLDS.md`
+- `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`
+- `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`
+- `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`
+- `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`
+- `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`
+- `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`
+- `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`
+- `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`
+- `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`

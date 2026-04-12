@@ -7,6 +7,7 @@
 
 狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
+{{sidecar_guardrails}}
 
 Task ID: {{task_id}}
 原因: {{reason}}
