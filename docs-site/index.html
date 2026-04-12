@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>協作看板</title>
-    <link rel="stylesheet" href="./style.css?v=20260407-0020" />
+    <link rel="stylesheet" href="./style.css?v=20260411-2358" />
   </head>
   <body>
     <div class="shell">
@@ -27,128 +27,313 @@
         <div id="overview-metrics" class="overview-grid"></div>
       </section>
 
-      <main class="dashboard-grid">
-        <section class="panel runtime-panel">
-          <div class="panel-head">
-            <div>
-              <p class="panel-kicker">Runtime</p>
-              <h2>Supervisor 與 Queue</h2>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div id="system-status" class="runtime-grid"></div>
-            <section class="subpanel">
-              <div class="subpanel-head">
-                <h3>Auto Worker</h3>
-                <p class="subpanel-copy">依執行 lane 分組，拆成進行中、等待處理、已改派 / 已接手、已完成。</p>
-              </div>
-              <div id="worker-history" class="worker-groups"></div>
-            </section>
-          </div>
-        </section>
-
-        <section class="panel work-panel">
-          <div class="panel-head">
-            <div>
-              <p class="panel-kicker">Execution</p>
-              <h2>Agent 與任務</h2>
-            </div>
-          </div>
-          <div class="panel-body">
-            <section class="subpanel">
-              <div class="subpanel-head">
-                <h3>Task Board</h3>
-                <div id="board-summary" class="inline-summary"></div>
-              </div>
-              <div id="task-board" class="board"></div>
-            </section>
-          </div>
-        </section>
-
-        <section class="panel coordination-panel">
-          <div class="panel-head">
-            <div>
-              <p class="panel-kicker">Coordination</p>
-              <h2>交接、阻塞與活動</h2>
-            </div>
-          </div>
-          <div class="panel-body">
-            <section class="subpanel">
-              <div class="subpanel-head">
-                <h3>交接佇列</h3>
-              </div>
-              <div id="handoff-list" class="stack"></div>
-            </section>
-
-            <section class="subpanel">
-              <div class="subpanel-head">
-                <h3>阻塞項目</h3>
-              </div>
-              <div id="blocker-list" class="stack"></div>
-            </section>
-
-            <section class="subpanel">
-              <div class="subpanel-head">
-                <h3>Sprint 摘要</h3>
-              </div>
-              <div id="snapshot" class="snapshot"></div>
-            </section>
-
-            <section class="subpanel">
-              <div class="subpanel-head">
-                <h3>即時活動</h3>
-              </div>
-              <div id="activity-list" class="activity"></div>
-            </section>
-          </div>
-        </section>
-      </main>
-
-      <section class="panel insights-panel">
+      <section class="panel cockpit-panel">
         <div class="panel-head">
           <div>
-            <p class="panel-kicker">Secondary</p>
-            <h2>次要分析區</h2>
+            <p class="panel-kicker">Control Plane</p>
+            <h2>現在最該看的事</h2>
           </div>
         </div>
-        <div class="panel-body insights-grid">
-          <details class="insight" open>
-            <summary>
-              <span>依賴排程</span>
-              <small>先看 ready、active、waiting 的波次關係</small>
-            </summary>
-            <div id="dependency-summary" class="mini-grid"></div>
-            <div id="dependency-schedule" class="stack"></div>
-          </details>
+        <div class="panel-body cockpit-grid">
+          <section class="subpanel cockpit-span-3">
+            <div class="subpanel-head">
+              <h3>全局判讀</h3>
+              <p class="subpanel-copy">先看目前焦點在哪裡、planning 和 execution 是否已順利接手，以及有沒有需要立刻處理的訊號。</p>
+            </div>
+            <div id="control-plane-strip" class="mode-grid"></div>
+          </section>
 
-          <details class="insight">
-            <summary>
-              <span>Audit 狀態</span>
-              <small>對齊檢查與 reviewer follow-up</small>
-            </summary>
-            <div id="audit-status" class="mini-grid"></div>
-            <div id="audit-list" class="stack"></div>
-          </details>
+          <section class="subpanel cockpit-span-2">
+            <div class="subpanel-head">
+              <h3>現在結論是什麼</h3>
+              <p class="subpanel-copy">用一句人話告訴你目前該盯 planning、bridge，還是 execution。</p>
+            </div>
+            <div id="focus-summary" class="focus-summary"></div>
+          </section>
 
-          <details class="insight">
-            <summary>
-              <span>Review Notes</span>
-              <small>目前 reviewer 給的備註</small>
-            </summary>
-            <div id="review-note-list" class="stack"></div>
-          </details>
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h3>整體進度</h3>
+              <p class="subpanel-copy">同時看 planning 完成度、bridge materialization，以及 execution 正式完成比例。</p>
+            </div>
+            <div class="progress-panel">
+              <p id="progress-label" class="metric-note">進度計算中...</p>
+              <div class="progress-track">
+                <div id="progress-fill" class="progress-fill"></div>
+              </div>
+              <div id="progress-breakdown" class="mini-grid"></div>
+            </div>
+          </section>
 
-          <details class="insight">
-            <summary>
-              <span>Delivery Layers</span>
-              <small>產品本體與外部整合工作的分層視圖</small>
-            </summary>
-            <div id="delivery-layers" class="stack"></div>
-          </details>
+          <section class="subpanel cockpit-span-3">
+            <div class="subpanel-head">
+              <h3>需要你注意</h3>
+              <p class="subpanel-copy">把 quota、paused provider、mismatch、blocker 這些高優先訊號拉到最上面，不用再去 activity feed 翻。</p>
+            </div>
+            <div id="alert-strip" class="alert-grid"></div>
+          </section>
+
+          <section class="subpanel cockpit-span-3">
+            <div class="subpanel-head">
+              <h3>Planning -> Execution 橋接</h3>
+              <p class="subpanel-copy">這裡只回答一件事：這輪共識到底有沒有順利變成可以執行的工作。</p>
+            </div>
+            <div id="bridge-card" class="bridge-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="planning-panel" class="panel planning-panel">
+        <div class="panel-head mode-panel-head">
+          <div>
+            <p class="panel-kicker">Planning</p>
+            <h2>Discussion Planning</h2>
+            <p class="subpanel-copy">開工前先把架構、交付順序和切片方式收斂成可執行共識。</p>
+          </div>
+          <div class="panel-head-actions">
+            <div id="planning-panel-summary" class="inline-summary panel-summary"></div>
+            <button id="planning-panel-toggle" class="panel-toggle" type="button" aria-expanded="true">收合</button>
+          </div>
+        </div>
+        <div class="panel-body planning-grid">
+          <section class="subpanel planning-span-2">
+            <div class="subpanel-head">
+              <h3>現在結論是什麼</h3>
+              <p class="subpanel-copy">先用人話講清楚這輪 planning 的目前結論、影響範圍，以及能不能安全地下放。</p>
+            </div>
+            <div id="planning-overview" class="planning-overview"></div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h3>還差什麼才能正式開工</h3>
+              <p class="subpanel-copy">說明現在卡在哪裡、誰該動、還差哪些條件才能把共識推進到下一步。</p>
+            </div>
+            <div id="planning-gate" class="stack"></div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h3>最近一次共識推進</h3>
+              <p class="subpanel-copy">只保留真正會改變判斷的轉折，不把所有內部事件都攤出來。</p>
+            </div>
+            <div id="planning-rounds" class="stack"></div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h3>Open Issues 與追蹤</h3>
+              <p class="subpanel-copy">把會阻擋流程的問題與只是追蹤中的事項分開看，避免每個 issue 都看起來一樣嚴重。</p>
+            </div>
+            <div id="planning-issues" class="stack"></div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h3>這輪切出的工作</h3>
+              <p class="subpanel-copy">看這輪 planning 產出的 execution slices，以及目前已下放多少、完成多少。</p>
+            </div>
+            <div id="planning-proposals" class="stack"></div>
+          </section>
+
+          <section class="subpanel planning-span-2">
+            <details class="insight planning-internals">
+              <summary>
+                <span>Planning Internals</span>
+                <small>只有在追 readout、artifact、baton loop 細節時才需要看。</small>
+              </summary>
+              <div id="planning-artifacts" class="stack"></div>
+            </details>
+          </section>
+        </div>
+      </section>
+
+      <section id="execution-shell" class="section-shell">
+        <div class="section-shell-head">
+          <div>
+            <p class="panel-kicker">Execution</p>
+            <h2>Supervisor Managed Execution</h2>
+            <p class="subpanel-copy">planning 共識定下來之後，這裡是日常追進度、看 live runtime、處理 review 與 blocker 的主戰場。</p>
+          </div>
+          <div class="panel-head-actions">
+            <div id="execution-panel-summary" class="inline-summary panel-summary"></div>
+            <button id="execution-panel-toggle" class="panel-toggle" type="button" aria-expanded="true">收合</button>
+          </div>
+        </div>
+
+        <div class="section-shell-body">
+          <section class="panel execution-overview-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Execution Overview</p>
+                <h2>執行現況與負載</h2>
+              </div>
+            </div>
+            <div class="panel-body execution-overview-grid">
+              <section class="subpanel">
+                <div class="subpanel-head">
+                  <h3>Execution Snapshot</h3>
+                  <div id="board-summary" class="inline-summary"></div>
+                </div>
+                <div id="execution-summary" class="mini-grid"></div>
+              </section>
+
+              <section class="subpanel">
+                <div class="subpanel-head">
+                  <h3>Lane Workload</h3>
+                  <p class="subpanel-copy">看每個 lane 手上總量、活躍量、阻塞量與完成量，避免把所有壓力都塞在同一條 lane。</p>
+                </div>
+                <div id="workload-grid" class="mini-grid"></div>
+              </section>
+
+              <section class="subpanel execution-span-2">
+                <div class="subpanel-head">
+                  <h3>Agent Lanes</h3>
+                  <p class="subpanel-copy">把每條 lane 的焦點任務、下一步與能力分工攤平，方便一眼掌握誰現在最忙、誰可以接手。</p>
+                </div>
+                <div id="agent-lanes" class="agent-grid"></div>
+              </section>
+            </div>
+          </section>
+
+          <main class="dashboard-grid">
+            <section class="panel runtime-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-kicker">Runtime</p>
+                  <h2>Supervisor 與 Runtime Health</h2>
+                </div>
+              </div>
+              <div class="panel-body">
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>Runtime Snapshot</h3>
+                    <p class="subpanel-copy">先看 supervisor、queue、approval 與各 lane 的 live 狀態。</p>
+                  </div>
+                  <div id="system-status" class="runtime-grid"></div>
+                </section>
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>Live Workers</h3>
+                    <p class="subpanel-copy">依執行 lane 分組，拆成進行中、等待處理、已改派 / 已接手、已完成。</p>
+                  </div>
+                  <div id="worker-history" class="worker-groups"></div>
+                </section>
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>Truth Mismatches</h3>
+                    <p class="subpanel-copy">集中列出 runtime、queue、task board 彼此不一致的地方。</p>
+                  </div>
+                  <div id="truth-mismatches" class="stack"></div>
+                </section>
+              </div>
+            </section>
+
+            <section class="panel work-panel">
+              <div class="panel-head mode-panel-head">
+                <div>
+                  <p class="panel-kicker">Execution</p>
+                  <h2>Task Board</h2>
+                </div>
+                <div id="work-panel-summary" class="inline-summary panel-summary"></div>
+              </div>
+              <div class="panel-body">
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>Task Board</h3>
+                    <p class="subpanel-copy">task truth 為主，但每張卡都會顯示 live runtime attachment 與 mismatch。</p>
+                  </div>
+                  <div id="task-board" class="board"></div>
+                </section>
+              </div>
+            </section>
+
+            <section class="panel coordination-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-kicker">Execution Coordination</p>
+                  <h2>交接、阻塞與活動</h2>
+                </div>
+              </div>
+              <div class="panel-body">
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>交接佇列</h3>
+                  </div>
+                  <div id="handoff-list" class="stack"></div>
+                </section>
+
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>阻塞項目</h3>
+                  </div>
+                  <div id="blocker-list" class="stack"></div>
+                </section>
+
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>Sprint 摘要</h3>
+                  </div>
+                  <div id="snapshot" class="snapshot"></div>
+                </section>
+
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>即時活動</h3>
+                  </div>
+                  <div id="activity-list" class="activity"></div>
+                </section>
+              </div>
+            </section>
+          </main>
+
+          <section class="panel insights-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Secondary</p>
+                <h2>Secondary Insights</h2>
+              </div>
+            </div>
+            <div class="panel-body insights-grid">
+              <details class="insight" open>
+                <summary>
+                  <span>依賴排程</span>
+                  <small>先看 ready、active、waiting 的波次關係</small>
+                </summary>
+                <div id="dependency-summary" class="mini-grid"></div>
+                <div id="dependency-schedule" class="stack"></div>
+              </details>
+
+              <details class="insight">
+                <summary>
+                  <span>Audit 狀態</span>
+                  <small>對齊檢查與 reviewer follow-up</small>
+                </summary>
+                <div id="audit-status" class="mini-grid"></div>
+                <div id="audit-list" class="stack"></div>
+              </details>
+
+              <details class="insight">
+                <summary>
+                  <span>Review Notes</span>
+                  <small>目前 reviewer 給的備註</small>
+                </summary>
+                <div id="review-note-list" class="stack"></div>
+              </details>
+
+              <details class="insight">
+                <summary>
+                  <span>Delivery Layers</span>
+                  <small>產品本體與外部整合工作的分層視圖</small>
+                </summary>
+                <div id="delivery-layers" class="stack"></div>
+              </details>
+            </div>
+          </section>
         </div>
       </section>
     </div>
 
-    <script src="./script.js?v=20260407-0020" type="module"></script>
+    <script src="./script.js?v=20260411-2358" type="module"></script>
   </body>
 </html>

@@ -54,7 +54,7 @@ class NoCacheRequestHandler(SimpleHTTPRequestHandler):
             return
         try:
             result = subprocess.run(
-                ["python3", str(repo_root / "scripts" / "ai_status.py"), "sync"],
+                ["bash", str(repo_root / "scripts" / "sync-state.sh")],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -111,8 +111,10 @@ def main() -> None:
         "/ai-status.json": repo_root / "ai-status.json",
         "/ai-activity-log.jsonl": repo_root / "ai-activity-log.jsonl",
         "/current-work.md": repo_root / "current-work.md",
+        "/dashboard-bundle.json": repo_root / "dashboard-bundle.json",
         "/orchestrator-state.json": repo_root / ".orchestrator" / "state.json",
         "/approval-queue.json": repo_root / ".orchestrator" / "approval-queue.json",
+        "/planning-state.json": repo_root / ".orchestrator" / "planning-state.json",
     }
     NoCacheRequestHandler.repo_root = repo_root
     handler = functools.partial(NoCacheRequestHandler, directory=directory)

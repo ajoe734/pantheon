@@ -6,10 +6,12 @@ This repo now includes a reusable bundle for the local `supervisor + auto worker
 
 The bundle includes:
 - `.orchestrator/` runtime code, adapters, templates, and tests
-- `scripts/` helpers for status sync, dashboard, supervisor launch, and LLM CLI setup
+- `scripts/` helpers for status sync, discussion planning, dashboard, supervisor launch, and LLM CLI setup
 - `docs-site/` dashboard assets
+- `docs/02-architecture/consensus/phase1/` planning artifacts and templates
 - generic shared-rule docs:
   - `AI_COLLABORATION_GUIDE.md`
+  - `LLM_ONBOARDING.md`
   - `FOR_CLAUDE.md`
   - `FOR_GEMINI.md`
   - `FOR_CODEX.md`
@@ -24,6 +26,7 @@ It does **not** carry over Pantheon runtime junk such as:
 - `.orchestrator/state.json`
 - `.orchestrator/event-queue.jsonl`
 - `.orchestrator/approval-queue.json`
+- `.orchestrator/planning-state.json`
 - `.orchestrator/logs/`
 - `.orchestrator/backups/`
 - generated dashboard mirror JSON files
@@ -48,6 +51,11 @@ bash scripts/setup-llm-cli.sh
 bash scripts/run-supervisor.sh --verbose
 bash scripts/run-dashboard.sh
 ```
+
+Immediately after bootstrap, replace any source-repo assumptions with new-project semantics:
+- update `AI_COLLABORATION_GUIDE.md` to point at the new repo's real canonical docs
+- adjust `FOR_*.md` briefs if the lane descriptions need new-project context
+- keep `ai-status.json` canonical layers aligned with the files that actually exist in the new repo
 
 ## Option B: Export A Tarball
 
@@ -77,15 +85,15 @@ bash scripts/setup-llm-cli.sh
    bash scripts/setup-llm-cli.sh
    ```
 2. Start Claude Code from the new repo root.
-3. Use this first prompt:
-   ```text
-   Read AI_COLLABORATION_GUIDE.md, current-work.md, ai-status.json, and ai-activity-log.jsonl first. Follow the canonical lifecycle todo -> in_progress -> review -> review_approved -> done. Use scripts/ai-status.sh for every state change.
+3. Use the repo-aware first prompt printed by:
+   ```bash
+   python3 scripts/ai_status.py prompt
    ```
 
 ### Codex CLI
 
 1. Start in the new repo root.
-2. Use the same first prompt as above.
+2. Use the same repo-aware prompt from `python3 scripts/ai_status.py prompt`.
 3. Keep supervisor running in a separate terminal:
    ```bash
    bash scripts/run-supervisor.sh --verbose
@@ -95,7 +103,7 @@ bash scripts/setup-llm-cli.sh
 
 - run `bash scripts/setup-llm-cli.sh` first so local settings are synchronized
 - start the tool from the new repo root
-- point it at the same canonical files and same lifecycle rules
+- point it at the prompt from `python3 scripts/ai_status.py prompt`, which follows the canonical files currently declared in `ai-status.json`
 
 ## Recommended First Smoke Test In The New Repo
 
@@ -110,6 +118,16 @@ Then confirm:
 - dashboard shows the task
 - supervisor terminal shows heartbeat and queue activity
 - `current-work.md` updates automatically
+
+Optional planning-mode smoke test:
+
+```bash
+cd /path/to/new-project
+./scripts/planning-state.sh start phase1 "Kick off discussion planning"
+./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
+./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted"
+./scripts/sync-state.sh
+```
 
 ## Important Notes
 
