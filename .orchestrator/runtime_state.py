@@ -22,6 +22,21 @@ def default_state() -> dict[str, Any]:
         "approvals": {
             "last_reconciled_at": None,
         },
+        "underutilization": {
+            "below_threshold_since": None,
+            "last_sidecar_wave_at": None,
+            "last_sidecar_wave_reason": None,
+            "last_ratio": None,
+        },
+        "provider_guardrails": {
+            "dispatch_pauses": {},
+            "task_failure_streaks": {},
+        },
+        "coordination": {
+            "last_scan_at": None,
+            "files": {},
+            "features": {},
+        },
         "supervisor": {
             "pid": None,
             "started_at": None,
@@ -34,7 +49,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
-    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor"}})
+    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination"}})
     state.setdefault("tasks", {})
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
@@ -43,6 +58,18 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("workers", {})
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
+    state.setdefault("underutilization", {})
+    state["underutilization"].setdefault("below_threshold_since", None)
+    state["underutilization"].setdefault("last_sidecar_wave_at", None)
+    state["underutilization"].setdefault("last_sidecar_wave_reason", None)
+    state["underutilization"].setdefault("last_ratio", None)
+    state.setdefault("provider_guardrails", {})
+    state["provider_guardrails"].setdefault("dispatch_pauses", {})
+    state["provider_guardrails"].setdefault("task_failure_streaks", {})
+    state.setdefault("coordination", {})
+    state["coordination"].setdefault("last_scan_at", None)
+    state["coordination"].setdefault("files", {})
+    state["coordination"].setdefault("features", {})
     state.setdefault("supervisor", {})
     state["supervisor"].setdefault("pid", None)
     state["supervisor"].setdefault("started_at", None)

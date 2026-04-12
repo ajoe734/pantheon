@@ -21,6 +21,8 @@ import ai_status
 PORTABLE_SCRIPT_FILES = [
     "scripts/ai_status.py",
     "scripts/ai-status.sh",
+    "scripts/planning_state.py",
+    "scripts/planning-state.sh",
     "scripts/sync-state.sh",
     "scripts/dashboard_server.py",
     "scripts/launch-docs-site.sh",
@@ -45,6 +47,7 @@ ORCHESTRATOR_EXCLUDES = {
     "github-webhook-events.jsonl",
     "logs",
     "provider_capabilities.json",
+    "planning-state.json",
     "state.json",
     "supervisor.pid",
 }
@@ -55,11 +58,13 @@ DOCS_SITE_EXCLUDES = {
     "approval-queue.json",
     "current-work.md",
     "orchestrator-state.json",
+    "planning-state.json",
 }
 
 PORTABLE_DIRS = [
     (".orchestrator", ORCHESTRATOR_EXCLUDES),
     ("docs-site", DOCS_SITE_EXCLUDES),
+    ("docs/02-architecture/consensus/phase1", set()),
 ]
 
 PORTABLE_DIR_STUBS = [
@@ -123,8 +128,42 @@ def copy_tree_filtered(src: Path, dest: Path, excludes: set[str]) -> None:
         copy_file(path, dest / rel)
 
 
+def remove_generated_portable_runtime(target_root: Path) -> None:
+    for rel_path in (
+        ".orchestrator/state.json",
+        ".orchestrator/event-queue.jsonl",
+        ".orchestrator/approval-queue.json",
+        ".orchestrator/provider_capabilities.json",
+        ".orchestrator/planning-state.json",
+        ".orchestrator/claude-approval-broker.mcp.json",
+        ".orchestrator/supervisor.pid",
+        "docs-site/ai-status.json",
+        "docs-site/ai-activity-log.jsonl",
+        "docs-site/approval-queue.json",
+        "docs-site/current-work.md",
+        "docs-site/orchestrator-state.json",
+        "docs-site/planning-state.json",
+    ):
+        (target_root / rel_path).unlink(missing_ok=True)
+
+
 def generic_state(project_name: str, objective: str) -> dict:
     timestamp = ai_status.iso_now()
+    canonical_layers = {
+        "L0 Collaboration & State": [
+            "AI_COLLABORATION_GUIDE.md",
+            "ai-status.json",
+            "ai-activity-log.jsonl",
+            "current-work.md",
+        ],
+        "L1 Runtime & Dashboard": [
+            "docs-site/index.html",
+        ],
+        "L2 Planning & Execution": [
+            "docs/02-architecture/consensus/phase1/README.md",
+            "docs/02-architecture/consensus/phase1/planning-session.json",
+        ],
+    }
     agents = []
     for name, meta in ai_status.KNOWN_AGENTS.items():
         agents.append(
@@ -144,12 +183,8 @@ def generic_state(project_name: str, objective: str) -> dict:
         "sprint": f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-bootstrap",
         "objective": objective,
         "updated_at": timestamp,
-        "canonical_files": [
-            "AI_COLLABORATION_GUIDE.md",
-            "current-work.md",
-            "ai-status.json",
-            "ai-activity-log.jsonl",
-        ],
+        "canonical_document_layers": canonical_layers,
+        "canonical_files": ai_status.flatten_canonical_document_layers(canonical_layers),
         "agents": agents,
         "tasks": [],
         "handoffs": [],
@@ -199,13 +234,16 @@ Read these in order before starting work:
 3. `ai-status.json`
 4. `ai-activity-log.jsonl`
 5. `docs-site/index.html`
+6. `docs/02-architecture/consensus/phase1/README.md` when discussion planning is active
+7. `docs/02-architecture/consensus/phase1/planning-session.json` when discussion planning is active
 
-Source of truth split:
-- `AI_COLLABORATION_GUIDE.md`: stable collaboration rules
-- `ai-status.json`: machine-readable live task state
-- `ai-activity-log.jsonl`: append-only activity history
-- `current-work.md`: generated human-readable snapshot
-- `docs-site/index.html`: local dashboard
+Layered source of truth:
+- `L0 Collaboration & State`: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`
+- `L1 Runtime & Dashboard`: `docs-site/index.html`
+- `L2 Planning & Execution`: `docs/02-architecture/consensus/phase1/README.md`, `docs/02-architecture/consensus/phase1/planning-session.json`
+
+Generated files must not outrank their machine-readable source.
+This bundle only seeds the collaboration/control-plane layer. As the repo gains project-specific architecture, backlog, or policy docs, update this file and `ai-status.json` so the canonical read order matches the new project instead of the source repo.
 
 ## 2. Collaboration Model
 
@@ -214,6 +252,7 @@ Source of truth split:
 - `Claude`: execution plane, control plane, governance review
 - `Gemini`: cloud/runtime packaging, CI/CD, worker operations
 - `Codex`: contracts, state system, schema, acceptance
+- `Qwen`: integration, schema, acceptance, code-agent execution
 - `Copilot`: coding assist, research ingestion, external search, critique
 
 ### Task Ownership
@@ -233,6 +272,23 @@ Lifecycle:
 - `review_approved`: reviewer gate passed; the task returns to the owner for finalization
 - `done`: owner has formally closed the task
 
+### Discussion Planning Mode
+
+Use `discussion_planning` before you create execution tasks when the repo still needs written consensus on architecture, wave order, or task slicing.
+
+Canonical planning files:
+- `docs/02-architecture/consensus/phase1/README.md`
+- `docs/02-architecture/consensus/phase1/planning-session.json`
+- `docs/02-architecture/consensus/phase1/starter-draft.md`
+- `docs/02-architecture/consensus/phase1/consensus-packet.md`
+
+Rules:
+- only the current baton owner edits `starter-draft.md`
+- reviewers write cited comments in `review-round-*.md`
+- `planning-session.json` is the machine-readable planning source of truth
+- `.orchestrator/planning-state.json` is derived for the dashboard
+- after human acceptance, materialize agreed slices into `ai-status.json`
+
 ## 3. Status Commands
 
 Use the status script instead of editing multiple files manually.
@@ -244,6 +300,10 @@ AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Updated progress"
 AI_NAME=Codex ./scripts/ai-status.sh handoff <task-id> Claude "Ready for review"
 AI_NAME=Claude REVIEW_NOTES_ZH="審查通過||回到 owner 收尾" ./scripts/ai-status.sh approve <task-id> "Review approved and returned to the owner for finalization"
 AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
+./scripts/planning-state.sh start phase1 "Kick off discussion planning"
+./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
+./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cross-review"
+./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted"
 ./scripts/sync-state.sh
 ```
 
@@ -284,11 +344,14 @@ Before doing anything:
 1. read `AI_COLLABORATION_GUIDE.md`
 2. read `current-work.md`
 3. read `ai-status.json`
-4. treat those files as the only shared truth
+4. read `ai-activity-log.jsonl` if you need recent history
+5. if discussion planning is active, read `docs/02-architecture/consensus/phase1/README.md` and `planning-session.json`
+6. treat generated views as derived from machine-readable state
 
 Working rules:
 - use `scripts/ai-status.sh` or `python3 scripts/ai_status.py` for status changes
 - do not directly patch `ai-status.json`, `current-work.md`, or `ai-activity-log.jsonl`
+- project-specific architecture or backlog docs are declared through `AI_COLLABORATION_GUIDE.md`; do not assume source-repo docs exist here unless the guide points to them
 - if you are the reviewer, finish `review` tasks first
 - if you are the owner of a `review_approved` task, finalize it to `done`
 - if review fails, write concrete changes and return the task to the owner
@@ -341,17 +404,137 @@ AI_NAME=Codex ./scripts/ai-status.sh start DEMO-001 "Started the first migrated 
 ./scripts/sync-state.sh
 ```
 
-## 4. Tell each LLM CLI how to behave
+## 4. Print the current first prompt
 
-Recommended first prompt for each CLI:
+The repo-aware prompt is generated from `ai-status.json`:
 
-```text
-Read AI_COLLABORATION_GUIDE.md, current-work.md, ai-status.json, and ai-activity-log.jsonl first. Follow the canonical lifecycle todo -> in_progress -> review -> review_approved -> done. Use scripts/ai-status.sh for every state change.
+```bash
+python3 scripts/ai_status.py prompt
 ```
 
-## 5. Optional GitHub bus
+If you add project-specific docs later, update `AI_COLLABORATION_GUIDE.md`, `FOR_*.md`, and `ai-status.json` canonical layers so the prompt stays aligned with the new repo.
+
+## 5. Optional discussion planning smoke test
+
+```bash
+./scripts/planning-state.sh start phase1 "Kick off the planning session"
+./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
+./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cross-review"
+./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted"
+./scripts/sync-state.sh
+```
+
+## 6. Optional GitHub bus
 
 The bootstrap leaves GitHub bus disabled by default. When you are ready, update `.orchestrator/config.local.json` with your repo details and enable `github_bus.enabled`.
+"""
+
+
+def llm_onboarding_doc(project_name: str) -> str:
+    project = project_title(project_name)
+    return f"""# LLM Onboarding
+
+This file is the first-stop onboarding guide for any LLM working inside `{project}`.
+
+## 1. Read Order
+
+Start with these files in order:
+
+1. `AI_COLLABORATION_GUIDE.md`
+2. `current-work.md`
+3. `ai-status.json`
+4. `ai-activity-log.jsonl` when you need recent history
+5. `docs/02-architecture/consensus/phase1/README.md` and `planning-session.json` when discussion planning is active
+
+If the repo later adds project-specific architecture, backlog, or policy docs, `AI_COLLABORATION_GUIDE.md` and `ai-status.json` should be updated to point at them explicitly.
+
+## 2. First Prompt
+
+Print the repo-aware prompt with:
+
+```bash
+python3 scripts/ai_status.py prompt
+```
+
+Use that output as the first prompt in Claude Code, Codex CLI, Gemini CLI, Copilot, or any other connected coding LLM.
+
+## 3. Shared Truth Rules
+
+- `ai-status.json` is the machine-readable source of truth for tasks, ownership, blockers, and handoffs
+- `ai-activity-log.jsonl` is append-only history
+- `current-work.md` is generated from state and is not the write source
+- `docs-site/` is a read-only dashboard mirror, not the place to edit status
+
+## 4. Status Commands
+
+Use the status script instead of editing collaboration files manually:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh assign <task-id> <owner> <reviewer> "Optional title"
+AI_NAME=Codex ./scripts/ai-status.sh start <task-id> "Started implementation"
+AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Updated progress"
+AI_NAME=Codex ./scripts/ai-status.sh handoff <task-id> Claude "Ready for review"
+AI_NAME=Claude REVIEW_NOTES_ZH="審查通過||回到 owner 收尾" ./scripts/ai-status.sh approve <task-id> "Review approved and returned to the owner for finalization"
+AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
+./scripts/sync-state.sh
+```
+
+Planning:
+
+```bash
+./scripts/planning-state.sh start phase1 "Kick off discussion planning"
+./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
+./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cited cross-review"
+./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted"
+./scripts/planning-state.sh human-gate approved "Human accepted the packet"
+./scripts/sync-state.sh
+```
+
+Lifecycle:
+- `todo -> in_progress -> review -> review_approved -> done`
+
+Guardrails:
+- `reviewer` cannot equal `owner`
+- only the reviewer may move a task to `review_approved`
+- only the owner may close a `review_approved` task to `done`
+
+## 5. Work Order
+
+Every LLM should follow this order:
+
+1. Review tasks assigned to you as reviewer
+2. Finalize your own `review_approved` tasks
+3. Continue your `in_progress` tasks
+4. Pick unblocked `todo` tasks assigned to you
+
+## 6. Local Runtime
+
+Prepare the local environment:
+
+```bash
+bash scripts/setup-llm-cli.sh
+```
+
+Run the local collaboration control plane from the repo root:
+
+```bash
+bash scripts/run-supervisor.sh --verbose
+bash scripts/run-dashboard.sh
+```
+
+## 7. First Smoke Test
+
+```bash
+AI_NAME=Codex TASK_PHASE="Foundation" TASK_SUMMARY_ZH="建立第一個遷移後任務。" ./scripts/ai-status.sh assign DEMO-001 Codex Claude "First migrated task"
+AI_NAME=Codex ./scripts/ai-status.sh start DEMO-001 "Started the first migrated task"
+./scripts/sync-state.sh
+```
+
+Then verify:
+- `ai-status.json` contains `DEMO-001`
+- `current-work.md` refreshed
+- dashboard shows the task
+- supervisor shows heartbeat or queue activity
 """
 
 
@@ -393,7 +576,9 @@ def ensure_clean_targets(target_root: Path, force: bool) -> None:
     candidates = [
         target_root / ".orchestrator",
         target_root / "docs-site",
+        target_root / "docs" / "02-architecture" / "consensus" / "phase1",
         target_root / "scripts" / "ai_status.py",
+        target_root / "scripts" / "planning_state.py",
         target_root / "scripts" / "dashboard_server.py",
         target_root / "AI_COLLABORATION_GUIDE.md",
         target_root / "FOR_CLAUDE.md",
@@ -401,6 +586,7 @@ def ensure_clean_targets(target_root: Path, force: bool) -> None:
         target_root / "FOR_CODEX.md",
         target_root / "FOR_COPILOT.md",
         target_root / "FOR_GROK.md",
+        target_root / "LLM_ONBOARDING.md",
         target_root / "ORCHESTRATOR_QUICKSTART.md",
         target_root / "ai-status.json",
         target_root / "ai-activity-log.jsonl",
@@ -434,16 +620,18 @@ def write_bootstrap_files(target_root: Path, project_name: str, objective: str) 
     write_text(target_root / "FOR_CODEX.md", agent_brief("Codex", ai_status.KNOWN_AGENTS["Codex"]["capability_lane"], project_name))
     write_text(target_root / "FOR_COPILOT.md", agent_brief("Copilot", ai_status.KNOWN_AGENTS["Copilot"]["capability_lane"], project_name))
     write_text(target_root / "FOR_GROK.md", copilot_alias_brief(project_name))
+    write_text(target_root / "LLM_ONBOARDING.md", llm_onboarding_doc(project_name))
     write_text(target_root / "ORCHESTRATOR_QUICKSTART.md", quickstart_doc(project_name))
     write_json(target_root / ".orchestrator" / "bundle-manifest.json", portable_manifest(project_name))
 
     subprocess.run(
-        ["python3", str(target_root / "scripts" / "ai_status.py"), "sync"],
+        ["bash", str(target_root / "scripts" / "sync-state.sh")],
         cwd=str(target_root),
         check=True,
         capture_output=True,
         text=True,
     )
+    remove_generated_portable_runtime(target_root)
 
 
 def bootstrap(target_repo: Path, project_name: str, objective: str, force: bool) -> None:

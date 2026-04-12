@@ -1,6 +1,6 @@
 # AI Collaboration Guide
 
-Last updated: 2026-04-06
+Last updated: 2026-04-09
 Status: canonical collaboration rules for the Pantheon project
 
 ## 0. Repository Architecture (2026-04-04 — migration complete)
@@ -39,27 +39,68 @@ Read these in order before starting work:
 1. `AI_COLLABORATION_GUIDE.md`
 2. `current-work.md`
 3. `ai-status.json`
-4. `TARGET_ARCHITECTURE.md`
-5. `ROADMAP.md`
-6. `OSS_INTEGRATION_CHECKLIST.md`
-7. `WORK_REBASELINE.md`
+4. `docs/02-architecture/consensus/phase1/README.md` when `discussion_planning` is active
+5. `docs/02-architecture/consensus/phase1/planning-session.json` when `discussion_planning` is active
+6. `TARGET_ARCHITECTURE.md`
+7. `CANONICAL_DOCUMENT_MAP.md`
+8. `ROADMAP.md`
+9. `DEVELOPMENT_WORKBREAKDOWN.md`
+10. the L1 policy file for the topic you are touching
+11. `OSS_INTEGRATION_CHECKLIST.md`
+12. L3 supporting docs only when you need rationale or migration history
 
-Source of truth split:
+Canonical truth now uses four layers:
+
+### L0 Collaboration & State
 
 - `AI_COLLABORATION_GUIDE.md`: stable collaboration rules and command usage
 - `ai-status.json`: machine-readable live task state, ownership, blockers, handoffs
 - `ai-activity-log.jsonl`: append-only activity history
 - `current-work.md`: generated human-readable sprint snapshot
-- `TARGET_ARCHITECTURE.md`: target-state product architecture
-- `ROADMAP.md`: epic-level delivery plan aligned to the target architecture
-- `OSS_INTEGRATION_CHECKLIST.md`: execution checklist for named upstream OSS components
-- `WORK_REBASELINE.md`: corrected work breakdown and audit scope after reclassifying upstream OSS components
-- `docs-site/index.html`: visual collaboration panel
 
-OSS interpretation rule:
+### L1 Platform Architecture & Policy
 
-- if a document names a real upstream project such as `OpenClaw`, `DSPy`, `Qlib`, `FinRL`, `TRL`, `imitation`, `MLflow`, `W&B`, `RLlib`, or `Tune`, assume that task means upstream integration unless a local replacement is explicitly stated
-- do not silently treat upstream project names as conceptual boxes only
+- `TARGET_ARCHITECTURE.md`: platform north-star and cross-plane architecture
+- `OPENCLAW_RUNTIME_CONTRACT.md`: upstream runtime boundary and adapter contract
+- `PERSONA_RUNTIME_MODEL.md`: persona registry/session/runtime model
+- `BINDING_AND_DEPLOYMENT_SEMANTICS.md`: binding, deployment, and write-owner semantics
+- `PAPER_CANARY_LIVE_POLICY.md`: deployment-stage policy and thresholds
+- `ROLLBACK_AND_POSITION_SEMANTICS.md`: rollback action semantics and position handling
+- `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`: lineage and telemetry storage truth model
+- `EVOLUTION_REVIEW_AND_THRESHOLDS.md`: evolution governance and threshold policy
+- `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`: cross-service consistency, outbox/inbox, and saga policy
+- `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`: kill switch and safe mode fast-path policy
+- `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`: multi-persona synthesis and sponsor-resolution policy
+- `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`: telemetry ingest shock-absorption and storage-layer policy
+- `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`: database ownership and shared-cluster write-boundary policy
+- `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`: event ordering, delivery guarantees, and idempotency policy
+- `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`: cooldown, observation window, and convergence policy
+- `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`: BFF HA, degraded control-plane operation, and operator fallback policy
+- `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`: loop trigger model, race-condition resolution, and scheduling boundaries
+
+### L2 Planning & Execution
+
+- `docs/02-architecture/consensus/phase1/README.md`: discussion planning operating model and baton loop
+- `docs/02-architecture/consensus/phase1/planning-session.json`: machine-readable planning session state
+- `ROADMAP.md`: phased program plan and critical path
+- `DEVELOPMENT_WORKBREAKDOWN.md`: full platform backlog and task decomposition
+- `OSS_INTEGRATION_CHECKLIST.md`: upstream OSS integration evidence checklist
+
+### L3 Supporting Design & Migration
+
+- `CANONICAL_CONTRACT_MIGRATION_DECISION.md`: migration decision and cutover rationale
+- `WORK_REBASELINE.md`: historical work-model reset after OSS reinterpretation
+- `Pantheon_總索引版系統分析文件.md`: north-star product blueprint
+- `Pantheon_資料表_Schema_設計版.md`: future-state data/storage design
+- `Pantheon_API_Service_Contract_設計版.md`: future-state service/API design
+
+Layer rules:
+
+- L0 state files coordinate work and do not define product semantics by themselves.
+- L1 defines current canonical architecture and policy.
+- L2 may sequence work but must not override L1 semantics.
+- L3 may explain or motivate decisions but does not override L1/L2.
+- `CANONICAL_DOCUMENT_MAP.md` is the lookup table when two docs seem close in scope.
 
 Compatibility-only files:
 
@@ -71,6 +112,15 @@ Compatibility-only files:
 - root `ai-status.py`
 
 These are wrappers, not truth.
+
+Derived but important:
+
+- `docs-site/index.html`: visual collaboration panel
+
+OSS interpretation rule:
+
+- if a document names a real upstream project such as `OpenClaw`, `DSPy`, `Qlib`, `FinRL`, `TRL`, `imitation`, `MLflow`, `W&B`, `RLlib`, or `Tune`, assume that task means upstream integration unless a local replacement is explicitly stated
+- do not silently treat upstream project names as conceptual boxes only
 
 Cutover rule:
 
@@ -87,6 +137,7 @@ Separate stable capability lanes from sprint ownership.
 - `Claude`: execution plane, control plane, governance review
 - `Gemini`: GCP, CI/CD, runtime packaging, worker operations
 - `Codex`: integration contracts, status system, schema, acceptance
+- `Qwen`: integration, schema, acceptance, code-agent execution
 - `Copilot`: coding assist, research ingestion, external search, spec review, critique
 
 Recommended local mode for `Copilot`:
@@ -110,6 +161,7 @@ Rules:
 - only the `reviewer` may move a task into `review_approved`
 - only the `owner` may finalize a `review_approved` task into `done`
 - done transitions must include a checkpoint message
+- only use `supersede` for legacy or duplicate lanes that were explicitly replaced by an accepted consensus packet or a newer execution slice
 - interface changes should be reflected through status updates, not hidden in chat only
 
 Lifecycle rule:
@@ -118,6 +170,44 @@ Lifecycle rule:
 - `review`: reviewer must either approve or request concrete changes
 - `review_approved`: reviewer gate passed; the task returns to the owner for finalization
 - `done`: owner has finished final checks, accepted the approved state, and formally closed the task
+- `supersede`: exceptional retirement path for obsolete lanes; it closes the task with a terminal note instead of pretending the original scope was fully implemented
+
+### Discussion Planning Mode
+
+`discussion_planning` is additive. It does not replace the current execution lifecycle.
+
+Use it before materializing execution tasks when we still need written consensus on:
+
+- architecture or source-of-truth boundaries
+- delivery order / wave order
+- task slicing and reviewer assignment
+
+Canonical planning workspace:
+
+- `docs/02-architecture/consensus/phase1/README.md`
+- `docs/02-architecture/consensus/phase1/planning-session.json`
+- `docs/02-architecture/consensus/phase1/starter-draft.md`
+- `docs/02-architecture/consensus/phase1/consensus-packet.md`
+- `docs/02-architecture/consensus/phase1/*-readout.md`
+- `docs/02-architecture/consensus/phase1/review-round-*.md`
+
+Rules:
+
+- only the current baton owner edits `starter-draft.md`
+- reviewers write cited comments in the current round file instead of directly rewriting the shared draft
+- `planning-session.json` is the machine-readable source of truth for planning state
+- `.orchestrator/planning-state.json` is derived for dashboard rendering
+- execution tasks still live in `ai-status.json`; planning drafts should not be inserted there prematurely
+
+Typical flow:
+
+1. all lanes read L0 -> L1 -> L2 canonical docs
+2. each lane writes an independent readout
+3. `Codex` creates the first starter draft
+4. `Qwen -> Gemini -> Copilot -> Claude` run cited cross-review rounds
+5. unresolved semantic conflicts become explicit `human_required` items
+6. `Claude` synthesizes the final `consensus-packet.md`
+7. after human acceptance, convert the agreed slices into execution tasks through `scripts/ai-status.sh`
 
 ## 3. Status Commands
 
@@ -132,6 +222,21 @@ AI_NAME=Gemini REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="審查通過||後�
 AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Owner picked up the approved task for final checks"
 AI_NAME=Codex ./scripts/ai-status.sh blocker <task-id> "Waiting for broker decision" Gemini
 AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
+AI_NAME=Codex ./scripts/ai-status.sh supersede <task-id> "Superseded by the accepted execution slice; retire this legacy lane." <replacement-task-id>
+./scripts/sync-state.sh
+```
+
+Planning commands:
+
+```bash
+./scripts/planning-state.sh start phase1 "Kick off the discussion planning session"
+./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
+./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cited cross-review"
+./scripts/planning-state.sh round 1 open "Opened review round 1"
+./scripts/planning-state.sh issue DIV-001 high human_required "Ownership/source-of-truth conflict"
+./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted and waiting for human acceptance"
+./scripts/planning-state.sh human-gate approved "Human accepted the planning packet"
+./scripts/planning-state.sh propose-task W3-001A Qwen Claude "Callcenter & CTI correlation baseline"
 ./scripts/sync-state.sh
 ```
 
@@ -260,11 +365,14 @@ Please read these files before starting:
 - current-work.md
 - ai-status.json
 - TARGET_ARCHITECTURE.md
+- CANONICAL_DOCUMENT_MAP.md
 - ROADMAP.md
+- DEVELOPMENT_WORKBREAKDOWN.md
 - OSS_INTEGRATION_CHECKLIST.md
-- WORK_REBASELINE.md
+- the L1 policy document that matches your task
+- L3 supporting docs only if you need rationale or migration history
 
-You are [Claude/Gemini/Codex/Copilot].
+You are [Claude/Gemini/Codex/Qwen/Copilot].
 Follow the current owner/reviewer assignments from ai-status.json.
 Update progress through scripts/ai-status.sh instead of manually editing multiple Markdown files.
 Work in this order: finish assigned reviews first, then finalize your own `review_approved` tasks, then continue your own unblocked tasks, then claim other safe tasks and set the original owner as reviewer.

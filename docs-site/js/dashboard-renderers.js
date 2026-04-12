@@ -1,0 +1,2340 @@
+import {
+  activityTypeLabel,
+  boardColumns,
+  logicalAgents,
+  planningHighSignalTypes,
+  workerStatusIcon,
+} from "./dashboard-config.js?v=20260411-2358";
+import {
+  buildTruthMismatches,
+  actorLabel,
+  agentLabel,
+  buildDependencySchedule,
+  dependencyBatchState,
+  deriveAgentState,
+  formatTime,
+  laneLabel,
+  normalizeDispatchQueue,
+  normalizePlanningState,
+  normalizeReviewNotes,
+  normalizeWorkerRecords,
+  qs,
+  statusLabel,
+  taskBadgeRow,
+  taskDeliveryLayer,
+  terminalTaskStatus,
+  timeAgo,
+  titleCase,
+  truncate,
+  workerLifecycleBadge,
+} from "./dashboard-core.js?v=20260411-2358";
+
+export function renderWorkload(status) {
+  const container = qs("#workload-grid");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const entries = Object.entries(status.workload_summary || {});
+  if (!entries.length) {
+    container.innerHTML = '<p class="empty">尚無 lane workload 摘要。</p>';
+    return;
+  }
+  for (const [name, summary] of entries) {
+    const target = status.workload?.[name] ?? 0;
+    const fill = Math.min(summary.total * 15, 100);
+    const card = document.createElement("article");
+    card.className = "workload-card";
+    card.innerHTML = `
+      <div class="lane-head">
+        <strong>${name}</strong>
+        <span class="status-pill">目標 ${target}%</span>
+      </div>
+      <div class="workload-bar"><div class="workload-fill" style="width:${fill}%"></div></div>
+      <div class="lane-meta">
+        <span class="chip">總數 ${summary.total}</span>
+        <span class="chip">活躍 ${summary.active}</span>
+        <span class="chip">阻塞 ${summary.blocked}</span>
+        <span class="chip">完成 ${summary.done}</span>
+      </div>
+    `;
+    container.appendChild(card);
+  }
+}
+
+export function renderAgentLanes(status, agentStates) {
+  const container = qs("#agent-lanes");
+  if (!container) return;
+  container.innerHTML = "";
+  const taskMap = new Map((status.tasks || []).map((task) => [task.id, task]));
+  const lanes = agentStates || deriveAgentState(status, null);
+  if (!lanes.length) {
+    container.innerHTML = '<p class="empty">尚無 agent lane 狀態。</p>';
+    return;
+  }
+
+  for (const agent of lanes) {
+    const focusTasks = (agent.current_task_ids || [])
+      .map((taskId) => taskMap.get(taskId))
+      .filter(Boolean)
+      .map((task) => `<li><strong>${task.id}</strong>：${task.summary_zh || task.title}</li>`)
+      .join("");
+    const card = document.createElement("article");
+    card.className = "lane";
+    const activeTasks = (agent.current_task_ids || []).length ? agent.current_task_ids.join(", ") : "目前沒有焦點任務";
+    card.innerHTML = `
+      <div class="lane-head">
+        <strong>${agent.name}</strong>
+        <span class="status-pill status-${agent.status}">${statusLabel(agent.status)}</span>
+      </div>
+      <p class="lane-copy">${(agent.capability_lane || []).map(laneLabel).join(" · ")}</p>
+      <div class="lane-meta">
+        <span class="chip">${agent.branch || "未指定分支"}</span>
+        <span class="chip">${activeTasks}</span>
+        <span class="chip">可開工 ${agent.ready_count || 0}</span>
+        <span class="chip">等前置 ${agent.waiting_count || 0}</span>
+        <span class="chip">已批准 ${agent.approved_count || 0}</span>
+      </div>
+      ${focusTasks ? `<ul class="note-list compact">${focusTasks}</ul>` : ""}
+      <p class="lane-copy">下一步：${truncate(agent.next, 120)}</p>
+      <p class="lane-copy">最後更新：${formatTime(agent.last_update)}</p>
+    `;
+    container.appendChild(card);
+  }
+}
+
+export function renderDeliveryLayers(status, planningState) {
+  const container = qs("#delivery-layers");
+  container.innerHTML = "";
+
+  const tasks = (status.tasks || []).filter((task) => task.status !== "done");
+  const planning = normalizePlanningState(planningState);
+  const taskIds = new Set((status.tasks || []).map((task) => task.id));
+  const layers = [
+    {
+      key: "planning",
+      title: "Planning Outputs",
+      copy: "已在 discussion planning 中提出，但尚未完全 materialize 成 execution task 的共識輸出。",
+      tasks: (planning.proposed_execution_tasks || []).filter((task) => !taskIds.has(task.id)),
+      planningLayer: true,
+    },
+    {
+      key: "product",
+      title: "產品本體工作",
+      copy: "產品本體、執行邊界、registry、feedback、repo 邊界與 audit 等工作。",
+      tasks: tasks.filter((task) => taskDeliveryLayer(task) === "product"),
+    },
+    {
+      key: "upstream",
+      title: "外部 / 上游整合工作",
+      copy: "針對外部框架、adapter、整合點與 smoke test 的工作。",
+      tasks: tasks.filter((task) => taskDeliveryLayer(task) === "upstream"),
+    },
+  ];
+
+  for (const layer of layers) {
+    const section = document.createElement("section");
+    section.className = "delivery-layer";
+    section.innerHTML = `
+      <div class="delivery-layer-head">
+        <div>
+          <h3>${layer.title}</h3>
+          <p class="section-copy">${layer.copy}</p>
+        </div>
+        <span class="status-pill">${layer.tasks.length} 個未完成任務</span>
+      </div>
+      <div class="delivery-layer-grid"></div>
+    `;
+    const grid = section.querySelector(".delivery-layer-grid");
+
+    if (!layer.tasks.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "目前這一層沒有未完成任務。";
+      grid.appendChild(empty);
+    }
+
+    for (const task of layer.tasks) {
+      const card = document.createElement("article");
+      card.className = "delivery-card";
+      const depends = (task.depends_on || []).length ? task.depends_on.join(", ") : "無";
+      const displayStatus = layer.planningLayer ? "draft" : task.status;
+      card.innerHTML = `
+        <div class="task-head">
+          <strong>${task.id}</strong>
+          <span class="status-pill status-${displayStatus}">${statusLabel(displayStatus)}</span>
+        </div>
+        <p>${task.title}</p>
+        <p class="task-summary">工作說明：${task.summary_zh || "尚未補上中文說明。"}</p>
+        <div class="lane-meta">
+          <span class="chip">${task.phase || "Planning Materialized"}</span>
+          <span class="chip">負責人 ${task.owner}</span>
+          <span class="chip">審查者 ${task.reviewer}</span>
+        </div>
+        ${layer.planningLayer ? "" : taskBadgeRow(task, "lane-meta")}
+        <div class="lane-meta">
+          <span class="chip">依賴 ${depends}</span>
+        </div>
+        <p class="card-copy">${
+          layer.planningLayer
+            ? task.summary_zh || "等待 human gate 或 materialization 動作。"
+            : `下一步：${truncate(task.next, 120)}`
+        }</p>
+      `;
+      grid.appendChild(card);
+    }
+
+    container.appendChild(section);
+  }
+}
+
+function renderRuntimeLinkDrilldown(link) {
+  const runId = link.worker_run_id || link.run_id || "-";
+  const runtimeStatus = link.worker_status || link.status || "pending";
+  const runtimeBucket = link.runtime_bucket || link.bucket || "pending";
+  const actor = link.display_actor || actorLabel(link.actor || link.logical_agent_id, link.provider);
+  const dispatchReason = link.dispatch_reason || link.reason || null;
+  const mismatchBadges = (link.mismatch_flags || [])
+    .map((flag) => `<span class="chip status-blocked">${flag}</span>`)
+    .join("");
+  const resolutionHints = Array.from(new Set((link.resolution_hints || []).filter(Boolean)));
+  return `
+    <article class="runtime-link-card runtime-${runtimeBucket}">
+      <div class="runtime-link-head">
+        <strong>${runId}</strong>
+        <div class="chip-row">
+          <span class="status-pill status-${runtimeStatus}">${statusLabel(runtimeStatus)}</span>
+          ${link.queue_status ? `<span class="chip">queue ${link.queue_status}</span>` : ""}
+          ${runtimeBucket ? `<span class="chip">bucket ${runtimeBucket}</span>` : ""}
+        </div>
+      </div>
+      <div class="runtime-link-meta">
+        <span class="chip">${actor}</span>
+        ${link.mode ? `<span class="chip">${link.mode}</span>` : ""}
+        ${dispatchReason ? `<span class="chip">${dispatchReason}</span>` : ""}
+        ${link.queue_event_id ? `<span class="chip">evt ${link.queue_event_id}</span>` : ""}
+      </div>
+      <div class="runtime-link-meta">
+        ${link.last_event_at ? `<span class="chip">worker ${timeAgo(link.last_event_at)}</span>` : ""}
+        ${link.queue_last_event_at ? `<span class="chip">queue ${timeAgo(link.queue_last_event_at)}</span>` : ""}
+        ${link.expected_actor ? `<span class="chip">expected ${agentLabel(link.expected_actor)}</span>` : ""}
+      </div>
+      ${mismatchBadges ? `<div class="runtime-link-meta">${mismatchBadges}</div>` : ""}
+      ${resolutionHints.length ? `<ul class="note-list compact-list">${resolutionHints.map((hint) => `<li>${hint}</li>`).join("")}</ul>` : ""}
+      ${link.last_error ? `<p class="card-copy error-text">last_error: ${truncate(link.last_error, 140)}</p>` : ""}
+    </article>
+  `;
+}
+
+export function renderTaskBoard(status, orchState, dashboardBundle = null) {
+  const board = qs("#task-board");
+  if (!board) return;
+  board.innerHTML = "";
+
+  const truth = buildTruthMismatches(status, orchState);
+  const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
+  const bundleMismatches = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : null;
+  const mismatchByTask = new Map();
+  for (const mismatch of bundleMismatches || truth.mismatches) {
+    if (!mismatch.task_id) continue;
+    if (!mismatchByTask.has(mismatch.task_id)) mismatchByTask.set(mismatch.task_id, []);
+    mismatchByTask.get(mismatch.task_id).push(mismatch);
+  }
+  const runtimeLinksByTask = new Map();
+  for (const link of bundleLinks) {
+    const taskId = String(link.task_id || "").trim();
+    if (!taskId) continue;
+    if (!runtimeLinksByTask.has(taskId)) runtimeLinksByTask.set(taskId, []);
+    runtimeLinksByTask.get(taskId).push(link);
+  }
+
+  const displayTasks = (status.tasks || []).map((task) => {
+    const bundleLinksForTask = runtimeLinksByTask.get(task.id) || [];
+    const liveWorkers = bundleLinksForTask.length ? bundleLinksForTask : truth.liveWorkersByTask.get(task.id) || [];
+    const hasRunningWorker = liveWorkers.some((worker) => (worker.runtime_bucket || worker.bucket) === "running");
+    const hasPendingWorker = liveWorkers.some((worker) => (worker.runtime_bucket || worker.bucket) === "pending");
+    let displayStatus = task.status;
+    if (!terminalTaskStatus(task.status) && hasRunningWorker) {
+      displayStatus = "in_progress";
+    } else if (task.status === "todo" && hasPendingWorker) {
+      displayStatus = "in_progress";
+    }
+    return {
+      ...task,
+      display_status: displayStatus,
+      live_workers: liveWorkers,
+      mismatch_count: (mismatchByTask.get(task.id) || []).length,
+      mismatches: mismatchByTask.get(task.id) || [],
+    };
+  });
+
+  for (const column of boardColumns) {
+    const wrapper = document.createElement("section");
+    wrapper.className = "board-column";
+    const tasks = displayTasks.filter((task) => task.display_status === column.key);
+    wrapper.innerHTML = `<h3>${column.label}</h3><div class="column-stack"></div>`;
+    const stack = wrapper.querySelector(".column-stack");
+
+    if (!tasks.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "目前沒有任務";
+      stack.appendChild(empty);
+    }
+
+    for (const task of tasks) {
+      const card = document.createElement("article");
+      card.className = "task-card";
+      const depends = (task.depends_on || []).length ? task.depends_on.join(", ") : "無";
+      const runtimeWorkers = task.live_workers || [];
+      const runtimeBadge = runtimeWorkers.length
+        ? `<span class="chip">live worker ${runtimeWorkers.map((worker) => `${agentLabel(worker.actor || worker.logical_agent_id)}:${worker.worker_status || worker.status}`).join(" / ")}</span>`
+        : "";
+      const mismatchBadge = task.mismatch_count
+        ? `<span class="chip status-blocked">mismatch ${task.mismatch_count}</span>`
+        : "";
+      const canonicalBadge = task.display_status !== task.status
+        ? `<span class="chip">canonical ${statusLabel(task.status)}</span>`
+        : "";
+      const approvedFollowupBadge = task.status === "review_approved"
+        ? `<span class="chip">待收尾回到 ${task.owner}</span>`
+        : "";
+      card.innerHTML = `
+        <div class="task-head">
+          <strong>${task.id}</strong>
+          <span class="status-pill status-${task.display_status}">${statusLabel(task.display_status)}</span>
+        </div>
+        <p>${task.title}</p>
+        <p class="task-summary">工作說明：${task.summary_zh || "尚未補上中文說明。"}</p>
+        <div class="task-meta">
+          <span class="chip">${task.phase}</span>
+          <span class="chip">負責人 ${task.owner}</span>
+          <span class="chip">審查者 ${task.reviewer}</span>
+        </div>
+        ${taskBadgeRow(task)}
+        <div class="task-foot">
+          <span class="chip">依賴 ${depends}</span>
+          <span class="chip">${formatTime(task.last_update)}</span>
+        </div>
+        <div class="task-meta">
+          ${runtimeBadge}
+          ${mismatchBadge}
+          ${canonicalBadge}
+          ${approvedFollowupBadge}
+        </div>
+        ${
+          runtimeWorkers.length
+            ? `<div class="review-block">
+                <p class="review-title">Live Runtime Drilldown</p>
+                <div class="runtime-link-grid">${runtimeWorkers.map((worker) => renderRuntimeLinkDrilldown(worker)).join("")}</div>
+              </div>`
+            : ""
+        }
+        ${
+          task.mismatches.length
+            ? `<div class="review-block">
+                <p class="review-title">Truth mismatch</p>
+                <ul class="note-list">${task.mismatches.map((item) => `<li>${item.title}：${item.summary}${item.resolution_hint ? ` 建議：${item.resolution_hint}` : ""}</li>`).join("")}</ul>
+              </div>`
+            : ""
+        }
+        ${
+          normalizeReviewNotes(task.review_notes_zh).length
+            ? `<div class="review-block">
+                <p class="review-title">審查重點</p>
+                <ul class="note-list">${normalizeReviewNotes(task.review_notes_zh).map((note) => `<li>${note}</li>`).join("")}</ul>
+                ${task.review_file ? `<p class="card-copy">參考檔案：<code>${task.review_file}</code></p>` : ""}
+              </div>`
+            : ""
+        }
+        <p class="card-copy">下一步：${truncate(task.next, 120)}</p>
+      `;
+      stack.appendChild(card);
+    }
+
+    board.appendChild(wrapper);
+  }
+}
+
+export function renderDependencySchedule(status) {
+  const summary = qs("#dependency-summary");
+  const container = qs("#dependency-schedule");
+  if (summary) summary.innerHTML = "";
+  if (container) container.innerHTML = "";
+
+  const schedule = buildDependencySchedule(status.tasks || []);
+  const summaryItems = [
+    { label: "現在可開工", value: schedule.readyNow, note: "所有前置都已完成，且尚未開始" },
+    { label: "目前進行中", value: schedule.activeNow, note: "包含進行中與待審查" },
+    { label: "等待前置", value: schedule.waitingNow, note: "依賴尚未完成，不能安全開工" },
+    { label: "明確阻塞", value: schedule.explicitBlocked, note: "已有 blocker 狀態記錄" },
+    { label: "已批准待收尾", value: schedule.approvedNow, note: "review_approved 尚未正式完成，需由 owner 收尾成 done" },
+  ];
+
+  for (const item of summaryItems) {
+    const card = document.createElement("article");
+    card.className = "workload-card";
+    card.innerHTML = `
+      <div class="lane-head">
+        <strong>${item.label}</strong>
+        <span class="status-pill">${item.value}</span>
+      </div>
+      <p class="dependency-copy">${item.note}</p>
+    `;
+    summary.appendChild(card);
+  }
+
+  if (schedule.approved.length) {
+    const approvedSection = document.createElement("section");
+    approvedSection.className = "dependency-wave dependency-approved";
+    approvedSection.innerHTML = `
+      <div class="dependency-wave-head">
+        <div>
+          <h3>已批准待收尾</h3>
+          <p class="section-copy">${schedule.approved.length} 個任務</p>
+        </div>
+        <div class="chip-row">
+          <span class="status-pill batch-pill batch-approved">review_approved ${schedule.approved.length}</span>
+        </div>
+      </div>
+      <div class="dependency-grid"></div>
+    `;
+    const approvedGrid = approvedSection.querySelector(".dependency-grid");
+    for (const task of schedule.approved) {
+      const depends = (task.depends_on || []).length ? task.depends_on.join(", ") : "無";
+      const card = document.createElement("article");
+      card.className = "dependency-card batch-approved";
+      card.innerHTML = `
+        <div class="task-head">
+          <strong>${task.id}</strong>
+          <div class="chip-row">
+            <span class="status-pill batch-pill batch-approved">待收尾</span>
+            <span class="status-pill status-${task.status}">${statusLabel(task.status)}</span>
+          </div>
+        </div>
+        <p>${task.title}</p>
+        <p class="task-summary">工作說明：${task.summary_zh || "尚未補上中文說明。"}</p>
+        <div class="dependency-meta">
+          <span class="chip">負責人 ${task.owner}</span>
+          <span class="chip">審查者 ${task.reviewer}</span>
+          <span class="chip">前置 ${depends}</span>
+        </div>
+        ${taskBadgeRow(task, "dependency-meta")}
+        <p class="dependency-copy">這些任務已通過 review gate，但尚未正式完成；owner 收尾成 done 後，才會解除下游依賴。</p>
+      `;
+      approvedGrid.appendChild(card);
+    }
+    container.appendChild(approvedSection);
+  }
+
+  if (!schedule.waves.length && !schedule.cyclic.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = schedule.approved.length ? "目前沒有新的開發 / 審查波次；上方仍有已批准待 owner 收尾的任務。" : "目前沒有可排程的未完成任務。";
+    container.appendChild(empty);
+    return;
+  }
+
+  schedule.waves.forEach((wave, index) => {
+    const section = document.createElement("section");
+    section.className = "dependency-wave";
+    const title = index === 0 ? "現在這一波" : index === 1 ? "下一波" : `第 ${index + 1} 波`;
+    const counts = wave.reduce(
+      (acc, task) => {
+        const unresolvedDeps = (task.depends_on || []).filter((depId) => String(schedule.taskMap.get(depId)?.status || "done").toLowerCase() !== "done");
+        const batch = dependencyBatchState(task, index, unresolvedDeps).key;
+        acc[batch] = (acc[batch] || 0) + 1;
+        return acc;
+      },
+      { completed: 0, active: 0, ready: 0, waiting: 0, blocked: 0 }
+    );
+    section.innerHTML = `
+      <div class="dependency-wave-head">
+        <div>
+          <h3>${title}</h3>
+          <p class="section-copy">${wave.length} 個任務</p>
+        </div>
+        <div class="chip-row">
+          ${counts.active ? `<span class="status-pill status-running">進行中 ${counts.active}</span>` : ""}
+          ${counts.ready ? `<span class="status-pill status-ready">可開工 ${counts.ready}</span>` : ""}
+          ${counts.waiting ? `<span class="status-pill status-pending">等待前置 ${counts.waiting}</span>` : ""}
+          ${counts.blocked ? `<span class="status-pill status-blocked">阻塞 ${counts.blocked}</span>` : ""}
+        </div>
+      </div>
+      <div class="dependency-grid"></div>
+    `;
+    const grid = section.querySelector(".dependency-grid");
+
+    for (const task of wave) {
+      const unresolvedDeps = (task.depends_on || []).filter((depId) => String(schedule.taskMap.get(depId)?.status || "done").toLowerCase() !== "done");
+      const depends = (task.depends_on || []).length ? task.depends_on.join(", ") : "無";
+      const unresolved = unresolvedDeps.length ? unresolvedDeps.join(", ") : "無";
+      const card = document.createElement("article");
+      const batchState = dependencyBatchState(task, index, unresolvedDeps);
+      card.className = `dependency-card batch-${batchState.key}`;
+      card.innerHTML = `
+        <div class="task-head">
+          <strong>${task.id}</strong>
+          <div class="chip-row">
+            <span class="status-pill batch-pill batch-${batchState.key}">${batchState.label}</span>
+            <span class="status-pill status-${task.status}">${statusLabel(task.status)}</span>
+          </div>
+        </div>
+        <p>${task.title}</p>
+        <p class="task-summary">工作說明：${task.summary_zh || "尚未補上中文說明。"}</p>
+        <div class="dependency-meta">
+          <span class="chip">${task.phase}</span>
+          <span class="chip">負責人 ${task.owner}</span>
+          <span class="chip">審查者 ${task.reviewer}</span>
+        </div>
+        ${taskBadgeRow(task, "dependency-meta")}
+        <div class="dependency-meta">
+          <span class="chip">全部前置 ${depends}</span>
+          <span class="chip">未完成前置 ${unresolved}</span>
+        </div>
+        <p class="dependency-copy">排程判斷：${
+          batchState.key === "completed"
+            ? "這一波中的工作已完成，後續可以往下一波推進。"
+            : batchState.key === "active"
+              ? "這一波正在被執行或審查，完成後會推動下一波。"
+              : batchState.key === "ready"
+                ? "這一波可直接開工。"
+                : batchState.key === "blocked"
+                  ? "這一波存在明確阻塞，需先解除阻塞。"
+                  : "仍有未完成前置；待前置正式 done 後才適合開始。"
+        }</p>
+        <p class="card-copy">下一步：${truncate(task.next, 120)}</p>
+      `;
+      grid.appendChild(card);
+    }
+
+    container.appendChild(section);
+  });
+
+  if (schedule.cyclic.length) {
+    const section = document.createElement("section");
+    section.className = "dependency-wave";
+    section.innerHTML = `
+      <div class="dependency-wave-head">
+        <h3>循環或異常依賴</h3>
+        <span class="section-copy">${schedule.cyclic.length} 個任務</span>
+      </div>
+      <div class="dependency-grid"></div>
+    `;
+    const grid = section.querySelector(".dependency-grid");
+    for (const task of schedule.cyclic) {
+      const card = document.createElement("article");
+      card.className = "dependency-card blocked-now";
+      card.innerHTML = `
+        <div class="task-head">
+          <strong>${task.id}</strong>
+          <span class="status-pill status-blocked">需檢查</span>
+        </div>
+        <p>${task.title}</p>
+        <div class="dependency-meta">
+          <span class="chip">前置 ${(task.depends_on || []).join(", ") || "無"}</span>
+        </div>
+        <p class="dependency-copy">這些任務沒有被正常排進波次，通常代表依賴循環或缺少狀態收斂。</p>
+      `;
+      grid.appendChild(card);
+    }
+    container.appendChild(section);
+  }
+}
+
+export function renderReviewNotes(status) {
+  const tasksWithNotes = (status.tasks || []).filter((task) => normalizeReviewNotes(task.review_notes_zh).length);
+  renderStackList(
+    "#review-note-list",
+    tasksWithNotes,
+    "目前沒有 reviewer 備註。",
+    (task) => `
+      <div class="stack-head">
+        <strong>${task.id}</strong>
+        <span class="status-pill status-${task.status}">${statusLabel(task.status)}</span>
+      </div>
+      <p>${task.title}</p>
+      <p class="task-summary">工作說明：${task.summary_zh || "尚未補上中文說明。"}</p>
+      ${taskBadgeRow(task)}
+      <p class="card-copy">Reviewer：${task.reviewer}</p>
+      <ul class="note-list">${normalizeReviewNotes(task.review_notes_zh).map((note) => `<li>${note}</li>`).join("")}</ul>
+      ${task.review_file ? `<p class="card-copy">詳細檔案：<code>${task.review_file}</code></p>` : ""}
+    `
+  );
+}
+
+export function renderAuditStatus(status) {
+  const audits = (status.tasks || []).filter((task) => task.phase === "Audit" || task.id.startsWith("AUD-"));
+  const summaryContainer = qs("#audit-status");
+  summaryContainer.innerHTML = "";
+
+  const summaryItems = [
+    { label: "總 Audit", value: audits.length, note: "目前被追蹤的對齊檢查任務數" },
+    {
+      label: "待開始",
+      value: audits.filter((task) => task.status === "todo").length,
+      note: "已指派但還沒開始的 audit",
+    },
+    {
+      label: "進行中",
+      value: audits.filter((task) => ["in_progress", "review"].includes(task.status)).length,
+      note: "已開始或正在審查中的 audit",
+    },
+    {
+      label: "已完成",
+      value: audits.filter((task) => task.status === "done").length,
+      note: "已產出檢查結果的 audit",
+    },
+  ];
+
+  for (const item of summaryItems) {
+    const card = document.createElement("article");
+    card.className = "workload-card";
+    card.innerHTML = `
+      <div class="lane-head">
+        <strong>${item.label}</strong>
+        <span class="status-pill">${item.value}</span>
+      </div>
+      <p class="dependency-copy">${item.note}</p>
+    `;
+    summaryContainer.appendChild(card);
+  }
+
+  renderStackList(
+    "#audit-list",
+    audits,
+    "目前沒有 audit 任務。",
+    (task) => `
+      <div class="stack-head">
+        <strong>${task.id}</strong>
+        <span class="status-pill status-${task.status}">${statusLabel(task.status)}</span>
+      </div>
+      <p>${task.title}</p>
+      <p class="task-summary">工作說明：${task.summary_zh || "尚未補上中文說明。"}</p>
+      <div class="lane-meta">
+        <span class="chip">負責人 ${task.owner}</span>
+        <span class="chip">審查者 ${task.reviewer}</span>
+      </div>
+      ${taskBadgeRow(task, "lane-meta")}
+      ${
+        (task.artifacts || []).length
+          ? `<p class="card-copy">輸出檔案：${task.artifacts.map((path) => `<code>${path}</code>`).join("、")}</p>`
+          : ""
+      }
+      <p class="card-copy">下一步：${truncate(task.next, 120)}</p>
+    `
+  );
+}
+
+export function renderStackList(selector, items, emptyText, formatter) {
+  const container = qs(selector);
+  container.innerHTML = "";
+
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = "stack-card";
+    card.innerHTML = formatter(item);
+    container.appendChild(card);
+  }
+}
+
+export function renderSnapshot(snapshot) {
+  const container = qs("#snapshot");
+  container.innerHTML = "";
+
+  const blocks = [
+    snapshot.objective || "目前沒有可顯示的目標。",
+    ...(snapshot.sprint || []),
+  ];
+
+  for (const block of blocks) {
+    const card = document.createElement("article");
+    card.className = "snapshot-card";
+    card.innerHTML = `<p class="snapshot-item">${block}</p>`;
+    container.appendChild(card);
+  }
+}
+
+export function renderOverviewMetrics(status, orchState, approvalQueue, dashboardBundle = null) {
+  const container = qs("#overview-metrics");
+  if (!container) return;
+  const tasks = status.tasks || [];
+  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const bundleRuntime = dashboardBundle?.runtime_summary || {};
+  const bundleExecution = dashboardBundle?.execution_summary || {};
+  const queueEvents = truth.queueEvents;
+  const approvalPending = (approvalQueue?.pending || []).length;
+  const activeWorkerRows = truth.liveWorkers.filter((w) => w.bucket === "running");
+  const activeWorkers = Number.isFinite(bundleRuntime.running_workers) ? bundleRuntime.running_workers : activeWorkerRows.length;
+  const supervisor = orchState?.supervisor || {};
+  const supervisorHeartbeat = supervisor?.last_heartbeat_at || orchState?.last_heartbeat_at || null;
+  const readyNow = tasks.filter((task) => {
+    if (String(task.status || "").toLowerCase() !== "todo") return false;
+    return (task.depends_on || []).every((depId) => String(tasks.find((candidate) => candidate.id === depId)?.status || "done").toLowerCase() === "done");
+  });
+  const activeTasks = tasks.filter((task) => ["in_progress", "review"].includes(String(task.status || "").toLowerCase()));
+
+  function renderTaskDetail(task) {
+    return `
+      <div class="metric-task-item">
+        <div class="metric-task-head">
+          <strong>${task.id}</strong>
+          <span class="status-pill status-${task.status}">${statusLabel(task.status)}</span>
+        </div>
+        <div class="metric-task-meta">
+          <span class="chip">Owner ${task.owner}</span>
+          <span class="chip">Reviewer ${task.reviewer}</span>
+        </div>
+        <p class="metric-task-copy">${truncate(task.summary_zh || task.title || "", 80)}</p>
+      </div>
+    `;
+  }
+
+  function renderQueueDetail(event) {
+    return `
+      <div class="metric-task-item">
+        <div class="metric-task-head">
+          <strong>${event.task_id || event.id || "-"}</strong>
+          <span class="status-pill status-${event.status || "pending"}">${statusLabel(event.status || "pending")}</span>
+        </div>
+        <div class="metric-task-meta">
+          <span class="chip">${actorLabel(event.logical_agent_id, event.provider)}</span>
+          <span class="chip">${event.reason || "-"}</span>
+          <span class="chip">${timeAgo(event.last_event_at || event.last_attempt_at || event.processed_at)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderWorkerDetail(worker) {
+    const lifecycle = workerLifecycleBadge(worker);
+    return `
+      <div class="metric-task-item">
+        <div class="metric-task-head">
+          <strong>${worker.task_id || worker.run_id || "-"}</strong>
+          <span class="status-pill status-${worker.status || "running"}">${statusLabel(worker.status || "running")}</span>
+          ${lifecycle ? `<span class="chip ${lifecycle.className}">${lifecycle.label}</span>` : ""}
+        </div>
+        <div class="metric-task-meta">
+          <span class="chip">${worker.display_actor}</span>
+          <span class="chip">${worker.reason || worker.mode || "-"}</span>
+          <span class="chip">${timeAgo(worker.last_event_at || worker.started_at)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const items = [
+    {
+      label: "Supervisor",
+      value: supervisorHeartbeat ? "Alive" : "No heartbeat",
+      note: supervisorHeartbeat
+        ? `Heartbeat ${timeAgo(supervisorHeartbeat)} · PID ${supervisor?.pid || "-"}`
+        : "runtime state 沒有 heartbeat，需先檢查 supervisor。",
+    },
+    {
+      label: "Running Workers",
+      value: activeWorkers,
+      note: activeWorkers ? "目前真的在跑的 live workers" : "目前沒有 live running worker",
+      details: activeWorkerRows,
+      emptyLabel: "目前沒有 active worker",
+      renderItem: renderWorkerDetail,
+    },
+    {
+      label: "Dispatch Queue",
+      value: Number.isFinite(bundleRuntime.queue_depth) ? bundleRuntime.queue_depth : queueEvents.length,
+      note: queueEvents.length ? "有事件待處理" : "目前清空",
+      details: queueEvents,
+      emptyLabel: "目前沒有 dispatch queue 項目",
+      renderItem: renderQueueDetail,
+    },
+    {
+      label: "Approval Queue",
+      value: Number.isFinite(bundleRuntime.pending_approvals) ? bundleRuntime.pending_approvals : approvalPending,
+      note: approvalPending ? "有待批准項目" : "目前清空",
+    },
+    {
+      label: "Execution Active",
+      value: Number.isFinite(bundleExecution.in_progress) ? bundleExecution.in_progress + (bundleExecution.in_review || 0) : activeTasks.length,
+      note: `Ready now ${Number.isFinite(bundleExecution.ready_now) ? bundleExecution.ready_now : readyNow.length} · Review ${Number.isFinite(bundleExecution.in_review) ? bundleExecution.in_review : tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length}`,
+      tasks: activeTasks,
+      emptyLabel: "目前沒有 active execution task",
+    },
+    {
+      label: "Truth Mismatches",
+      value: Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches.length : truth.counts.total,
+      note: (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches.length : truth.counts.total)
+        ? `High ${truth.counts.high} · Medium ${truth.counts.medium}`
+        : "runtime / execution / planning 目前沒有明顯不一致",
+      details: truth.mismatches,
+      emptyLabel: "目前沒有 mismatch",
+      renderItem: (item) => `
+        <div class="metric-task-item mismatch-${item.severity}">
+          <div class="metric-task-head">
+            <strong>${item.task_id || item.worker_run_id || item.queue_event_id || "-"}</strong>
+            <span class="status-pill status-${item.severity === "high" ? "blocked" : "pending"}">${item.severity}</span>
+          </div>
+          <p class="metric-task-copy">${item.title}</p>
+          <p class="metric-task-copy">${truncate(item.summary, 90)}</p>
+          ${item.resolution_hint ? `<p class="metric-task-copy">Hint: ${truncate(item.resolution_hint, 90)}</p>` : ""}
+        </div>
+      `,
+    },
+  ];
+
+  container.innerHTML = items.map((item) => {
+    const taskList = Array.isArray(item.tasks) ? item.tasks : [];
+    const detailList = Array.isArray(item.details) ? item.details : [];
+    const detailRender = item.renderItem || renderTaskDetail;
+    const detailRows = item.details ? detailList : taskList;
+    const detailHtml = detailRows.length
+      ? `
+        <details class="metric-details">
+          <summary>查看 ${detailRows.length} 個項目</summary>
+          <div class="metric-task-list">
+            ${detailRows.map((entry) => detailRender(entry)).join("")}
+          </div>
+        </details>
+      `
+      : (item.tasks || item.details)
+        ? `<div class="metric-empty">${item.emptyLabel || "目前沒有項目"}</div>`
+        : "";
+    return `
+      <article class="metric-card">
+        <div class="metric-label">${item.label}</div>
+        <div class="metric-value">${item.value}</div>
+        <div class="metric-note">${item.note}</div>
+        ${detailHtml}
+      </article>
+    `;
+  }).join("");
+}
+
+function executionStatusCounts(status, dashboardBundle = null) {
+  const tasks = status.tasks || [];
+  const summary = dashboardBundle?.execution_summary || {};
+  return {
+    total: tasks.length,
+    done: Number.isFinite(summary.done) ? summary.done : tasks.filter((task) => String(task.status || "").toLowerCase() === "done").length,
+    reviewApproved: Number.isFinite(summary.review_approved) ? summary.review_approved : tasks.filter((task) => String(task.status || "").toLowerCase() === "review_approved").length,
+    inProgress: Number.isFinite(summary.in_progress) ? summary.in_progress : tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length,
+    review: Number.isFinite(summary.in_review) ? summary.in_review : tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length,
+    blocked: Number.isFinite(summary.blocked) ? summary.blocked : tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length,
+    todo: tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
+    readyNow: Number.isFinite(summary.ready_now) ? summary.ready_now : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
+    liveAttached: Number.isFinite(summary.live_attached) ? summary.live_attached : 0,
+    mismatchCount: Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : 0,
+  };
+}
+
+function pausedProviderEntries(orchState) {
+  const pauses = orchState?.provider_guardrails?.dispatch_pauses;
+  if (!pauses || typeof pauses !== "object") return [];
+  return Object.entries(pauses)
+    .map(([provider, info]) => ({ provider, ...(info || {}) }))
+    .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
+}
+
+function planningGateProgress(planning) {
+  const gate = planning.switch_gate || {};
+  const keys = [
+    "all_readouts_submitted",
+    "cross_review_round_present",
+    "divergence_resolved_or_escalated",
+    "consensus_packet_drafted",
+    "human_approved",
+  ];
+  const done = keys.filter((key) => gate[key]).length;
+  return {
+    done,
+    total: keys.length,
+    percent: keys.length ? Math.round((done / keys.length) * 100) : 0,
+  };
+}
+
+function planningNextAction(planning, status) {
+  const gate = planning.switch_gate || {};
+  const missing = planningOutstandingRequirements(planning);
+  const taskIds = new Set((status.tasks || []).map((task) => task.id));
+  const proposals = planning.proposed_execution_tasks || [];
+  const materializedCount = proposals.filter((task) => taskIds.has(task.id)).length;
+  let owner = agentLabel(planning.baton_owner);
+  let action = "等待下一個 planning 更新。";
+
+  if (planning.status === "accepted") {
+    owner = materializedCount < proposals.length ? "Execution owner" : "Execution lanes";
+    action = materializedCount < proposals.length
+      ? `把剩下 ${proposals.length - materializedCount}/${proposals.length} 個候選切片正式下放到 execution task board。`
+      : "planning 已完成，接下來應回到 execution board 追蹤實作與 review。";
+  } else if (planning.status === "human_required") {
+    owner = "Human";
+    action = "先處理需要人工裁決的分歧，再繼續讓 facilitator 收斂共識。";
+  } else if (gate.ready_for_human) {
+    owner = "Human";
+    action = "檢查 consensus packet，決定是否批准進入 execution。";
+  } else if (!gate.all_readouts_submitted) {
+    owner = agentLabel(planning.baton_owner);
+    action = "補齊剩餘 readouts 或明確標記 waived / tracking，避免一直停留在半收斂狀態。";
+  } else if (!gate.cross_review_round_present) {
+    owner = agentLabel(planning.next_reviewer || planning.baton_owner);
+    action = "至少完成一輪 cross-review，讓共識不是只有單 lane 的看法。";
+  }
+
+  return {
+    owner,
+    action,
+    missing,
+    materializedCount,
+    totalProposals: proposals.length,
+  };
+}
+
+function executionNextAction(status, orchState, dashboardBundle = null) {
+  const counts = executionStatusCounts(status, dashboardBundle);
+  const pausedProviders = pausedProviderEntries(orchState);
+  const reviewTasks = (status.tasks || []).filter((task) => String(task.status || "").toLowerCase() === "review");
+  const blockedTasks = (status.tasks || []).filter((task) => String(task.status || "").toLowerCase() === "blocked");
+  const readyTasks = (status.tasks || []).filter((task) => String(task.status || "").toLowerCase() === "todo");
+
+  if (pausedProviders.length) {
+    return {
+      owner: "Supervisor",
+      action: `先處理 ${pausedProviders.length} 個 paused provider，確認改派是否成功，避免 queue 持續把工作送回沒 quota 的 lane。`,
+    };
+  }
+
+  if (reviewTasks.length) {
+    return {
+      owner: "Review lanes",
+      action: `目前有 ${reviewTasks.length} 個任務在 review，先清掉 review queue，避免 owner 一直卡在待審查。`,
+    };
+  }
+
+  if (blockedTasks.length) {
+    return {
+      owner: "Task owners",
+      action: `先處理 ${blockedTasks.length} 個 blocker，否則 ready queue 再漂亮也推不動下游。`,
+    };
+  }
+
+  if (counts.inProgress) {
+    return {
+      owner: "Execution owners",
+      action: `目前有 ${counts.inProgress} 個任務在進行中，優先把 active slices 推到 review，而不是再盲目開新工作。`,
+    };
+  }
+
+  if (readyTasks.length) {
+    return {
+      owner: "Available lanes",
+      action: `目前有 ${readyTasks.length} 個 ready task，可由 supervisor 依 lane 容量繼續派工。`,
+    };
+  }
+
+  return {
+    owner: "Supervisor",
+    action: "目前 execution 沒有明顯積壓，持續監看 queue、worker heartbeat 與 blocker 即可。",
+  };
+}
+
+function currentPriorityNarrative(planning, status, orchState, dashboardBundle = null) {
+  const focusMode = dashboardFocusMode(planning);
+  const proposalStats = planningProposalStats(planning, status);
+  const pausedProviders = pausedProviderEntries(orchState);
+  const executionCounts = executionStatusCounts(status, dashboardBundle);
+  const planningAction = planningNextAction(planning, status);
+  const executionAction = executionNextAction(status, orchState, dashboardBundle);
+
+  if (focusMode === "planning") {
+    return {
+      focusMode,
+      badge: "討論收斂",
+      tone: "status-active",
+      title: "現在先把共識收斂清楚，再談大規模開工",
+      body: "目前系統焦點在 discussion planning。execution 雖然可能仍有既有任務在跑，但新的切片、ownership 與 source-of-truth 決策應先在這一輪收斂完成。",
+      owner: planningAction.owner,
+      nextAction: planningAction.action,
+      chips: [
+        `Consensus ${statusLabel(planning.consensus_status)}`,
+        `Readouts ${planning.counts.readouts_resolved || 0}/${Object.keys(planning.readouts || {}).length}`,
+        `Open issues ${planning.counts.open_items || 0}`,
+        `Rounds ${planning.counts.rounds_total || 0}`,
+      ],
+    };
+  }
+
+  if (planning.status === "accepted" && proposalStats.total && proposalStats.materialized < proposalStats.total) {
+    return {
+      focusMode: "bridge",
+      badge: "共識下放",
+      tone: "status-review",
+      title: "共識已經過關，現在要把它穩定地下放成工作",
+      body: "planning 本身已完成，但還有一部分候選切片尚未 materialize 成正式 execution tasks。這時候最重要的不是再討論，而是把橋接補齊。",
+      owner: planningAction.owner,
+      nextAction: planningAction.action,
+      chips: [
+        `Proposals ${proposalStats.total}`,
+        `Materialized ${proposalStats.materialized}/${proposalStats.total}`,
+        `Completed ${proposalStats.done}/${proposalStats.total}`,
+        `Pending bridge ${Math.max(proposalStats.total - proposalStats.materialized, 0)}`,
+      ],
+    };
+  }
+
+  return {
+    focusMode: "execution",
+    badge: "執行追進度",
+    tone: pausedProviders.length ? "status-blocked" : "status-ready",
+    title: pausedProviders.length
+      ? "Execution 正在跑，但容量與派工需要特別盯"
+      : "共識已落地，現在應該回到 execution 追進度",
+    body: pausedProviders.length
+      ? `目前 execution 是主戰場，但有 ${pausedProviders.length} 個 provider 被暫停派工。重點是確認改派、review 與 blocker 是否仍能讓工作流暢推進。`
+      : "planning 已經完成或不是目前焦點，現在最重要的是把 active slices 推進到 review / done，並保持 runtime 與 task board 對齊。",
+    owner: executionAction.owner,
+    nextAction: executionAction.action,
+    chips: [
+      `Open tasks ${executionCounts.total - executionCounts.done}`,
+      `In progress ${executionCounts.inProgress}`,
+      `In review ${executionCounts.review}`,
+      `Blocked ${executionCounts.blocked}`,
+    ],
+  };
+}
+
+export function renderControlPlaneStrip(status, planningState, orchState = null, dashboardBundle = null) {
+  const container = qs("#control-plane-strip");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const focus = currentPriorityNarrative(planning, status, orchState, dashboardBundle);
+  const taskIds = new Set((status.tasks || []).map((task) => task.id));
+  const proposedTasks = planning.proposed_execution_tasks || [];
+  const materializedCount = proposedTasks.filter((task) => taskIds.has(task.id)).length;
+  const executionCounts = executionStatusCounts(status, dashboardBundle);
+  const pausedProviders = pausedProviderEntries(orchState);
+  const blockers = (status.blockers || []).filter((blocker) => blocker.status === "open").length;
+  const pendingBridge = Math.max(proposedTasks.length - materializedCount, 0);
+
+  const items = [
+    {
+      label: "目前焦點",
+      value: focus.badge,
+      note: focus.title,
+      statusClass: focus.tone,
+    },
+    {
+      label: "Planning 狀態",
+      value: `${statusLabel(planning.status)} / ${statusLabel(planning.consensus_status)}`,
+      note: planning.session_id || "尚未建立 planning session",
+      statusClass: `status-${planning.consensus_status || planning.status}`,
+    },
+    {
+      label: "下放進度",
+      value: proposedTasks.length ? `${materializedCount}/${proposedTasks.length}` : "0/0",
+      note: proposedTasks.length
+        ? (pendingBridge ? `還有 ${pendingBridge} 個候選切片尚未正式下放` : "所有候選切片都已成功進入 execution")
+        : "這輪 planning 目前沒有提出 execution slice",
+      statusClass: pendingBridge ? "status-review" : "status-ready",
+    },
+    {
+      label: "執行進度",
+      value: `${executionCounts.done}/${executionCounts.total} done`,
+      note: `進行中 ${executionCounts.inProgress} · 待審查 ${executionCounts.review} · 阻塞 ${executionCounts.blocked}`,
+    },
+    {
+      label: "即時提醒",
+      value: pausedProviders.length
+        ? `${pausedProviders.length} paused`
+        : blockers || executionCounts.mismatchCount
+          ? `${blockers + executionCounts.mismatchCount} signals`
+          : "All clear",
+      note: pausedProviders.length
+        ? `${pausedProviders.map((entry) => agentLabel(entry.provider)).join("、")} 暫停派工中`
+        : blockers || executionCounts.mismatchCount
+          ? `Blockers ${blockers} · Mismatches ${executionCounts.mismatchCount}`
+          : "目前沒有高優先告警訊號",
+      statusClass: pausedProviders.length || blockers || executionCounts.mismatchCount ? "status-blocked" : "status-ready",
+    },
+  ];
+
+  container.innerHTML = items
+    .map(
+      (item) => `
+      <article class="mode-card">
+        <div class="metric-label">${item.label}</div>
+        <div class="metric-value ${item.statusClass || ""}">${item.value}</div>
+        <div class="metric-note">${item.note}</div>
+      </article>
+    `
+    )
+    .join("");
+}
+
+function planningDecisionSummary(planning, status) {
+  const taskIds = new Set((status.tasks || []).map((task) => task.id));
+  const proposals = planning.proposed_execution_tasks || [];
+  const materializedCount = proposals.filter((task) => taskIds.has(task.id)).length;
+  const pendingMaterialization = Math.max(proposals.length - materializedCount, 0);
+
+  if (planning.status === "accepted") {
+    if (pendingMaterialization > 0) {
+      return {
+        title: "Planning 已完成，共識已被接受",
+        body: `這輪 planning 已完成收斂並通過 human gate。現在的重點不是再討論，而是把剩下 ${pendingMaterialization}/${proposals.length} 個候選切片正式下放到 execution board。`,
+        tone: "status-ready",
+      };
+    }
+    return {
+      title: "Planning 已完成，execution 已接手",
+      body: "這輪 planning 已完成收斂，主要輸出都已進入 execution board。現在應該回到 execution 追進度，而不是再調整 planning 工作區。",
+      tone: "status-ready",
+    };
+  }
+
+  if (planning.status === "human_required") {
+    return {
+      title: "Planning 卡在人工決策",
+      body: "LLM 間已整理出主要分歧，但仍有需要人類裁決的問題。現在最重要的是把分歧解掉，而不是擴大 execution 範圍。",
+      tone: "status-human_required",
+    };
+  }
+
+  if (planning.switch_gate?.ready_for_human) {
+    return {
+      title: "Planning 已接近完成，等待人工確認",
+      body: "主要共識已成型，現在卡在 human gate。此時應優先確認 consensus packet，而不是再擴散討論。",
+      tone: "status-review",
+    };
+  }
+
+  if (planning.status === "active") {
+    return {
+      title: "Planning 仍在收斂中",
+      body: "這輪 planning 還在整合 readout、review 與分歧。現在應先把判斷收斂清楚，再決定哪些內容可以安全地下放到 execution。",
+      tone: "status-active",
+    };
+  }
+
+  return {
+    title: "目前沒有 active planning session",
+    body: "沒有正在進行中的 planning 收斂流程。若要重新跑規劃，應先建立新的 planning session。",
+    tone: "status-done",
+  };
+}
+
+function planningProposalStats(planning, status) {
+  const taskMap = new Map((status.tasks || []).map((task) => [task.id, task]));
+  const proposals = planning.proposed_execution_tasks || [];
+  return {
+    total: proposals.length,
+    materialized: proposals.filter((task) => taskMap.has(task.id)).length,
+    done: proposals.filter((task) => taskMap.get(task.id)?.status === "done").length,
+    reviewApproved: proposals.filter((task) => taskMap.get(task.id)?.status === "review_approved").length,
+    inProgress: proposals.filter((task) => taskMap.get(task.id)?.status === "in_progress").length,
+    review: proposals.filter((task) => taskMap.get(task.id)?.status === "review").length,
+    todo: proposals.filter((task) => taskMap.get(task.id)?.status === "todo").length,
+    blocked: proposals.filter((task) => taskMap.get(task.id)?.status === "blocked").length,
+  };
+}
+
+function planningHighlights(planning) {
+  const items = [];
+  if (planning.summary) {
+    items.push({ label: "這輪在解什麼", note: planning.summary });
+  }
+  if (planning.current_round) {
+    items.push({
+      label: "評審進度",
+      note: `目前到 round ${planning.current_round}，review 順序為 ${(planning.review_sequence || []).map(agentLabel).join(" -> ") || "-"}`,
+    });
+  }
+  const latestRound = [...(planning.cross_review_rounds || [])].pop();
+  if (latestRound) {
+    items.push({
+      label: "最近一次收斂",
+      note: latestRound.summary || `Round ${latestRound.round} 已更新`,
+    });
+  }
+  const latestEvent = [...(planning.recent_events || [])]
+    .filter((entry) => !["execution_slice_proposed", "readout_updated"].includes(String(entry.type || "")))
+    .pop();
+  if (latestEvent) {
+    items.push({
+      label: "最新訊號",
+      note: latestEvent.message || latestEvent.summary || String(latestEvent.type || "update"),
+    });
+  }
+  if (!items.length) {
+    items.push({
+      label: "目前沒有額外摘要",
+      note: "尚未累積足夠的 planning event，可先看 next step 與候選工作。",
+    });
+  }
+  return items.slice(0, 3);
+}
+
+function planningOutstandingRequirements(planning) {
+  const gate = planning.switch_gate || {};
+  const missing = [];
+  if (!gate.all_readouts_submitted) missing.push("readouts 尚未全部收斂");
+  if (!gate.cross_review_round_present) missing.push("還沒有完成至少一輪 cross-review");
+  if (!gate.divergence_resolved_or_escalated) missing.push("仍有分歧未解決或未升級");
+  if (!gate.consensus_packet_drafted) missing.push("consensus packet 尚未成稿");
+  if (!gate.human_approved) missing.push("human gate 尚未批准");
+  return missing;
+}
+
+export function renderPlanningOverview(planningState, status) {
+  const container = qs("#planning-overview");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const readoutTotal = Object.keys(planning.readouts || {}).length;
+  const proposals = planning.proposed_execution_tasks || [];
+  const proposalStats = planningProposalStats(planning, status);
+  const decision = planningDecisionSummary(planning, status);
+  const highlights = planningHighlights(planning);
+
+  container.innerHTML = `
+    <div class="planning-hero">
+      <article class="planning-hero-main">
+        <div class="lane-head">
+          <div>
+            <strong>${decision.title}</strong>
+            <p class="dependency-copy">${planning.session_id || "-"}</p>
+          </div>
+          <span class="status-pill ${decision.tone}">${statusLabel(planning.status)}</span>
+        </div>
+        <p class="body-copy">${decision.body}</p>
+        <div class="planning-kpis">
+          <span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>
+          <span class="chip">Human gate ${statusLabel(planning.human_gate_status)}</span>
+          <span class="chip">Can materialize ${planning.switch_gate?.ready_to_materialize ? "Yes" : "No"}</span>
+          <span class="chip">Open issues ${planning.counts.open_items || 0}</span>
+          <span class="chip">Work total ${proposalStats.total}</span>
+          <span class="chip">Completed ${proposalStats.done}/${proposalStats.total}</span>
+          <span class="chip">Materialized ${proposalStats.materialized}/${proposalStats.total}</span>
+          <span class="chip">In progress ${proposalStats.inProgress + proposalStats.review}</span>
+          <span class="chip">Readouts ${planning.counts.readouts_resolved || 0}/${readoutTotal} resolved</span>
+        </div>
+      </article>
+      <div class="planning-side-stack">
+        <article class="planning-side-card">
+          <div class="stack-head">
+            <strong>協作角色</strong>
+            <span class="chip">Round ${planning.current_round || 0}</span>
+          </div>
+          <div class="planning-list">
+            <div class="planning-list-item">
+              <div class="planning-callout-title">Facilitator</div>
+              <div class="planning-callout-value">${agentLabel(planning.facilitator)}</div>
+            </div>
+            <div class="planning-list-item">
+              <div class="planning-callout-title">Current baton</div>
+              <div class="planning-callout-value">${agentLabel(planning.baton_owner)}</div>
+              <p class="dependency-copy">Next reviewer：${agentLabel(planning.next_reviewer)}</p>
+            </div>
+          </div>
+        </article>
+        <article class="planning-side-card">
+          <div class="stack-head">
+            <strong>重要訊號</strong>
+            <span class="chip">${highlights.length}</span>
+          </div>
+          <div class="planning-list">
+            ${highlights
+              .map(
+                (item) => `
+                <div class="planning-list-item">
+                  <div class="planning-callout-title">${item.label}</div>
+                  <p class="dependency-copy">${truncate(item.note, 140)}</p>
+                </div>
+              `
+              )
+              .join("")}
+          </div>
+        </article>
+      </div>
+    </div>
+  `;
+}
+
+export function renderPlanningArtifacts(planningState) {
+  const container = qs("#planning-artifacts");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const artifacts = Object.entries(planning.artifacts || {});
+  const readouts = Object.entries(planning.readouts || {});
+
+  const sections = [];
+  sections.push(`
+    <article class="stack-card artifact-card">
+      <div class="stack-head">
+        <strong>Planning Artifacts</strong>
+        <span class="chip">${artifacts.length}</span>
+      </div>
+      <p class="card-copy">這裡顯示的是 planning workspace 內部材料狀態，主要用於除錯與追文件流程，不是給使用者判斷「現在能不能開工」的主訊號。</p>
+      <div class="artifact-grid">
+        ${artifacts
+          .map(
+            ([key, artifact]) => `
+            <div class="artifact-item">
+              <div class="lane-head">
+                <strong>${titleCase(key)}</strong>
+                <span class="status-pill status-${artifact.status || "pending"}">${statusLabel(artifact.status)}</span>
+              </div>
+              <p class="card-copy artifact-path"><code class="path-code">${artifact.path || "-"}</code></p>
+            </div>
+          `
+          )
+          .join("")}
+      </div>
+    </article>
+  `);
+
+  sections.push(`
+    <article class="stack-card artifact-card">
+      <div class="stack-head">
+        <strong>Lane Readouts</strong>
+        <span class="chip">${planning.counts.readouts_resolved || 0}/${readouts.length} resolved</span>
+      </div>
+      <p class="card-copy"><code>submitted</code>、<code>accepted</code>、<code>waived</code> 都視為已收斂；這一格不是 live execution worker 數。</p>
+      <div class="artifact-grid">
+        ${readouts
+          .map(
+            ([agent, info]) => `
+            <div class="artifact-item">
+              <div class="lane-head">
+                <strong>${agentLabel(agent)}</strong>
+                <span class="status-pill status-${info.status || "pending"}">${statusLabel(info.status)}</span>
+              </div>
+              <p class="card-copy artifact-path"><code class="path-code">${info.path || "-"}</code></p>
+              <p class="card-copy">更新：${formatTime(info.updated_at)}</p>
+            </div>
+          `
+          )
+          .join("")}
+      </div>
+    </article>
+  `);
+
+  container.innerHTML = sections.join("");
+}
+
+export function renderPlanningRounds(planningState) {
+  const container = qs("#planning-rounds");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const interesting = new Set([
+    "planning_session_started",
+    "cross_review_round_opened",
+    "cross_review_round_completed",
+    "consensus_packet_drafted",
+    "consensus_status_updated",
+    "consensus_accepted",
+    "human_gate_updated",
+    "planning_issue_updated",
+  ]);
+  const events = (planning.recent_events || [])
+    .filter((entry) => interesting.has(String(entry.type || "")))
+    .slice(-4)
+    .reverse();
+
+  if (!events.length) {
+    container.innerHTML = `
+      <article class="stack-card">
+        <div class="stack-head">
+          <strong>Recent Decisions</strong>
+          <span class="status-pill status-pending">尚無摘要</span>
+        </div>
+        <p class="card-copy">目前還沒有足夠的 planning 轉折事件可摘要，可先看 next step 與候選工作。</p>
+      </article>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <article class="stack-card">
+      <div class="stack-head">
+        <strong>Recent Decisions</strong>
+        <span class="chip">${events.length} 個關鍵轉折</span>
+      </div>
+      <div class="planning-list">
+        ${events
+          .map(
+            (entry) => `
+            <div class="planning-list-item">
+              <div class="lane-head">
+                <strong>${titleCase(String(entry.type || "update").replace(/_/g, " "))}</strong>
+                <span class="activity-meta">${formatTime(entry.ts || entry.updated_at)}</span>
+              </div>
+              <p class="dependency-copy">${entry.message || entry.summary || "-"}</p>
+            </div>
+          `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+export function renderPlanningGate(planningState, status) {
+  const container = qs("#planning-gate");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const gate = planning.switch_gate || {};
+  const nextStep = planningNextAction(planning, status);
+  const items = [
+    ["all_readouts_submitted", "All readouts submitted"],
+    ["cross_review_round_present", "At least one cross-review round"],
+    ["divergence_resolved_or_escalated", "Divergences resolved or escalated"],
+    ["consensus_packet_drafted", "Consensus packet drafted"],
+    ["human_approved", "Human accepted the packet"],
+  ];
+
+  container.innerHTML = `
+    <article class="stack-card">
+      <div class="stack-head">
+        <strong>Next Step</strong>
+        <span class="status-pill ${gate.ready_to_materialize ? "status-ready" : gate.ready_for_human ? "status-review" : "status-pending"}">
+          ${gate.ready_to_materialize ? "Ready to materialize" : gate.ready_for_human ? "Ready for human" : "Not ready"}
+        </span>
+      </div>
+      <p class="card-copy">${nextStep.action}</p>
+      <div class="planning-callouts">
+        <div class="artifact-item">
+          <div class="planning-callout-title">Current owner</div>
+          <div class="planning-callout-value">${nextStep.owner}</div>
+        </div>
+        <div class="artifact-item">
+          <div class="planning-callout-title">Materialization</div>
+          <div class="planning-callout-value">${nextStep.materializedCount}/${nextStep.totalProposals}</div>
+        </div>
+        <div class="artifact-item">
+          <div class="planning-callout-title">Still missing</div>
+          <div class="planning-callout-value">${nextStep.missing.length}</div>
+        </div>
+      </div>
+      ${nextStep.missing.length ? `<p class="dependency-copy">目前還差：${nextStep.missing.join("、")}。</p>` : ""}
+      <div class="gate-checklist">
+        ${items
+          .map(
+            ([key, label]) => `
+            <div class="gate-item ${gate[key] ? "gate-ok" : "gate-wait"}">
+              <span class="gate-dot">${gate[key] ? "yes" : "wait"}</span>
+              <span>${label}</span>
+            </div>
+          `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+export function renderPlanningIssues(planningState) {
+  const planning = normalizePlanningState(planningState);
+  const container = qs("#planning-issues");
+  if (!container) return;
+  const items = planning.unresolved_items || [];
+  const blocking = items.filter((item) => !["tracking", "resolved", "accepted"].includes(String(item.status || "").toLowerCase()));
+  const tracking = items.filter((item) => ["tracking", "resolved", "accepted"].includes(String(item.status || "").toLowerCase()));
+
+  if (!items.length) {
+    container.innerHTML = `
+      <article class="stack-card">
+        <div class="stack-head">
+          <strong>Planning Issues</strong>
+          <span class="status-pill status-ready">清空</span>
+        </div>
+        <p class="card-copy">目前沒有需要額外注意的 planning issue，沒有顯著風險阻擋這輪收斂。</p>
+      </article>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <article class="stack-card">
+      <div class="stack-head">
+        <strong>Planning Issues</strong>
+        <span class="chip">Blocking ${blocking.length} · Tracking ${tracking.length}</span>
+      </div>
+      <p class="card-copy">${
+        blocking.length
+          ? "以下問題仍會影響是否能安全地下放。"
+          : "目前沒有 blocking issue；以下項目主要是追蹤與後續收斂提醒。"
+      }</p>
+      <div class="planning-list">
+        ${items
+          .map(
+            (item) => `
+            <div class="planning-list-item">
+              <div class="stack-head">
+                <strong>${item.id || "DIV"}</strong>
+                <span class="status-pill status-${item.status || "open"}">${statusLabel(item.status)}</span>
+              </div>
+              <p class="dependency-copy">${item.summary || "尚未填寫 divergence 說明。"}</p>
+              <div class="lane-meta">
+                <span class="chip">Severity ${item.severity || "-"}</span>
+                <span class="chip">${["tracking", "resolved", "accepted"].includes(String(item.status || "").toLowerCase()) ? "不阻擋主流程" : "需優先處理"}</span>
+              </div>
+            </div>
+          `
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+export function renderPlanningProposals(planningState, status) {
+  const planning = normalizePlanningState(planningState);
+  const container = qs("#planning-proposals");
+  if (!container) return;
+  const taskIds = new Set((status.tasks || []).map((task) => task.id));
+  const proposals = planning.proposed_execution_tasks || [];
+  const proposalStats = planningProposalStats(planning, status);
+  const materialized = proposals.filter((task) => taskIds.has(task.id));
+  const pending = proposals.filter((task) => !taskIds.has(task.id));
+  const primaryList = pending.length ? pending : proposals;
+  const preview = primaryList.slice(0, 6);
+  const remaining = primaryList.slice(6);
+
+  if (!proposals.length) {
+    container.innerHTML = `
+      <article class="stack-card">
+        <div class="stack-head">
+          <strong>Execution Slices</strong>
+          <span class="status-pill status-pending">尚未提出</span>
+        </div>
+        <p class="card-copy">這輪 planning 還沒有整理出可下放的 execution slices。</p>
+      </article>
+    `;
+    return;
+  }
+
+  const renderProposal = (task) => `
+    <div class="planning-list-item">
+      <div class="stack-head">
+        <strong>${task.id}</strong>
+        <span class="status-pill ${taskIds.has(task.id) ? "status-ready" : "status-pending"}">${taskIds.has(task.id) ? "已 materialize" : "待下放"}</span>
+      </div>
+      <p>${task.title || "尚未填寫標題。"}</p>
+      <div class="lane-meta">
+        <span class="chip">Owner ${agentLabel(task.owner)}</span>
+        <span class="chip">Reviewer ${agentLabel(task.reviewer)}</span>
+      </div>
+      ${task.summary_zh ? `<p class="dependency-copy">${task.summary_zh}</p>` : ""}
+    </div>
+  `;
+
+  container.innerHTML = `
+    <article class="stack-card">
+      <div class="stack-head">
+        <strong>Execution Slices</strong>
+        <span class="chip">總數 ${proposalStats.total} · 完成 ${proposalStats.done}</span>
+      </div>
+      <p class="card-copy">${
+        pending.length
+          ? `目前還有 ${pending.length} 個候選切片尚未正式進入 execution board。`
+          : "所有候選切片都已經進入 execution board。"
+      }</p>
+      <div class="lane-meta">
+        <span class="chip">已下放 ${proposalStats.materialized}/${proposalStats.total}</span>
+        <span class="chip">進行中 ${proposalStats.inProgress + proposalStats.review}</span>
+        <span class="chip">待開始 ${proposalStats.todo}</span>
+        <span class="chip">已完成 ${proposalStats.done}</span>
+        ${proposalStats.blocked ? `<span class="chip">阻塞 ${proposalStats.blocked}</span>` : ""}
+      </div>
+      <div class="planning-list">
+        ${preview.map(renderProposal).join("")}
+      </div>
+      ${
+        remaining.length
+          ? `
+          <details class="inline-details">
+            <summary>查看剩餘 ${remaining.length} 個切片</summary>
+            <div class="planning-list">
+              ${remaining.map(renderProposal).join("")}
+            </div>
+          </details>
+        `
+          : ""
+      }
+    </article>
+  `;
+}
+
+export function renderFocusSummary(status, planningState, orchState, dashboardBundle = null) {
+  const container = qs("#focus-summary");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const narrative = currentPriorityNarrative(planning, status, orchState, dashboardBundle);
+  const proposalStats = planningProposalStats(planning, status);
+  const pausedProviders = pausedProviderEntries(orchState);
+  const evidence = [
+    proposalStats.total ? `本輪 planning 產出 ${proposalStats.total} 個候選工作` : "目前沒有待橋接的 planning slice",
+    pausedProviders.length
+      ? `${pausedProviders.length} 個 provider 因 quota / rate limit 被暫停派工`
+      : "目前沒有 provider pause guardrail",
+    proposalStats.total
+      ? `execution 已完成 ${proposalStats.done}/${proposalStats.total} 個本輪切片`
+      : "execution 目前仍以既有 task board 為主要節奏",
+  ];
+
+  container.innerHTML = `
+    <div class="focus-grid">
+      <article class="focus-card focus-primary">
+        <div class="stack-head">
+          <strong>${narrative.title}</strong>
+          <span class="status-pill ${narrative.tone}">${narrative.badge}</span>
+        </div>
+        <p class="body-copy">${narrative.body}</p>
+        <div class="inline-summary">
+          ${narrative.chips.map((chip) => `<span class="chip">${chip}</span>`).join("")}
+        </div>
+      </article>
+      <article class="focus-card">
+        <div class="stack-head">
+          <strong>下一步由誰推進</strong>
+          <span class="chip">${narrative.owner}</span>
+        </div>
+        <p class="body-copy">${narrative.nextAction}</p>
+        <div class="focus-evidence">
+          ${evidence.map((item) => `<div class="focus-evidence-item">${item}</div>`).join("")}
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+export function renderProgressBreakdown(status, planningState, dashboardBundle = null) {
+  const container = qs("#progress-breakdown");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const planningProgress = planningGateProgress(planning);
+  const proposalStats = planningProposalStats(planning, status);
+  const executionCounts = executionStatusCounts(status, dashboardBundle);
+  const bridgePercent = proposalStats.total ? Math.round((proposalStats.materialized / proposalStats.total) * 100) : (planning.switch_gate?.ready_to_materialize ? 100 : 0);
+  const executionPercent = executionCounts.total ? Math.round((executionCounts.done / executionCounts.total) * 100) : 0;
+
+  const items = [
+    {
+      label: "Planning Gate",
+      value: `${planningProgress.percent}%`,
+      note: `${planningProgress.done}/${planningProgress.total} 條件已滿足`,
+      tone: planning.status === "accepted" ? "status-ready" : planning.status === "active" ? "status-active" : "status-pending",
+    },
+    {
+      label: "下放進度",
+      value: `${bridgePercent}%`,
+      note: `${proposalStats.materialized}/${proposalStats.total || 0} 已 materialize`,
+      tone: proposalStats.total && proposalStats.materialized < proposalStats.total ? "status-review" : "status-ready",
+    },
+    {
+      label: "Execution 完成度",
+      value: `${executionPercent}%`,
+      note: `${executionCounts.done}/${executionCounts.total} 正式完成`,
+      tone: executionCounts.blocked ? "status-review" : "status-ready",
+    },
+  ];
+
+  container.innerHTML = items
+    .map(
+      (item) => `
+        <article class="progress-card">
+          <div class="stack-head">
+            <strong>${item.label}</strong>
+            <span class="status-pill ${item.tone}">${item.value}</span>
+          </div>
+          <p class="dependency-copy">${item.note}</p>
+        </article>
+      `
+    )
+    .join("");
+}
+
+export function renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle = null) {
+  const container = qs("#alert-strip");
+  if (!container) return;
+  const alerts = [];
+  const pausedProviders = pausedProviderEntries(orchState);
+  const planning = normalizePlanningState(planningState);
+  const executionCounts = executionStatusCounts(status, dashboardBundle);
+  const blockers = (status.blockers || []).filter((blocker) => blocker.status === "open");
+  const approvalPending = (approvalQueue?.pending || []).length;
+
+  for (const pause of pausedProviders) {
+    alerts.push({
+      severity: "critical",
+      title: `${agentLabel(pause.provider)} 暫停派工中`,
+      body: truncate(pause.reason || "provider guardrail 已暫停此 lane 的新 dispatch。", 180),
+      chips: [
+        pause.blocked_until ? `until ${formatTime(pause.blocked_until)}` : "until -",
+        pause.task_id ? `task ${pause.task_id}` : "",
+      ].filter(Boolean),
+    });
+  }
+
+  if (executionCounts.mismatchCount) {
+    alerts.push({
+      severity: "warning",
+      title: `Runtime / task board 還有 ${executionCounts.mismatchCount} 個 mismatch`,
+      body: "代表 queue、worker、task truth 之間還有不一致，需要在 runtime panel 裡繼續追。",
+      chips: ["請看 Truth Mismatches"],
+    });
+  }
+
+  if (blockers.length) {
+    alerts.push({
+      severity: "warning",
+      title: `${blockers.length} 個 blocker 正在卡 execution`,
+      body: "這些不是一般待辦，而是會阻止工作繼續向下游推進的阻塞項目。",
+      chips: blockers.slice(0, 3).map((item) => item.task_id || "-"),
+    });
+  }
+
+  if (approvalPending) {
+    alerts.push({
+      severity: "info",
+      title: `${approvalPending} 個待批准項目`,
+      body: "工具批准還沒清掉時，相關 worker 可能停在 waiting_approval。",
+      chips: ["Approval queue"],
+    });
+  }
+
+  if (planning.status === "human_required") {
+    alerts.push({
+      severity: "critical",
+      title: "Planning 需要人工裁決",
+      body: "LLM 已整理出主要分歧，但仍有需要 human 決策的問題，未裁決前不建議擴大下游 execution。",
+      chips: ["Human gate"],
+    });
+  }
+
+  if (!alerts.length) {
+    alerts.push({
+      severity: "ok",
+      title: "目前沒有高優先告警",
+      body: planning.status === "accepted"
+        ? "planning 已被接受，execution 也沒有額外 approval / quota / blocker 壓力，現在最值得做的是穩定推進 active tasks。"
+        : "目前沒有需要立刻處理的 quota、approval、blocker 或 mismatch 告警，系統狀態相對平穩。",
+      chips: ["All clear"],
+    });
+  }
+
+  container.innerHTML = alerts
+    .map(
+      (alert) => `
+        <article class="alert-card alert-${alert.severity}">
+          <div class="stack-head">
+            <strong>${alert.title}</strong>
+            <span class="status-pill ${alert.severity === "critical" ? "status-blocked" : alert.severity === "warning" ? "status-review" : "status-ready"}">${
+              {
+                critical: "需立即處理",
+                warning: "注意",
+                info: "資訊",
+                ok: "穩定",
+              }[alert.severity] || titleCase(alert.severity)
+            }</span>
+          </div>
+          <p class="body-copy">${alert.body}</p>
+          ${alert.chips?.length ? `<div class="lane-meta">${alert.chips.map((chip) => `<span class="chip">${chip}</span>`).join("")}</div>` : ""}
+        </article>
+      `
+    )
+    .join("");
+}
+
+export function renderBridgeCard(status, planningState) {
+  const container = qs("#bridge-card");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const proposalStats = planningProposalStats(planning, status);
+  const taskIds = new Set((status.tasks || []).map((task) => task.id));
+  const pending = (planning.proposed_execution_tasks || []).filter((task) => !taskIds.has(task.id));
+  const incomplete = (planning.proposed_execution_tasks || [])
+    .filter((task) => taskIds.has(task.id))
+    .filter((task) => {
+      const current = (status.tasks || []).find((candidate) => candidate.id === task.id);
+      return current && String(current.status || "").toLowerCase() !== "done";
+    });
+
+  let title = "這輪 planning 還沒有橋接到 execution";
+  let tone = "status-pending";
+  let body = "目前還沒有提出可 materialize 的 execution slice，所以 bridge 層不會有太多內容。";
+
+  if (proposalStats.total) {
+    if (proposalStats.materialized < proposalStats.total) {
+      title = "共識已成形，但還有工作尚未正式進入 execution";
+      tone = "status-review";
+      body = `目前 ${proposalStats.materialized}/${proposalStats.total} 個切片已 materialize。剩下的候選工作還需要轉成正式 task，execution 才能完整接手。`;
+    } else if (proposalStats.done < proposalStats.total) {
+      title = "橋接已完成，execution 正在把共識消化成成果";
+      tone = "status-ready";
+      body = `所有 ${proposalStats.total} 個候選切片都已進入 execution。現在重點是把還在進行中或待審查的工作收斂成 done。`;
+    } else {
+      title = "這輪 planning 的輸出已完整落地";
+      tone = "status-ready";
+      body = `本輪 planning 提出的 ${proposalStats.total} 個切片都已經 materialize，並且已全部完成。`;
+    }
+  }
+
+  const leadList = (pending.length ? pending : incomplete).slice(0, 4);
+
+  const statCards = [
+    { label: "候選工作", value: proposalStats.total, note: "這輪 planning 提出的候選工作數" },
+    { label: "已下放", value: `${proposalStats.materialized}/${proposalStats.total || 0}`, note: "已正式變成 execution task" },
+    { label: "尚在執行", value: proposalStats.inProgress + proposalStats.review + proposalStats.todo, note: "已下放但尚未 done 的切片" },
+    { label: "已完成", value: `${proposalStats.done}/${proposalStats.total || 0}`, note: "已真正走完 execution lifecycle 的切片" },
+  ];
+
+  container.innerHTML = `
+    <article class="bridge-card bridge-lead">
+      <div class="stack-head">
+        <strong>${title}</strong>
+        <span class="status-pill ${tone}">${proposalStats.materialized}/${proposalStats.total || 0}</span>
+      </div>
+      <p class="body-copy">${body}</p>
+      <div class="inline-summary">
+        <span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>
+        <span class="chip">Human gate ${statusLabel(planning.human_gate_status)}</span>
+        <span class="chip">Can materialize ${planning.switch_gate?.ready_to_materialize ? "Yes" : "No"}</span>
+      </div>
+      ${
+        leadList.length
+          ? `
+            <div class="bridge-preview">
+              <strong>${pending.length ? "優先補下放的切片" : "目前仍在 execution 中的切片"}</strong>
+              <ul class="note-list compact-list">
+                ${leadList.map((task) => `<li><strong>${task.id}</strong>：${task.title || task.summary_zh || "尚未填寫"}</li>`).join("")}
+              </ul>
+            </div>
+          `
+          : ""
+      }
+    </article>
+    ${statCards
+      .map(
+        (item) => `
+          <article class="bridge-card bridge-stat">
+            <div class="metric-label">${item.label}</div>
+            <div class="metric-value">${item.value}</div>
+            <div class="metric-note">${item.note}</div>
+          </article>
+        `
+      )
+      .join("")}
+  `;
+}
+
+export function renderExecutionSummary(status, orchState, dashboardBundle = null) {
+  const container = qs("#execution-summary");
+  if (!container) return;
+  const tasks = status.tasks || [];
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const truth = buildTruthMismatches(status, orchState);
+  const summary = dashboardBundle?.execution_summary || {};
+  const readyNow = tasks.filter((task) => {
+    if (String(task.status || "").toLowerCase() !== "todo") return false;
+    return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
+  }).length;
+  const activeNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length;
+  const reviewNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
+  const blockedNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length;
+  const attachedNow = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
+  const cards = [
+    { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "前置都完成，隨時可以開工的 todo task" },
+    { label: "In Progress", value: Number.isFinite(summary.in_progress) ? summary.in_progress : activeNow, note: "task board 上已進入 in_progress 的任務" },
+    { label: "In Review", value: Number.isFinite(summary.in_review) ? summary.in_review : reviewNow, note: "正在 review lane 的任務" },
+    { label: "Live Attached", value: Number.isFinite(summary.live_attached) ? summary.live_attached : attachedNow, note: "目前有 live running worker 真的掛在 task 上" },
+    { label: "Blocked", value: Number.isFinite(summary.blocked) ? summary.blocked : blockedNow, note: "已標記 blocker 的任務" },
+    {
+      label: "Mismatches",
+      value: Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total,
+      note: (Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total) ? `High ${truth.counts.high} · Medium ${truth.counts.medium}` : "目前 execution/runtime 對齊",
+      statusClass: (Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total) ? "status-blocked" : "status-ready",
+    },
+  ];
+
+  container.innerHTML = cards
+    .map(
+      (item) => `
+      <article class="workload-card">
+        <div class="lane-head">
+          <strong>${item.label}</strong>
+          <span class="status-pill ${item.statusClass || ""}">${item.value}</span>
+        </div>
+        <p class="dependency-copy">${item.note}</p>
+      </article>
+    `
+    )
+    .join("");
+}
+
+export function renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle = null) {
+  const container = qs("#truth-mismatches");
+  if (!container) return;
+  container.innerHTML = "";
+  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const mismatchItems = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : truth.mismatches;
+
+  if (!mismatchItems.length) {
+    container.innerHTML = `
+      <article class="stack-card mismatch-card mismatch-ok">
+        <div class="stack-head">
+          <strong>Runtime / Execution 已對齊</strong>
+          <span class="status-pill status-ready">0 mismatch</span>
+        </div>
+        <p class="card-copy">目前看不到 live worker、queue record、task board 之間的高訊號不一致。</p>
+      </article>
+    `;
+    return;
+  }
+
+  container.innerHTML = mismatchItems
+    .map(
+      (item) => `
+      <article class="stack-card mismatch-card mismatch-${item.severity || "medium"}">
+        <div class="stack-head">
+          <strong>${item.title}</strong>
+          <span class="status-pill status-${item.severity === "high" ? "blocked" : "pending"}">${item.severity || "medium"}</span>
+        </div>
+        <p class="card-copy">${item.summary}</p>
+        <div class="lane-meta">
+          ${item.task_id ? `<span class="chip">task ${item.task_id}</span>` : ""}
+          ${item.worker_run_id ? `<span class="chip">run ${item.worker_run_id}</span>` : ""}
+          ${item.queue_event_id ? `<span class="chip">queue ${item.queue_event_id}</span>` : ""}
+          ${item.expected_actor ? `<span class="chip">expected ${item.expected_actor}</span>` : ""}
+          ${item.actual_actor ? `<span class="chip">actual ${item.actual_actor}</span>` : ""}
+          <span class="chip">${timeAgo(item.detected_at)}</span>
+        </div>
+        ${item.resolution_hint ? `<p class="card-copy"><strong>Resolution hint:</strong> ${item.resolution_hint}</p>` : ""}
+      </article>
+    `
+    )
+    .join("");
+}
+
+export function renderBoardSummary(status, orchState, dashboardBundle = null) {
+  const containers = [qs("#board-summary"), qs("#work-panel-summary")].filter(Boolean);
+  if (!containers.length) return;
+  const tasks = status.tasks || [];
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const truth = buildTruthMismatches(status, orchState);
+  const summary = dashboardBundle?.execution_summary || {};
+  const readyCount = tasks.filter((task) => {
+    if (String(task.status || "").toLowerCase() !== "todo") return false;
+    return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
+  }).length;
+  const reviewCount = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
+  const attachedCount = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
+  const chips = [
+    `<span class="chip">Ready ${Number.isFinite(summary.ready_now) ? summary.ready_now : readyCount}</span>`,
+    `<span class="chip">Review ${Number.isFinite(summary.in_review) ? summary.in_review : reviewCount}</span>`,
+    `<span class="chip">Live attached ${Number.isFinite(summary.live_attached) ? summary.live_attached : attachedCount}</span>`,
+    `<span class="chip ${(Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total) ? "status-blocked" : ""}">Mismatch ${Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total}</span>`,
+  ];
+  for (const container of containers) {
+    container.innerHTML = chips.join("");
+  }
+}
+
+export function renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle = null) {
+  const container = qs("#execution-panel-summary");
+  if (!container) return;
+  const planning = normalizePlanningState(planningState);
+  const counts = executionStatusCounts(status, dashboardBundle);
+  const pausedProviders = pausedProviderEntries(orchState);
+  const focusMode = dashboardFocusMode(planning);
+  const chips = [
+    `<span class="chip">${focusMode === "planning" ? "目前非焦點" : "目前焦點"}</span>`,
+    `<span class="chip">Open ${counts.total - counts.done}</span>`,
+    `<span class="chip">Done ${counts.done}/${counts.total}</span>`,
+    `<span class="chip">In progress ${counts.inProgress}</span>`,
+    `<span class="chip">Review ${counts.review}</span>`,
+    `<span class="chip">Blocked ${counts.blocked}</span>`,
+  ];
+  if (pausedProviders.length) {
+    chips.push(`<span class="chip status-blocked">Paused ${pausedProviders.length}</span>`);
+  }
+  container.innerHTML = chips.join("");
+}
+
+export function renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle = null) {
+  const statusEl = qs("#system-status");
+  const historyEl = qs("#worker-history");
+  if (!statusEl || !historyEl) return;
+  statusEl.innerHTML = "";
+  historyEl.innerHTML = "";
+  const queueEvents = normalizeDispatchQueue(orchState, status);
+  const runtimeSummary = dashboardBundle?.runtime_summary || {};
+  const supervisor = orchState?.supervisor || {};
+  const supervisorPid = supervisor?.pid || "-";
+  const supervisorStartedAt = supervisor?.started_at || orchState?.initialized_at || null;
+  const supervisorHeartbeat = supervisor?.last_heartbeat_at || orchState?.last_heartbeat_at || null;
+  const lastScan = orchState?.last_scan_at || supervisorHeartbeat || null;
+  const workers = normalizeWorkerRecords(orchState, status);
+  const pausedProviders = pausedProviderEntries(orchState);
+  const activeWorkerCount = Number.isFinite(runtimeSummary.running_workers) ? runtimeSummary.running_workers : workers.filter((w) => w.bucket === "running").length;
+  const pending = Number.isFinite(runtimeSummary.pending_approvals) ? runtimeSummary.pending_approvals : (approvalQueue?.pending || []).length;
+
+  const supervisorCard = document.createElement("article");
+  supervisorCard.className = "sys-card";
+  supervisorCard.innerHTML = `
+      <div class="sys-card-head"><span class="sys-icon">🖥</span><strong>Supervisor</strong></div>
+      <div class="sys-card-body">
+        <span class="status-pill ${supervisorHeartbeat ? "status-working" : "status-blocked"}">${supervisorHeartbeat ? "運作中" : "無資料"}</span>
+      <span class="chip">PID：${runtimeSummary.supervisor_pid || supervisorPid}</span>
+        <span class="chip">啟動：${formatTime(supervisorStartedAt)}</span>
+      <span class="chip">Heartbeat：${timeAgo(runtimeSummary.heartbeat_at || supervisorHeartbeat)}</span>
+        <span class="chip">上次掃描：${timeAgo(lastScan)}</span>
+        <span class="chip">Active Workers：${activeWorkerCount}</span>
+      </div>
+  `;
+  statusEl.appendChild(supervisorCard);
+
+  const dispatchCard = document.createElement("article");
+  dispatchCard.className = "sys-card";
+  dispatchCard.innerHTML = `
+      <div class="sys-card-head"><span class="sys-icon">📬</span><strong>Dispatch Queue</strong></div>
+      <div class="sys-card-body">
+        <span class="status-pill ${queueEvents.length > 0 ? "status-review" : "status-done"}">${queueEvents.length > 0 ? `${queueEvents.length} 個待處理` : "清空"}</span>
+        <span class="chip">bundle queue ${Number.isFinite(runtimeSummary.queue_depth) ? runtimeSummary.queue_depth : queueEvents.length}</span>
+        <span class="chip">目前 active workers：${activeWorkerCount}</span>
+      ${queueEvents.map((event) => `
+        <div class="approval-item">
+          <span class="chip">${event.task_id || "-"}</span>
+          <span class="chip">${actorLabel(event.logical_agent_id, event.provider)}</span>
+          <span class="chip">${event.status || "-"}</span>
+          <span class="chip">${event.reason || "-"}</span>
+          <span class="chip">${timeAgo(event.last_event_at || event.last_attempt_at || event.processed_at)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  statusEl.appendChild(dispatchCard);
+
+  const approvalCard = document.createElement("article");
+  approvalCard.className = "sys-card";
+  approvalCard.innerHTML = `
+    <div class="sys-card-head"><span class="sys-icon">⏳</span><strong>待批准佇列</strong></div>
+    <div class="sys-card-body">
+      <span class="status-pill ${pending > 0 ? "status-review" : "status-done"}">${pending > 0 ? `${pending} 個待處理` : "清空"}</span>
+      ${(approvalQueue?.pending || []).map((a) => `
+        <div class="approval-item">
+          <span class="chip">${actorLabel(a.agent_id, a.provider)}</span>
+          <span class="chip">task=${a.task_id || "-"}</span>
+          <span class="chip">${a.tool_name}</span>
+          <span class="chip">${timeAgo(a.created_at)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  statusEl.appendChild(approvalCard);
+
+  if (pausedProviders.length) {
+    const pauseCard = document.createElement("article");
+    pauseCard.className = "sys-card";
+    pauseCard.innerHTML = `
+      <div class="sys-card-head"><span class="sys-icon">⛔</span><strong>Provider Guardrails</strong></div>
+      <div class="sys-card-body">
+        <span class="status-pill status-blocked">${pausedProviders.length} 個 lane 暫停派工</span>
+        ${pausedProviders.map((entry) => `
+          <div class="approval-item">
+            <span class="chip">${agentLabel(entry.provider)}</span>
+            <span class="chip">until ${formatTime(entry.blocked_until)}</span>
+            ${entry.task_id ? `<span class="chip">task=${entry.task_id}</span>` : ""}
+          </div>
+        `).join("")}
+      </div>
+    `;
+    statusEl.appendChild(pauseCard);
+  }
+
+  const agentStateMap = new Map((agentStates || []).map((a) => [a.name.toLowerCase(), a]));
+  for (const agentId of logicalAgents) {
+    const pw = workers.filter((w) => w.logical_agent_id === agentId);
+    const running = pw.filter((w) => w.bucket === "running").length;
+    const waiting = pw.filter((w) => w.bucket === "pending").length;
+    const transition = pw.filter((w) => w.bucket === "transition").length;
+    const failed = pw.filter((w) => w.status === "failed").length;
+    const completed = pw.filter((w) => w.bucket === "completed").length;
+    const agent = agentStateMap.get(agentId);
+    const runningTasks = pw.filter((w) => w.bucket === "running").map((w) => w.task_id).filter(Boolean);
+    const card = document.createElement("article");
+    card.className = "sys-card";
+    card.innerHTML = `
+      <div class="sys-card-head"><span class="sys-icon">${running > 0 ? "🟡" : failed > 0 ? "🔴" : "⚪"}</span><strong>${agentLabel(agentId)}</strong></div>
+      <div class="sys-card-body">
+        <span class="chip">執行中 ${running}</span>
+        <span class="chip">等待 ${waiting}</span>
+        ${transition ? `<span class="chip">改派 ${transition}</span>` : ""}
+        <span class="chip">失敗 ${failed}</span>
+        <span class="chip">完成 ${completed}</span>
+        ${runningTasks.length ? `<span class="chip">任務 ${runningTasks.join(", ")}</span>` : ""}
+        ${agent ? `<span class="chip">可開工 ${agent.ready_count || 0}</span><span class="chip">等前置 ${agent.waiting_count || 0}</span>` : ""}
+      </div>
+    `;
+    statusEl.appendChild(card);
+  }
+
+  const workerGroups = logicalAgents.map((agentId) => {
+    const groupWorkers = workers.filter((worker) => worker.logical_agent_id === agentId);
+    return {
+      agentId,
+      running: groupWorkers.filter((worker) => worker.bucket === "running"),
+      pending: groupWorkers.filter((worker) => worker.bucket === "pending"),
+      transition: groupWorkers.filter((worker) => worker.bucket === "transition"),
+      completed: groupWorkers.filter((worker) => worker.bucket === "completed"),
+    };
+  });
+
+  if (!workerGroups.some((group) => group.running.length || group.pending.length || group.transition.length || group.completed.length)) {
+    historyEl.innerHTML = '<p class="empty">尚無 Worker 記錄。</p>';
+    return;
+  }
+
+  historyEl.innerHTML = workerGroups
+    .map((group) => {
+      const total = group.running.length + group.pending.length + group.transition.length + group.completed.length;
+      if (!total) return "";
+      const renderBucket = (label, items, open = true, options = {}) => {
+        const { hideWhenEmpty = false } = options;
+        if (hideWhenEmpty && !items.length) return "";
+        return `
+        <details class="worker-bucket" ${open ? "open" : ""}>
+          <summary class="worker-bucket-head">
+            <strong>${label}</strong>
+            <span class="chip">${items.length}</span>
+          </summary>
+          <div class="worker-bucket-body">
+            ${items.length ? items.map((w) => `
+              <article class="queue-item worker-row worker-${w.status}">
+                <div class="queue-item-head">
+                  <strong>${w.task_id || "-"}</strong>
+                  <div class="chip-row">
+                    ${workerLifecycleBadge(w) ? `<span class="status-pill worker-lifecycle ${workerLifecycleBadge(w).className}">${workerLifecycleBadge(w).label}</span>` : ""}
+                    <span class="status-pill status-${w.status}">${workerStatusIcon[w.status] || "?"} ${w.status}</span>
+                  </div>
+                </div>
+                <div class="lane-meta">
+                  <span class="chip"><code>${w.mode || "-"}</code></span>
+                  <span class="chip">${w.display_actor}</span>
+                  ${w.task_status ? `<span class="chip">task=${statusLabel(w.task_status)}</span>` : ""}
+                  <span class="chip">${timeAgo(w.last_event_at)}</span>
+                </div>
+                ${w.last_error ? `<p class="meta-line">${truncate(w.last_error, 120)}</p>` : ""}
+              </article>
+            `).join("") : '<p class="empty">目前沒有項目。</p>'}
+          </div>
+        </details>
+      `;
+      };
+
+      return `
+        <section class="worker-group">
+          <div class="worker-group-head">
+            <strong>${agentLabel(group.agentId)}</strong>
+            <span class="chip">共 ${total} 筆</span>
+          </div>
+          <div class="worker-buckets">
+            ${renderBucket("進行中", group.running, true)}
+            ${renderBucket("等待處理", group.pending, true)}
+            ${renderBucket("已改派 / 已接手", group.transition, false, { hideWhenEmpty: true })}
+            ${renderBucket("已完成", group.completed, false, { hideWhenEmpty: true })}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+export function renderProgressBar(tasks) {
+  const total = (tasks || []).length;
+  const done = (tasks || []).filter((t) => t.status === "done").length;
+  const approved = (tasks || []).filter((t) => t.status === "review_approved").length;
+  const open = (tasks || []).filter((t) => ["todo", "in_progress", "review", "blocked"].includes(String(t.status || "").toLowerCase())).length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const label = qs("#progress-label");
+  const fill = qs("#progress-fill");
+  if (label) label.textContent = `Sprint 進度：正式完成 ${done} / ${total} (${pct}%) · 待收尾 ${approved} · 其他 open ${open}`;
+  if (fill) fill.style.width = `${pct}%`;
+}
+
+export function renderActivity(entries) {
+  const container = qs("#activity-list");
+  container.innerHTML = "";
+  const highSignalTypes = new Set([
+    "worker_started",
+    "worker_failed",
+    "worker_resumed",
+    "worker_recovered",
+    "worker_stalled",
+    "worker_superseded",
+    "approval_requested",
+    "approval_resolved",
+    "task_reassigned",
+    "handoff",
+    "review_approved",
+    "done",
+    "blocker",
+    ...planningHighSignalTypes,
+  ]);
+  const recent = entries
+    .filter((entry) => highSignalTypes.has(entry.type))
+    .slice(-8)
+    .reverse();
+
+  if (!recent.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "目前還沒有活動紀錄。";
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const entry of recent) {
+    const card = document.createElement("article");
+    card.className = "activity-card";
+    const typeLabel = activityTypeLabel[entry.type] || entry.type || "-";
+    const msg = (entry.message || "").slice(0, 120) + ((entry.message || "").length > 120 ? "…" : "");
+    card.innerHTML = `
+      <div class="lane-head">
+        <strong>${entry.agent || entry.provider || entry.actor || "-"}</strong>
+        <span class="activity-meta">${timeAgo(entry.ts || entry.updated_at)}</span>
+      </div>
+      <p class="activity-message">${msg}</p>
+      <div class="lane-meta">
+        <span class="chip">${typeLabel}</span>
+        <span class="chip">${entry.task_id || entry.issue_id || (entry.round ? `round ${entry.round}` : "-")}</span>
+      </div>
+    `;
+    container.appendChild(card);
+  }
+}
+
+function safeReadStorage(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeWriteStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures in restricted browser contexts.
+  }
+}
+
+function planningHasRenderableActivity(planning) {
+  const counts = planning.counts || {};
+  const proposed = planning.proposed_execution_tasks || [];
+  const hasResolvedReadouts = Number(counts.readouts_resolved || 0) > 0;
+  const hasRounds = Number(counts.rounds_total || 0) > 0;
+  const hasOpenItems = Number(counts.open_items || 0) > 0;
+  const hasProposals = proposed.length > 0;
+  const consensusTouched = !["not_started", "accepted"].includes(String(planning.consensus_status || ""));
+  const humanGateActive = ["pending", "rejected"].includes(String(planning.human_gate_status || ""));
+  return ["active", "human_required"].includes(String(planning.status || "")) || hasResolvedReadouts || hasRounds || hasOpenItems || hasProposals || consensusTouched || humanGateActive;
+}
+
+function dashboardFocusMode(planning) {
+  if (["active", "human_required"].includes(String(planning.status || ""))) {
+    return "planning";
+  }
+  if (String(planning.runtime_mode || "") === "supervisor_managed_execution") {
+    return "execution";
+  }
+  return "execution";
+}
+
+export function applyModeVisibility(status, planningState) {
+  const planning = normalizePlanningState(planningState);
+  const planningPanel = qs("#planning-panel");
+  const planningSummary = qs("#planning-panel-summary");
+  const planningToggle = qs("#planning-panel-toggle");
+  const executionShell = qs("#execution-shell");
+  const executionToggle = qs("#execution-panel-toggle");
+  if (!planningPanel || !planningSummary || !planningToggle || !executionShell || !executionToggle) return;
+
+  const readoutTotal = Object.keys(planning.readouts || {}).length;
+  const focusMode = dashboardFocusMode(planning);
+  const hasPlanningActivity = planningHasRenderableActivity(planning);
+  const shouldHidePlanning = !hasPlanningActivity;
+  const defaultCollapsed = !shouldHidePlanning && focusMode !== "planning";
+  const preferenceKey = `dashboard:panel:planning:${planning.session_id || "default"}`;
+  const storedPreference = safeReadStorage(preferenceKey);
+  const collapsed = shouldHidePlanning
+    ? true
+    : focusMode === "planning"
+      ? false
+      : storedPreference
+        ? storedPreference === "collapsed"
+        : defaultCollapsed;
+
+  planningPanel.hidden = shouldHidePlanning;
+  planningPanel.classList.toggle("mode-collapsed", collapsed);
+  planningToggle.dataset.preferenceKey = preferenceKey;
+  planningToggle.textContent = collapsed ? "展開" : "收合";
+  planningToggle.setAttribute("aria-expanded", String(!collapsed));
+  planningToggle.hidden = shouldHidePlanning;
+
+  const summaryChips = [
+    `<span class="chip">${focusMode === "planning" ? "目前焦點" : "非目前焦點"}</span>`,
+    `<span class="chip">Session ${statusLabel(planning.status)}</span>`,
+    `<span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>`,
+    `<span class="chip">Can materialize ${planning.switch_gate?.ready_to_materialize ? "Yes" : "No"}</span>`,
+    `<span class="chip">Issues ${planning.counts.open_items || 0}</span>`,
+    `<span class="chip">Proposals ${(planning.proposed_execution_tasks || []).length}</span>`,
+    `<span class="chip">Readouts ${planning.counts.readouts_resolved || 0}/${readoutTotal} resolved</span>`,
+  ];
+  if ((planning.counts.rounds_total || 0) > 0 || String(planning.status || "") !== "inactive") {
+    summaryChips.push(`<span class="chip">Rounds ${planning.counts.rounds_total || 0}</span>`);
+  }
+  planningSummary.innerHTML = summaryChips.join("");
+
+  const executionPreferenceKey = "dashboard:panel:execution";
+  const storedExecutionPreference = safeReadStorage(executionPreferenceKey);
+  const executionCollapsed = focusMode === "planning"
+    ? (storedExecutionPreference ? storedExecutionPreference === "collapsed" : true)
+    : (storedExecutionPreference ? storedExecutionPreference === "collapsed" : false);
+
+  executionShell.classList.toggle("mode-collapsed", executionCollapsed);
+  executionToggle.textContent = executionCollapsed ? "展開" : "收合";
+  executionToggle.setAttribute("aria-expanded", String(!executionCollapsed));
+  executionToggle.dataset.preferenceKey = executionPreferenceKey;
+
+  if (!planningToggle.dataset.bound) {
+    planningToggle.dataset.bound = "true";
+    planningToggle.addEventListener("click", () => {
+      const nextCollapsed = !planningPanel.classList.contains("mode-collapsed");
+      const activePreferenceKey = planningToggle.dataset.preferenceKey || preferenceKey;
+      planningPanel.classList.toggle("mode-collapsed", nextCollapsed);
+      planningToggle.textContent = nextCollapsed ? "展開" : "收合";
+      planningToggle.setAttribute("aria-expanded", String(!nextCollapsed));
+      safeWriteStorage(activePreferenceKey, nextCollapsed ? "collapsed" : "expanded");
+    });
+  }
+
+  if (!executionToggle.dataset.bound) {
+    executionToggle.dataset.bound = "true";
+    executionToggle.addEventListener("click", () => {
+      const nextCollapsed = !executionShell.classList.contains("mode-collapsed");
+      const activePreferenceKey = executionToggle.dataset.preferenceKey || executionPreferenceKey;
+      executionShell.classList.toggle("mode-collapsed", nextCollapsed);
+      executionToggle.textContent = nextCollapsed ? "展開" : "收合";
+      executionToggle.setAttribute("aria-expanded", String(!nextCollapsed));
+      safeWriteStorage(activePreferenceKey, nextCollapsed ? "collapsed" : "expanded");
+    });
+  }
+}
