@@ -78,7 +78,10 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ai_status.command_done(self.state, ["REG-002", "Reviewer cannot finalize"])
 
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+        ):
             ai_status.command_done(self.state, ["REG-002", "Owner finalized approved task"])
 
         self.assertEqual(self.state["tasks"][0]["status"], "done")
@@ -205,7 +208,7 @@ class SidecarTaskTests(unittest.TestCase):
 
 
 class PortableStateRenderingTests(unittest.TestCase):
-    def test_build_onboarding_prompt_follows_state_canonical_files(self) -> None:
+    def test_sync_canonical_document_metadata_migrates_current_work_to_derived_layer(self) -> None:
         state = {
             "canonical_document_layers": {
                 "L0 Collaboration & State": [
@@ -220,10 +223,43 @@ class PortableStateRenderingTests(unittest.TestCase):
             }
         }
 
+        ai_status.sync_canonical_document_metadata(state)
+
+        self.assertEqual(
+            state["canonical_document_layers"]["L0 Collaboration & State"],
+            [
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "ai-activity-log.jsonl",
+            ],
+        )
+        self.assertEqual(
+            state["canonical_document_layers"]["L0.5 Derived Narrative"],
+            ["current-work.md"],
+        )
+
+    def test_build_onboarding_prompt_follows_state_canonical_files(self) -> None:
+        state = {
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+                "L0.5 Derived Narrative": [
+                    "current-work.md",
+                ],
+                "L1 Runtime & Dashboard": [
+                    "docs-site/index.html",
+                ],
+            }
+        }
+
         prompt = ai_status.build_onboarding_prompt(state)
 
-        self.assertIn("Read AI_COLLABORATION_GUIDE.md, current-work.md, and ai-status.json first.", prompt)
-        self.assertIn("Use ai-activity-log.jsonl when you need recent history.", prompt)
+        self.assertIn("Read AI_COLLABORATION_GUIDE.md and ai-status.json first.", prompt)
+        self.assertIn("Use current-work.md as a human summary only", prompt)
+        self.assertIn("Use ai-activity-log.jsonl only when you need targeted recent history.", prompt)
         self.assertNotIn("TARGET_ARCHITECTURE.md", prompt)
 
     def test_write_current_work_uses_generic_delivery_sections(self) -> None:
@@ -236,6 +272,8 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "AI_COLLABORATION_GUIDE.md",
                     "ai-status.json",
                     "ai-activity-log.jsonl",
+                ],
+                "L0.5 Derived Narrative": [
                     "current-work.md",
                 ],
                 "L1 Runtime & Dashboard": [
@@ -289,7 +327,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("### External / Upstream Integration Work", content)
         self.assertNotIn("### Pantheon Product Work", content)
         self.assertNotIn("Canonical map", content)
-        self.assertIn("- Canonical tiers: `L0 Collaboration & State`, `L1 Runtime & Dashboard`", content)
+        self.assertIn("- Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Runtime & Dashboard`", content)
 
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
@@ -298,6 +336,8 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "AI_COLLABORATION_GUIDE.md",
                     "ai-status.json",
                     "ai-activity-log.jsonl",
+                ],
+                "L0.5 Derived Narrative": [
                     "current-work.md",
                 ],
                 "L2 Planning & Execution": [
@@ -312,7 +352,7 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         self.assertIn("Discussion planning is active", prompt)
         self.assertIn("docs/02-architecture/consensus/phase1/README.md", prompt)
-        self.assertIn("docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md", prompt)
+        self.assertIn("docs/02-architecture/consensus/phase1/planning-session.json", prompt)
 
     def test_write_current_work_includes_planning_snapshot(self) -> None:
         state = {
@@ -324,6 +364,8 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "AI_COLLABORATION_GUIDE.md",
                     "ai-status.json",
                     "ai-activity-log.jsonl",
+                ],
+                "L0.5 Derived Narrative": [
                     "current-work.md",
                 ],
                 "L2 Planning & Execution": [
@@ -399,13 +441,37 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
         planning_state = {
             "status": "accepted",
+            "session_id": "phase2-2026-04-13-blueprint-gap",
+            "planning_dir": "docs/02-architecture/consensus/phase2",
+            "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
             "runtime_mode": "supervisor_managed_execution",
             "consensus_status": "accepted",
             "human_gate_status": "approved",
             "counts": {"readouts_resolved": 5, "open_items": 0},
+            "artifacts": {
+                "consensus_packet": {"path": "docs/02-architecture/consensus/phase2/consensus-packet.md"},
+                "execution_materialization": {"path": "docs/02-architecture/consensus/phase2/execution-materialization.md"},
+            },
+            "materialization_contract": {
+                "source_plane": "planning",
+                "session_id": "phase2-2026-04-13-blueprint-gap",
+                "phase": "phase2",
+                "planning_dir": "docs/02-architecture/consensus/phase2",
+                "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+                "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+                "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md",
+            },
             "proposed_execution_tasks": [
-                {"id": "APP-002-W1-FRONT-HANDOFF"},
-                {"id": "APP-002-W2-READ-INCIDENT"},
+                {
+                    "id": "APP-002-W1-FRONT-HANDOFF",
+                    "source_plane": "planning",
+                    "source_ref": {"session_id": "phase2-2026-04-13-blueprint-gap"},
+                },
+                {
+                    "id": "APP-002-W2-READ-INCIDENT",
+                    "source_plane": "planning",
+                    "source_ref": {"session_id": "phase2-2026-04-13-blueprint-gap"},
+                },
                 {"id": "APP-002-W5-SSE-LIVE"},
             ],
         }
@@ -433,6 +499,11 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
         self.assertEqual(bundle["execution_summary"]["in_review"], 1)
         self.assertEqual(bundle["planning_summary"]["materialized_count"], 2)
+        self.assertEqual(bundle["bridge_summary"]["source_plane"], "planning")
+        self.assertEqual(bundle["bridge_summary"]["session_id"], "phase2-2026-04-13-blueprint-gap")
+        self.assertEqual(bundle["bridge_summary"]["materialized_count"], 2)
+        self.assertEqual(bundle["bridge_summary"]["pending_materialization_count"], 1)
+        self.assertEqual(bundle["bridge_summary"]["consensus_packet"], "docs/02-architecture/consensus/phase2/consensus-packet.md")
         self.assertEqual(len(bundle["truth_mismatches"]), 2)
         self.assertEqual({item["type"] for item in bundle["truth_mismatches"]}, {"running_worker_on_todo", "active_task_without_worker"})
         mismatch_hints = {item["type"]: item["resolution_hint"] for item in bundle["truth_mismatches"]}

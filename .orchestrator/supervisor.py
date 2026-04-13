@@ -28,6 +28,7 @@ from common import (
     command_exists,
     config_path,
     display_name_for,
+    execution_context_files,
     load_config,
     load_json,
     load_status,
@@ -38,7 +39,9 @@ from common import (
     shell_quote,
     snapshot_task,
     spawn_background_process,
+    summarize_failure_reason,
     utc_now,
+    write_failure_evidence,
     write_json,
     write_activity_log,
 )
@@ -93,6 +96,7 @@ PLANNING_CANONICAL_FILES = [
     "docs/02-architecture/consensus/phase1/starter-draft.md",
     "docs/02-architecture/consensus/phase1/consensus-packet.md",
 ]
+_UNSET = object()
 
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
@@ -114,6 +118,15 @@ def clear_supervisor_pid(config: dict[str, Any]) -> None:
     except OSError:
         return
     if current == str(os.getpid()):
+        try:
+            state = load_runtime_state(config)
+            supervisor_state = state.setdefault("supervisor", {})
+            supervisor_state["pid"] = os.getpid()
+            supervisor_state["lifecycle"] = "stopping"
+            supervisor_state["last_heartbeat_at"] = utc_now()
+            save_runtime_state(config, state)
+        except Exception:
+            pass
         path.unlink(missing_ok=True)
 
 
@@ -271,6 +284,180 @@ def safe_load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
         return {"pending": [], "history": []}
 
 
+def event_dispatch_mode(event: dict[str, Any]) -> str:
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    planning = metadata.get("planning")
+    if isinstance(planning, dict) and planning:
+        return "planning"
+    coordination = metadata.get("coordination")
+    if isinstance(coordination, dict) and coordination:
+        return "coordination"
+    reason = str(event.get("reason") or "").strip()
+    if reason.startswith("discussion_planning_"):
+        return "planning"
+    if reason.startswith("coordination:"):
+        return "coordination"
+    return "execution"
+
+
+def worker_dispatch_mode(worker: dict[str, Any]) -> str:
+    if worker_is_discussion_planning(worker):
+        return "planning"
+    if worker_is_coordination_dispatch(worker):
+        return "coordination"
+    return "execution"
+
+
+def empty_mode_occupancy() -> dict[str, dict[str, int]]:
+    return {
+        "planning": {"running": 0, "pending": 0, "queued": 0},
+        "execution": {"running": 0, "pending": 0, "queued": 0},
+        "coordination": {"running": 0, "pending": 0, "queued": 0},
+    }
+
+
+def mode_has_activity(bucket: dict[str, Any] | None) -> bool:
+    if not isinstance(bucket, dict):
+        return False
+    return any(int(bucket.get(key) or 0) > 0 for key in ("running", "pending", "queued"))
+
+
+def compute_mode_occupancy(config: dict[str, Any], state: dict[str, Any]) -> dict[str, dict[str, int]]:
+    occupancy = empty_mode_occupancy()
+    settings = ready_dispatch_settings(config)
+    active_worker_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_worker_statuses.update({"started", "suspended_approval", "fallback"})
+    pending_worker_statuses = {"waiting_approval", "manual_pending", "suspended_approval", "retry_backoff"}
+    active_event_ids: set[str] = set()
+
+    for worker in state.get("workers", {}).values():
+        status = str(worker.get("status") or "")
+        if status not in active_worker_statuses:
+            continue
+        mode = worker_dispatch_mode(worker)
+        bucket = occupancy.setdefault(mode, {"running": 0, "pending": 0, "queued": 0})
+        if status in pending_worker_statuses:
+            bucket["pending"] += 1
+        else:
+            bucket["running"] += 1
+        event_id = str(worker.get("queue_event_id") or "").strip()
+        if event_id:
+            active_event_ids.add(event_id)
+
+    queue_records = state.get("queue", {}).get("events", {}) or {}
+    pending_queue_statuses = {"started", "manual_pending", "waiting_approval", "suspended_approval", "retry_backoff", "stalled", "fallback"}
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+
+    for event in queued_events:
+        event_id = str(event.get("event_id") or "").strip()
+        if not event_id:
+            continue
+        record = queue_records.get(event_id, {})
+        record_status = str(record.get("status") or "queued")
+        if record_status in {"completed", "failed", "done"}:
+            continue
+        if event_id in active_event_ids:
+            continue
+        mode = event_dispatch_mode(event)
+        bucket = occupancy.setdefault(mode, {"running": 0, "pending": 0, "queued": 0})
+        if record_status in pending_queue_statuses:
+            bucket["pending"] += 1
+        else:
+            bucket["queued"] += 1
+
+    return occupancy
+
+
+def stamp_supervisor_runtime_state(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    planning_state: dict[str, Any] | None,
+    heartbeat_at: str,
+    lifecycle: str | None = None,
+    loop_started_at: str | object = _UNSET,
+    loop_finished_at: str | object = _UNSET,
+    loop_error: str | None | object = _UNSET,
+) -> None:
+    supervisor_state = state.setdefault("supervisor", {})
+    current_pid = os.getpid()
+    previous_pid = supervisor_state.get("pid")
+    previous_focus = str(supervisor_state.get("focus_mode") or "").strip()
+
+    supervisor_state["pid"] = current_pid
+    supervisor_state["last_heartbeat_at"] = heartbeat_at
+    if not supervisor_state.get("started_at") or previous_pid != current_pid:
+        supervisor_state["started_at"] = heartbeat_at
+        supervisor_state["last_successful_loop_at"] = None
+        supervisor_state["last_loop_started_at"] = None
+        supervisor_state["last_loop_finished_at"] = None
+        supervisor_state["last_loop_duration_ms"] = None
+        supervisor_state["last_loop_error"] = None
+
+    if lifecycle is not None:
+        supervisor_state["lifecycle"] = lifecycle
+    if loop_started_at is not _UNSET:
+        supervisor_state["last_loop_started_at"] = loop_started_at
+    if loop_finished_at is not _UNSET:
+        supervisor_state["last_loop_finished_at"] = loop_finished_at
+    if loop_error is not _UNSET:
+        supervisor_state["last_loop_error"] = loop_error
+    effective_loop_started_at = (
+        loop_started_at
+        if isinstance(loop_started_at, str)
+        else supervisor_state.get("last_loop_started_at")
+    )
+    if (
+        loop_finished_at is not _UNSET
+        and isinstance(effective_loop_started_at, str)
+        and isinstance(loop_finished_at, str)
+    ):
+        started_dt = parse_runtime_timestamp(effective_loop_started_at)
+        finished_dt = parse_runtime_timestamp(loop_finished_at)
+        if started_dt is not None and finished_dt is not None:
+            supervisor_state["last_loop_duration_ms"] = max(0, int((finished_dt - started_dt).total_seconds() * 1000))
+    if (
+        loop_finished_at is not _UNSET
+        and loop_finished_at is not None
+        and loop_error is not _UNSET
+        and loop_error is None
+    ):
+        supervisor_state["last_successful_loop_at"] = loop_finished_at
+
+    occupancy = compute_mode_occupancy(config, state)
+    supervisor_state["mode_occupancy"] = occupancy
+
+    desired_focus = "planning" if discussion_planning_is_active(planning_state) else "execution"
+    previous_focus_valid = previous_focus in {"planning", "execution"}
+    if previous_focus_valid and previous_focus != desired_focus and mode_has_activity(occupancy.get(previous_focus)):
+        supervisor_state["focus_mode"] = previous_focus
+        supervisor_state["mode_status"] = "draining"
+        supervisor_state["mode_switch_requested"] = desired_focus
+    else:
+        supervisor_state["focus_mode"] = desired_focus
+        supervisor_state["mode_status"] = "active" if mode_has_activity(occupancy.get(desired_focus)) else "idle"
+        supervisor_state["mode_switch_requested"] = None
+        if previous_focus_valid and previous_focus != desired_focus:
+            supervisor_state["last_mode_switch_at"] = heartbeat_at
+
+
+def bootstrap_supervisor_runtime_state(config: dict[str, Any], *, lifecycle: str = "starting") -> dict[str, Any]:
+    heartbeat_at = utc_now()
+    state = load_runtime_state(config)
+    stamp_supervisor_runtime_state(
+        config,
+        state,
+        planning_state=load_discussion_planning_state(),
+        heartbeat_at=heartbeat_at,
+        lifecycle=lifecycle,
+    )
+    save_runtime_state(config, state)
+    return state
+
+
 def log_runtime_summary(
     state: dict[str, Any],
     approval_state: dict[str, Any],
@@ -283,17 +470,18 @@ def log_runtime_summary(
     once: bool = False,
 ) -> None:
     summary = summarize_runtime(state, approval_state)
-    heartbeat = (
-        state.get("supervisor", {}).get("last_heartbeat_at")
-        or "-"
-    )
+    supervisor_state = state.get("supervisor", {}) or {}
+    heartbeat = supervisor_state.get("last_heartbeat_at") or "-"
     heartbeat_local = format_runtime_timestamp_local(heartbeat if heartbeat != "-" else None)
     lag_seconds = heartbeat_lag_seconds(previous_heartbeat, heartbeat)
     lag_summary = f"{lag_seconds:.1f}s" if lag_seconds is not None else "-"
+    lifecycle = str(supervisor_state.get("lifecycle") or "idle")
+    mode_status = str(supervisor_state.get("mode_status") or "idle")
     mode = "once" if once else "tick"
     console_log(
         (
-            f"supervisor {mode}: heartbeat={heartbeat_local} lag={lag_summary} changed={'yes' if changed else 'no'} "
+            f"supervisor {mode}: lifecycle={lifecycle} heartbeat={heartbeat_local} lag={lag_summary} changed={'yes' if changed else 'no'} "
+            f"mode={mode_status} "
             f"queue={summary['queue_count']} "
             f"approvals={summary['pending_approval_count']} "
             f"active_workers={summary['active_worker_count']}"
@@ -363,6 +551,9 @@ def build_request(config: dict[str, Any], event: dict[str, Any]) -> DeliveryRequ
     model_preference = resolve_agent_model_preference(config, agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
+    context_files = event.get("context_files")
+    if context_files is None:
+        context_files = execution_context_files(config, event.get("task_id"))
     return DeliveryRequest(
         agent_id=agent["id"],
         provider=agent.get("provider", agent["id"]),
@@ -372,7 +563,7 @@ def build_request(config: dict[str, Any], event: dict[str, Any]) -> DeliveryRequ
         message=event["message"],
         task_id=event.get("task_id"),
         reason=event.get("reason"),
-        context_files=event.get("context_files", [relpath(path) for path in selected_shared_files(config)]),
+        context_files=context_files,
         target_files=event.get("target_files", []),
         metadata=metadata,
     )
@@ -429,6 +620,21 @@ def start_worker_for_request(
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
     result = adapter.deliver(request)
     if not result.ok:
+        failure_worker = {
+            "provider": request.provider,
+            "agent_id": request.agent_id,
+            "task_id": request.task_id,
+            "queue_event_id": event_id_for_log,
+            "run_id": None,
+            "log_path": result.log_path,
+        }
+        failure_summary = summarize_failure_reason(result.error or result.notes or "Worker delivery failed.", request.provider)
+        raw_ref = write_failure_evidence(
+            config,
+            worker=failure_worker,
+            reason=result.error or result.notes or "Worker delivery failed.",
+            failure_kind=failure_summary.get("kind"),
+        )
         write_activity_log(
             config,
             {
@@ -436,12 +642,13 @@ def start_worker_for_request(
                 "task_id": request.task_id,
                 "target_agent": display_name_for(config, agent["id"]),
                 "delivery_mode": result.mode,
-                "message": result.error or result.notes or "Worker delivery failed.",
+                "message": failure_summary.get("summary") or "Worker delivery failed.",
                 "queue_event_id": event_id_for_log,
                 "parent_run_id": parent_run_id,
+                "raw_ref": raw_ref,
             },
         )
-        return False, result.error or result.notes or "Worker delivery failed.", None
+        return False, failure_summary.get("summary") or result.error or result.notes or "Worker delivery failed.", None
 
     worker_run_id = result.run_id or new_runtime_id(request.provider)
     state.setdefault("workers", {})[worker_run_id] = {
@@ -537,13 +744,15 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
             continue
         request = build_request(config, event)
-        pause_entry = current_provider_dispatch_pause(state, request.provider)
+        request_provider = getattr(request, "provider", event.get("provider"))
+        pause_entry = current_provider_dispatch_pause(state, request_provider)
         if pause_entry:
+            pause_summary = str(pause_entry.get("summary") or pause_entry.get("reason") or "capacity guardrail active.")
             record["status"] = "failed"
             record["processed_at"] = utc_now()
             record["error"] = (
-                f"Dispatch paused for provider {request.provider} until {pause_entry.get('blocked_until')}: "
-                f"{pause_entry.get('reason') or 'capacity guardrail active.'}"
+                f"Dispatch paused for provider {request_provider} until {pause_entry.get('blocked_until')}: "
+                f"{pause_summary}"
             )
             write_activity_log(
                 config,
@@ -551,9 +760,10 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     "type": "wake_skipped",
                     "task_id": event.get("task_id"),
                     "target_agent": event.get("target_display_name") or event.get("target_agent"),
-                    "provider": request.provider,
+                    "provider": request_provider,
                     "message": record["error"],
                     "queue_event_id": event_id,
+                    "raw_ref": pause_entry.get("raw_ref"),
                 },
             )
             changed = True
@@ -578,11 +788,19 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 "run_id": record.get("run_id"),
                 "retry_count": max(0, int(record.get("attempt_count", 0)) - 1),
             }
-            failure = classify_worker_failure(config, failure_worker, str(outcome or ""))
+            failure_reason = str(outcome or "")
+            failure = classify_worker_failure(config, failure_worker, failure_reason)
+            failure_summary = summarize_failure_reason(failure_reason, request.provider)
+            raw_ref = write_failure_evidence(
+                config,
+                worker=failure_worker,
+                reason=failure_reason,
+                failure_kind=str(failure.get("kind") or ""),
+            )
             failure_count = record_task_failure_streak(
                 state,
                 failure_worker,
-                str(outcome or ""),
+                failure_reason,
                 failure_kind=str(failure.get("kind") or ""),
             )
             if failure.get("kind") == "capacity":
@@ -590,14 +808,16 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     config,
                     state,
                     request.provider,
-                    str(outcome or ""),
+                    failure_reason,
                     task_id=str(request.task_id or ""),
+                    failure_kind=str(failure.get("kind") or ""),
+                    raw_ref=raw_ref,
                 )
             reassigned_to = maybe_reassign_task_after_worker_failure(
                 config,
                 state,
                 failure_worker,
-                str(outcome or ""),
+                failure_summary.get("summary") or failure_reason,
                 terminal=True,
                 force=bool(failure.get("kind") == "capacity"),
                 failure_count=failure_count,
@@ -605,11 +825,15 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             if reassigned_to:
                 record["status"] = "completed"
                 record["processed_at"] = utc_now()
-                record["error"] = str(outcome or "")
+                record["error"] = failure_summary.get("summary") or ""
+                if raw_ref:
+                    record["raw_ref"] = raw_ref
                 changed = True
                 continue
             record["status"] = "failed"
-            record["error"] = outcome
+            record["error"] = failure_summary.get("summary") or outcome
+            if raw_ref:
+                record["raw_ref"] = raw_ref
             record["processed_at"] = utc_now()
             changed = True
             continue
@@ -1001,6 +1225,8 @@ def mark_provider_dispatch_paused(
     *,
     task_id: str | None = None,
     worker_run_id: str | None = None,
+    failure_kind: str | None = None,
+    raw_ref: str | None = None,
 ) -> bool:
     settings = provider_guardrail_settings(config)
     if not settings.get("pause_on_capacity_failure", True):
@@ -1014,12 +1240,22 @@ def mark_provider_dispatch_paused(
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
     bucket = _dispatch_pause_bucket(state)
     previous = bucket.get(provider_id)
-    changed = not isinstance(previous, dict) or str(previous.get("blocked_until") or "") != blocked_until_iso or str(previous.get("reason") or "") != reason
+    summary = summarize_failure_reason(reason, provider_id)
+    changed = (
+        not isinstance(previous, dict)
+        or str(previous.get("blocked_until") or "") != blocked_until_iso
+        or str(previous.get("summary") or "") != summary.get("summary")
+        or str(previous.get("raw_ref") or "") != str(raw_ref or "")
+    )
     bucket[provider_id] = {
         "provider": provider_id,
         "paused_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "blocked_until": blocked_until_iso,
-        "reason": reason,
+        "reason": summary.get("summary"),
+        "summary": summary.get("summary"),
+        "detail": summary.get("detail"),
+        "failure_kind": failure_kind or summary.get("kind"),
+        "raw_ref": raw_ref,
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
@@ -1031,7 +1267,11 @@ def mark_provider_dispatch_paused(
                 "provider": provider_id,
                 "task_id": task_id,
                 "worker_run_id": worker_run_id,
-                "message": f"Paused new dispatches for {provider_id} until {blocked_until_iso} after capacity failure: {reason}",
+                "message": (
+                    f"Paused new dispatches for {provider_id} until {blocked_until_iso} after capacity failure: "
+                    f"{summary.get('summary')}"
+                ),
+                "raw_ref": raw_ref,
             },
         )
     return changed
@@ -1208,7 +1448,7 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     reason = str(event.get("reason") or "").strip()
     action_by_reason = {
         "owned_ready_dispatch": ("start", {"todo"}),
-        "owned_finalize_dispatch": ("start", {"review_approved"}),
+        "owned_finalize_dispatch": ("note", {"review_approved"}),
         "owned_in_progress_dispatch": ("progress", {"in_progress"}),
     }
     action = action_by_reason.get(reason)
@@ -1334,15 +1574,22 @@ def persist_task_reassignment(
 
 def maybe_reassign_task_after_worker_failure(
     config: dict[str, Any],
-    state: dict[str, Any],
-    worker: dict[str, Any],
-    reason: str,
+    state_or_worker: dict[str, Any],
+    worker_or_reason: dict[str, Any] | str | None = None,
+    reason: str | None = None,
     *,
     terminal: bool = False,
     force: bool = False,
     failure_count: int | None = None,
     respect_threshold: bool = False,
 ) -> str | None:
+    if isinstance(worker_or_reason, dict):
+        state = state_or_worker
+        worker = worker_or_reason
+    else:
+        state = {}
+        worker = state_or_worker
+        reason = str(worker_or_reason or reason or "")
     settings = worker_reassignment_settings(config)
     if not settings.get("enabled", True):
         return None
@@ -1373,6 +1620,7 @@ def maybe_reassign_task_after_worker_failure(
     failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
     failure = classify_worker_failure(config, worker, reason)
     failure_label = failure.get("label", "provider failure")
+    failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
     owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
 
@@ -1382,7 +1630,7 @@ def maybe_reassign_task_after_worker_failure(
         if not new_reviewer:
             return None
         message = (
-            f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated {failing_agent} {failure_label}: {reason}"
+            f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated {failing_agent} {failure_label}: {failure_summary}"
         )
         if not persist_task_reassignment(
             config,
@@ -1424,7 +1672,7 @@ def maybe_reassign_task_after_worker_failure(
         if not new_reviewer:
             return None
         message = (
-            f"Auto-reassigned ownership from {owner} to {new_owner} after repeated {failing_agent} {failure_label}: {reason}"
+            f"Auto-reassigned ownership from {owner} to {new_owner} after repeated {failing_agent} {failure_label}: {failure_summary}"
         )
         if not persist_task_reassignment(
             config,
@@ -2095,6 +2343,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
         failure_reason = detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
+            failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
+            raw_ref = write_failure_evidence(
+                config,
+                worker=worker,
+                reason=failure_reason,
+                failure_kind=str(failure.get("kind") or ""),
+            )
             failure_count = record_task_failure_streak(
                 state,
                 worker,
@@ -2113,12 +2368,14 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     failure_reason,
                     task_id=str(worker.get("task_id") or ""),
                     worker_run_id=str(worker.get("run_id") or ""),
+                    failure_kind=str(failure.get("kind") or ""),
+                    raw_ref=raw_ref,
                 )
                 reassigned_to = maybe_reassign_task_after_worker_failure(
                     config,
                     state,
                     worker,
-                    failure_reason,
+                    failure_summary.get("summary") or failure_reason,
                     terminal=True,
                     force=True,
                     failure_count=failure_count,
@@ -2126,13 +2383,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                 if reassigned_to:
                     worker["status"] = "reassigned"
                     worker["reassigned_to"] = reassigned_to
-                    worker["last_error"] = failure_reason
+                    worker["last_error"] = failure_summary.get("summary") or failure_reason
+                    worker["last_error_raw_ref"] = raw_ref
                     worker["last_event_at"] = utc_now()
                     finalize_queue_event_record(config, state, worker, "completed")
                     changed = True
                     continue
                 worker["status"] = "failed"
-                worker["last_error"] = failure_reason
+                worker["last_error"] = failure_summary.get("summary") or failure_reason
+                worker["last_error_raw_ref"] = raw_ref
                 worker["last_event_at"] = utc_now()
                 write_activity_log(
                     config,
@@ -2140,10 +2399,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                         "type": "worker_failed",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
-                        "message": failure_reason,
+                        "message": failure_summary.get("summary") or failure_reason,
                         "worker_run_id": worker["run_id"],
                         "pr_url": worker.get("pr_url"),
                         "session_url": worker.get("session_url"),
+                        "raw_ref": raw_ref,
                     },
                 )
                 finalize_queue_event_record(config, state, worker, "failed", failure_reason)
@@ -2158,19 +2418,22 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                 config,
                 state,
                 worker,
-                failure_reason,
+                failure_summary.get("summary") or failure_reason,
                 terminal=True,
                 failure_count=failure_count,
             )
             if reassigned_to:
                 worker["status"] = "reassigned"
                 worker["reassigned_to"] = reassigned_to
-                worker["last_error"] = failure_reason
+                worker["last_error"] = failure_summary.get("summary") or failure_reason
+                worker["last_error_raw_ref"] = raw_ref
                 worker["last_event_at"] = utc_now()
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
             worker["status"] = "failed"
+            worker["last_error"] = failure_summary.get("summary") or failure_reason
+            worker["last_error_raw_ref"] = raw_ref
             worker["last_event_at"] = utc_now()
             write_activity_log(
                 config,
@@ -2178,13 +2441,14 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     "type": "worker_failed",
                     "provider": worker.get("provider"),
                     "task_id": worker.get("task_id"),
-                    "message": failure_reason,
+                    "message": failure_summary.get("summary") or failure_reason,
                     "worker_run_id": worker["run_id"],
                     "pr_url": worker.get("pr_url"),
                     "session_url": worker.get("session_url"),
+                    "raw_ref": raw_ref,
                 },
             )
-            finalize_queue_event_record(config, state, worker, "failed", failure_reason)
+            finalize_queue_event_record(config, state, worker, "failed", failure_summary.get("summary") or failure_reason)
             changed = True
             continue
 
@@ -3624,58 +3888,89 @@ def run_once(
     once: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
-    heartbeat_at = utc_now()
-    def stamp_supervisor_state(state: dict[str, Any]) -> None:
-        supervisor_state = state.setdefault("supervisor", {})
-        previous_pid = supervisor_state.get("pid")
-        current_pid = os.getpid()
-        supervisor_state["pid"] = current_pid
-        supervisor_state["last_heartbeat_at"] = heartbeat_at
-        if not supervisor_state.get("started_at") or previous_pid != current_pid:
-            supervisor_state["started_at"] = heartbeat_at
-
+    loop_started_at = utc_now()
     state = load_runtime_state(config)
     previous_heartbeat = state.get("supervisor", {}).get("last_heartbeat_at")
-    stamp_supervisor_state(state)
-    changed = False
-    pruned = prune_stale_approvals(config)
-    if pruned:
-        changed = True
-    provider_report = load_provider_report(config)
-    if watch:
-        changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
-        state = load_runtime_state(config)
-        stamp_supervisor_state(state)
-    changed = sync_coordination_files(config, state) or changed
-    changed = poll_workers(config, state) or changed
-    changed = reconcile_queue_records(config, state) or changed
-    changed = prune_event_queue(config, state) or changed
     planning_state = load_discussion_planning_state()
-    if discussion_planning_is_active(planning_state):
-        changed = dispatch_discussion_planning(config, state, planning_state) or changed
-    else:
-        changed = dispatch_ready_tasks(config, state) or changed
-        changed = dispatch_underutilization_sidecars(config, state) or changed
-    changed = process_queue(config, state, provider_report) or changed
-    changed = poll_workers(config, state) or changed
-    changed = reconcile_queue_records(config, state) or changed
-    changed = prune_event_queue(config, state) or changed
-    changed = sync_github_bus(config, state) or changed
-    trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
-    trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
-    stamp_supervisor_state(state)
-    save_runtime_state(config, state)
-    log_runtime_summary(
+    stamp_supervisor_runtime_state(
+        config,
         state,
-        safe_load_approval_state(config),
-        changed=changed,
-        quiet=quiet,
-        verbose=verbose,
-        previous_heartbeat=previous_heartbeat,
-        warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
-        once=once,
+        planning_state=planning_state,
+        heartbeat_at=loop_started_at,
+        lifecycle="running",
+        loop_started_at=loop_started_at,
     )
-    return changed
+    save_runtime_state(config, state)
+    changed = False
+    try:
+        pruned = prune_stale_approvals(config)
+        if pruned:
+            changed = True
+        provider_report = load_provider_report(config)
+        if watch:
+            changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
+            state = load_runtime_state(config)
+            stamp_supervisor_runtime_state(
+                config,
+                state,
+                planning_state=planning_state,
+                heartbeat_at=loop_started_at,
+                lifecycle="running",
+                loop_started_at=loop_started_at,
+            )
+        changed = sync_coordination_files(config, state) or changed
+        changed = poll_workers(config, state) or changed
+        changed = reconcile_queue_records(config, state) or changed
+        changed = prune_event_queue(config, state) or changed
+        planning_state = load_discussion_planning_state()
+        if discussion_planning_is_active(planning_state):
+            changed = dispatch_discussion_planning(config, state, planning_state) or changed
+        else:
+            changed = dispatch_ready_tasks(config, state) or changed
+            changed = dispatch_underutilization_sidecars(config, state) or changed
+        changed = process_queue(config, state, provider_report) or changed
+        changed = poll_workers(config, state) or changed
+        changed = reconcile_queue_records(config, state) or changed
+        changed = prune_event_queue(config, state) or changed
+        changed = sync_github_bus(config, state) or changed
+        trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
+        trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
+
+        loop_finished_at = utc_now()
+        stamp_supervisor_runtime_state(
+            config,
+            state,
+            planning_state=planning_state,
+            heartbeat_at=loop_finished_at,
+            lifecycle="running",
+            loop_finished_at=loop_finished_at,
+            loop_error=None,
+        )
+        save_runtime_state(config, state)
+        log_runtime_summary(
+            state,
+            safe_load_approval_state(config),
+            changed=changed,
+            quiet=quiet,
+            verbose=verbose,
+            previous_heartbeat=previous_heartbeat,
+            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
+            once=once,
+        )
+        return changed
+    except Exception as exc:
+        loop_finished_at = utc_now()
+        stamp_supervisor_runtime_state(
+            config,
+            state,
+            planning_state=planning_state,
+            heartbeat_at=loop_finished_at,
+            lifecycle="degraded",
+            loop_finished_at=loop_finished_at,
+            loop_error=f"{type(exc).__name__}: {exc}",
+        )
+        save_runtime_state(config, state)
+        raise
 
 
 def main() -> int:
@@ -3686,6 +3981,7 @@ def main() -> int:
     terminate_older_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
+    bootstrap_supervisor_runtime_state(config, lifecycle="starting")
     poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 2.0))
     console_log(
         f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",

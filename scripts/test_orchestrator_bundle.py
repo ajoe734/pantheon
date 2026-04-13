@@ -73,7 +73,8 @@ class OrchestratorBundleTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            self.assertIn("Read AI_COLLABORATION_GUIDE.md, current-work.md, and ai-status.json first.", prompt_result.stdout)
+            self.assertIn("Read AI_COLLABORATION_GUIDE.md and ai-status.json first.", prompt_result.stdout)
+            self.assertIn("Use current-work.md as a human summary only", prompt_result.stdout)
             self.assertNotIn("TARGET_ARCHITECTURE.md", prompt_result.stdout)
 
             setup_script = (target / "scripts" / "setup-llm-cli.sh").read_text(encoding="utf-8")

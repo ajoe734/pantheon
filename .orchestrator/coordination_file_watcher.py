@@ -9,9 +9,9 @@ from typing import Any
 from common import (
     agent_config_for,
     display_name_for,
+    execution_context_files,
     new_runtime_id,
     relpath,
-    selected_shared_files,
     to_bool,
     utc_now,
     write_activity_log,
@@ -186,7 +186,7 @@ def queue_coordination_dispatch(
         return False
 
     agent = agent_config_for(config, target_agent)
-    context_files = [relpath(path) for path in selected_shared_files(config)]
+    context_files = execution_context_files(config, feature_id)
     if source_path and source_path not in context_files:
         context_files.append(source_path)
 

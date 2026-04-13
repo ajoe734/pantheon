@@ -63,6 +63,14 @@ class PlanningStateTests(unittest.TestCase):
                 self.assertEqual(derived["status"], "inactive")
                 self.assertEqual(derived["planning_mode"], "discussion_planning")
                 self.assertFalse(derived["switch_gate"]["ready_to_materialize"])
+                self.assertEqual(derived["materialization_contract"]["source_plane"], "planning")
+                self.assertEqual(derived["materialization_contract"]["session_id"], session["session_id"])
+
+    def test_blueprint_gap_brief_files_excludes_current_work(self) -> None:
+        files = planning_state.blueprint_gap_brief_files()
+
+        self.assertIn("ai-status.json", files)
+        self.assertNotIn("current-work.md", files)
 
     def test_command_flow_advances_switch_gate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-flow-") as temp_dir:
@@ -248,6 +256,58 @@ class PlanningStateTests(unittest.TestCase):
         self.assertEqual(task_map["PLAN-002"]["owner"], "Codex")
         self.assertEqual(task_map["BG-005"]["depends_on"], ["BG-000", "BG-001", "BG-003"])
         self.assertEqual(task_map["BG-007"]["reviewer"], "Codex")
+        self.assertEqual(task_map["PLAN-002"]["source_plane"], "planning")
+        self.assertEqual(task_map["PLAN-002"]["source_ref"]["session_id"], planning_state.PHASE2_SESSION_ID)
+        self.assertEqual(task_map["PLAN-002"]["source_ref"]["consensus_packet"], "docs/02-architecture/consensus/phase2/consensus-packet.md")
+        self.assertEqual(
+            task_map["PLAN-002"]["source_ref"]["execution_materialization"],
+            "docs/02-architecture/consensus/phase2/execution-materialization.md",
+        )
+        self.assertEqual(task_map["PLAN-002"]["materialization_ref"]["human_gate_status"], "approved")
+
+    def test_materialize_preserves_existing_execution_truth_and_only_backfills_source_refs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-backfill-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root), self.patch_ai_status_paths(root):
+                session = planning_state.default_session(planning_state.PHASE2_SESSION_ID, "phase2")
+                planning_state.command_human_gate(session, ["approved", "Human accepted execution plan"])
+                state = planning_state.ai_status.default_state()
+                state["tasks"] = [
+                    {
+                        "id": "BG-000",
+                        "title": "Operationally reassigned title",
+                        "summary_zh": "保留目前 execution truth。",
+                        "phase": "Blueprint Gap P0",
+                        "owner": "Qwen",
+                        "reviewer": "Codex",
+                        "status": "in_progress",
+                        "depends_on": ["PLAN-002"],
+                        "artifacts": [],
+                        "acceptance": [],
+                        "next": "Keep current execution moving",
+                        "last_update": "2026-04-13T07:00:00Z",
+                    }
+                ]
+                state["agents"] = []
+                state["handoffs"] = []
+                state["blockers"] = []
+                state["workload"] = {}
+                state["workload_summary"] = {}
+                (root / "ai-status.json").write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+                planning_state.command_materialize(session, [])
+                status = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+                task_map = {task["id"]: task for task in status["tasks"]}
+
+        self.assertEqual(task_map["BG-000"]["title"], "Operationally reassigned title")
+        self.assertEqual(task_map["BG-000"]["owner"], "Qwen")
+        self.assertEqual(task_map["BG-000"]["status"], "in_progress")
+        self.assertEqual(task_map["BG-000"]["last_update"], "2026-04-13T07:00:00Z")
+        self.assertEqual(task_map["BG-000"]["source_plane"], "planning")
+        self.assertEqual(task_map["BG-000"]["source_ref"]["session_id"], planning_state.PHASE2_SESSION_ID)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260411-2358";
+} from "./dashboard-config.js?v=20260413-1745";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -27,7 +27,64 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260411-2358";
+} from "./dashboard-core.js?v=20260413-1745";
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function compactWhitespace(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function summarizePausedReason(reason, provider) {
+  const raw = compactWhitespace(reason || "");
+  const lower = raw.toLowerCase();
+  const providerName = agentLabel(provider);
+  if (!raw) {
+    return {
+      summary: `${providerName} provider guardrail 已暫停此 lane 的新 dispatch。`,
+      detail: "",
+      kind: "pause",
+    };
+  }
+  if (lower.includes("402") && lower.includes("no quota")) {
+    return {
+      summary: "402 You have no quota",
+      detail: truncate(raw, 420),
+      kind: "quota",
+    };
+  }
+  if (lower.includes("hit your limit")) {
+    return {
+      summary: raw.match(/You've hit your limit[^|]*/i)?.[0] || "You've hit your limit",
+      detail: truncate(raw, 420),
+      kind: "quota",
+    };
+  }
+  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("capacity")) {
+    return {
+      summary: "Capacity / rate limit guardrail triggered",
+      detail: truncate(raw, 420),
+      kind: "quota",
+    };
+  }
+  const firstMeaningfulSegment = raw
+    .split(/\s+\|\s+|\n+/)
+    .map((part) => compactWhitespace(part))
+    .find((part) => part && !part.startsWith("./") && !part.startsWith("/"))
+    || raw;
+  return {
+    summary: truncate(firstMeaningfulSegment, 180),
+    detail: truncate(raw, 420),
+    kind: "pause",
+  };
+}
 
 export function renderWorkload(status) {
   const container = qs("#workload-grid");
@@ -232,9 +289,9 @@ export function renderTaskBoard(status, orchState, dashboardBundle = null) {
 
   const truth = buildTruthMismatches(status, orchState);
   const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
-  const bundleMismatches = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : null;
+  const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
   const mismatchByTask = new Map();
-  for (const mismatch of bundleMismatches || truth.mismatches) {
+  for (const mismatch of mismatchItems) {
     if (!mismatch.task_id) continue;
     if (!mismatchByTask.has(mismatch.task_id)) mismatchByTask.set(mismatch.task_id, []);
     mismatchByTask.get(mismatch.task_id).push(mismatch);
@@ -249,7 +306,8 @@ export function renderTaskBoard(status, orchState, dashboardBundle = null) {
 
   const displayTasks = (status.tasks || []).map((task) => {
     const bundleLinksForTask = runtimeLinksByTask.get(task.id) || [];
-    const liveWorkers = bundleLinksForTask.length ? bundleLinksForTask : truth.liveWorkersByTask.get(task.id) || [];
+    const truthWorkersForTask = truth.liveWorkersByTask.get(task.id) || [];
+    const liveWorkers = truthWorkersForTask.length ? truthWorkersForTask : bundleLinksForTask;
     const hasRunningWorker = liveWorkers.some((worker) => (worker.runtime_bucket || worker.bucket) === "running");
     const hasPendingWorker = liveWorkers.some((worker) => (worker.runtime_bucket || worker.bucket) === "pending");
     let displayStatus = task.status;
@@ -769,8 +827,8 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
     },
     {
       label: "Truth Mismatches",
-      value: Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches.length : truth.counts.total,
-      note: (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches.length : truth.counts.total)
+      value: truth.counts.total,
+      note: truth.counts.total
         ? `High ${truth.counts.high} · Medium ${truth.counts.medium}`
         : "runtime / execution / planning 目前沒有明顯不一致",
       details: truth.mismatches,
@@ -946,7 +1004,7 @@ function executionNextAction(status, orchState, dashboardBundle = null) {
 
 function currentPriorityNarrative(planning, status, orchState, dashboardBundle = null) {
   const focusMode = dashboardFocusMode(planning);
-  const proposalStats = planningProposalStats(planning, status);
+  const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const pausedProviders = pausedProviderEntries(orchState);
   const executionCounts = executionStatusCounts(status, dashboardBundle);
   const planningAction = planningNextAction(planning, status);
@@ -1014,13 +1072,11 @@ export function renderControlPlaneStrip(status, planningState, orchState = null,
   if (!container) return;
   const planning = normalizePlanningState(planningState);
   const focus = currentPriorityNarrative(planning, status, orchState, dashboardBundle);
-  const taskIds = new Set((status.tasks || []).map((task) => task.id));
-  const proposedTasks = planning.proposed_execution_tasks || [];
-  const materializedCount = proposedTasks.filter((task) => taskIds.has(task.id)).length;
+  const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const executionCounts = executionStatusCounts(status, dashboardBundle);
   const pausedProviders = pausedProviderEntries(orchState);
   const blockers = (status.blockers || []).filter((blocker) => blocker.status === "open").length;
-  const pendingBridge = Math.max(proposedTasks.length - materializedCount, 0);
+  const pendingBridge = Math.max(proposalStats.pendingMaterializationCount, 0);
 
   const items = [
     {
@@ -1037,8 +1093,8 @@ export function renderControlPlaneStrip(status, planningState, orchState = null,
     },
     {
       label: "下放進度",
-      value: proposedTasks.length ? `${materializedCount}/${proposedTasks.length}` : "0/0",
-      note: proposedTasks.length
+      value: proposalStats.total ? `${proposalStats.materialized}/${proposalStats.total}` : "0/0",
+      note: proposalStats.total
         ? (pendingBridge ? `還有 ${pendingBridge} 個候選切片尚未正式下放` : "所有候選切片都已成功進入 execution")
         : "這輪 planning 目前沒有提出 execution slice",
       statusClass: pendingBridge ? "status-review" : "status-ready",
@@ -1129,10 +1185,18 @@ function planningDecisionSummary(planning, status) {
   };
 }
 
-function planningProposalStats(planning, status) {
+function planningBridgeSummary(planning, status, dashboardBundle = null) {
   const taskMap = new Map((status.tasks || []).map((task) => [task.id, task]));
   const proposals = planning.proposed_execution_tasks || [];
-  return {
+  const fallback = {
+    sourcePlane: "planning",
+    sessionId: planning.session_id || null,
+    phase: planning.phase || null,
+    profile: planning.profile || null,
+    planningDir: planning.planning_dir || null,
+    sessionFile: planning.session_file || null,
+    consensusPacket: planning.artifacts?.consensus_packet?.path || null,
+    executionMaterialization: planning.artifacts?.execution_materialization?.path || null,
     total: proposals.length,
     materialized: proposals.filter((task) => taskMap.has(task.id)).length,
     done: proposals.filter((task) => taskMap.get(task.id)?.status === "done").length,
@@ -1141,7 +1205,63 @@ function planningProposalStats(planning, status) {
     review: proposals.filter((task) => taskMap.get(task.id)?.status === "review").length,
     todo: proposals.filter((task) => taskMap.get(task.id)?.status === "todo").length,
     blocked: proposals.filter((task) => taskMap.get(task.id)?.status === "blocked").length,
+    pendingMaterializationCount: proposals.filter((task) => !taskMap.has(task.id)).length,
+    pendingProposals: proposals.filter((task) => !taskMap.has(task.id)),
+    activeMaterializedTasks: proposals
+      .filter((task) => taskMap.has(task.id))
+      .map((task) => taskMap.get(task.id))
+      .filter((task) => task && String(task.status || "").toLowerCase() !== "done"),
+    planningBackedTotal: 0,
+    planningBackedActive: 0,
+    currentSessionMaterialized: proposals.filter((task) => taskMap.has(task.id)).length,
+    missingSourceRefCount: 0,
   };
+  const bundleBridge = dashboardBundle?.bridge_summary || null;
+  if (!bundleBridge || typeof bundleBridge !== "object") {
+    return fallback;
+  }
+  return {
+    ...fallback,
+    sourcePlane: bundleBridge.source_plane ?? fallback.sourcePlane,
+    sessionId: bundleBridge.session_id ?? fallback.sessionId,
+    phase: bundleBridge.phase ?? fallback.phase,
+    profile: bundleBridge.profile ?? fallback.profile,
+    planningDir: bundleBridge.planning_dir ?? fallback.planningDir,
+    sessionFile: bundleBridge.session_file ?? fallback.sessionFile,
+    consensusPacket: bundleBridge.consensus_packet ?? fallback.consensusPacket,
+    executionMaterialization: bundleBridge.execution_materialization ?? fallback.executionMaterialization,
+    total: Number.isFinite(bundleBridge.proposed_total) ? bundleBridge.proposed_total : fallback.total,
+    materialized: Number.isFinite(bundleBridge.materialized_count) ? bundleBridge.materialized_count : fallback.materialized,
+    done: Number.isFinite(bundleBridge.done) ? bundleBridge.done : fallback.done,
+    reviewApproved: Number.isFinite(bundleBridge.review_approved) ? bundleBridge.review_approved : fallback.reviewApproved,
+    inProgress: Number.isFinite(bundleBridge.in_progress) ? bundleBridge.in_progress : fallback.inProgress,
+    review: Number.isFinite(bundleBridge.review) ? bundleBridge.review : fallback.review,
+    todo: Number.isFinite(bundleBridge.todo) ? bundleBridge.todo : fallback.todo,
+    blocked: Number.isFinite(bundleBridge.blocked) ? bundleBridge.blocked : fallback.blocked,
+    pendingMaterializationCount: Number.isFinite(bundleBridge.pending_materialization_count)
+      ? bundleBridge.pending_materialization_count
+      : fallback.pendingMaterializationCount,
+    pendingProposals: Array.isArray(bundleBridge.pending_proposals) ? bundleBridge.pending_proposals : fallback.pendingProposals,
+    activeMaterializedTasks: Array.isArray(bundleBridge.active_materialized_tasks)
+      ? bundleBridge.active_materialized_tasks
+      : fallback.activeMaterializedTasks,
+    planningBackedTotal: Number.isFinite(bundleBridge.planning_backed_total)
+      ? bundleBridge.planning_backed_total
+      : fallback.planningBackedTotal,
+    planningBackedActive: Number.isFinite(bundleBridge.planning_backed_active)
+      ? bundleBridge.planning_backed_active
+      : fallback.planningBackedActive,
+    currentSessionMaterialized: Number.isFinite(bundleBridge.current_session_materialized)
+      ? bundleBridge.current_session_materialized
+      : fallback.currentSessionMaterialized,
+    missingSourceRefCount: Number.isFinite(bundleBridge.missing_source_ref_count)
+      ? bundleBridge.missing_source_ref_count
+      : fallback.missingSourceRefCount,
+  };
+}
+
+function planningProposalStats(planning, status, dashboardBundle = null) {
+  return planningBridgeSummary(planning, status, dashboardBundle);
 }
 
 function planningHighlights(planning) {
@@ -1191,13 +1311,13 @@ function planningOutstandingRequirements(planning) {
   return missing;
 }
 
-export function renderPlanningOverview(planningState, status) {
+export function renderPlanningOverview(planningState, status, dashboardBundle = null) {
   const container = qs("#planning-overview");
   if (!container) return;
   const planning = normalizePlanningState(planningState);
   const readoutTotal = Object.keys(planning.readouts || {}).length;
   const proposals = planning.proposed_execution_tasks || [];
-  const proposalStats = planningProposalStats(planning, status);
+  const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const decision = planningDecisionSummary(planning, status);
   const highlights = planningHighlights(planning);
 
@@ -1493,15 +1613,15 @@ export function renderPlanningIssues(planningState) {
   `;
 }
 
-export function renderPlanningProposals(planningState, status) {
+export function renderPlanningProposals(planningState, status, dashboardBundle = null) {
   const planning = normalizePlanningState(planningState);
   const container = qs("#planning-proposals");
   if (!container) return;
   const taskIds = new Set((status.tasks || []).map((task) => task.id));
   const proposals = planning.proposed_execution_tasks || [];
-  const proposalStats = planningProposalStats(planning, status);
+  const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const materialized = proposals.filter((task) => taskIds.has(task.id));
-  const pending = proposals.filter((task) => !taskIds.has(task.id));
+  const pending = proposalStats.pendingProposals?.length ? proposalStats.pendingProposals : proposals.filter((task) => !taskIds.has(task.id));
   const primaryList = pending.length ? pending : proposals;
   const preview = primaryList.slice(0, 6);
   const remaining = primaryList.slice(6);
@@ -1576,7 +1696,7 @@ export function renderFocusSummary(status, planningState, orchState, dashboardBu
   if (!container) return;
   const planning = normalizePlanningState(planningState);
   const narrative = currentPriorityNarrative(planning, status, orchState, dashboardBundle);
-  const proposalStats = planningProposalStats(planning, status);
+  const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const pausedProviders = pausedProviderEntries(orchState);
   const evidence = [
     proposalStats.total ? `本輪 planning 產出 ${proposalStats.total} 個候選工作` : "目前沒有待橋接的 planning slice",
@@ -1619,7 +1739,7 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
   if (!container) return;
   const planning = normalizePlanningState(planningState);
   const planningProgress = planningGateProgress(planning);
-  const proposalStats = planningProposalStats(planning, status);
+  const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const executionCounts = executionStatusCounts(status, dashboardBundle);
   const bridgePercent = proposalStats.total ? Math.round((proposalStats.materialized / proposalStats.total) * 100) : (planning.switch_gate?.ready_to_materialize ? 100 : 0);
   const executionPercent = executionCounts.total ? Math.round((executionCounts.done / executionCounts.total) * 100) : 0;
@@ -1666,52 +1786,87 @@ export function renderAlertStrip(status, orchState, planningState, approvalQueue
   const alerts = [];
   const pausedProviders = pausedProviderEntries(orchState);
   const planning = normalizePlanningState(planningState);
-  const executionCounts = executionStatusCounts(status, dashboardBundle);
+  const truth = buildTruthMismatches(status, orchState, approvalQueue);
   const blockers = (status.blockers || []).filter((blocker) => blocker.status === "open");
   const approvalPending = (approvalQueue?.pending || []).length;
+  const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
 
   for (const pause of pausedProviders) {
+    const pauseReason = summarizePausedReason(pause.summary || pause.reason, pause.provider);
+    const detailLines = [];
+    if (pauseReason.detail && pauseReason.detail !== pauseReason.summary) {
+      detailLines.push(pauseReason.detail);
+    }
+    if (pause.raw_ref) {
+      detailLines.push(`evidence: ${pause.raw_ref}`);
+    }
     alerts.push({
       severity: "critical",
+      priority: 10,
       title: `${agentLabel(pause.provider)} 暫停派工中`,
-      body: truncate(pause.reason || "provider guardrail 已暫停此 lane 的新 dispatch。", 180),
+      body: pauseReason.summary,
       chips: [
+        pauseReason.kind === "quota" ? "Quota / rate limit" : "Dispatch paused",
         pause.blocked_until ? `until ${formatTime(pause.blocked_until)}` : "until -",
         pause.task_id ? `task ${pause.task_id}` : "",
       ].filter(Boolean),
+      detail: detailLines.join("\n"),
     });
   }
 
-  if (executionCounts.mismatchCount) {
+  if (mismatchItems.length) {
     alerts.push({
       severity: "warning",
-      title: `Runtime / task board 還有 ${executionCounts.mismatchCount} 個 mismatch`,
-      body: "代表 queue、worker、task truth 之間還有不一致，需要在 runtime panel 裡繼續追。",
-      chips: ["請看 Truth Mismatches"],
+      priority: 30,
+      title: `Runtime / task board 還有 ${mismatchItems.length} 個 mismatch`,
+      body: mismatchItems.length >= 2
+        ? `目前最明顯的是 ${mismatchItems.slice(0, 2).map((item) => `${item.task_id}: ${item.summary}`).join("；")}。`
+        : mismatchItems[0].summary,
+      chips: mismatchItems.length ? mismatchItems.slice(0, 4).map((item) => item.task_id || "mismatch") : ["請看 Truth Mismatches"],
+      detail: mismatchItems.map((item) => `${item.task_id || item.type || "-"} · ${item.summary}`).join("\n"),
     });
   }
 
   if (blockers.length) {
     alerts.push({
       severity: "warning",
+      priority: 20,
       title: `${blockers.length} 個 blocker 正在卡 execution`,
       body: "這些不是一般待辦，而是會阻止工作繼續向下游推進的阻塞項目。",
       chips: blockers.slice(0, 3).map((item) => item.task_id || "-"),
+      detail: blockers.map((item) => `${item.task_id || "-"} · ${compactWhitespace(item.summary || item.reason || "")}`).join("\n"),
     });
   }
 
   if (approvalPending) {
+    const pendingApprovals = approvalQueue?.pending || [];
     alerts.push({
       severity: "info",
+      priority: 40,
       title: `${approvalPending} 個待批准項目`,
       body: "工具批准還沒清掉時，相關 worker 可能停在 waiting_approval。",
-      chips: ["Approval queue"],
+      chips: pendingApprovals.length
+        ? pendingApprovals.slice(0, 4).map((item) => item.task_id || item.tool_name || "approval")
+        : ["Approval queue"],
+      detail: pendingApprovals
+        .map((item) => {
+          const parts = [
+            item.approval_id || "-",
+            item.tool_name || "-",
+            item.task_id ? `task ${item.task_id}` : "",
+            item.tool_input_preview ? `input ${item.tool_input_preview}` : "",
+            item.evidence_ref ? `evidence ${item.evidence_ref}` : "",
+          ].filter(Boolean);
+          return parts.join(" · ");
+        })
+        .join("\n"),
     });
   }
 
   if (planning.status === "human_required") {
     alerts.push({
       severity: "critical",
+      priority: 0,
       title: "Planning 需要人工裁決",
       body: "LLM 已整理出主要分歧，但仍有需要 human 決策的問題，未裁決前不建議擴大下游 execution。",
       chips: ["Human gate"],
@@ -1729,12 +1884,19 @@ export function renderAlertStrip(status, orchState, planningState, approvalQueue
     });
   }
 
+  const severityRank = { critical: 0, warning: 1, info: 2, ok: 3 };
+  alerts.sort((a, b) => {
+    const priorityDelta = Number(a.priority ?? 50) - Number(b.priority ?? 50);
+    if (priorityDelta) return priorityDelta;
+    return Number(severityRank[a.severity] ?? 9) - Number(severityRank[b.severity] ?? 9);
+  });
+
   container.innerHTML = alerts
     .map(
       (alert) => `
         <article class="alert-card alert-${alert.severity}">
           <div class="stack-head">
-            <strong>${alert.title}</strong>
+            <strong>${escapeHtml(alert.title)}</strong>
             <span class="status-pill ${alert.severity === "critical" ? "status-blocked" : alert.severity === "warning" ? "status-review" : "status-ready"}">${
               {
                 critical: "需立即處理",
@@ -1744,27 +1906,27 @@ export function renderAlertStrip(status, orchState, planningState, approvalQueue
               }[alert.severity] || titleCase(alert.severity)
             }</span>
           </div>
-          <p class="body-copy">${alert.body}</p>
-          ${alert.chips?.length ? `<div class="lane-meta">${alert.chips.map((chip) => `<span class="chip">${chip}</span>`).join("")}</div>` : ""}
+          <p class="body-copy">${escapeHtml(alert.body)}</p>
+          ${alert.chips?.length ? `<div class="lane-meta">${alert.chips.map((chip) => `<span class="chip">${escapeHtml(chip)}</span>`).join("")}</div>` : ""}
+          ${alert.detail ? `
+            <details class="alert-detail">
+              <summary>展開詳細原因</summary>
+              <p class="alert-detail-copy">${escapeHtml(alert.detail)}</p>
+            </details>
+          ` : ""}
         </article>
       `
     )
     .join("");
 }
 
-export function renderBridgeCard(status, planningState) {
+export function renderBridgeCard(status, planningState, dashboardBundle = null) {
   const container = qs("#bridge-card");
   if (!container) return;
   const planning = normalizePlanningState(planningState);
-  const proposalStats = planningProposalStats(planning, status);
-  const taskIds = new Set((status.tasks || []).map((task) => task.id));
-  const pending = (planning.proposed_execution_tasks || []).filter((task) => !taskIds.has(task.id));
-  const incomplete = (planning.proposed_execution_tasks || [])
-    .filter((task) => taskIds.has(task.id))
-    .filter((task) => {
-      const current = (status.tasks || []).find((candidate) => candidate.id === task.id);
-      return current && String(current.status || "").toLowerCase() !== "done";
-    });
+  const proposalStats = planningProposalStats(planning, status, dashboardBundle);
+  const pending = proposalStats.pendingProposals || [];
+  const incomplete = proposalStats.activeMaterializedTasks || [];
 
   let title = "這輪 planning 還沒有橋接到 execution";
   let tone = "status-pending";
@@ -1806,6 +1968,7 @@ export function renderBridgeCard(status, planningState) {
         <span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>
         <span class="chip">Human gate ${statusLabel(planning.human_gate_status)}</span>
         <span class="chip">Can materialize ${planning.switch_gate?.ready_to_materialize ? "Yes" : "No"}</span>
+        ${proposalStats.sessionId ? `<span class="chip">Session ${proposalStats.sessionId}</span>` : ""}
       </div>
       ${
         leadList.length
@@ -1815,6 +1978,19 @@ export function renderBridgeCard(status, planningState) {
               <ul class="note-list compact-list">
                 ${leadList.map((task) => `<li><strong>${task.id}</strong>：${task.title || task.summary_zh || "尚未填寫"}</li>`).join("")}
               </ul>
+            </div>
+          `
+          : ""
+      }
+      ${
+        proposalStats.consensusPacket || proposalStats.executionMaterialization
+          ? `
+            <div class="bridge-preview">
+              <strong>Bridge refs</strong>
+              <div class="lane-meta">
+                ${proposalStats.consensusPacket ? `<span class="chip">${proposalStats.consensusPacket}</span>` : ""}
+                ${proposalStats.executionMaterialization ? `<span class="chip">${proposalStats.executionMaterialization}</span>` : ""}
+              </div>
             </div>
           `
           : ""
@@ -1857,9 +2033,9 @@ export function renderExecutionSummary(status, orchState, dashboardBundle = null
     { label: "Blocked", value: Number.isFinite(summary.blocked) ? summary.blocked : blockedNow, note: "已標記 blocker 的任務" },
     {
       label: "Mismatches",
-      value: Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total,
-      note: (Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total) ? `High ${truth.counts.high} · Medium ${truth.counts.medium}` : "目前 execution/runtime 對齊",
-      statusClass: (Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total) ? "status-blocked" : "status-ready",
+      value: truth.counts.total,
+      note: truth.counts.total ? `High ${truth.counts.high} · Medium ${truth.counts.medium}` : "目前 execution/runtime 對齊",
+      statusClass: truth.counts.total ? "status-blocked" : "status-ready",
     },
   ];
 
@@ -1883,7 +2059,7 @@ export function renderTruthMismatches(status, orchState, approvalQueue, dashboar
   if (!container) return;
   container.innerHTML = "";
   const truth = buildTruthMismatches(status, orchState, approvalQueue);
-  const mismatchItems = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : truth.mismatches;
+  const mismatchItems = truth.mismatches.length ? truth.mismatches : (Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : []);
 
   if (!mismatchItems.length) {
     container.innerHTML = `
@@ -1939,7 +2115,7 @@ export function renderBoardSummary(status, orchState, dashboardBundle = null) {
     `<span class="chip">Ready ${Number.isFinite(summary.ready_now) ? summary.ready_now : readyCount}</span>`,
     `<span class="chip">Review ${Number.isFinite(summary.in_review) ? summary.in_review : reviewCount}</span>`,
     `<span class="chip">Live attached ${Number.isFinite(summary.live_attached) ? summary.live_attached : attachedCount}</span>`,
-    `<span class="chip ${(Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total) ? "status-blocked" : ""}">Mismatch ${Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : truth.counts.total}</span>`,
+    `<span class="chip ${truth.counts.total ? "status-blocked" : ""}">Mismatch ${truth.counts.total}</span>`,
   ];
   for (const container of containers) {
     container.innerHTML = chips.join("");
@@ -2027,14 +2203,22 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     <div class="sys-card-head"><span class="sys-icon">⏳</span><strong>待批准佇列</strong></div>
     <div class="sys-card-body">
       <span class="status-pill ${pending > 0 ? "status-review" : "status-done"}">${pending > 0 ? `${pending} 個待處理` : "清空"}</span>
-      ${(approvalQueue?.pending || []).map((a) => `
+      ${(approvalQueue?.pending || []).map((a) => {
+        const chips = [
+          `<span class="chip">${escapeHtml(actorLabel(a.agent_id, a.provider))}</span>`,
+          `<span class="chip">task=${escapeHtml(a.task_id || "-")}</span>`,
+          `<span class="chip">${escapeHtml(a.tool_name || "-")}</span>`,
+          a.risk_class ? `<span class="chip">${escapeHtml(a.risk_class)}</span>` : "",
+          `<span class="chip">${escapeHtml(timeAgo(a.created_at))}</span>`,
+          a.tool_input_preview ? `<span class="chip">input=${escapeHtml(a.tool_input_preview)}</span>` : "",
+          a.evidence_ref ? `<span class="chip">evidence=${escapeHtml(a.evidence_ref)}</span>` : "",
+        ].filter(Boolean).join("");
+        return `
         <div class="approval-item">
-          <span class="chip">${actorLabel(a.agent_id, a.provider)}</span>
-          <span class="chip">task=${a.task_id || "-"}</span>
-          <span class="chip">${a.tool_name}</span>
-          <span class="chip">${timeAgo(a.created_at)}</span>
+          ${chips}
         </div>
-      `).join("")}
+      `;
+      }).join("")}
     </div>
   `;
   statusEl.appendChild(approvalCard);

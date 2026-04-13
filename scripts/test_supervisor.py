@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -217,6 +218,102 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
             supervisor.dispatch_ready_tasks(self.config, state)
 
         queue_delivery_event.assert_not_called()
+
+
+class SupervisorRuntimeStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="supervisor-runtime-")
+        self.root = Path(self.temp_dir.name)
+        orch = self.root / ".orchestrator"
+        orch.mkdir(parents=True, exist_ok=True)
+        self.config = {
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "state_file": str(orch / "state.json"),
+                "event_queue": str(orch / "event-queue.jsonl"),
+                "activity_log": str(self.root / "ai-activity-log.jsonl"),
+                "approval_queue": str(orch / "approval-queue.json"),
+                "provider_capabilities": str(orch / "provider_capabilities.json"),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+                "handoffs_path": "handoffs",
+            },
+            "agents": {
+                "claude": {"id": "claude", "name": "Claude", "display_name": "Claude", "provider": "claude"},
+                "codex": {"id": "codex", "name": "Codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {
+                "claude": {},
+                "codex": {},
+            },
+            "supervisor": {
+                "auto_refresh_provider_capabilities": False,
+            },
+        }
+        Path(self.config["paths"]["status_file"]).write_text(json.dumps({"tasks": [], "handoffs": []}), encoding="utf-8")
+        Path(self.config["paths"]["approval_queue"]).write_text(json.dumps({"pending": [], "history": []}), encoding="utf-8")
+        Path(self.config["paths"]["provider_capabilities"]).write_text("{}", encoding="utf-8")
+        Path(self.config["paths"]["event_queue"]).write_text("", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_bootstrap_supervisor_runtime_state_records_starting_lifecycle(self) -> None:
+        state = supervisor.bootstrap_supervisor_runtime_state(self.config, lifecycle="starting")
+        supervisor_state = state["supervisor"]
+        self.assertEqual(supervisor_state["pid"], supervisor.os.getpid())
+        self.assertEqual(supervisor_state["lifecycle"], "starting")
+        self.assertEqual(supervisor_state["focus_mode"], "execution")
+        self.assertEqual(supervisor_state["mode_status"], "idle")
+        self.assertIn("execution", supervisor_state["mode_occupancy"])
+
+    def test_run_once_reconciles_execution_mode_state_from_running_workers(self) -> None:
+        state = runtime_state.default_state()
+        state["workers"] = {
+            "run-1": {
+                "run_id": "run-1",
+                "provider": "claude",
+                "agent_id": "claude",
+                "task_id": "BG-001",
+                "status": "running",
+                "pid": supervisor.os.getpid(),
+                "queue_event_id": None,
+                "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                "last_event_at": "2026-04-13T07:12:46Z",
+            }
+        }
+        runtime_state.save_runtime_state(self.config, state)
+
+        with mock.patch.object(supervisor, "prune_stale_approvals", return_value=False), \
+            mock.patch.object(supervisor, "load_provider_report", return_value={}), \
+            mock.patch.object(supervisor, "sync_coordination_files", return_value=False), \
+            mock.patch.object(supervisor, "poll_workers", return_value=False), \
+            mock.patch.object(supervisor, "reconcile_queue_records", return_value=False), \
+            mock.patch.object(supervisor, "prune_event_queue", return_value=False), \
+            mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=False), \
+            mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False), \
+            mock.patch.object(supervisor, "process_queue", return_value=False), \
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False), \
+            mock.patch.object(supervisor, "load_discussion_planning_state", return_value=None):
+            supervisor.run_once(self.config, watch=False, quiet=True, once=True)
+
+        saved = runtime_state.load_runtime_state(self.config)
+        supervisor_state = saved["supervisor"]
+        self.assertEqual(supervisor_state["focus_mode"], "execution")
+        self.assertEqual(supervisor_state["mode_status"], "active")
+        self.assertEqual(supervisor_state["mode_occupancy"]["execution"]["running"], 1)
+        self.assertEqual(supervisor_state["mode_occupancy"]["execution"]["pending"], 0)
+        self.assertIsNotNone(supervisor_state["last_successful_loop_at"])
+        self.assertIsNotNone(supervisor_state["last_loop_started_at"])
+        self.assertIsNotNone(supervisor_state["last_loop_finished_at"])
+        self.assertIsNone(supervisor_state["last_loop_error"])
+        self.assertIsInstance(supervisor_state["last_loop_duration_ms"], int)
+        self.assertGreaterEqual(supervisor_state["last_loop_duration_ms"], 0)
+        self.assertGreaterEqual(supervisor_state["last_successful_loop_at"], supervisor_state["started_at"])
 
 
 if __name__ == "__main__":

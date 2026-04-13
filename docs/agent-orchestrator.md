@@ -2,14 +2,18 @@
 
 ## What This Is
 
-This repo now contains a WSL-native orchestrator under `.orchestrator/` that treats shared-state files as the source of truth:
+This repo now contains a WSL-native orchestrator under `.orchestrator/` that currently uses these shared-state files:
 
 - `ai-status.json`
 - `ai-activity-log.jsonl`
 - `current-work.md`
 - `docs-site/index.html`
 
-The orchestrator does not rewrite large prompts. It only emits a minimal wake-up event and lets each provider read the shared-state files for full context.
+Framework redesign note:
+- the current shared-state model is still operational, but it is too coarse for long-lived collaboration
+- the proposed layered replacement is documented in [orchestrator-state-plane-redesign.md](/home/ajoe734/code/pantheon/docs/orchestrator-state-plane-redesign.md)
+
+The old model let each provider read the shared-state files for broad context. The redesign direction is to move execution workers onto task-scoped briefs while keeping shared-state files as durable truth or derived narrative, depending on the file.
 
 ## Why We Do Not Use Windows GUI Automation
 
@@ -39,7 +43,7 @@ Text form:
 5. Activity is appended to `ai-activity-log.jsonl`
 6. GitHub approval bus mirrors review/blocker state through `.orchestrator/github_bus.py`
 
-The shared-state files remain canonical. Queue, approval, and worker session files under `.orchestrator/` are transient control-plane state.
+`ai-status.json` remains the durable execution source of truth. Queue, approval, and worker session files under `.orchestrator/` are transient control-plane state. `current-work.md` is a derived human summary and should not be the default machine context for worker execution. Planning-backed execution tasks now carry structured `source_ref` metadata back to the accepted planning packet instead of copying planning narrative into task text.
 
 The supervisor now also understands cross-repo delivery handoffs through `.coordination/*.yaml` and can mirror them into GitHub coordination issues while keeping Pantheon as the runtime authority.
 

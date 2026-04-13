@@ -21,6 +21,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                 "state_file": str(self.root / "state.json"),
                 "event_queue": str(self.root / "event-queue.jsonl"),
                 "activity_log": str(self.root / "activity-log.jsonl"),
+                "evidence_dir": str(self.root / "evidence"),
             },
             "approvals": {
                 "stale_pending_seconds": 1800,
@@ -62,6 +63,8 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["pending"], [])
         self.assertEqual(saved["history"][0]["approval_id"], "apr-missing-worker")
+        self.assertTrue(saved["history"][0]["resolution_ref"])
+        self.assertTrue(Path(saved["history"][0]["resolution_ref"]).exists())
 
     def test_keeps_pending_approval_when_worker_is_alive(self) -> None:
         self._write_json(
@@ -146,6 +149,89 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
         self.assertEqual(len(saved["pending"]), 1)
         self.assertEqual(saved["pending"][0]["approval_id"], "apr-claude-resume")
+
+    def test_create_approval_writes_request_evidence_and_sanitizes_queue_state(self) -> None:
+        approval = approval_queue.create_approval(
+            self.config,
+            {
+                "provider": "codex",
+                "task_id": "BG-006",
+                "worker_run_id": "codex-001",
+                "agent_id": "Codex",
+                "tool_name": "Bash",
+                "tool_input": {"command": "python3 -m unittest discover -s .orchestrator -p test_approval_queue.py"},
+                "risk_class": "needs_review",
+            },
+        )
+
+        saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
+        pending = saved["pending"][0]
+        self.assertEqual(pending["approval_id"], approval["approval_id"])
+        self.assertNotIn("tool_input", pending)
+        self.assertTrue(pending["tool_input_signature"])
+        self.assertIn("python3 -m unittest", pending["tool_input_preview"])
+        self.assertTrue(pending["evidence_ref"])
+        evidence_path = Path(pending["evidence_ref"])
+        self.assertTrue(evidence_path.exists())
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        self.assertEqual(evidence["stage"], "request")
+        self.assertEqual(evidence["tool_input"]["command"], "python3 -m unittest discover -s .orchestrator -p test_approval_queue.py")
+
+    def test_can_recover_tool_input_from_request_evidence(self) -> None:
+        approval_queue.create_approval(
+            self.config,
+            {
+                "provider": "claude",
+                "task_id": "BG-001",
+                "worker_run_id": "claude-001",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git status"},
+                "risk_class": "needs_review",
+                "suggested_rule": "Bash(git status)",
+            },
+        )
+
+        saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
+        pending = saved["pending"][0]
+        self.assertNotIn("tool_input", pending)
+        recovered = approval_queue._approval_tool_input(pending)
+        self.assertEqual(recovered, {"command": "git status"})
+
+    def test_resolve_approval_writes_resolution_evidence(self) -> None:
+        approval = approval_queue.create_approval(
+            self.config,
+            {
+                "provider": "codex",
+                "task_id": "BG-004",
+                "worker_run_id": "codex-002",
+                "agent_id": "Codex",
+                "tool_name": "WebFetch",
+                "tool_input": {"url": "https://example.com/status"},
+                "risk_class": "network",
+            },
+        )
+
+        resolved = approval_queue.resolve_approval(
+            self.config,
+            approval["approval_id"],
+            decision="deny",
+            note="Network access denied in test",
+            remember=False,
+        )
+
+        self.assertEqual(resolved["decision"], "deny")
+        self.assertTrue(resolved["resolution_ref"])
+        resolution_path = Path(resolved["resolution_ref"])
+        self.assertTrue(resolution_path.exists())
+        resolution = json.loads(resolution_path.read_text(encoding="utf-8"))
+        self.assertEqual(resolution["stage"], "resolution")
+        self.assertEqual(resolution["decision"], "deny")
+        self.assertEqual(resolution["request_ref"], approval["evidence_ref"])
+
+        saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["pending"], [])
+        self.assertEqual(saved["history"][0]["approval_id"], approval["approval_id"])
+        self.assertNotIn("tool_input", saved["history"][0])
 
 
 if __name__ == "__main__":

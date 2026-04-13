@@ -88,7 +88,6 @@ DEFAULT_COMMIT_CONVENTIONS = {
 }
 FIRST_PROMPT_PRIORITY = [
     "AI_COLLABORATION_GUIDE.md",
-    "current-work.md",
     "ai-status.json",
     "TARGET_ARCHITECTURE.md",
     "CANONICAL_DOCUMENT_MAP.md",
@@ -107,6 +106,8 @@ def default_canonical_document_layers() -> dict[str, list[str]]:
             "AI_COLLABORATION_GUIDE.md",
             "ai-status.json",
             "ai-activity-log.jsonl",
+        ],
+        "L0.5 Derived Narrative": [
             "current-work.md",
         ],
         "L1 Platform Architecture & Policy": [
@@ -167,6 +168,32 @@ def sync_canonical_document_metadata(state: dict[str, Any]) -> None:
         if not normalized_layers:
             normalized_layers = default_canonical_document_layers()
         layers = normalized_layers
+    current_work = "current-work.md"
+    derived_layer = "L0.5 Derived Narrative"
+    removed_current_work = False
+    for key, documents in layers.items():
+        if key == derived_layer:
+            continue
+        filtered = [document for document in documents if document != current_work]
+        if len(filtered) != len(documents):
+            removed_current_work = True
+            layers[key] = filtered
+    derived_documents = [str(item) for item in layers.get(derived_layer, []) if str(item).strip()]
+    if current_work in derived_documents:
+        derived_documents = [document for document in derived_documents if document != current_work]
+    if removed_current_work or derived_documents:
+        layers[derived_layer] = [current_work, *derived_documents]
+    elif derived_layer not in layers:
+        insertion: dict[str, list[str]] = {}
+        inserted = False
+        for key, documents in layers.items():
+            insertion[key] = documents
+            if key == "L0 Collaboration & State":
+                insertion[derived_layer] = [current_work]
+                inserted = True
+        if not inserted:
+            insertion[derived_layer] = [current_work]
+        layers = insertion
     state["canonical_document_layers"] = layers
     state["canonical_files"] = flatten_canonical_document_layers(layers)
 
@@ -227,11 +254,13 @@ def build_onboarding_prompt(state: dict[str, Any]) -> str:
     canonical_files = canonical_file_set(state)
     prompt_files = [item for item in FIRST_PROMPT_PRIORITY if item in canonical_files]
     if not prompt_files:
-        prompt_files = FIRST_PROMPT_PRIORITY[:3]
+        prompt_files = FIRST_PROMPT_PRIORITY[:2]
 
     parts = [f"Read {human_join(prompt_files)} first."]
+    if "current-work.md" in canonical_files:
+        parts.append("Use current-work.md as a human summary only; do not treat it as the primary machine context.")
     if "ai-activity-log.jsonl" in canonical_files:
-        parts.append("Use ai-activity-log.jsonl when you need recent history.")
+        parts.append("Use ai-activity-log.jsonl only when you need targeted recent history.")
     planning_state = load_planning_state()
     if planning_state and planning_state.get("status") in {"active", "human_required"}:
         planning_files = planning_reference_files(planning_state)[:4]
@@ -1451,6 +1480,123 @@ def detect_truth_mismatches(
     return live_workers, mismatches
 
 
+def normalized_source_ref(task: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(task, dict):
+        return {}
+    payload = task.get("source_ref")
+    if not isinstance(payload, dict):
+        return {}
+    normalized: dict[str, Any] = {}
+    for key, value in payload.items():
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        normalized[str(key)] = text
+    return normalized
+
+
+def build_bridge_summary(state: dict[str, Any], planning: dict[str, Any]) -> dict[str, Any]:
+    task_map = {task["id"]: task for task in state.get("tasks", [])}
+    proposed = planning.get("proposed_execution_tasks") or []
+    contract = planning.get("materialization_contract") if isinstance(planning.get("materialization_contract"), dict) else {}
+    artifacts = planning.get("artifacts") if isinstance(planning.get("artifacts"), dict) else {}
+    consensus_packet = str(contract.get("consensus_packet") or ((artifacts.get("consensus_packet") or {}).get("path")) or "").strip()
+    execution_materialization = str(
+        contract.get("execution_materialization")
+        or ((artifacts.get("execution_materialization") or {}).get("path"))
+        or ""
+    ).strip()
+    session_id = str(contract.get("session_id") or planning.get("session_id") or "").strip()
+    planning_backed_tasks = [
+        task
+        for task in state.get("tasks", [])
+        if str(task.get("source_plane") or "").strip().lower() == "planning"
+    ]
+
+    status_counts = {
+        "done": 0,
+        "review_approved": 0,
+        "in_progress": 0,
+        "review": 0,
+        "todo": 0,
+        "blocked": 0,
+    }
+    pending_proposals: list[dict[str, Any]] = []
+    active_materialized: list[dict[str, Any]] = []
+    materialized_task_ids: list[str] = []
+    missing_source_ref_count = 0
+    current_session_materialized = 0
+
+    for proposal in proposed:
+        task_id = str(proposal.get("id") or "").strip()
+        if not task_id:
+            continue
+        current = task_map.get(task_id)
+        if current is None:
+            pending_proposals.append(
+                {
+                    "id": task_id,
+                    "title": str(proposal.get("title") or "").strip(),
+                    "summary_zh": str(proposal.get("summary_zh") or "").strip(),
+                    "owner": str(proposal.get("owner") or "").strip(),
+                    "reviewer": str(proposal.get("reviewer") or "").strip(),
+                }
+            )
+            continue
+
+        materialized_task_ids.append(task_id)
+        current_status = str(current.get("status") or "").lower()
+        if current_status in status_counts:
+            status_counts[current_status] += 1
+        source_ref = normalized_source_ref(current)
+        if not source_ref:
+            missing_source_ref_count += 1
+        elif session_id and str(source_ref.get("session_id") or "").strip() == session_id:
+            current_session_materialized += 1
+        if current_status != "done":
+            active_materialized.append(
+                {
+                    "id": task_id,
+                    "title": str(current.get("title") or proposal.get("title") or "").strip(),
+                    "summary_zh": str(current.get("summary_zh") or proposal.get("summary_zh") or "").strip(),
+                    "status": str(current.get("status") or "").strip(),
+                    "owner": str(current.get("owner") or "").strip(),
+                    "reviewer": str(current.get("reviewer") or "").strip(),
+                }
+            )
+
+    return {
+        "source_plane": "planning",
+        "session_id": session_id,
+        "phase": str(contract.get("phase") or planning.get("phase") or "").strip(),
+        "profile": str(contract.get("profile") or planning.get("profile") or "").strip(),
+        "planning_dir": str(contract.get("planning_dir") or planning.get("planning_dir") or "").strip(),
+        "session_file": str(contract.get("session_file") or planning.get("session_file") or "").strip(),
+        "consensus_packet": consensus_packet,
+        "execution_materialization": execution_materialization,
+        "proposed_total": len(proposed),
+        "materialized_count": len(materialized_task_ids),
+        "pending_materialization_count": len(pending_proposals),
+        "done": status_counts["done"],
+        "review_approved": status_counts["review_approved"],
+        "in_progress": status_counts["in_progress"],
+        "review": status_counts["review"],
+        "todo": status_counts["todo"],
+        "blocked": status_counts["blocked"],
+        "materialized_task_ids": materialized_task_ids,
+        "pending_proposals": pending_proposals,
+        "active_materialized_tasks": active_materialized,
+        "planning_backed_total": len(planning_backed_tasks),
+        "planning_backed_active": sum(
+            1 for task in planning_backed_tasks if str(task.get("status") or "").lower() in {"todo", "in_progress", "review", "review_approved", "blocked"}
+        ),
+        "current_session_materialized": current_session_materialized,
+        "missing_source_ref_count": missing_source_ref_count,
+    }
+
+
 def build_dashboard_bundle(
     state: dict[str, Any],
     planning_state: dict[str, Any] | None,
@@ -1469,6 +1615,7 @@ def build_dashboard_bundle(
         and str(task_map.get(str(event.get("task_id") or ""), {}).get("status") or "").lower() != "done"
     ]
     live_workers, mismatches = detect_truth_mismatches(state, workers, queue_events, approvals)
+    bridge_summary = build_bridge_summary(state, planning)
     supervisor_state = orchestrator.get("supervisor") if isinstance(orchestrator.get("supervisor"), dict) else {}
 
     live_workers_by_task: dict[str, list[dict[str, Any]]] = {}
@@ -1525,6 +1672,8 @@ def build_dashboard_bundle(
                 "owner": task.get("owner"),
                 "reviewer": task.get("reviewer"),
                 "expected_actor": expected_task_actor(task) if task else None,
+                "source_plane": task.get("source_plane"),
+                "source_ref": normalized_source_ref(task),
                 "worker_run_id": worker.get("run_id"),
                 "queue_event_id": worker.get("queue_event_id"),
                 "queue_status": queue_event.get("status"),
@@ -1545,7 +1694,7 @@ def build_dashboard_bundle(
         )
 
     proposed = planning.get("proposed_execution_tasks") or []
-    materialized_count = sum(1 for item in proposed if str(item.get("id") or "") in task_map)
+    materialized_count = int(bridge_summary.get("materialized_count") or 0)
     runtime_mode = str(planning.get("runtime_mode") or "supervisor_managed_execution")
     planning_status = str(planning.get("status") or "inactive")
     supervisor_focus = str(supervisor_state.get("focus_mode") or "").strip()
@@ -1629,6 +1778,8 @@ def build_dashboard_bundle(
             "done": done,
             "live_attached": sum(1 for linked in live_workers_by_task.values() if any(worker.get("bucket") == "running" for worker in linked)),
             "mismatch_count": len(mismatches),
+            "planning_backed_total": int(bridge_summary.get("planning_backed_total") or 0),
+            "planning_backed_active": int(bridge_summary.get("planning_backed_active") or 0),
         },
         "planning_summary": {
             "status": planning.get("status"),
@@ -1646,6 +1797,7 @@ def build_dashboard_bundle(
             },
             "recent_sessions": planning.get("recent_sessions") or [],
         },
+        "bridge_summary": bridge_summary,
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
@@ -1990,6 +2142,46 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
 
 
+def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
+    """Recover a task that was incorrectly downgraded from review_approved to in_progress by the supervisor.
+
+    Only allowed when:
+    - actor is the owner
+    - current status is in_progress
+    - task has review_notes_zh (evidence of a prior approval)
+    """
+    if len(args) < 2:
+        raise SystemExit("Usage: restore_approved <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = current_actor()
+    ensure_agent(actor)
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can restore {task_id}")
+    if task.get("status") != "in_progress":
+        raise SystemExit(f"restore_approved is only valid when status is in_progress (current: {task.get('status')})")
+    if not task.get("review_notes_zh"):
+        raise SystemExit(
+            f"restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
+            f"Use the normal review lifecycle if the task has not been reviewed yet."
+        )
+    timestamp = iso_now()
+    task["status"] = "review_approved"
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "restore_approved",
+            "task_id": task_id,
+            "message": message,
+        }
+    )
+
+
 def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
@@ -2128,6 +2320,7 @@ def main(argv: list[str]) -> int:
         "handoff": command_handoff,
         "blocker": command_blocker,
         "done": command_done,
+        "restore_approved": command_restore_approved,
         "supersede": command_supersede,
         "approve": command_approve,
         "sync": command_sync,
