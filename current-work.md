@@ -3,7 +3,7 @@
 This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 
-Last updated: 2026-04-13T02:21:04Z
+Last updated: 2026-04-13T02:21:36Z
 
 ## Objective
 
@@ -53,7 +53,6 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | Codex | in_progress | `PLAN-002` | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 |
 | `BG-007` | Blueprint Gap P2 | Publish product-facing glossary and stage-status language pack | Codex | todo | `PLAN-002` | 整理 glossary、action→object map 與 stage/status wording 的對外語言包。 |
 | `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | Claude | in_progress | - | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
-| `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | Qwen | review_approved | - | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -203,13 +202,13 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 | Codex | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:18:56Z | Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota (Request ID: E3C8:222A8F:663D4EE:8132403:69DC5274) |
 | `BG-007` | Blueprint Gap P2 | Publish product-facing glossary and stage-status language pack | 整理 glossary、action→object map 與 stage/status wording 的對外語言包。 | Codex | Claude | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
 | `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude | Codex | in_progress | - | 2026-04-13T02:14:13Z | Supervisor resumed PLAN-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch. |
-| `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Qwen | Codex | review_approved | - | 2026-04-13T02:20:40Z | Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done. |
+| `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Qwen | Codex | done | - | 2026-04-13T02:21:36Z | Sidecar review packet formally closed. All acceptance criteria met. Support artifact at support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `PLAN-002-SIDECAR-REVIEW` | Codex | Qwen | Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done. | pending | 2026-04-13T02:20:40Z |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -264,23 +263,23 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 ## Latest Checkpoints
 
-- 2026-04-13T02:20:40Z Codex: `PLAN-002-SIDECAR-REVIEW` Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.
-- 2026-04-13T02:20:40Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:20:40Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:20:41Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:20:47Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:20:47Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:20:53Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T022002Z-3efcefa4
-- 2026-04-13T02:20:53Z Orchestrator: `BG-001` Worker superseded to prioritize higher-priority review/finalize work.
-- 2026-04-13T02:20:53Z Orchestrator: `BG-001` Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-04-13T02:20:54Z Orchestrator: `BG-001` Worker started via qwen: owned_in_progress_dispatch
-- 2026-04-13T02:20:54Z Qwen: `BG-001` Supervisor re-dispatched BG-001; task remains in progress.
-- 2026-04-13T02:20:55Z Orchestrator: `BG-001` Supervisor re-dispatched BG-001; task remains in progress.
-- 2026-04-13T02:20:57Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:20:57Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:20:57Z Orchestrator: PreToolUse: Read
-- 2026-04-13T02:21:02Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:03Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:03Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:21:03Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:21:04Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T022002Z-3efcefa4
+- 2026-04-13T02:21:16Z Orchestrator: PostToolUse: TodoWrite
+- 2026-04-13T02:21:19Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:19Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:21:22Z Orchestrator: PreToolUse: Read
+- 2026-04-13T02:21:22Z Orchestrator: PostToolUse: Read
+- 2026-04-13T02:21:25Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:25Z Qwen: `PLAN-002-SIDECAR-REVIEW` --summary
+- 2026-04-13T02:21:25Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:21:27Z Orchestrator: PreToolUse: Read
+- 2026-04-13T02:21:28Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:28Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:21:31Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T022002Z-3efcefa4
+- 2026-04-13T02:21:31Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:31Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:31Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:21:34Z Orchestrator: PreToolUse: Read
+- 2026-04-13T02:21:34Z Orchestrator: PostToolUse: Read
+- 2026-04-13T02:21:35Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:36Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:21:36Z Qwen: `PLAN-002-SIDECAR-REVIEW` Sidecar review packet formally closed. All acceptance criteria met. Support artifact at support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md.
