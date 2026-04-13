@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecurityMaster",
+  "description": "Canonical security identity for Pantheon Data Plane.",
+  "type": "object",
+  "required": [
+    "security_id",
+    "market",
+    "venue",
+    "symbol_native",
+    "symbol_canonical",
+    "asset_type",
+    "currency"
+  ],
+  "properties": {
+    "security_id": {
+      "type": "string",
+      "description": "Globally unique identifier (e.g., SEC-US0378331005)."
+    },
+    "market": {
+      "type": "string",
+      "description": "Market code (e.g., US, TW, CRYPTO)."
+    },
+    "venue": {
+      "type": "string",
+      "description": "Primary venue / exchange code (e.g., NASDAQ, TWSE)."
+    },
+    "symbol_native": {
+      "type": "string",
+      "description": "Native symbol as used by the venue (e.g., AAPL, 2330)."
+    },
+    "symbol_canonical": {
+      "type": "string",
+      "description": "Normalized cross-venue symbol (e.g., ISIN or internal canonical form)."
+    },
+    "asset_type": {
+      "type": "string",
+      "enum": [
+        "equity",
+        "etf",
+        "future",
+        "option",
+        "forex",
+        "crypto",
+        "bond",
+        "index",
+        "warrant",
+        "right"
+      ],
+      "description": "One of the supported asset types."
+    },
+    "currency": {
+      "type": "string",
+      "description": "ISO 4217 currency code (e.g., USD, TWD)."
+    },
+    "underlying_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "For derivatives, references the underlying security_id."
+    },
+    "listing_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended",
+        "delisted",
+        "pending"
+      ],
+      "default": "active",
+      "description": "Current lifecycle status."
+    },
+    "metadata_json": {
+      "type": "object",
+      "default": {},
+      "description": "Free-form venue or market-specific metadata."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of record creation."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update."
+    }
+  }
+}

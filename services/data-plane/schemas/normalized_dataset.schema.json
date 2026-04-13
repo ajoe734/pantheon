@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NormalizedDataset",
+  "description": "Dataset after normalization and symbol mapping.",
+  "type": "object",
+  "required": [
+    "dataset_id",
+    "parent_raw_dataset_id",
+    "normalization_version",
+    "available_time_policy",
+    "storage_ref",
+    "checksum"
+  ],
+  "properties": {
+    "dataset_id": {
+      "type": "string",
+      "description": "Globally unique dataset identifier."
+    },
+    "parent_raw_dataset_id": {
+      "type": "string",
+      "description": "Reference to the source RawDataset dataset_id."
+    },
+    "normalization_version": {
+      "type": "string",
+      "description": "Version string for this normalization pass."
+    },
+    "symbol_mapping_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Version of the symbol mapping used."
+    },
+    "corp_action_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Version of corporate action adjustments applied."
+    },
+    "calendar_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Version of the market calendar used."
+    },
+    "available_time_policy": {
+      "type": "string",
+      "enum": [
+        "at_open",
+        "at_reported",
+        "at_ingest",
+        "delayed_minutes",
+        "custom"
+      ],
+      "description": "How available_time is determined."
+    },
+    "storage_ref": {
+      "type": "string",
+      "description": "Reference to storage location."
+    },
+    "checksum": {
+      "type": "string",
+      "description": "SHA-256 checksum of the normalized data file(s)."
+    },
+    "metadata_json": {
+      "type": "object",
+      "default": {},
+      "description": "Free-form normalization metadata."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of record creation."
+    }
+  }
+}

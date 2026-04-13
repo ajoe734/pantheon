@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ContractMaster",
+  "description": "Canonical derivative contract identity for Pantheon Data Plane.",
+  "type": "object",
+  "required": [
+    "contract_id",
+    "underlying_id",
+    "market",
+    "venue",
+    "contract_type",
+    "expiry",
+    "multiplier",
+    "tick_size"
+  ],
+  "properties": {
+    "contract_id": {
+      "type": "string",
+      "description": "Globally unique identifier (e.g., CON-US-ES-202606)."
+    },
+    "underlying_id": {
+      "type": "string",
+      "description": "Reference to the underlying SecurityMaster security_id."
+    },
+    "market": {
+      "type": "string",
+      "description": "Market code (e.g., US, TW, CRYPTO)."
+    },
+    "venue": {
+      "type": "string",
+      "description": "Primary venue / exchange code (e.g., CME, TAIFEX)."
+    },
+    "contract_type": {
+      "type": "string",
+      "enum": [
+        "future",
+        "option",
+        "future_option",
+        "swap",
+        "forward",
+        "spread"
+      ],
+      "description": "One of the ContractType enum values."
+    },
+    "expiry": {
+      "type": "string",
+      "format": "date",
+      "description": "Contract expiry date in ISO 8601 format."
+    },
+    "strike": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Strike price for options; null for futures/forwards."
+    },
+    "option_right": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        null,
+        "call",
+        "put"
+      ],
+      "description": "CALL or PUT for options; null otherwise."
+    },
+    "multiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Contract multiplier (e.g., 50 for ES futures)."
+    },
+    "tick_size": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Minimum price increment."
+    },
+    "settlement_type": {
+      "type": "string",
+      "enum": [
+        "cash",
+        "physical"
+      ],
+      "default": "cash",
+      "description": "Cash or physical settlement."
+    },
+    "margin_type": {
+      "type": "string",
+      "enum": [
+        "portfolio",
+        "strat_scan",
+        "fixed",
+        "none"
+      ],
+      "default": "none",
+      "description": "Margin calculation method."
+    },
+    "metadata_json": {
+      "type": "object",
+      "default": {},
+      "description": "Free-form venue or contract-specific metadata."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of record creation."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update."
+    }
+  }
+}
