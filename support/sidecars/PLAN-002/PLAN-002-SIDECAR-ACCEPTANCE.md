@@ -3,21 +3,27 @@
 **Parent Task**: `PLAN-002` — Generalize discussion planning for reusable sessions
 **Parent Owner**: Qwen
 **Parent Reviewer**: Claude
-**Parent Status**: `in_progress`
-**Sidecar Owner**: Claude
-**Sidecar Reviewer**: Codex
+**Parent Status**: `done`
+**Sidecar Owner**: Codex
+**Sidecar Reviewer**: Claude
 **Helper Kind**: `acceptance_packet`
 **Generated**: 2026-04-13T00:21:43Z
-**Last Updated**: 2026-04-13T02:12:50Z
+**Last Updated**: 2026-04-13T07:01:10Z
 **Original Drafter**: Qwen
 
 > This is a support artifact only. It does not modify canonical truth, L1 policy documents, or core runtime/registry/governance implementations.
 >
 > Reviewer cleanup note: every claim below is constrained to the shared-truth files named in the wake-up brief: `ai-status.json`, `current-work.md`, `ai-activity-log.jsonl`, and `docs-site/index.html`. This packet does not rely on non-shared files as source-of-truth evidence.
 
-Shared-truth note:
+Finalize refresh note (2026-04-13):
 
-- `ai-status.json` shows `PLAN-002` is currently `in_progress`, owned by Qwen, reviewer Claude
+- The task-scoped brief for this resumed finalize pass assigns `PLAN-002-SIDECAR-ACCEPTANCE` to `Codex` with `Claude` as reviewer and marks the sidecar as waiting for owner closure.
+- `ai-status.json` now shows the parent `PLAN-002` as `done`; the parent task is no longer waiting on this packet for review closure.
+- Earlier sections in this document preserve the acceptance evidence gathered during the original review loop. Section 10 supersedes the stale owner/reviewer closure wording in Sections 6-9 for this final owner-close pass.
+
+Historical shared-truth note from the original reviewer pass:
+
+- `ai-status.json` showed `PLAN-002` as `in_progress`, owned by Qwen, reviewer Claude, when the original reviewer-phase evidence pass was captured
 - `current-work.md` shows discussion planning session `phase2-2026-04-12-blueprint-gap-convergence` is `accepted`, with `consensus: accepted`, `human gate: approved`, and `ready to materialize execution: True`
 - `ai-status.json` records Codex's parent-task handoff note: reusable planning session profiles were implemented, legacy `phase1` / blueprint-gap behavior was preserved, and generic `phase2` sessions no longer inherit blueprint defaults
 - `ai-activity-log.jsonl` captures the accepted planning-state snapshot, including profile `blueprint-gap-convergence`, artifact statuses for `gap-response-matrix`, `execution-materialization`, and `consensus-packet`, submitted / waived readouts, and completed cross-review round 1
@@ -240,3 +246,22 @@ As the designated owner of `PLAN-002-SIDECAR-ACCEPTANCE`, I have reviewed this p
 This packet is now operationally consistent with the shared-truth files and remains within sidecar-only scope. No canonical truth, runtime, registry, or governance implementation was modified.
 
 **Reviewer action:** approve `PLAN-002-SIDECAR-ACCEPTANCE` in the status system so it can return to Claude for final `done` closure.
+
+---
+
+## 10. Codex Owner Finalize Refresh (2026-04-13)
+
+This resumed dispatch is an owner-close pass for the sidecar itself, not a reopening of the parent planning task.
+
+Current finalize context:
+
+- `PLAN-002` parent is already `done` in `ai-status.json`.
+- The sidecar is now owned by `Codex` with `Claude` as reviewer per the task-scoped brief.
+- The support artifact remains valid as a historical acceptance packet; no new canonical or runtime evidence collection was required for this owner-close pass.
+- The only remaining action is lifecycle cleanup in the status system so the sidecar no longer stays artificially `in_progress` after the earlier approval path.
+
+Owner verdict:
+
+- Packet remains support-only and usable as historical acceptance evidence for the accepted `PLAN-002` planning wave.
+- No L1 truth, core contracts, runtime logic, registry logic, or governance implementation was changed.
+- Sections 6-9 should be read as the completed earlier review trail; this section is the authoritative finalization note for the current Codex-owned closure.
