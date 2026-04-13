@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MarketCalendarSession",
+  "description": "Market trading calendar session for Pantheon Data Plane.",
+  "type": "object",
+  "required": [
+    "market",
+    "trade_date",
+    "session_open",
+    "session_close",
+    "timezone"
+  ],
+  "properties": {
+    "market": {
+      "type": "string",
+      "description": "Market code (e.g., US, TW, CRYPTO)."
+    },
+    "trade_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Trading date in ISO 8601 format."
+    },
+    "session_open": {
+      "type": "string",
+      "description": "Session open time in HH:MM:SS format (market local). Empty string is allowed for holidays."
+    },
+    "session_close": {
+      "type": "string",
+      "description": "Session close time in HH:MM:SS format (market local). Empty string is allowed for holidays."
+    },
+    "early_close_flag": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this session has an early close."
+    },
+    "holiday_flag": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this date is a holiday (no trading)."
+    },
+    "timezone": {
+      "type": "string",
+      "description": "IANA timezone identifier."
+    },
+    "metadata_json": {
+      "type": "object",
+      "default": {},
+      "description": "Free-form session-specific metadata."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of record creation."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "holiday_flag": {
+            "const": true
+          }
+        },
+        "required": [
+          "holiday_flag"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_open": {
+            "pattern": "^$|^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$"
+          },
+          "session_close": {
+            "pattern": "^$|^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "session_open": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$"
+          },
+          "session_close": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$"
+          }
+        }
+      }
+    }
+  ]
+}

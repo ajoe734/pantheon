@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FeatureDataset",
+  "description": "Feature-engineered dataset ready for research or training.",
+  "type": "object",
+  "required": [
+    "dataset_id",
+    "parent_normalized_dataset_id",
+    "feature_spec_version",
+    "label_spec_version",
+    "point_in_time_rule",
+    "storage_ref",
+    "checksum"
+  ],
+  "properties": {
+    "dataset_id": {
+      "type": "string",
+      "description": "Globally unique dataset identifier."
+    },
+    "parent_normalized_dataset_id": {
+      "type": "string",
+      "description": "Reference to the source NormalizedDataset dataset_id."
+    },
+    "feature_spec_version": {
+      "type": "string",
+      "description": "Version of the feature specification used."
+    },
+    "label_spec_version": {
+      "type": "string",
+      "description": "Version of the label specification used."
+    },
+    "point_in_time_rule": {
+      "type": "string",
+      "description": "Rule description ensuring no look-ahead bias (e.g., available_time <= event_time + 0d)."
+    },
+    "storage_ref": {
+      "type": "string",
+      "description": "Reference to storage location."
+    },
+    "checksum": {
+      "type": "string",
+      "description": "SHA-256 checksum of the feature data file(s)."
+    },
+    "metadata_json": {
+      "type": "object",
+      "default": {},
+      "description": "Free-form feature engineering metadata."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of record creation."
+    }
+  }
+}

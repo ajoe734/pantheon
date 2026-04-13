@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DatasetVersion",
+  "description": "Frozen lineage snapshot across raw, normalized, and feature datasets. This is the unit of replay.",
+  "type": "object",
+  "required": [
+    "dataset_version_id",
+    "market_scope",
+    "instrument_scope",
+    "raw_dataset_refs",
+    "normalized_dataset_refs",
+    "feature_dataset_refs"
+  ],
+  "properties": {
+    "dataset_version_id": {
+      "type": "string",
+      "description": "Globally unique version identifier."
+    },
+    "market_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of market codes covered."
+    },
+    "instrument_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of security_id or contract_id values covered."
+    },
+    "raw_dataset_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of RawDataset dataset_id values."
+    },
+    "normalized_dataset_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of NormalizedDataset dataset_id values."
+    },
+    "feature_dataset_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of FeatureDataset dataset_id values."
+    },
+    "frozen_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this version was frozen."
+    },
+    "metadata_json": {
+      "type": "object",
+      "default": {},
+      "description": "Free-form version metadata."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of record creation."
+    }
+  }
+}

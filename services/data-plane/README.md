@@ -1,0 +1,64 @@
+# Data Plane Schemas (BG-001)
+
+Canonical Data Plane object definitions for Pantheon.
+
+## Objects
+
+| Model | File | Schema |
+|---|---|---|
+| SecurityMaster | `models/security_master.py` | `schemas/security_master.schema.json` |
+| ContractMaster | `models/contract_master.py` | `schemas/contract_master.schema.json` |
+| MarketCalendarSession | `models/market_calendar_session.py` | `schemas/market_calendar_session.schema.json` |
+| RawDataset | `models/dataset_lineage.py` | `schemas/raw_dataset.schema.json` |
+| NormalizedDataset | `models/dataset_lineage.py` | `schemas/normalized_dataset.schema.json` |
+| FeatureDataset | `models/dataset_lineage.py` | `schemas/feature_dataset.schema.json` |
+| DatasetVersion | `models/dataset_lineage.py` | `schemas/dataset_version.schema.json` |
+
+## Design Decisions
+
+### Availability Discipline
+- **RawDataset**: carries `ingest_time` (when the data entered the system).
+- **NormalizedDataset**: carries `available_time_policy` defining how `available_time` is determined (at_open, at_reported, at_ingest, delayed_minutes, custom).
+- **FeatureDataset**: carries `point_in_time_rule` — a human-readable rule ensuring no look-ahead bias (e.g., `available_time <= event_time + 0d`).
+
+### Lineage Chain
+```
+SecurityMaster / ContractMaster  ← instrument identity
+         ↓
+RawDataset  ← raw ingest, checksummed
+         ↓
+NormalizedDataset  ← symbol mapping, corporate actions, calendar alignment
+         ↓
+FeatureDataset  ← feature engineering, point-in-time correct
+         ↓
+DatasetVersion  ← frozen lineage snapshot (unit of replay)
+```
+
+### Source Classes
+Six source classes are defined per the blueprint gap review:
+- `market` — price, volume, order book data
+- `fundamental` — earnings, financials, ratios
+- `event` — news, announcements, economic calendars
+- `alternative` — sentiment, web traffic, satellite
+- `execution_internal` — fills, slippage, PnL (internal telemetry)
+- `human_feedback` — trader approvals, edits, rejections
+
+### Market Calendar
+- Supports per-market timezone management.
+- Distinguishes regular sessions, early closes, and holidays.
+- Holiday sessions may have empty `session_open` / `session_close` values.
+
+## Verification
+
+```bash
+# Unit tests (37 tests)
+python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py' -v
+
+# Smoke test (47 checks, including jsonschema validation)
+python3 services/data-plane/smoke_test.py
+```
+
+## References
+- `Pantheon_Blueprint_Gap_Review_v1.md` §GAP-01
+- `Pantheon_Market_Data_Scope_and_Source_Plan_v1.md` §6
+- `docs/02-architecture/consensus/phase2/planning-session.json` → BG-001

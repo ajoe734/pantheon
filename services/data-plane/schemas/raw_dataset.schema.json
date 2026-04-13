@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RawDataset",
+  "description": "Ingested dataset before any normalization.",
+  "type": "object",
+  "required": [
+    "dataset_id",
+    "source_class",
+    "market",
+    "instrument_scope",
+    "coverage_start",
+    "coverage_end",
+    "ingest_time",
+    "storage_ref",
+    "checksum"
+  ],
+  "properties": {
+    "dataset_id": {
+      "type": "string",
+      "description": "Globally unique dataset identifier."
+    },
+    "source_class": {
+      "type": "string",
+      "enum": [
+        "market",
+        "fundamental",
+        "event",
+        "alternative",
+        "execution_internal",
+        "human_feedback"
+      ],
+      "description": "Data source classification."
+    },
+    "market": {
+      "type": "string",
+      "description": "Market code (e.g., US, TW, CRYPTO)."
+    },
+    "instrument_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of security_id or contract_id values this dataset covers."
+    },
+    "coverage_start": {
+      "type": "string",
+      "format": "date",
+      "description": "Earliest data point date in the dataset."
+    },
+    "coverage_end": {
+      "type": "string",
+      "format": "date",
+      "description": "Latest data point date in the dataset."
+    },
+    "ingest_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this dataset was ingested."
+    },
+    "storage_ref": {
+      "type": "string",
+      "description": "Reference to storage location (e.g., GCS URI, object store path)."
+    },
+    "checksum": {
+      "type": "string",
+      "description": "SHA-256 checksum of the raw data file(s)."
+    },
+    "metadata_json": {
+      "type": "object",
+      "default": {},
+      "description": "Free-form ingestion metadata."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of record creation."
+    }
+  }
+}
