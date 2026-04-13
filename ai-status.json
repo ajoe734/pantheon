@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-12-blueprint-gap-convergence-planning",
   "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-13T02:14:15Z",
+  "updated_at": "2026-04-13T02:21:04Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,12 +93,14 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "PLAN-002-SIDECAR-ACCEPTANCE",
-        "PLAN-002-SIDECAR-REVIEW"
+        "BG-001",
+        "BG-002",
+        "BG-004",
+        "PLAN-002-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.",
-      "last_update": "2026-04-13T02:14:15Z"
+      "next": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-13T02:21:04Z"
     },
     {
       "name": "Gemini",
@@ -111,8 +113,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.",
-      "last_update": "2026-04-13T00:15:11Z"
+      "next": "Supervisor auto-started BG-003 after successful dispatch.",
+      "last_update": "2026-04-13T02:18:18Z"
     },
     {
       "name": "Codex",
@@ -122,15 +124,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
+      "status": "working",
       "current_task_ids": [
-        "BG-000",
-        "BG-005",
-        "BG-007"
+        "BG-003",
+        "BG-006"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-13T02:10:24Z"
+      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
+      "last_update": "2026-04-13T02:19:49Z"
     },
     {
       "name": "Copilot",
@@ -143,8 +144,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Supervisor auto-started APP-002-W5-LOVABLE-CUTOVER after successful dispatch.",
-      "last_update": "2026-04-12T01:06:16Z"
+      "next": "Supervisor auto-started BG-006 after successful dispatch.",
+      "last_update": "2026-04-13T02:18:20Z"
     },
     {
       "name": "Qwen",
@@ -156,11 +157,11 @@
       ],
       "status": "finalize",
       "current_task_ids": [
-        "PLAN-002"
+        "PLAN-002-SIDECAR-REVIEW"
       ],
       "branch": "feat/qwen-code-agent",
-      "next": "PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.",
-      "last_update": "2026-04-13T02:13:49Z"
+      "next": "Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.",
+      "last_update": "2026-04-13T02:20:40Z"
     }
   ],
   "tasks": [
@@ -3367,9 +3368,38 @@
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "status": "review_approved",
-      "next": "PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.",
-      "last_update": "2026-04-13T02:13:49Z"
+      "status": "done",
+      "next": "PLAN-002 completed. Discussion planning runtime generalized to reusable session-driven profiles. Session profile system (generic/backend-completion/blueprint-gap-convergence), session pointer system, human gate enforcement, and 8 downstream BG tasks materialized. All 10 acceptance criteria verified via sidecar packet. Sidecar review: Qwen APPROVED, Claude CONFIRMED, Codex ENDORSED. Commit 65054fd.",
+      "last_update": "2026-04-13T02:14:34Z",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T02:14:34Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "65054fd9902381f93cfd0badc977673d582ad3f0",
+        "commit_subject": "PLAN-002: Generalize discussion planning for reusable sessions",
+        "commit_author": {
+          "name": "ajoe734",
+          "email": "ajoe734@local"
+        },
+        "commit_metadata": {
+          "- Sidecar review packet": "Qwen APPROVED, Claude CONFIRMED, Codex ENDORSED",
+          "LLM-Agent": "Qwen",
+          "Task-ID": "PLAN-002",
+          "Reviewer": "Claude",
+          "Co-authored-by": "Qwen-Coder <qwen-coder@alibabacloud.com>"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 35,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": "origin/master",
+        "ahead": 1,
+        "behind": 0,
+        "push_status": "ahead"
+      }
     },
     {
       "id": "BG-000",
@@ -3392,48 +3422,48 @@
       "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
       "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
       "phase": "Blueprint Gap P0",
-      "owner": "Qwen",
+      "owner": "Claude",
       "reviewer": "Codex",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-12T14:57:33Z"
+      "status": "in_progress",
+      "next": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-13T02:21:04Z"
     },
     {
       "id": "BG-002",
       "title": "Publish research backend maturity matrix and production-path mapping",
       "summary_zh": "整理 research backend maturity matrix 與 production path 對照。",
       "phase": "Blueprint Gap P1",
-      "owner": "Qwen",
-      "reviewer": "Gemini",
+      "owner": "Claude",
+      "reviewer": "Qwen",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-12T14:57:33Z"
+      "status": "in_progress",
+      "next": "Supervisor re-dispatched BG-002; task remains in progress.",
+      "last_update": "2026-04-13T02:18:58Z"
     },
     {
       "id": "BG-003",
       "title": "Formalize decision-front objects and adjudication boundaries",
       "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
       "phase": "Blueprint Gap P0",
-      "owner": "Qwen",
-      "reviewer": "Claude",
+      "owner": "Codex",
+      "reviewer": "Qwen",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-12T14:57:33Z"
+      "status": "in_progress",
+      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
+      "last_update": "2026-04-13T02:19:49Z"
     },
     {
       "id": "BG-004",
@@ -3447,9 +3477,9 @@
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-12T14:57:33Z"
+      "status": "in_progress",
+      "next": "Supervisor re-dispatched BG-004; task remains in progress.",
+      "last_update": "2026-04-13T02:18:16Z"
     },
     {
       "id": "BG-005",
@@ -3474,16 +3504,16 @@
       "title": "Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths",
       "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
       "phase": "Blueprint Gap P1",
-      "owner": "Qwen",
-      "reviewer": "Claude",
+      "owner": "Codex",
+      "reviewer": "Qwen",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-12T14:57:33Z"
+      "status": "in_progress",
+      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota (Request ID: E3C8:222A8F:663D4EE:8132403:69DC5274)",
+      "last_update": "2026-04-13T02:18:56Z"
     },
     {
       "id": "BG-007",
@@ -3538,9 +3568,9 @@
       "title": "Prepare PLAN-002 review packet and evidence summary",
       "summary_zh": "平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
       "phase": "Planning Bootstrap",
-      "owner": "Claude",
+      "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md"
@@ -3550,8 +3580,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.",
-      "last_update": "2026-04-13T02:14:15Z",
+      "next": "Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.",
+      "last_update": "2026-04-13T02:20:40Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "PLAN-002",
@@ -7227,8 +7257,9 @@
       "from": "Claude",
       "to": "Qwen",
       "message": "PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.",
-      "status": "pending",
-      "created_at": "2026-04-13T02:13:49Z"
+      "status": "done",
+      "created_at": "2026-04-13T02:13:49Z",
+      "resolved_at": "2026-04-13T02:14:34Z"
     },
     {
       "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
@@ -7238,6 +7269,50 @@
       "status": "done",
       "created_at": "2026-04-13T02:13:51Z",
       "resolved_at": "2026-04-13T02:14:13Z"
+    },
+    {
+      "task_id": "BG-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T02:15:37Z",
+      "resolved_at": "2026-04-13T02:18:18Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T02:15:38Z",
+      "resolved_at": "2026-04-13T02:18:18Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Qwen",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T02:15:39Z",
+      "resolved_at": "2026-04-13T02:18:20Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet complete. Requesting Codex reviewer approval to close this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-13T02:20:27Z",
+      "resolved_at": "2026-04-13T02:20:40Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.",
+      "status": "pending",
+      "created_at": "2026-04-13T02:20:40Z"
     }
   ],
   "blockers": [
@@ -7314,13 +7389,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 9,
-      "active": 2,
+      "total": 10,
+      "active": 4,
       "blocked": 0,
       "done": 6,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 4
     },
     "Gemini": {
       "total": 3,
@@ -7332,22 +7407,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 71,
-      "active": 0,
+      "total": 73,
+      "active": 2,
       "blocked": 0,
       "done": 68,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 5
     },
     "Qwen": {
-      "total": 40,
+      "total": 37,
       "active": 0,
       "blocked": 0,
-      "done": 35,
+      "done": 36,
       "review": 0,
       "review_approved": 1,
-      "todo": 4
+      "todo": 0
     },
     "Copilot": {
       "total": 16,

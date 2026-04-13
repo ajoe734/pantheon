@@ -3,7 +3,7 @@
 This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 
-Last updated: 2026-04-13T02:14:15Z
+Last updated: 2026-04-13T02:21:04Z
 
 ## Objective
 
@@ -32,11 +32,11 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.
-- `Codex`: integration, status-system, schema, acceptance; next: Assignment created from accepted planning session
-- `Copilot`: research-ingest, external-search, spec-review, critique; next: Supervisor auto-started APP-002-W5-LOVABLE-CUTOVER after successful dispatch.
-- `Qwen`: integration, schema, acceptance, code-agent; next: PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.
+- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started BG-003 after successful dispatch.
+- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]
+- `Copilot`: research-ingest, external-search, spec-review, critique; next: Supervisor auto-started BG-006 after successful dispatch.
+- `Qwen`: integration, schema, acceptance, code-agent; next: Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.
 
 ## Delivery Layers
 
@@ -44,17 +44,16 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `PLAN-002` | Planning Bootstrap | Generalize discussion planning for reusable sessions | Qwen | review_approved | - | 把 discussion planning runtime 改成可重複使用的 session-driven 模式。 |
 | `BG-000` | Blueprint Gap P0 | Canonicalize market scope, instrument policy, and source-class matrix | Codex | todo | `PLAN-002` | 把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。 |
-| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | Qwen | todo | `PLAN-002` | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 |
-| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | Qwen | todo | `PLAN-002` | 整理 research backend maturity matrix 與 production path 對照。 |
-| `BG-003` | Blueprint Gap P0 | Formalize decision-front objects and adjudication boundaries | Qwen | todo | `PLAN-002` | 正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。 |
-| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | Claude | todo | `PLAN-002` | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 |
+| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | Claude | in_progress | `PLAN-002` | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 |
+| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | Claude | in_progress | `PLAN-002` | 整理 research backend maturity matrix 與 production path 對照。 |
+| `BG-003` | Blueprint Gap P0 | Formalize decision-front objects and adjudication boundaries | Codex | in_progress | `PLAN-002` | 正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。 |
+| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | Claude | in_progress | `PLAN-002` | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 |
 | `BG-005` | Blueprint Gap P0 | Define golden replay scenario and acceptance runbook | Codex | todo | `BG-000`, `BG-001`, `BG-003` | 定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。 |
-| `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | Qwen | todo | `PLAN-002` | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 |
+| `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | Codex | in_progress | `PLAN-002` | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 |
 | `BG-007` | Blueprint Gap P2 | Publish product-facing glossary and stage-status language pack | Codex | todo | `PLAN-002` | 整理 glossary、action→object map 與 stage/status wording 的對外語言包。 |
 | `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | Claude | in_progress | - | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
-| `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | Claude | in_progress | - | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | Qwen | review_approved | - | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -194,23 +193,23 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF` | Phase 5: APP-002 Execution Wave 5 | [Sidecar] [Auto] [Parent APP-002-W5-SSE-LIVE] Prepare APP-002-W5-SSE-LIVE BFF and frontend handoff packet | 平行支援 APP-002-W5-SSE-LIVE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex | Qwen | done | `APP-002-W4-REMAINING-CATALOG` | 2026-04-11T23:39:47Z | Finalized sidecar handoff packet; review approved and ready for parent owner consumption. |
 | `APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE` | Phase 5: APP-002 Execution Wave 5 | [Sidecar] [Auto] [Parent APP-002-W5-LOVABLE-CUTOVER] Prepare APP-002-W5-LOVABLE-CUTOVER acceptance packet and dependency map | 平行支援 APP-002-W5-LOVABLE-CUTOVER，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Qwen | done | `APP-002-W5-SSE-LIVE` | 2026-04-12T00:09:39Z | Finalized acceptance packet; review approved; ready for parent owner cutover validation. |
 | `APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW` | Phase 5: APP-002 Execution Wave 5 | [Sidecar] [Auto] [Parent APP-002-W5-LOVABLE-CUTOVER] Prepare APP-002-W5-LOVABLE-CUTOVER review packet and evidence summary | 平行支援 APP-002-W5-LOVABLE-CUTOVER，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Qwen | Codex | done | `APP-002-W5-SSE-LIVE` | 2026-04-12T01:23:15Z | Sidecar review packet created with evidence summary - all parent acceptance criteria verified against Pantheon-side artifacts |
-| `PLAN-002` | Planning Bootstrap | Generalize discussion planning for reusable sessions | 把 discussion planning runtime 改成可重複使用的 session-driven 模式。 | Qwen | Claude | review_approved | - | 2026-04-13T02:13:49Z | PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure. |
+| `PLAN-002` | Planning Bootstrap | Generalize discussion planning for reusable sessions | 把 discussion planning runtime 改成可重複使用的 session-driven 模式。 | Qwen | Claude | done | - | 2026-04-13T02:14:34Z | PLAN-002 completed. Discussion planning runtime generalized to reusable session-driven profiles. Session profile system (generic/backend-completion/blueprint-gap-convergence), session pointer system, human gate enforcement, and 8 downstream BG tasks materialized. All 10 acceptance criteria verified via sidecar packet. Sidecar review: Qwen APPROVED, Claude CONFIRMED, Codex ENDORSED. Commit 65054fd. |
 | `BG-000` | Blueprint Gap P0 | Canonicalize market scope, instrument policy, and source-class matrix | 把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。 | Codex | Gemini | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
-| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 | Qwen | Codex | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
-| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | 整理 research backend maturity matrix 與 production path 對照。 | Qwen | Gemini | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
-| `BG-003` | Blueprint Gap P0 | Formalize decision-front objects and adjudication boundaries | 正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。 | Qwen | Claude | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
-| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 | Claude | Codex | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
+| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 | Claude | Codex | in_progress | `PLAN-002` | 2026-04-13T02:21:04Z | Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status. |
+| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | 整理 research backend maturity matrix 與 production path 對照。 | Claude | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:18:58Z | Supervisor re-dispatched BG-002; task remains in progress. |
+| `BG-003` | Blueprint Gap P0 | Formalize decision-front objects and adjudication boundaries | 正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。 | Codex | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:19:49Z | Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object] |
+| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 | Claude | Codex | in_progress | `PLAN-002` | 2026-04-13T02:18:16Z | Supervisor re-dispatched BG-004; task remains in progress. |
 | `BG-005` | Blueprint Gap P0 | Define golden replay scenario and acceptance runbook | 定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。 | Codex | Qwen | todo | `BG-000`, `BG-001`, `BG-003` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
-| `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 | Qwen | Claude | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
+| `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 | Codex | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:18:56Z | Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota (Request ID: E3C8:222A8F:663D4EE:8132403:69DC5274) |
 | `BG-007` | Blueprint Gap P2 | Publish product-facing glossary and stage-status language pack | 整理 glossary、action→object map 與 stage/status wording 的對外語言包。 | Codex | Claude | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
 | `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude | Codex | in_progress | - | 2026-04-13T02:14:13Z | Supervisor resumed PLAN-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch. |
-| `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | in_progress | - | 2026-04-13T02:14:15Z | Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress. |
+| `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Qwen | Codex | review_approved | - | 2026-04-13T02:20:40Z | Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `PLAN-002` | Claude | Qwen | PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure. | pending | 2026-04-13T02:13:49Z |
+| `PLAN-002-SIDECAR-REVIEW` | Codex | Qwen | Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done. | pending | 2026-04-13T02:20:40Z |
 
 ## Blockers
 
@@ -265,23 +264,23 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 ## Latest Checkpoints
 
-- 2026-04-13T02:13:57Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:14:03Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:14:03Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:14:03Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:14:03Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:14:09Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:14:09Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:14:12Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:14:12Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
-- 2026-04-13T02:14:12Z Orchestrator: `PLAN-002-SIDECAR-REVIEW` Worker superseded to prioritize higher-priority review/finalize work.
-- 2026-04-13T02:14:12Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-04-13T02:14:12Z Orchestrator: `PLAN-002-SIDECAR-REVIEW` Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-04-13T02:14:12Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:14:12Z Orchestrator: SessionEnd: SessionEnd
-- 2026-04-13T02:14:13Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker started via claude_cli: owned_finalize_dispatch
-- 2026-04-13T02:14:13Z Claude: `PLAN-002-SIDECAR-ACCEPTANCE` Supervisor resumed PLAN-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-04-13T02:14:14Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Supervisor resumed PLAN-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-04-13T02:14:14Z Orchestrator: SessionStart: SessionStart
-- 2026-04-13T02:14:15Z Orchestrator: `PLAN-002-SIDECAR-REVIEW` Worker started via claude_cli: owned_in_progress_dispatch
-- 2026-04-13T02:14:15Z Claude: `PLAN-002-SIDECAR-REVIEW` Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.
+- 2026-04-13T02:20:40Z Codex: `PLAN-002-SIDECAR-REVIEW` Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.
+- 2026-04-13T02:20:40Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:20:40Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:20:41Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:20:47Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:20:47Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:20:53Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T022002Z-3efcefa4
+- 2026-04-13T02:20:53Z Orchestrator: `BG-001` Worker superseded to prioritize higher-priority review/finalize work.
+- 2026-04-13T02:20:53Z Orchestrator: `BG-001` Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-04-13T02:20:54Z Orchestrator: `BG-001` Worker started via qwen: owned_in_progress_dispatch
+- 2026-04-13T02:20:54Z Qwen: `BG-001` Supervisor re-dispatched BG-001; task remains in progress.
+- 2026-04-13T02:20:55Z Orchestrator: `BG-001` Supervisor re-dispatched BG-001; task remains in progress.
+- 2026-04-13T02:20:57Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:20:57Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:20:57Z Orchestrator: PreToolUse: Read
+- 2026-04-13T02:21:02Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:03Z Orchestrator: PreToolUse: Bash
+- 2026-04-13T02:21:03Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:21:03Z Orchestrator: PostToolUse: Bash
+- 2026-04-13T02:21:04Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T022002Z-3efcefa4
