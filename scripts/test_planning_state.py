@@ -19,6 +19,8 @@ class PlanningStateTests(unittest.TestCase):
         return mock.patch.multiple(
             planning_state,
             ROOT=root,
+            PLANNING_POINTER_FILE=root / ".orchestrator" / "planning-session-pointer.json",
+            ORCHESTRATOR_STATE_FILE=root / ".orchestrator" / "state.json",
             PLANNING_DIR=planning_dir,
             SESSION_FILE=planning_dir / "planning-session.json",
             README_FILE=planning_dir / "README.md",
@@ -29,6 +31,21 @@ class PlanningStateTests(unittest.TestCase):
             SUPERVISOR_QUEUE_FILE=planning_dir / "supervisor-queue.md",
             CONSENSUS_PACKET_FILE=planning_dir / "consensus-packet.md",
             DERIVED_STATE_FILE=root / ".orchestrator" / "planning-state.json",
+        )
+
+    def patch_ai_status_paths(self, root: Path):
+        return mock.patch.multiple(
+            planning_state.ai_status,
+            ROOT=root,
+            STATUS_FILE=root / "ai-status.json",
+            LOG_FILE=root / "ai-activity-log.jsonl",
+            CURRENT_WORK_FILE=root / "current-work.md",
+            DOCS_SITE_DIR=root / "docs-site",
+            CONFIG_FILE=root / ".orchestrator" / "config.json",
+            PLANNING_STATE_FILE=root / ".orchestrator" / "planning-state.json",
+            ORCHESTRATOR_STATE_FILE=root / ".orchestrator" / "state.json",
+            APPROVAL_QUEUE_FILE=root / ".orchestrator" / "approval-queue.json",
+            DASHBOARD_BUNDLE_FILE=root / "dashboard-bundle.json",
         )
 
     def test_sync_creates_templates_and_derived_state(self) -> None:
@@ -101,7 +118,8 @@ class PlanningStateTests(unittest.TestCase):
                 planning_state.command_round(session, ["1", "completed", "Round 1 closed"])
                 planning_state.sync_all(session)
 
-                saved = json.loads((root / "docs" / "02-architecture" / "consensus" / "phase1" / "planning-session.json").read_text(encoding="utf-8"))
+                pointer = json.loads((root / ".orchestrator" / "planning-session-pointer.json").read_text(encoding="utf-8"))
+                saved = json.loads((root / pointer["session_file"]).read_text(encoding="utf-8"))
                 derived = json.loads((root / ".orchestrator" / "planning-state.json").read_text(encoding="utf-8"))
 
         self.assertEqual(saved["status"], "accepted")
@@ -110,6 +128,29 @@ class PlanningStateTests(unittest.TestCase):
         self.assertEqual(saved["artifacts"]["consensus_packet"]["status"], "accepted")
         self.assertEqual(saved["artifacts"]["review_rounds"]["status"], "completed")
         self.assertTrue(derived["switch_gate"]["ready_to_materialize"])
+
+    def test_start_new_session_uses_archive_path_and_keeps_history(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-archive-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root):
+                legacy = planning_state.default_session("phase1-2026-04-11-backend-completion", "phase1")
+                planning_state.command_human_gate(legacy, ["approved", "Legacy accepted"])
+                planning_state.sync_all(legacy)
+
+                active = planning_state.load_session()
+                planning_state.command_start(active, ["phase3-2026-04-12-runtime-replan", "New runtime replan"])
+                planning_state.sync_all(active)
+
+                pointer = json.loads((root / ".orchestrator" / "planning-session-pointer.json").read_text(encoding="utf-8"))
+                derived = json.loads((root / ".orchestrator" / "planning-state.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(pointer["session_id"], "phase3-2026-04-12-runtime-replan")
+        self.assertEqual(pointer["planning_dir"], "docs/02-architecture/consensus/sessions/phase3-2026-04-12-runtime-replan")
+        self.assertEqual(derived["active_session"]["planning_dir"], pointer["planning_dir"])
+        self.assertEqual(derived["profile"], planning_state.SESSION_PROFILE_GENERIC)
+        recent_ids = [entry["session_id"] for entry in derived["recent_sessions"]]
+        self.assertEqual(recent_ids[0], "phase3-2026-04-12-runtime-replan")
+        self.assertIn("phase1-2026-04-11-backend-completion", recent_ids)
 
     def test_switch_gate_treats_waived_readouts_and_tracking_items_as_terminal(self) -> None:
         session = planning_state.default_session()
@@ -142,6 +183,71 @@ class PlanningStateTests(unittest.TestCase):
         self.assertTrue(derived["switch_gate"]["ready_to_materialize"])
         self.assertEqual(derived["counts"]["readouts_resolved"], len(planning_state.AGENT_ORDER))
         self.assertEqual(derived["counts"]["open_items"], 0)
+
+    def test_start_phase2_preserves_phase1_and_seeds_phase2_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-phase2-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root):
+                phase1 = planning_state.default_session("phase1-2026-04-11-backend-completion", "phase1")
+                planning_state.command_consensus(phase1, ["accepted", "Phase1 accepted"])
+                planning_state.command_human_gate(phase1, ["approved", "Human accepted phase1"])
+                planning_state.sync_all(phase1)
+                phase1_file = root / "docs" / "02-architecture" / "consensus" / "phase1" / "planning-session.json"
+                phase1_saved = json.loads(phase1_file.read_text(encoding="utf-8"))
+
+                active = planning_state.load_session()
+                planning_state.command_start(active, [planning_state.PHASE2_SESSION_ID, "Blueprint gap convergence"])
+                planning_state.sync_all(active)
+
+                phase2_file = root / "docs" / "02-architecture" / "consensus" / "phase2" / "planning-session.json"
+                phase2_saved = json.loads(phase2_file.read_text(encoding="utf-8"))
+                pointer = json.loads((root / ".orchestrator" / "planning-session-pointer.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(phase1_saved["session_id"], "phase1-2026-04-11-backend-completion")
+        self.assertEqual(phase1_saved["status"], "accepted")
+        self.assertEqual(phase2_saved["session_id"], planning_state.PHASE2_SESSION_ID)
+        self.assertEqual(phase2_saved["phase"], "phase2")
+        self.assertEqual(phase2_saved["profile"], planning_state.SESSION_PROFILE_BLUEPRINT_GAP)
+        self.assertIn("Pantheon_Blueprint_Gap_Review_v1.md", phase2_saved["brief_files"])
+        self.assertIn("Pantheon_Market_Data_Scope_and_Source_Plan_v1.md", phase2_saved["brief_files"])
+        self.assertEqual(phase2_saved["baton_owner"], "Codex")
+        self.assertEqual(pointer["session_id"], planning_state.PHASE2_SESSION_ID)
+        self.assertEqual(pointer["planning_dir"], "docs/02-architecture/consensus/phase2")
+
+    def test_non_blueprint_phase2_session_uses_generic_profile(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-generic-phase2-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root):
+                active = planning_state.load_session()
+                planning_state.command_start(active, ["phase2-2026-04-13-risk-replan", "Generic phase2 session"])
+                planning_state.sync_all(active)
+
+                session_file = root / "docs" / "02-architecture" / "consensus" / "sessions" / "phase2-2026-04-13-risk-replan" / "planning-session.json"
+                saved = json.loads(session_file.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["profile"], planning_state.SESSION_PROFILE_GENERIC)
+        self.assertEqual(saved["planning_dir"], "docs/02-architecture/consensus/sessions/phase2-2026-04-13-risk-replan")
+        self.assertEqual([entry["id"] for entry in saved["expected_outputs"]], ["consensus_packet"])
+        self.assertNotIn("Pantheon_Blueprint_Gap_Review_v1.md", saved["brief_files"])
+        self.assertEqual(saved["proposed_execution_tasks"], [])
+
+    def test_materialize_writes_phase2_tasks_after_human_gate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-materialize-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root), self.patch_ai_status_paths(root):
+                session = planning_state.default_session(planning_state.PHASE2_SESSION_ID, "phase2")
+                planning_state.command_human_gate(session, ["approved", "Human accepted execution plan"])
+                planning_state.sync_all(session)
+                planning_state.command_materialize(session, [])
+
+                status = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+                task_map = {task["id"]: task for task in status["tasks"]}
+
+        self.assertIn("PLAN-002", task_map)
+        self.assertIn("BG-005", task_map)
+        self.assertEqual(task_map["PLAN-002"]["owner"], "Codex")
+        self.assertEqual(task_map["BG-005"]["depends_on"], ["BG-000", "BG-001", "BG-003"])
+        self.assertEqual(task_map["BG-007"]["reviewer"], "Codex")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,370 @@
+{
+  "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+  "phase": "phase2",
+  "profile": "blueprint-gap-convergence",
+  "status": "accepted",
+  "planning_mode": "discussion_planning",
+  "runtime_mode": "supervisor_managed_execution",
+  "summary": "Blueprint gap convergence session activated",
+  "objective": "Use the blueprint gap review, market data scope/source plan, current execution state, and canonical L1/L2 truth to converge on the next Pantheon delivery wave. Required outputs are gap-response-matrix.md, execution-materialization.md, and consensus-packet.md.",
+  "facilitator": "Claude",
+  "baton_owner": "Codex",
+  "starter_owner": "Codex",
+  "next_reviewer": "Qwen",
+  "baton_sequence": [
+    "Codex",
+    "Qwen",
+    "Gemini",
+    "Copilot",
+    "Claude"
+  ],
+  "review_sequence": [
+    "Qwen",
+    "Gemini",
+    "Copilot",
+    "Claude"
+  ],
+  "brief_files": [
+    "Pantheon_Blueprint_Gap_Review_v1.md",
+    "Pantheon_Market_Data_Scope_and_Source_Plan_v1.md",
+    "ai-status.json",
+    "current-work.md",
+    "TARGET_ARCHITECTURE.md",
+    "OPENCLAW_RUNTIME_CONTRACT.md",
+    "PERSONA_RUNTIME_MODEL.md",
+    "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+    "PAPER_CANARY_LIVE_POLICY.md",
+    "ROLLBACK_AND_POSITION_SEMANTICS.md",
+    "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+    "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+    "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+    "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+    "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+    "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+    "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+    "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+    "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+    "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+    "CANONICAL_DOCUMENT_MAP.md",
+    "ROADMAP.md",
+    "DEVELOPMENT_WORKBREAKDOWN.md",
+    "OSS_INTEGRATION_CHECKLIST.md"
+  ],
+  "expected_outputs": [
+    {
+      "id": "gap_response_matrix",
+      "path": "docs/02-architecture/consensus/phase2/gap-response-matrix.md",
+      "owner": "Claude",
+      "status": "not_started"
+    },
+    {
+      "id": "execution_materialization",
+      "path": "docs/02-architecture/consensus/phase2/execution-materialization.md",
+      "owner": "Codex",
+      "status": "not_started"
+    },
+    {
+      "id": "consensus_packet",
+      "path": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "owner": "Claude",
+      "status": "not_started"
+    }
+  ],
+  "lane_focus": {
+    "Claude": "Facilitate the blueprint-gap session, integrate readouts and unresolved items, and draft the final consensus packet after every lane is resolved or waived.",
+    "Codex": "Verify each gap claim against repo evidence, own the shared starter draft, and draft execution materialization for the next delivery wave.",
+    "Gemini": "Evaluate runtime, replay, and tooling feasibility for GAP-02 and GAP-05; report blockers with cited implementation constraints.",
+    "Qwen": "Audit schema and object formalization for GAP-01, GAP-03, and GAP-06, especially canonical object boundaries and acceptance surface coverage.",
+    "Copilot": "Critique market-source scope, research backend maturity, and product-facing acceptance language for GAP-00, GAP-02, and GAP-07."
+  },
+  "fallback_policy": {
+    "Gemini": {
+      "waive_after_seconds": 1800,
+      "waive_on_terminal_failure": true,
+      "issue_id": "DISC-GEMINI-PLANNING",
+      "summary": "Gemini planning lane failed; waive the lane, track the issue, and rely on Copilot critique plus Codex task slicing to keep the session moving.",
+      "covering_agents": [
+        "Copilot",
+        "Codex"
+      ]
+    }
+  },
+  "current_round": 1,
+  "consensus_status": "accepted",
+  "human_gate_status": "approved",
+  "artifacts": {
+    "planning_readme": {
+      "path": "docs/02-architecture/consensus/phase2/README.md",
+      "status": "active"
+    },
+    "planning_session": {
+      "path": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "status": "accepted"
+    },
+    "readout_template": {
+      "path": "docs/02-architecture/consensus/phase2/LLM_READOUT_TEMPLATE.md",
+      "status": "ready"
+    },
+    "starter_draft": {
+      "path": "docs/02-architecture/consensus/phase2/starter-draft.md",
+      "status": "active"
+    },
+    "baton_log": {
+      "path": "docs/02-architecture/consensus/phase2/baton-log.md",
+      "status": "active"
+    },
+    "supervisor_queue": {
+      "path": "docs/02-architecture/consensus/phase2/supervisor-queue.md",
+      "status": "active"
+    },
+    "consensus_packet": {
+      "path": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "status": "accepted"
+    },
+    "review_rounds": {
+      "path": "docs/02-architecture/consensus/phase2/review-round-*.md",
+      "status": "completed"
+    },
+    "gap_response_matrix": {
+      "path": "docs/02-architecture/consensus/phase2/gap-response-matrix.md",
+      "status": "active"
+    },
+    "execution_materialization": {
+      "path": "docs/02-architecture/consensus/phase2/execution-materialization.md",
+      "status": "active"
+    }
+  },
+  "readouts": {
+    "Claude": {
+      "path": "docs/02-architecture/consensus/phase2/claude-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-12T13:15:30Z"
+    },
+    "Codex": {
+      "path": "docs/02-architecture/consensus/phase2/codex-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-12T14:28:44Z"
+    },
+    "Gemini": {
+      "path": "docs/02-architecture/consensus/phase2/gemini-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-12T14:38:54Z"
+    },
+    "Qwen": {
+      "path": "docs/02-architecture/consensus/phase2/qwen-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-12T14:24:26Z"
+    },
+    "Copilot": {
+      "path": "docs/02-architecture/consensus/phase2/copilot-readout.md",
+      "status": "waived",
+      "updated_at": "2026-04-12T13:30:00Z"
+    }
+  },
+  "cross_review_rounds": [
+    {
+      "round": 1,
+      "status": "completed",
+      "reviewers": [
+        "Qwen",
+        "Gemini",
+        "Claude"
+      ],
+      "updated_at": "2026-04-12T13:29:12Z",
+      "summary": "Round 1 resolved all three starter-draft open disagreements: BG-005 is P0 not P2; BG-005 requires real DatasetVersion+decision-chain anchor not synthetic replay; BG-002 scope is matrix+mapping only with OSS-002-DOC as follow-on. Copilot waived due to quota exhaustion (DISC-COPILOT-PLANNING)."
+    }
+  ],
+  "unresolved_items": [
+    {
+      "id": "DISC-COPILOT-PLANNING",
+      "severity": "low",
+      "status": "tracking",
+      "summary": "Copilot planning lane hit quota exhaustion before submitting a readout. Lane waived per fallback policy. GAP-00/GAP-02/GAP-07 coverage absorbed by Codex and Claude."
+    },
+    {
+      "id": "DISC-BG002-SCOPE",
+      "severity": "low",
+      "status": "resolved",
+      "summary": "BG-002 scope resolved as maturity-matrix + production-path mapping only. Documentation hardening (OSS-002-DOC) is a follow-on task activated after BG-002 closes."
+    }
+  ],
+  "proposed_execution_tasks": [
+    {
+      "id": "PLAN-002",
+      "title": "Generalize discussion planning for reusable sessions",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Planning Bootstrap",
+      "summary_zh": "把 discussion planning runtime 改成可重複使用的 session-driven 模式。",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-000",
+      "title": "Canonicalize market scope, instrument policy, and source-class matrix",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "phase": "Blueprint Gap P0",
+      "summary_zh": "把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-001",
+      "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "phase": "Blueprint Gap P0",
+      "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-002",
+      "title": "Publish research backend maturity matrix and production-path mapping",
+      "owner": "Qwen",
+      "reviewer": "Gemini",
+      "phase": "Blueprint Gap P1",
+      "summary_zh": "整理 research backend maturity matrix 與 production path 對照。",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-003",
+      "title": "Formalize decision-front objects and adjudication boundaries",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "phase": "Blueprint Gap P0",
+      "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-004",
+      "title": "Publish memory layer design note for persona, institutional memory, and write-back",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Blueprint Gap P2",
+      "summary_zh": "補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-005",
+      "title": "Define golden replay scenario and acceptance runbook",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "phase": "Blueprint Gap P0",
+      "summary_zh": "定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。",
+      "depends_on": [
+        "BG-000",
+        "BG-001",
+        "BG-003"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-006",
+      "title": "Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "phase": "Blueprint Gap P1",
+      "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    },
+    {
+      "id": "BG-007",
+      "title": "Publish product-facing glossary and stage-status language pack",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Blueprint Gap P2",
+      "summary_zh": "整理 glossary、action→object map 與 stage/status wording 的對外語言包。",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": []
+    }
+  ],
+  "recent_events": [
+    {
+      "ts": "2026-04-12T13:11:04Z",
+      "agent": "Codex",
+      "type": "planning_session_started",
+      "message": "Blueprint gap convergence session activated"
+    },
+    {
+      "ts": "2026-04-12T13:14:36Z",
+      "agent": "Codex",
+      "type": "readout_submitted",
+      "message": "Qwen readout ready",
+      "status": "submitted",
+      "owner": "Qwen"
+    },
+    {
+      "ts": "2026-04-12T13:21:00Z",
+      "agent": "Codex",
+      "type": "readout_submitted",
+      "message": "Gemini readout ready",
+      "status": "submitted",
+      "owner": "Gemini"
+    },
+    {
+      "ts": "2026-04-12T13:27:17Z",
+      "agent": "Codex",
+      "type": "readout_submitted",
+      "message": "Codex readout ready",
+      "status": "submitted",
+      "owner": "Codex"
+    },
+    {
+      "ts": "2026-04-12T14:24:30Z",
+      "agent": "Codex",
+      "type": "readout_submitted",
+      "message": "Qwen readout ready",
+      "status": "submitted",
+      "owner": "Qwen"
+    },
+    {
+      "ts": "2026-04-12T14:40:00Z",
+      "agent": "Gemini",
+      "type": "readout_submitted",
+      "message": "Gemini readout ready",
+      "status": "submitted",
+      "owner": "Gemini"
+    },
+    {
+      "ts": "2026-04-12T14:57:33Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 9 new tasks and refreshed 0 existing tasks in ai-status.json.",
+      "status": "approved"
+    }
+  ],
+  "updated_at": "2026-04-13T02:00:58Z",
+  "human_gate_ts": "2026-04-12T14:50:00Z",
+  "planning_dir": "docs/02-architecture/consensus/phase2",
+  "session_file": "docs/02-architecture/consensus/phase2/planning-session.json"
+}
