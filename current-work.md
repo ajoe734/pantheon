@@ -3,7 +3,7 @@
 This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 
-Last updated: 2026-04-13T02:21:36Z
+Last updated: 2026-04-13T02:41:27Z
 
 ## Objective
 
@@ -32,11 +32,11 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started BG-003 after successful dispatch.
-- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]
+- `Claude`: execution, control-plane, governance-review; next: Memory Layer Design Note ready for review. Artifacts: services/memory/MEMORY_LAYER_DESIGN_NOTE.md, services/memory/persona_memory.schema.json, services/memory/institutional_memory_entry.schema.json. Closes GAP-04. All 4 acceptance criteria met: 2 object schemas, write-back pipeline, retrieval query path, postmortem→institutional memory→research reuse example.
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started BG-003-SIDECAR-ACCEPTANCE after successful dispatch.
+- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Claude to Codex after repeated Claude capacity/429: {"type":"assistant","message":{"id":"270631f1-5fc3-4d76-91ef-35fb320783a3","container":null,"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","stop_sequence":"","type":"message","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":null,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":null,"iterations":null,"speed":null},"content":[{"type":"text","text":"You've hit your limit · resets 1pm (Asia/Taipei)"}],"context_management":null},"parent_tool_use_id":null,"session_id":"b3d9eabb-b702-4300-a418-db16e347ff04","uuid":"165f6beb-6405-48e3-97e7-64b6fc3ff3e1","error":"rate_limit"}
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Supervisor auto-started BG-006 after successful dispatch.
-- `Qwen`: integration, schema, acceptance, code-agent; next: Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.
+- `Qwen`: integration, schema, acceptance, code-agent; next: Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas.
 
 ## Delivery Layers
 
@@ -45,14 +45,16 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `BG-000` | Blueprint Gap P0 | Canonicalize market scope, instrument policy, and source-class matrix | Codex | todo | `PLAN-002` | 把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。 |
-| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | Claude | in_progress | `PLAN-002` | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 |
-| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | Claude | in_progress | `PLAN-002` | 整理 research backend maturity matrix 與 production path 對照。 |
+| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | Qwen | review | `PLAN-002` | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 |
+| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | Codex | in_progress | `PLAN-002` | 整理 research backend maturity matrix 與 production path 對照。 |
 | `BG-003` | Blueprint Gap P0 | Formalize decision-front objects and adjudication boundaries | Codex | in_progress | `PLAN-002` | 正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。 |
-| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | Claude | in_progress | `PLAN-002` | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 |
+| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | Claude | review | `PLAN-002` | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 |
 | `BG-005` | Blueprint Gap P0 | Define golden replay scenario and acceptance runbook | Codex | todo | `BG-000`, `BG-001`, `BG-003` | 定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。 |
 | `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | Codex | in_progress | `PLAN-002` | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 |
 | `BG-007` | Blueprint Gap P2 | Publish product-facing glossary and stage-status language pack | Codex | todo | `PLAN-002` | 整理 glossary、action→object map 與 stage/status wording 的對外語言包。 |
-| `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | Claude | in_progress | - | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | Claude | review_approved | - | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `BG-002-SIDECAR-ACCEPTANCE` | Blueprint Gap P1 | [Sidecar] [Auto] [Parent BG-002] Prepare BG-002 acceptance packet and dependency map | Qwen | review | `PLAN-002` | 平行支援 BG-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `BG-003-SIDECAR-ACCEPTANCE` | Blueprint Gap P0 | [Sidecar] [Auto] [Parent BG-003] Prepare BG-003 acceptance packet and dependency map | Qwen | review | `PLAN-002` | 平行支援 BG-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -194,21 +196,27 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW` | Phase 5: APP-002 Execution Wave 5 | [Sidecar] [Auto] [Parent APP-002-W5-LOVABLE-CUTOVER] Prepare APP-002-W5-LOVABLE-CUTOVER review packet and evidence summary | 平行支援 APP-002-W5-LOVABLE-CUTOVER，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Qwen | Codex | done | `APP-002-W5-SSE-LIVE` | 2026-04-12T01:23:15Z | Sidecar review packet created with evidence summary - all parent acceptance criteria verified against Pantheon-side artifacts |
 | `PLAN-002` | Planning Bootstrap | Generalize discussion planning for reusable sessions | 把 discussion planning runtime 改成可重複使用的 session-driven 模式。 | Qwen | Claude | done | - | 2026-04-13T02:14:34Z | PLAN-002 completed. Discussion planning runtime generalized to reusable session-driven profiles. Session profile system (generic/backend-completion/blueprint-gap-convergence), session pointer system, human gate enforcement, and 8 downstream BG tasks materialized. All 10 acceptance criteria verified via sidecar packet. Sidecar review: Qwen APPROVED, Claude CONFIRMED, Codex ENDORSED. Commit 65054fd. |
 | `BG-000` | Blueprint Gap P0 | Canonicalize market scope, instrument policy, and source-class matrix | 把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。 | Codex | Gemini | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
-| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 | Claude | Codex | in_progress | `PLAN-002` | 2026-04-13T02:21:04Z | Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status. |
-| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | 整理 research backend maturity matrix 與 production path 對照。 | Claude | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:18:58Z | Supervisor re-dispatched BG-002; task remains in progress. |
-| `BG-003` | Blueprint Gap P0 | Formalize decision-front objects and adjudication boundaries | 正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。 | Codex | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:19:49Z | Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object] |
-| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 | Claude | Codex | in_progress | `PLAN-002` | 2026-04-13T02:18:16Z | Supervisor re-dispatched BG-004; task remains in progress. |
+| `BG-001` | Blueprint Gap P0 | Formalize security master, contract master, market calendar, and dataset lineage objects | 正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。 | Qwen | Codex | review | `PLAN-002` | 2026-04-13T02:35:40Z | Artifacts registered: services/data-plane/{models, schemas, tests, README.md, smoke_test.py} |
+| `BG-002` | Blueprint Gap P1 | Publish research backend maturity matrix and production-path mapping | 整理 research backend maturity matrix 與 production path 對照。 | Codex | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:36:11Z | Auto-reassigned ownership from Claude to Codex after repeated Claude capacity/429: {"type":"assistant","message":{"id":"270631f1-5fc3-4d76-91ef-35fb320783a3","container":null,"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","stop_sequence":"","type":"message","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":null,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":null,"iterations":null,"speed":null},"content":[{"type":"text","text":"You've hit your limit · resets 1pm (Asia/Taipei)"}],"context_management":null},"parent_tool_use_id":null,"session_id":"b3d9eabb-b702-4300-a418-db16e347ff04","uuid":"165f6beb-6405-48e3-97e7-64b6fc3ff3e1","error":"rate_limit"} |
+| `BG-003` | Blueprint Gap P0 | Formalize decision-front objects and adjudication boundaries | 正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。 | Codex | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:23:05Z | Qwen acknowledges reviewer role for BG-003. Standing by for Codex handoff. |
+| `BG-004` | Blueprint Gap P2 | Publish memory layer design note for persona, institutional memory, and write-back | 補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。 | Claude | Codex | review | `PLAN-002` | 2026-04-13T02:22:01Z | Memory Layer Design Note ready for review. Artifacts: services/memory/MEMORY_LAYER_DESIGN_NOTE.md, services/memory/persona_memory.schema.json, services/memory/institutional_memory_entry.schema.json. Closes GAP-04. All 4 acceptance criteria met: 2 object schemas, write-back pipeline, retrieval query path, postmortem→institutional memory→research reuse example. |
 | `BG-005` | Blueprint Gap P0 | Define golden replay scenario and acceptance runbook | 定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。 | Codex | Qwen | todo | `BG-000`, `BG-001`, `BG-003` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
 | `BG-006` | Blueprint Gap P1 | Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths | 整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。 | Codex | Qwen | in_progress | `PLAN-002` | 2026-04-13T02:18:56Z | Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota (Request ID: E3C8:222A8F:663D4EE:8132403:69DC5274) |
 | `BG-007` | Blueprint Gap P2 | Publish product-facing glossary and stage-status language pack | 整理 glossary、action→object map 與 stage/status wording 的對外語言包。 | Codex | Claude | todo | `PLAN-002` | 2026-04-12T14:57:33Z | Assignment created from accepted planning session |
-| `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude | Codex | in_progress | - | 2026-04-13T02:14:13Z | Supervisor resumed PLAN-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch. |
+| `PLAN-002-SIDECAR-ACCEPTANCE` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 acceptance packet and dependency map | 平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude | Codex | review_approved | - | 2026-04-13T02:34:37Z | Codex endorsement confirmed: packet is consistent with shared truth, support-only scope preserved throughout. All 10 acceptance criteria verified. Approving for final Claude done closure. |
 | `PLAN-002-SIDECAR-REVIEW` | Planning Bootstrap | [Sidecar] [Auto] [Parent PLAN-002] Prepare PLAN-002 review packet and evidence summary | 平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Qwen | Codex | done | - | 2026-04-13T02:21:36Z | Sidecar review packet formally closed. All acceptance criteria met. Support artifact at support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md. |
+| `BG-002-SIDECAR-ACCEPTANCE` | Blueprint Gap P1 | [Sidecar] [Auto] [Parent BG-002] Prepare BG-002 acceptance packet and dependency map | 平行支援 BG-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Qwen | Claude | review | `PLAN-002` | 2026-04-13T02:39:24Z | Acceptance packet complete. Awaiting Claude review. Artifacts: support/sidecars/BG-002/{BG-002-SIDECAR-ACCEPTANCE.md, BG-002-SIDECAR-REVIEW.md}. All 11 acceptance criteria verified, 5 risks documented, 5 downstream consumers identified. |
+| `BG-003-SIDECAR-ACCEPTANCE` | Blueprint Gap P0 | [Sidecar] [Auto] [Parent BG-003] Prepare BG-003 acceptance packet and dependency map | 平行支援 BG-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Qwen | Codex | review | `PLAN-002` | 2026-04-13T02:41:27Z | Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `BG-004` | Claude | Codex | Memory Layer Design Note ready for review. Artifacts: services/memory/MEMORY_LAYER_DESIGN_NOTE.md, services/memory/persona_memory.schema.json, services/memory/institutional_memory_entry.schema.json. Closes GAP-04. All 4 acceptance criteria met: 2 object schemas, write-back pipeline, retrieval query path, postmortem→institutional memory→research reuse example. | pending | 2026-04-13T02:22:01Z |
+| `PLAN-002-SIDECAR-ACCEPTANCE` | Codex | Claude | Codex endorsement confirmed: packet is consistent with shared truth, support-only scope preserved throughout. All 10 acceptance criteria verified. Approving for final Claude done closure. | pending | 2026-04-13T02:34:37Z |
+| `BG-001` | Qwen | Codex | BG-001 implementation complete: 7 Data Plane objects (SecurityMaster, ContractMaster, MarketCalendarSession, RawDataset, NormalizedDataset, FeatureDataset, DatasetVersion) with Python models + JSON schemas. 29 unit tests + 38 smoke checks all pass. Artifacts: services/data-plane/. Ready for review. | pending | 2026-04-13T02:35:04Z |
+| `BG-002-SIDECAR-ACCEPTANCE` | Qwen | Claude | Acceptance packet created: 11 criteria verified, 5 risks documented, 5 downstream consumers identified. Artifact at support/sidecars/BG-002/BG-002-SIDECAR-ACCEPTANCE.md. Ready for Claude review. | pending | 2026-04-13T02:37:57Z |
+| `BG-003-SIDECAR-ACCEPTANCE` | Qwen | Codex | Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas. | pending | 2026-04-13T02:41:27Z |
 
 ## Blockers
 
@@ -263,23 +271,23 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 ## Latest Checkpoints
 
-- 2026-04-13T02:21:16Z Orchestrator: PostToolUse: TodoWrite
-- 2026-04-13T02:21:19Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:19Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:21:22Z Orchestrator: PreToolUse: Read
-- 2026-04-13T02:21:22Z Orchestrator: PostToolUse: Read
-- 2026-04-13T02:21:25Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:25Z Qwen: `PLAN-002-SIDECAR-REVIEW` --summary
-- 2026-04-13T02:21:25Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:21:27Z Orchestrator: PreToolUse: Read
-- 2026-04-13T02:21:28Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:28Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:21:31Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T022002Z-3efcefa4
-- 2026-04-13T02:21:31Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:31Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:31Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:21:34Z Orchestrator: PreToolUse: Read
-- 2026-04-13T02:21:34Z Orchestrator: PostToolUse: Read
-- 2026-04-13T02:21:35Z Orchestrator: PreToolUse: Bash
-- 2026-04-13T02:21:36Z Orchestrator: PostToolUse: Bash
-- 2026-04-13T02:21:36Z Qwen: `PLAN-002-SIDECAR-REVIEW` Sidecar review packet formally closed. All acceptance criteria met. Support artifact at support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md.
+- 2026-04-13T02:36:24Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T023458Z-64e560f6
+- 2026-04-13T02:36:24Z Orchestrator: `BG-002-SIDECAR-ACCEPTANCE` Worker superseded to prioritize higher-priority review/finalize work.
+- 2026-04-13T02:36:24Z Orchestrator: `BG-003-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
+- 2026-04-13T02:36:51Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T023458Z-64e560f6
+- 2026-04-13T02:36:51Z Orchestrator: `BG-002-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-04-13T02:36:54Z Orchestrator: `BG-002-SIDECAR-ACCEPTANCE` Worker started via qwen: owned_in_progress_dispatch
+- 2026-04-13T02:36:54Z Qwen: `BG-002-SIDECAR-ACCEPTANCE` Supervisor re-dispatched BG-002-SIDECAR-ACCEPTANCE; task remains in progress.
+- 2026-04-13T02:36:54Z Orchestrator: `BG-002-SIDECAR-ACCEPTANCE` Supervisor re-dispatched BG-002-SIDECAR-ACCEPTANCE; task remains in progress.
+- 2026-04-13T02:37:04Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T023458Z-64e560f6
+- 2026-04-13T02:37:31Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T023458Z-64e560f6
+- 2026-04-13T02:37:39Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T023458Z-64e560f6
+- 2026-04-13T02:37:57Z Qwen: `BG-002-SIDECAR-ACCEPTANCE` Handoff to Claude: Acceptance packet created: 11 criteria verified, 5 risks documented, 5 downstream consumers identified. Artifact at support/sidecars/BG-002/BG-002-SIDECAR-ACCEPTANCE.md. Ready for Claude review.
+- 2026-04-13T02:37:58Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260413T023458Z-64e560f6
+- 2026-04-13T02:38:07Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Worker superseded to prioritize higher-priority review/finalize work.
+- 2026-04-13T02:38:07Z Orchestrator: `BG-002-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
+- 2026-04-13T02:38:07Z Orchestrator: `BG-002-SIDECAR-ACCEPTANCE` Review task is in review, but no non-default local branch is available for PR creation.
+- 2026-04-13T02:38:15Z Orchestrator: `PLAN-002-SIDECAR-ACCEPTANCE` Auto-pruned stale approval apr-20260413T023458Z-64e560f6
+- 2026-04-13T02:38:32Z Qwen: `BG-002-SIDECAR-ACCEPTANCE` Acceptance packet authored, committed (f9f2808), and handed off to Claude for review.
+- 2026-04-13T02:39:24Z Codex: `BG-002-SIDECAR-ACCEPTANCE` Acceptance packet complete. Awaiting Claude review. Artifacts: support/sidecars/BG-002/{BG-002-SIDECAR-ACCEPTANCE.md, BG-002-SIDECAR-REVIEW.md}. All 11 acceptance criteria verified, 5 risks documented, 5 downstream consumers identified.
+- 2026-04-13T02:41:27Z Qwen: `BG-003-SIDECAR-ACCEPTANCE` Handoff to Codex: Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas.

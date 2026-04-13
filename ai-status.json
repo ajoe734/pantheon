@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-12-blueprint-gap-convergence-planning",
   "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-13T02:21:36Z",
+  "updated_at": "2026-04-13T02:41:27Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -91,16 +91,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
-        "BG-001",
-        "BG-002",
-        "BG-004",
-        "PLAN-002-SIDECAR-ACCEPTANCE"
+        "BG-004"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
-      "last_update": "2026-04-13T02:21:04Z"
+      "next": "Memory Layer Design Note ready for review. Artifacts: services/memory/MEMORY_LAYER_DESIGN_NOTE.md, services/memory/persona_memory.schema.json, services/memory/institutional_memory_entry.schema.json. Closes GAP-04. All 4 acceptance criteria met: 2 object schemas, write-back pipeline, retrieval query path, postmortem→institutional memory→research reuse example.",
+      "last_update": "2026-04-13T02:22:01Z"
     },
     {
       "name": "Gemini",
@@ -113,8 +110,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started BG-003 after successful dispatch.",
-      "last_update": "2026-04-13T02:18:18Z"
+      "next": "Supervisor auto-started BG-003-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-04-13T02:35:34Z"
     },
     {
       "name": "Codex",
@@ -126,12 +123,13 @@
       ],
       "status": "working",
       "current_task_ids": [
+        "BG-002",
         "BG-003",
         "BG-006"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
-      "last_update": "2026-04-13T02:19:49Z"
+      "next": "Auto-reassigned ownership from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"270631f1-5fc3-4d76-91ef-35fb320783a3\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1pm (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"b3d9eabb-b702-4300-a418-db16e347ff04\",\"uuid\":\"165f6beb-6405-48e3-97e7-64b6fc3ff3e1\",\"error\":\"rate_limit\"}",
+      "last_update": "2026-04-13T02:36:11Z"
     },
     {
       "name": "Copilot",
@@ -155,11 +153,15 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "BG-001",
+        "BG-002-SIDECAR-ACCEPTANCE",
+        "BG-003-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/qwen-code-agent",
-      "next": "Codex reviewer approval confirmed. Sidecar review packet verified against shared truth. Ready for Qwen to close as done.",
-      "last_update": "2026-04-13T02:20:40Z"
+      "next": "Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas.",
+      "last_update": "2026-04-13T02:41:27Z"
     }
   ],
   "tasks": [
@@ -3420,23 +3422,23 @@
       "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
       "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
       "phase": "Blueprint Gap P0",
-      "owner": "Claude",
+      "owner": "Qwen",
       "reviewer": "Codex",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "in_progress",
-      "next": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
-      "last_update": "2026-04-13T02:21:04Z"
+      "status": "review",
+      "next": "Artifacts registered: services/data-plane/{models, schemas, tests, README.md, smoke_test.py}",
+      "last_update": "2026-04-13T02:35:40Z"
     },
     {
       "id": "BG-002",
       "title": "Publish research backend maturity matrix and production-path mapping",
       "summary_zh": "整理 research backend maturity matrix 與 production path 對照。",
       "phase": "Blueprint Gap P1",
-      "owner": "Claude",
+      "owner": "Codex",
       "reviewer": "Qwen",
       "depends_on": [
         "PLAN-002"
@@ -3444,8 +3446,8 @@
       "artifacts": [],
       "acceptance": [],
       "status": "in_progress",
-      "next": "Supervisor re-dispatched BG-002; task remains in progress.",
-      "last_update": "2026-04-13T02:18:58Z"
+      "next": "Auto-reassigned ownership from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"270631f1-5fc3-4d76-91ef-35fb320783a3\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1pm (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"b3d9eabb-b702-4300-a418-db16e347ff04\",\"uuid\":\"165f6beb-6405-48e3-97e7-64b6fc3ff3e1\",\"error\":\"rate_limit\"}",
+      "last_update": "2026-04-13T02:36:11Z"
     },
     {
       "id": "BG-003",
@@ -3460,8 +3462,8 @@
       "artifacts": [],
       "acceptance": [],
       "status": "in_progress",
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
-      "last_update": "2026-04-13T02:19:49Z"
+      "next": "Qwen acknowledges reviewer role for BG-003. Standing by for Codex handoff.",
+      "last_update": "2026-04-13T02:23:05Z"
     },
     {
       "id": "BG-004",
@@ -3475,9 +3477,9 @@
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "in_progress",
-      "next": "Supervisor re-dispatched BG-004; task remains in progress.",
-      "last_update": "2026-04-13T02:18:16Z"
+      "status": "review",
+      "next": "Memory Layer Design Note ready for review. Artifacts: services/memory/MEMORY_LAYER_DESIGN_NOTE.md, services/memory/persona_memory.schema.json, services/memory/institutional_memory_entry.schema.json. Closes GAP-04. All 4 acceptance criteria met: 2 object schemas, write-back pipeline, retrieval query path, postmortem→institutional memory→research reuse example.",
+      "last_update": "2026-04-13T02:22:01Z"
     },
     {
       "id": "BG-005",
@@ -3536,7 +3538,7 @@
       "phase": "Planning Bootstrap",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md"
@@ -3546,8 +3548,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor resumed PLAN-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch.",
-      "last_update": "2026-04-13T02:14:13Z",
+      "next": "Codex endorsement confirmed: packet is consistent with shared truth, support-only scope preserved throughout. All 10 acceptance criteria verified. Approving for final Claude done closure.",
+      "last_update": "2026-04-13T02:34:37Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "PLAN-002",
@@ -3619,6 +3621,62 @@
         "behind": 0,
         "push_status": "ahead"
       }
+    },
+    {
+      "id": "BG-002-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BG-002 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BG-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Blueprint Gap P1",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-002/BG-002-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Acceptance packet complete. Awaiting Claude review. Artifacts: support/sidecars/BG-002/{BG-002-SIDECAR-ACCEPTANCE.md, BG-002-SIDECAR-REVIEW.md}. All 11 acceptance criteria verified, 5 risks documented, 5 downstream consumers identified.",
+      "last_update": "2026-04-13T02:39:24Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-002",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BG-003-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BG-003 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BG-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-003/BG-003-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas.",
+      "last_update": "2026-04-13T02:41:27Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-003",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -7339,6 +7397,82 @@
       "status": "done",
       "created_at": "2026-04-13T02:20:40Z",
       "resolved_at": "2026-04-13T02:21:25Z"
+    },
+    {
+      "task_id": "BG-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Memory Layer Design Note ready for review. Artifacts: services/memory/MEMORY_LAYER_DESIGN_NOTE.md, services/memory/persona_memory.schema.json, services/memory/institutional_memory_entry.schema.json. Closes GAP-04. All 4 acceptance criteria met: 2 object schemas, write-back pipeline, retrieval query path, postmortem→institutional memory→research reuse example.",
+      "status": "pending",
+      "created_at": "2026-04-13T02:22:01Z"
+    },
+    {
+      "task_id": "BG-002",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "RESEARCH_BACKEND_MATURITY_MATRIX.md published. 13 backends classified: 3 production-path (DSPy, imitation, MLflow), 7 activation-ready (OpenClaw, Qlib, TRL, FinRL, RLlib, Ray Tune, W&B), 3 not-integrated (vectorbt, statsmodels, QuantLib). Sidecar packet at support/sidecars/BG-002/BG-002-SIDECAR-REVIEW.md. Please verify tier assignments and GAP-02 format compliance.",
+      "status": "done",
+      "created_at": "2026-04-13T02:24:47Z",
+      "resolved_at": "2026-04-13T02:26:21Z"
+    },
+    {
+      "task_id": "BG-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Review approved. Tier assignments verified: 3 production-path (DSPy/imitation/MLflow smoke-tested), 7 activation-ready (OpenClaw/Qlib/TRL/FinRL/RLlib/Ray Tune/W&B), 3 not-integrated (vectorbt/statsmodels/QuantLib). Cross-backend consistency assessment sound. GAP-02 format compliance satisfied.",
+      "status": "done",
+      "created_at": "2026-04-13T02:26:21Z",
+      "resolved_at": "2026-04-13T02:33:11Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete: all 10 criteria verified against shared truth, PLAN-002 is done, Codex endorsement on record in review_notes_zh. Submitting for final approve step.",
+      "status": "done",
+      "created_at": "2026-04-13T02:34:29Z",
+      "resolved_at": "2026-04-13T02:34:37Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex endorsement confirmed: packet is consistent with shared truth, support-only scope preserved throughout. All 10 acceptance criteria verified. Approving for final Claude done closure.",
+      "status": "pending",
+      "created_at": "2026-04-13T02:34:37Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All 7 Data Plane schemas, models, tests, and AVAILABILITY_TIME_DISCIPLINE.md spec complete. 29/29 tests pass. MarketCalendarSession holiday validation bug fixed. Ready for review. Artifacts: services/data-plane/schemas/*.schema.json (7 files), services/data-plane/models/*.py (4 files), services/data-plane/tests/test_data_plane_schemas.py, docs/01-design-decisions/AVAILABILITY_TIME_DISCIPLINE.md.",
+      "status": "done",
+      "created_at": "2026-04-13T02:34:46Z",
+      "resolved_at": "2026-04-13T02:35:04Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "BG-001 implementation complete: 7 Data Plane objects (SecurityMaster, ContractMaster, MarketCalendarSession, RawDataset, NormalizedDataset, FeatureDataset, DatasetVersion) with Python models + JSON schemas. 29 unit tests + 38 smoke checks all pass. Artifacts: services/data-plane/. Ready for review.",
+      "status": "pending",
+      "created_at": "2026-04-13T02:35:04Z"
+    },
+    {
+      "task_id": "BG-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Acceptance packet created: 11 criteria verified, 5 risks documented, 5 downstream consumers identified. Artifact at support/sidecars/BG-002/BG-002-SIDECAR-ACCEPTANCE.md. Ready for Claude review.",
+      "status": "pending",
+      "created_at": "2026-04-13T02:37:57Z"
+    },
+    {
+      "task_id": "BG-003-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas.",
+      "status": "pending",
+      "created_at": "2026-04-13T02:41:27Z"
     }
   ],
   "blockers": [
@@ -7415,13 +7549,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 10,
-      "active": 4,
+      "total": 8,
+      "active": 1,
       "blocked": 0,
       "done": 6,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 4
+      "review": 1,
+      "review_approved": 1,
+      "todo": 0
     },
     "Gemini": {
       "total": 3,
@@ -7433,20 +7567,20 @@
       "todo": 0
     },
     "Codex": {
-      "total": 73,
-      "active": 2,
+      "total": 74,
+      "active": 3,
       "blocked": 0,
       "done": 68,
       "review": 0,
       "review_approved": 0,
-      "todo": 5
+      "todo": 6
     },
     "Qwen": {
-      "total": 37,
-      "active": 0,
+      "total": 40,
+      "active": 3,
       "blocked": 0,
       "done": 37,
-      "review": 0,
+      "review": 3,
       "review_approved": 0,
       "todo": 0
     },
