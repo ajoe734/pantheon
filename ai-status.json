@@ -1,8 +1,8 @@
 {
   "project": "pantheon",
-  "sprint": "2026-04-09-phased-platform-execution",
-  "objective": "Activate the full Pantheon platform backlog in ai-status so agents can execute continuously by dependency order while preserving canonical policy truth, owner/reviewer defaults, and phased delivery sequencing.",
-  "updated_at": "2026-04-12T02:20:27Z",
+  "sprint": "2026-04-12-blueprint-gap-convergence-planning",
+  "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
+  "updated_at": "2026-04-13T02:14:15Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -30,6 +30,10 @@
       "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
     ],
     "L2 Planning & Execution": [
+      "docs/02-architecture/consensus/phase2/README.md",
+      "docs/02-architecture/consensus/phase2/planning-session.json",
+      "Pantheon_Blueprint_Gap_Review_v1.md",
+      "Pantheon_Market_Data_Scope_and_Source_Plan_v1.md",
       "CANONICAL_DOCUMENT_MAP.md",
       "ROADMAP.md",
       "DEVELOPMENT_WORKBREAKDOWN.md",
@@ -65,6 +69,10 @@
     "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
     "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
     "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+    "docs/02-architecture/consensus/phase2/README.md",
+    "docs/02-architecture/consensus/phase2/planning-session.json",
+    "Pantheon_Blueprint_Gap_Review_v1.md",
+    "Pantheon_Market_Data_Scope_and_Source_Plan_v1.md",
     "CANONICAL_DOCUMENT_MAP.md",
     "ROADMAP.md",
     "DEVELOPMENT_WORKBREAKDOWN.md",
@@ -83,11 +91,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "PLAN-002-SIDECAR-ACCEPTANCE",
+        "PLAN-002-SIDECAR-REVIEW"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor auto-started APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-04-11T23:07:46Z"
+      "next": "Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.",
+      "last_update": "2026-04-13T02:14:15Z"
     },
     {
       "name": "Gemini",
@@ -100,8 +111,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started APP-002-W5-SSE-LIVE after successful dispatch.",
-      "last_update": "2026-04-11T23:12:19Z"
+      "next": "Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.",
+      "last_update": "2026-04-13T00:15:11Z"
     },
     {
       "name": "Codex",
@@ -111,11 +122,15 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "BG-000",
+        "BG-005",
+        "BG-007"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "Review approved (syncing prior approval).",
-      "last_update": "2026-04-12T01:25:32Z"
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-13T02:10:24Z"
     },
     {
       "name": "Copilot",
@@ -139,11 +154,13 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "PLAN-002"
+      ],
       "branch": "feat/qwen-code-agent",
-      "next": "Review approved: sidecar review packet complete and evidence verified",
-      "last_update": "2026-04-12T01:23:10Z"
+      "next": "PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.",
+      "last_update": "2026-04-13T02:13:49Z"
     }
   ],
   "tasks": [
@@ -3339,6 +3356,214 @@
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization",
       "terminal_outcome": "completed"
+    },
+    {
+      "id": "PLAN-002",
+      "title": "Generalize discussion planning for reusable sessions",
+      "summary_zh": "把 discussion planning runtime 改成可重複使用的 session-driven 模式。",
+      "phase": "Planning Bootstrap",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "review_approved",
+      "next": "PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.",
+      "last_update": "2026-04-13T02:13:49Z"
+    },
+    {
+      "id": "BG-000",
+      "title": "Canonicalize market scope, instrument policy, and source-class matrix",
+      "summary_zh": "把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "BG-001",
+      "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
+      "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "BG-002",
+      "title": "Publish research backend maturity matrix and production-path mapping",
+      "summary_zh": "整理 research backend maturity matrix 與 production path 對照。",
+      "phase": "Blueprint Gap P1",
+      "owner": "Qwen",
+      "reviewer": "Gemini",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "BG-003",
+      "title": "Formalize decision-front objects and adjudication boundaries",
+      "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "BG-004",
+      "title": "Publish memory layer design note for persona, institutional memory, and write-back",
+      "summary_zh": "補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。",
+      "phase": "Blueprint Gap P2",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "BG-005",
+      "title": "Define golden replay scenario and acceptance runbook",
+      "summary_zh": "定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "depends_on": [
+        "BG-000",
+        "BG-001",
+        "BG-003"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "BG-006",
+      "title": "Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths",
+      "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
+      "phase": "Blueprint Gap P1",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "BG-007",
+      "title": "Publish product-facing glossary and stage-status language pack",
+      "summary_zh": "整理 glossary、action→object map 與 stage/status wording 的對外語言包。",
+      "phase": "Blueprint Gap P2",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [],
+      "acceptance": [],
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-12T14:57:33Z"
+    },
+    {
+      "id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "title": "Prepare PLAN-002 acceptance packet and dependency map",
+      "summary_zh": "平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Planning Bootstrap",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Supervisor resumed PLAN-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch.",
+      "last_update": "2026-04-13T02:14:13Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "PLAN-002",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "reviewer endorsement complete：packet 已對齊目前 shared truth 的 Qwen-owned parent state",
+        "acceptance packet 仍維持 support-only scope，未修改 canonical truth",
+        "可交回 Claude 做 final done closure，供 parent PLAN-002 reviewer flow 引用"
+      ],
+      "review_file": "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md"
+    },
+    {
+      "id": "PLAN-002-SIDECAR-REVIEW",
+      "title": "Prepare PLAN-002 review packet and evidence summary",
+      "summary_zh": "平行支援 PLAN-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Planning Bootstrap",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Supervisor re-dispatched PLAN-002-SIDECAR-REVIEW; task remains in progress.",
+      "last_update": "2026-04-13T02:14:15Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "PLAN-002",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "reviewer addendum 已限制在共享真相範圍",
+        "packet 可作為 PLAN-002 支援性 review evidence，未觸碰 canonical truth",
+        "下一步應由 Claude 將此 sidecar 正式結為 done"
+      ],
+      "review_file": "support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md"
     }
   ],
   "handoffs": [
@@ -6870,6 +7095,149 @@
       "status": "done",
       "created_at": "2026-04-12T01:25:32Z",
       "resolved_at": "2026-04-12T01:25:38Z"
+    },
+    {
+      "task_id": "PLAN-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented reusable planning session profiles in planning_state, preserved legacy phase1/blueprint-gap behavior, and prevented generic phase2 sessions from inheriting blueprint defaults. Verified with test_planning_state, test_ai_status, test_supervisor, and test_orchestrator_bundle.",
+      "status": "done",
+      "created_at": "2026-04-12T15:09:20Z",
+      "resolved_at": "2026-04-13T00:28:33Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet created at support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md. Contains dependency map, 10-item acceptance checklist, execution wave readiness, and artifact inventory. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-13T00:19:43Z",
+      "resolved_at": "2026-04-13T00:25:41Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewer cleanup complete: packet now cites shared truth only, corrects downstream task count to 8 BG tasks, and is ready to support parent PLAN-002 closure.",
+      "status": "done",
+      "created_at": "2026-04-13T00:25:41Z",
+      "resolved_at": "2026-04-13T00:26:02Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet complete at support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md. All 10 acceptance criteria verified. Ready for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-04-13T00:27:16Z",
+      "resolved_at": "2026-04-13T00:28:30Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewer cleanup complete: packet now cites shared truth only, corrects downstream task count to 8 BG tasks, and is ready to support parent PLAN-002 closure.",
+      "status": "done",
+      "created_at": "2026-04-13T00:28:30Z",
+      "resolved_at": "2026-04-13T00:28:54Z"
+    },
+    {
+      "task_id": "PLAN-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PLAN-002 APPROVED. Reviewed planning_state.py: (1) session profile isolation confirmed — generic phase2 sessions correctly use SESSION_PROFILE_GENERIC and do not inherit blueprint-gap brief files, expected outputs, or proposed tasks; (2) legacy phase1 behavior preserved via LEGACY_SESSION_PATHS + legacy_phase_for_session() routing phase1-bootstrap and phase1-2026-04-11-backend-completion to their original phase1 directory; (3) session pointer system working — planning-session-pointer.json correctly tracks active session; (4) all 9 test_planning_state tests pass, plus 35/35 across test_ai_status/test_supervisor/test_orchestrator_bundle. Downstream BG-000 through BG-007 are unblocked.",
+      "status": "done",
+      "created_at": "2026-04-13T00:28:33Z",
+      "resolved_at": "2026-04-13T00:28:52Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet verified against shared truth (ai-status.json, current-work.md, ai-activity-log.jsonl). All 10 acceptance criteria confirmed. 8 BG tasks materialized and dependency-gated on PLAN-002. Claude sign-off added in Section 7. Use as support evidence when Codex hands off PLAN-002 to Claude for formal review closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:03:50Z",
+      "resolved_at": "2026-04-13T02:03:55Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet verified against shared truth (ai-status.json, current-work.md, ai-activity-log.jsonl). All 10 acceptance criteria confirmed. 8 BG tasks materialized and dependency-gated on PLAN-002. Claude sign-off added in Section 7. Use as support evidence when Codex hands off PLAN-002 to Claude for formal review closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:03:55Z",
+      "resolved_at": "2026-04-13T02:06:02Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet verified: Qwen's independent code verification (9 tests, live profile assertions, pointer file checks) all confirmed against source. Minor non-blocking observation on alias map structure noted. Verdict: APPROVED. Ready for Codex endorsement.",
+      "status": "done",
+      "created_at": "2026-04-13T02:04:00Z",
+      "resolved_at": "2026-04-13T02:04:06Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete. Qwen independently verified all 6 implementation claim categories; Claude co-signed. All findings traceable to shared truth. Packet at support/sidecars/PLAN-002/PLAN-002-SIDECAR-REVIEW.md. Requesting Codex reviewer approval to unblock parent PLAN-002 closure and the BG execution wave.",
+      "status": "done",
+      "created_at": "2026-04-13T02:04:06Z",
+      "resolved_at": "2026-04-13T02:08:44Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet re-aligned to current shared truth before approval: parent PLAN-002 is currently in_progress, sidecar owner is Claude, and the only remaining action is for Codex to hand PLAN-002 back to Claude for formal review closure. All 10 acceptance criteria remain verified from ai-status.json, current-work.md, ai-activity-log.jsonl, and docs-site/index.html. Support-only scope preserved; no canonical truth changed.",
+      "status": "done",
+      "created_at": "2026-04-13T02:06:02Z",
+      "resolved_at": "2026-04-13T02:06:15Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer approval recorded from shared truth. Sidecar packet is sufficient as support evidence and is handed back to Claude for final done closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:08:44Z",
+      "resolved_at": "2026-04-13T02:10:23Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 10 acceptance criteria verified against shared truth. Finalize section added (Section 8). No canonical truth modified. Requesting formal approval to mark done and unblock parent PLAN-002 closure + BG execution wave.",
+      "status": "done",
+      "created_at": "2026-04-13T02:10:10Z",
+      "resolved_at": "2026-04-13T02:13:51Z"
+    },
+    {
+      "task_id": "PLAN-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "PLAN-002 ready for final review closure. All 10 acceptance criteria verified by sidecar packet. Sidecar review APPROVED by Qwen, CONFIRMED by Claude, ENDORSED by Codex. Planning session accepted with human gate approved. 8 BG tasks materialized. Ready for reviewer sign-off and done closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:13:41Z",
+      "resolved_at": "2026-04-13T02:13:49Z"
+    },
+    {
+      "task_id": "PLAN-002",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.",
+      "status": "pending",
+      "created_at": "2026-04-13T02:13:49Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Shared-truth reviewer pass complete. Packet aligned to current parent ownership and ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T02:13:51Z",
+      "resolved_at": "2026-04-13T02:14:13Z"
     }
   ],
   "blockers": [
@@ -6946,13 +7314,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 6,
-      "active": 0,
+      "total": 9,
+      "active": 2,
       "blocked": 0,
       "done": 6,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 3
     },
     "Gemini": {
       "total": 3,
@@ -6964,22 +7332,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 68,
+      "total": 71,
       "active": 0,
       "blocked": 0,
       "done": 68,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 3
     },
     "Qwen": {
-      "total": 35,
+      "total": 40,
       "active": 0,
       "blocked": 0,
       "done": 35,
       "review": 0,
-      "review_approved": 0,
-      "todo": 0
+      "review_approved": 1,
+      "todo": 4
     },
     "Copilot": {
       "total": 16,

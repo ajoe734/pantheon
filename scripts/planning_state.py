@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -15,22 +17,24 @@ if str(THIS_DIR) not in sys.path:
 
 import ai_status
 
-PLANNING_DIR = ROOT / "docs" / "02-architecture" / "consensus" / "phase1"
-SESSION_FILE = PLANNING_DIR / "planning-session.json"
-README_FILE = PLANNING_DIR / "README.md"
-READOUT_TEMPLATE_FILE = PLANNING_DIR / "LLM_READOUT_TEMPLATE.md"
-CHECKLIST_FILE = PLANNING_DIR / "pantheon-backend-completion-checklist.md"
-STARTER_DRAFT_FILE = PLANNING_DIR / "starter-draft.md"
-BATON_LOG_FILE = PLANNING_DIR / "baton-log.md"
-SUPERVISOR_QUEUE_FILE = PLANNING_DIR / "supervisor-queue.md"
-CONSENSUS_PACKET_FILE = PLANNING_DIR / "consensus-packet.md"
+DEFAULT_PHASE = "phase1"
 ROUND_GLOB = "review-round-*.md"
 DERIVED_STATE_FILE = ROOT / ".orchestrator" / "planning-state.json"
+PLANNING_POINTER_FILE = ROOT / ".orchestrator" / "planning-session-pointer.json"
+ORCHESTRATOR_STATE_FILE = ROOT / ".orchestrator" / "state.json"
 
 AGENT_ORDER = ["Claude", "Codex", "Gemini", "Qwen", "Copilot"]
 BATON_SEQUENCE = ["Codex", "Qwen", "Gemini", "Copilot", "Claude"]
 REVIEW_SEQUENCE = ["Qwen", "Gemini", "Copilot", "Claude"]
-ROUND_WILDCARD_PATH = "docs/02-architecture/consensus/phase1/review-round-*.md"
+PHASE2_SESSION_ID = "phase2-2026-04-12-blueprint-gap-convergence"
+SESSION_PROFILE_GENERIC = "generic"
+SESSION_PROFILE_BACKEND_COMPLETION = "backend-completion"
+SESSION_PROFILE_BLUEPRINT_GAP = "blueprint-gap-convergence"
+LEGACY_SESSION_PATHS = {
+    "phase1-bootstrap": "phase1",
+    "phase1-2026-04-11-backend-completion": "phase1",
+    PHASE2_SESSION_ID: "phase2",
+}
 PLANNING_STATUS_LABELS = {
     "inactive",
     "active",
@@ -51,6 +55,17 @@ HUMAN_GATE_STATUS_LABELS = {
     "approved",
     "rejected",
 }
+SESSION_PROFILE_ALIASES = {
+    "generic": SESSION_PROFILE_GENERIC,
+    "default": SESSION_PROFILE_GENERIC,
+    "backend-completion": SESSION_PROFILE_BACKEND_COMPLETION,
+    "backend_completion": SESSION_PROFILE_BACKEND_COMPLETION,
+    "phase1": SESSION_PROFILE_BACKEND_COMPLETION,
+    "blueprint-gap-convergence": SESSION_PROFILE_BLUEPRINT_GAP,
+    "blueprint_gap_convergence": SESSION_PROFILE_BLUEPRINT_GAP,
+    "blueprint-gap": SESSION_PROFILE_BLUEPRINT_GAP,
+    "phase2-blueprint-gap-convergence": SESSION_PROFILE_BLUEPRINT_GAP,
+}
 
 
 def iso_now() -> str:
@@ -59,6 +74,387 @@ def iso_now() -> str:
 
 def relative_to_root(path: Path) -> str:
     return str(path.relative_to(ROOT))
+
+
+def phase_from_session_id(session_id: str | None, fallback: str = DEFAULT_PHASE) -> str:
+    candidate = str(session_id or "").strip()
+    match = re.match(r"^(phase\d+)\b", candidate, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+    return fallback
+
+
+def canonical_session_profile(value: Any) -> str:
+    candidate = str(value or "").strip().lower().replace("_", "-")
+    if not candidate:
+        return ""
+    return SESSION_PROFILE_ALIASES.get(candidate, "")
+
+
+def resolve_session_profile(session_id: str | None, phase: str | None, explicit_profile: Any = None) -> str:
+    explicit = canonical_session_profile(explicit_profile)
+    if explicit:
+        return explicit
+
+    candidate = str(session_id or "").strip()
+    if candidate == PHASE2_SESSION_ID:
+        return SESSION_PROFILE_BLUEPRINT_GAP
+    if candidate in {"phase1-bootstrap", "phase1-2026-04-11-backend-completion"}:
+        return SESSION_PROFILE_BACKEND_COMPLETION
+    if str(phase or "").strip().lower() == "phase1":
+        return SESSION_PROFILE_BACKEND_COMPLETION
+    return SESSION_PROFILE_GENERIC
+
+
+def profile_has_backend_checklist(profile: str) -> bool:
+    return profile == SESSION_PROFILE_BACKEND_COMPLETION
+
+
+def profile_has_gap_outputs(profile: str) -> bool:
+    return profile == SESSION_PROFILE_BLUEPRINT_GAP
+
+
+def profile_fixed_baton_owner(profile: str) -> str | None:
+    if profile == SESSION_PROFILE_BLUEPRINT_GAP:
+        return "Codex"
+    return None
+
+
+def planning_dir_for_phase(phase: str) -> Path:
+    return ROOT / "docs" / "02-architecture" / "consensus" / (str(phase or DEFAULT_PHASE).strip() or DEFAULT_PHASE)
+
+
+def planning_sessions_root() -> Path:
+    return ROOT / "docs" / "02-architecture" / "consensus" / "sessions"
+
+
+def legacy_phase_for_session(session_id: str | None) -> str | None:
+    candidate = str(session_id or "").strip()
+    return LEGACY_SESSION_PATHS.get(candidate)
+
+
+def planning_dir_for_session(session_id: str | None, phase: str | None = None) -> Path:
+    resolved_phase = str(phase or "").strip() or phase_from_session_id(session_id)
+    legacy_phase = legacy_phase_for_session(session_id)
+    if legacy_phase:
+        return planning_dir_for_phase(legacy_phase)
+    session_slug = str(session_id or "").strip() or "bootstrap-session"
+    return planning_sessions_root() / session_slug
+
+
+def configure_session_paths(planning_dir: Path) -> None:
+    global PLANNING_DIR
+    global SESSION_FILE
+    global README_FILE
+    global READOUT_TEMPLATE_FILE
+    global CHECKLIST_FILE
+    global STARTER_DRAFT_FILE
+    global BATON_LOG_FILE
+    global SUPERVISOR_QUEUE_FILE
+    global CONSENSUS_PACKET_FILE
+    global ROUND_WILDCARD_PATH
+
+    PLANNING_DIR = planning_dir
+    SESSION_FILE = PLANNING_DIR / "planning-session.json"
+    README_FILE = PLANNING_DIR / "README.md"
+    READOUT_TEMPLATE_FILE = PLANNING_DIR / "LLM_READOUT_TEMPLATE.md"
+    CHECKLIST_FILE = PLANNING_DIR / "pantheon-backend-completion-checklist.md"
+    STARTER_DRAFT_FILE = PLANNING_DIR / "starter-draft.md"
+    BATON_LOG_FILE = PLANNING_DIR / "baton-log.md"
+    SUPERVISOR_QUEUE_FILE = PLANNING_DIR / "supervisor-queue.md"
+    CONSENSUS_PACKET_FILE = PLANNING_DIR / "consensus-packet.md"
+    ROUND_WILDCARD_PATH = f"{relative_to_root(PLANNING_DIR)}/{ROUND_GLOB}"
+
+
+configure_session_paths(planning_dir_for_phase(DEFAULT_PHASE))
+
+
+def list_session_files() -> list[Path]:
+    session_files: list[Path] = []
+    seen: set[Path] = set()
+    for phase in sorted(set(LEGACY_SESSION_PATHS.values())):
+        candidate = planning_dir_for_phase(phase) / "planning-session.json"
+        if candidate.exists() and candidate not in seen:
+            seen.add(candidate)
+            session_files.append(candidate)
+    sessions_dir = planning_sessions_root()
+    if sessions_dir.exists():
+        for candidate in sorted(sessions_dir.glob("*/planning-session.json")):
+            if candidate not in seen:
+                seen.add(candidate)
+                session_files.append(candidate)
+    return session_files
+
+
+def discover_recent_sessions(*, active_session_id: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    active_id = str(active_session_id or "").strip()
+    for session_file in list_session_files():
+        try:
+            payload = json.loads(session_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        session_id = str(payload.get("session_id") or session_file.parent.name).strip()
+        phase = str(payload.get("phase") or "").strip() or phase_from_session_id(session_id, session_file.parent.name)
+        planning_dir = str(payload.get("planning_dir") or relative_to_root(session_file.parent)).strip()
+        sessions.append(
+            {
+                "session_id": session_id,
+                "phase": phase,
+                "status": str(payload.get("status") or "inactive"),
+                "consensus_status": str(payload.get("consensus_status") or "not_started"),
+                "human_gate_status": str(payload.get("human_gate_status") or "not_requested"),
+                "planning_dir": planning_dir,
+                "session_file": relative_to_root(session_file),
+                "updated_at": str(payload.get("updated_at") or path_updated_at(session_file) or ""),
+                "archived": session_id != active_id,
+            }
+        )
+    sessions.sort(
+        key=lambda item: (
+            0 if str(item.get("session_id") or "") == active_id else 1,
+            str(item.get("updated_at") or ""),
+        ),
+        reverse=False,
+    )
+    sessions.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    if active_id:
+        sessions.sort(key=lambda item: 0 if str(item.get("session_id") or "") == active_id else 1)
+    return sessions[:limit]
+
+
+def load_active_session_pointer() -> dict[str, Any]:
+    default_planning_dir = planning_dir_for_phase(DEFAULT_PHASE)
+    default_payload = {
+        "session_id": "phase1-2026-04-11-backend-completion",
+        "phase": DEFAULT_PHASE,
+        "planning_dir": relative_to_root(default_planning_dir),
+        "session_file": relative_to_root(default_planning_dir / "planning-session.json"),
+    }
+    if not PLANNING_POINTER_FILE.exists():
+        return default_payload
+    try:
+        payload = json.loads(PLANNING_POINTER_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return default_payload
+    if not isinstance(payload, dict):
+        return default_payload
+    planning_dir = str(payload.get("planning_dir") or "").strip()
+    if not planning_dir:
+        session_id = str(payload.get("session_id") or "").strip()
+        phase = str(payload.get("phase") or "").strip() or phase_from_session_id(session_id)
+        planning_dir = relative_to_root(planning_dir_for_session(session_id, phase))
+    payload["planning_dir"] = planning_dir
+    payload["session_file"] = str(payload.get("session_file") or f"{planning_dir}/planning-session.json")
+    payload["phase"] = str(payload.get("phase") or "").strip() or phase_from_session_id(payload.get("session_id"))
+    return payload
+
+
+def save_active_session_pointer(session: dict[str, Any]) -> None:
+    PLANNING_POINTER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "session_id": session.get("session_id"),
+        "phase": session.get("phase"),
+        "planning_dir": relative_to_root(PLANNING_DIR),
+        "session_file": relative_to_root(SESSION_FILE),
+        "updated_at": iso_now(),
+    }
+    PLANNING_POINTER_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def unique_strings(items: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def blueprint_gap_brief_files() -> list[str]:
+    layers = ai_status.default_canonical_document_layers()
+    l1 = list(layers.get("L1 Platform Architecture & Policy", []))
+    l2 = [
+        item
+        for item in layers.get("L2 Planning & Execution", [])
+        if "/consensus/phase1/" not in item
+    ]
+    return unique_strings(
+        [
+            "Pantheon_Blueprint_Gap_Review_v1.md",
+            "Pantheon_Market_Data_Scope_and_Source_Plan_v1.md",
+            "ai-status.json",
+            "current-work.md",
+            *l1,
+            *l2,
+        ]
+    )
+
+
+def default_brief_files(profile: str) -> list[str]:
+    if profile == SESSION_PROFILE_BLUEPRINT_GAP:
+        return blueprint_gap_brief_files()
+    if profile == SESSION_PROFILE_BACKEND_COMPLETION:
+        return [relative_to_root(CHECKLIST_FILE)]
+    return []
+
+
+def default_expected_outputs(profile: str) -> list[dict[str, Any]]:
+    base = [
+        {
+            "id": "consensus_packet",
+            "path": relative_to_root(CONSENSUS_PACKET_FILE),
+            "owner": "Claude",
+            "status": "not_started",
+        }
+    ]
+    if profile == SESSION_PROFILE_BLUEPRINT_GAP:
+        return [
+            {
+                "id": "gap_response_matrix",
+                "path": f"{relative_to_root(PLANNING_DIR)}/gap-response-matrix.md",
+                "owner": "Claude",
+                "status": "not_started",
+            },
+            {
+                "id": "execution_materialization",
+                "path": f"{relative_to_root(PLANNING_DIR)}/execution-materialization.md",
+                "owner": "Codex",
+                "status": "not_started",
+            },
+            *base,
+        ]
+    return base
+
+
+def default_lane_focus(profile: str) -> dict[str, str]:
+    generic = {
+        "Claude": "Facilitate consensus, synthesize cited disagreements, and prepare the human gate packet.",
+        "Codex": "Ground the plan in repo evidence and turn converged decisions into execution slices.",
+        "Gemini": "Stress-test runtime, replay, and tooling feasibility.",
+        "Qwen": "Audit schemas, object boundaries, and contract formalization gaps.",
+        "Copilot": "Pressure-test research readiness, external source assumptions, and acceptance wording.",
+    }
+    if profile == SESSION_PROFILE_BLUEPRINT_GAP:
+        return {
+            "Claude": "Facilitate the blueprint-gap session, integrate readouts and unresolved items, and draft the final consensus packet after every lane is resolved or waived.",
+            "Codex": "Verify each gap claim against repo evidence, own the shared starter draft, and draft execution materialization for the next delivery wave.",
+            "Gemini": "Evaluate runtime, replay, and tooling feasibility for GAP-02 and GAP-05; report blockers with cited implementation constraints.",
+            "Qwen": "Audit schema and object formalization for GAP-01, GAP-03, and GAP-06, especially canonical object boundaries and acceptance surface coverage.",
+            "Copilot": "Critique market-source scope, research backend maturity, and product-facing acceptance language for GAP-00, GAP-02, and GAP-07.",
+        }
+    return generic
+
+
+def default_fallback_policy(profile: str) -> dict[str, Any]:
+    if profile == SESSION_PROFILE_BLUEPRINT_GAP:
+        return {
+            "Gemini": {
+                "waive_after_seconds": 1800,
+                "waive_on_terminal_failure": True,
+                "issue_id": "DISC-GEMINI-PLANNING",
+                "summary": "Gemini planning lane failed; waive the lane, track the issue, and rely on Copilot critique plus Codex task slicing to keep the session moving.",
+                "covering_agents": ["Copilot", "Codex"],
+            }
+        }
+    return {}
+
+
+def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "PLAN-002",
+            "title": "Generalize discussion planning for reusable sessions",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "phase": "Planning Bootstrap",
+            "summary_zh": "把 discussion planning runtime 改成可重複使用的 session-driven 模式。",
+            "depends_on": [],
+        },
+        {
+            "id": "BG-000",
+            "title": "Canonicalize market scope, instrument policy, and source-class matrix",
+            "owner": "Codex",
+            "reviewer": "Copilot",
+            "phase": "Blueprint Gap P0",
+            "summary_zh": "把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。",
+            "depends_on": ["PLAN-002"],
+        },
+        {
+            "id": "BG-001",
+            "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
+            "owner": "Qwen",
+            "reviewer": "Codex",
+            "phase": "Blueprint Gap P0",
+            "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
+            "depends_on": ["PLAN-002"],
+        },
+        {
+            "id": "BG-002",
+            "title": "Publish research backend maturity matrix and production-path mapping",
+            "owner": "Copilot",
+            "reviewer": "Gemini",
+            "phase": "Blueprint Gap P1",
+            "summary_zh": "整理 research backend maturity matrix 與 production path 對照。",
+            "depends_on": ["PLAN-002"],
+        },
+        {
+            "id": "BG-003",
+            "title": "Formalize decision-front objects and adjudication boundaries",
+            "owner": "Qwen",
+            "reviewer": "Claude",
+            "phase": "Blueprint Gap P0",
+            "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
+            "depends_on": ["PLAN-002"],
+        },
+        {
+            "id": "BG-004",
+            "title": "Publish memory layer design note for persona, institutional memory, and write-back",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "phase": "Blueprint Gap P1",
+            "summary_zh": "補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。",
+            "depends_on": ["PLAN-002"],
+        },
+        {
+            "id": "BG-005",
+            "title": "Define golden replay scenario and acceptance runbook",
+            "owner": "Codex",
+            "reviewer": "Qwen",
+            "phase": "Blueprint Gap P2",
+            "summary_zh": "定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。",
+            "depends_on": ["BG-000", "BG-001", "BG-003"],
+        },
+        {
+            "id": "BG-006",
+            "title": "Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths",
+            "owner": "Qwen",
+            "reviewer": "Claude",
+            "phase": "Blueprint Gap P1",
+            "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
+            "depends_on": ["PLAN-002"],
+        },
+        {
+            "id": "BG-007",
+            "title": "Publish product-facing glossary and stage-status language pack",
+            "owner": "Copilot",
+            "reviewer": "Codex",
+            "phase": "Blueprint Gap P1",
+            "summary_zh": "整理 glossary、action→object map 與 stage/status wording 的對外語言包。",
+            "depends_on": ["PLAN-002"],
+        },
+    ]
+
+
+def default_proposed_execution_tasks(profile: str) -> list[dict[str, Any]]:
+    if profile == SESSION_PROFILE_BLUEPRINT_GAP:
+        return phase2_proposed_execution_tasks()
+    return []
 
 
 def readout_file_for(agent: str) -> Path:
@@ -77,11 +473,12 @@ Usage:
   python3 scripts/planning_state.py consensus <status> [message]
   python3 scripts/planning_state.py human-gate <status> [message]
   python3 scripts/planning_state.py propose-task <task-id> <owner> <reviewer> <title>
+  python3 scripts/planning_state.py materialize
 """
 
 
-def default_artifacts() -> dict[str, dict[str, Any]]:
-    return {
+def default_artifacts(profile: str = SESSION_PROFILE_BACKEND_COMPLETION) -> dict[str, dict[str, Any]]:
+    artifacts = {
         "planning_readme": {
             "path": relative_to_root(README_FILE),
             "status": "ready",
@@ -92,10 +489,6 @@ def default_artifacts() -> dict[str, dict[str, Any]]:
         },
         "readout_template": {
             "path": relative_to_root(READOUT_TEMPLATE_FILE),
-            "status": "ready",
-        },
-        "backend_completion_checklist": {
-            "path": relative_to_root(CHECKLIST_FILE),
             "status": "ready",
         },
         "starter_draft": {
@@ -119,6 +512,21 @@ def default_artifacts() -> dict[str, dict[str, Any]]:
             "status": "not_started",
         },
     }
+    if profile_has_backend_checklist(profile):
+        artifacts["backend_completion_checklist"] = {
+            "path": relative_to_root(CHECKLIST_FILE),
+            "status": "ready",
+        }
+    if profile_has_gap_outputs(profile):
+        artifacts["gap_response_matrix"] = {
+            "path": f"{relative_to_root(PLANNING_DIR)}/gap-response-matrix.md",
+            "status": "not_started",
+        }
+        artifacts["execution_materialization"] = {
+            "path": f"{relative_to_root(PLANNING_DIR)}/execution-materialization.md",
+            "status": "not_started",
+        }
+    return artifacts
 
 
 def default_readouts() -> dict[str, dict[str, Any]]:
@@ -132,88 +540,110 @@ def default_readouts() -> dict[str, dict[str, Any]]:
     }
 
 
-def default_session() -> dict[str, Any]:
+def default_session(
+    session_id: str = "phase1-bootstrap",
+    phase: str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    resolved_phase = str(phase or "").strip() or phase_from_session_id(session_id)
+    configure_session_paths(planning_dir_for_session(session_id, resolved_phase))
+    resolved_profile = resolve_session_profile(session_id, resolved_phase, profile)
     timestamp = iso_now()
-    return {
-        "session_id": "phase1-bootstrap",
-        "phase": "phase1",
+    session = {
+        "session_id": session_id,
+        "phase": resolved_phase,
+        "profile": resolved_profile,
         "status": "inactive",
         "planning_mode": "discussion_planning",
         "runtime_mode": "supervisor_managed_execution",
         "summary": "Align architecture, delivery order, and task slicing before materializing execution work.",
+        "objective": "Align architecture, delivery order, and task slicing before materializing execution work.",
         "facilitator": "Claude",
         "baton_owner": "Codex",
         "starter_owner": "Codex",
         "next_reviewer": "Qwen",
         "baton_sequence": BATON_SEQUENCE,
         "review_sequence": REVIEW_SEQUENCE,
+        "brief_files": default_brief_files(resolved_profile),
+        "expected_outputs": default_expected_outputs(resolved_profile),
+        "lane_focus": default_lane_focus(resolved_profile),
+        "fallback_policy": default_fallback_policy(resolved_profile),
         "current_round": 0,
         "consensus_status": "not_started",
         "human_gate_status": "not_requested",
-        "artifacts": default_artifacts(),
+        "artifacts": default_artifacts(resolved_profile),
         "readouts": default_readouts(),
         "cross_review_rounds": [],
         "unresolved_items": [],
-        "proposed_execution_tasks": [],
+        "proposed_execution_tasks": default_proposed_execution_tasks(resolved_profile),
         "recent_events": [],
         "updated_at": timestamp,
     }
+    fixed_baton_owner = profile_fixed_baton_owner(resolved_profile)
+    if fixed_baton_owner:
+        session["baton_owner"] = fixed_baton_owner
+        session["starter_owner"] = fixed_baton_owner
+    if resolved_profile == SESSION_PROFILE_BLUEPRINT_GAP:
+        session.update(
+            {
+                "summary": "Run a blueprint-gap convergence session that turns gap review findings into cited consensus outputs and the next execution wave plan.",
+                "objective": (
+                    "Use the blueprint gap review, market data scope/source plan, current execution state, and canonical L1/L2 truth to converge on the next "
+                    "Pantheon delivery wave. Required outputs are gap-response-matrix.md, execution-materialization.md, and consensus-packet.md."
+                ),
+                "baton_owner": "Codex",
+                "starter_owner": "Codex",
+                "next_reviewer": "Qwen",
+            }
+        )
+    return session
 
 
-def planning_readme_template() -> str:
-    return """# Discussion Planning Mode
+def planning_readme_template(session: dict[str, Any]) -> str:
+    brief_files = session.get("brief_files", [])
+    expected_outputs = session.get("expected_outputs", [])
+    shared_draft_owner = session.get("starter_owner", "Codex")
+    brief_lines = "\n".join(f"- `{path}`" for path in brief_files) or "- _(none)_"
+    output_lines = "\n".join(
+        f"- `{entry.get('path')}` (owner: `{entry.get('owner', '-')}`)"
+        for entry in expected_outputs
+        if str(entry.get("path") or "").strip()
+    ) or "- _(none)_"
+    return f"""# Discussion Planning Mode
 
 This directory is the canonical workspace for `discussion_planning`.
 
-## Goal
+## Session
 
-Before execution tasks are created, every lane should align on:
+- Session ID: `{session.get("session_id", "phase1-bootstrap")}`
+- Objective: {session.get("objective", "").strip() or "Align architecture, delivery order, and task slicing before materializing execution work."}
+- Shared draft owner: `{shared_draft_owner}`
 
-- architecture and ownership boundaries
-- delivery order / wave order
-- task slicing and reviewer assignment
+## Brief Files
 
-## Canonical Files
+{brief_lines}
 
-Read in this order when a planning session is active:
+## Expected Outputs
 
-1. `README.md`
-2. `planning-session.json`
-3. `pantheon-backend-completion-checklist.md`
-4. `starter-draft.md`
-5. `consensus-packet.md`
-6. the current `*-readout.md` and `review-round-*.md` files
+{output_lines}
 
 ## Baton Loop
 
-1. all lanes read canonical docs in L0 -> L1 -> L2 order
-2. each lane writes an independent readout using `LLM_READOUT_TEMPLATE.md`
-3. `Codex` starts the first `starter-draft.md`
-4. `Qwen -> Gemini -> Copilot -> Claude` perform cited cross-review round by round
-5. unresolved disagreements become explicit `human_required` items
-6. `Claude` synthesizes `consensus-packet.md`
-7. after human acceptance, convert the agreed slices into execution tasks through `scripts/ai-status.sh`
+1. every lane reads the session brief and writes an independent readout using `LLM_READOUT_TEMPLATE.md`
+2. only `{shared_draft_owner}` seeds `starter-draft.md`
+3. cited cross-review happens round by round
+4. unresolved disagreements become explicit `human_required` or `tracking` items
+5. the facilitator drafts `consensus-packet.md`
+6. after human acceptance, convert `proposed_execution_tasks` into execution tasks through `scripts/planning-state.sh materialize`
 
 ## Rules
 
-- only the current baton owner edits `starter-draft.md`
+- only the shared draft owner edits `starter-draft.md`
 - reviewers do not directly rewrite the shared draft
 - `planning-session.json` is the machine-readable source of truth for planning state
-- `.orchestrator/planning-state.json` is derived for the dashboard
+- `.orchestrator/planning-state.json` is the derived dashboard state
+- every planning round keeps its own session directory; archived sessions are immutable history
 - execution tasks stay in `ai-status.json`; do not mix planning drafts into the execution board too early
-
-## Commands
-
-```bash
-./scripts/planning-state.sh start phase1 "Kick off the planning session"
-./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
-./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cross-review"
-./scripts/planning-state.sh round 1 open "Opened cited cross-review round 1"
-./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted and ready"
-./scripts/planning-state.sh human-gate approved "Human accepted the packet"
-./scripts/planning-state.sh propose-task W3-001A Qwen Claude "Callcenter & CTI correlation baseline"
-./scripts/sync-state.sh
-```
 """
 
 
@@ -294,10 +724,110 @@ Use this file to anchor discussion planning around the real implementation gap b
 """
 
 
-def starter_draft_template() -> str:
-    return """# Starter Draft
+def gap_response_matrix_template() -> str:
+    return """# Gap Response Matrix
 
-Current rule: only the baton owner edits this file directly.
+Use this file to answer GAP-00 through GAP-07 with:
+
+- current repo evidence
+- what is already done
+- what remains a real gap
+- the canonicalization or delivery action required next
+- cited references to source docs or code
+
+## GAP-00
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+
+## GAP-01
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+
+## GAP-02
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+
+## GAP-03
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+
+## GAP-04
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+
+## GAP-05
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+
+## GAP-06
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+
+## GAP-07
+
+- Gap statement:
+- Repo evidence:
+- Decision:
+- Next action:
+- Citations:
+"""
+
+
+def execution_materialization_template() -> str:
+    return """# Execution Materialization
+
+## P0
+
+| Task ID | Owner | Reviewer | Depends On | Wave | Notes |
+|---|---|---|---|---|---|
+| _(pending)_ | - | - | - | - | - |
+
+## P1
+
+| Task ID | Owner | Reviewer | Depends On | Wave | Notes |
+|---|---|---|---|---|---|
+| _(pending)_ | - | - | - | - | - |
+
+## P2
+
+| Task ID | Owner | Reviewer | Depends On | Wave | Notes |
+|---|---|---|---|---|---|
+| _(pending)_ | - | - | - | - | - |
+"""
+
+
+def starter_draft_template(session: dict[str, Any]) -> str:
+    return f"""# Starter Draft
+
+Current rule: only `{session.get("starter_owner", "Codex")}` edits this file directly.
 
 ## Shared Draft
 
@@ -309,33 +839,34 @@ Current rule: only the baton owner edits this file directly.
 """
 
 
-def baton_log_template() -> str:
-    return """# Baton Log
+def baton_log_template(session: dict[str, Any]) -> str:
+    return f"""# Baton Log
 
 | Timestamp | From | To | Message |
 |---|---|---|---|
-| _(pending)_ | - | Codex | Bootstrap baton owner |
+| _(pending)_ | - | {session.get("baton_owner", "Codex")} | Bootstrap baton owner |
 """
 
 
-def supervisor_queue_template() -> str:
-    return """# Supervisor Queue
+def supervisor_queue_template(session: dict[str, Any]) -> str:
+    return f"""# Supervisor Queue
 
 | Order | Item | Owner | Status | Notes |
 |---|---|---|---|---|
 | 1 | Collect lane readouts | All lanes | pending | Use `LLM_READOUT_TEMPLATE.md` |
-| 2 | Create starter draft | Codex | pending | First editable shared draft |
-| 3 | Run cited cross-review | Qwen -> Gemini -> Copilot -> Claude | pending | One round at a time |
-| 4 | Draft consensus packet | Claude | pending | Escalate unresolved semantic conflicts |
+| 2 | Create starter draft | {session.get("starter_owner", "Codex")} | pending | First editable shared draft |
+| 3 | Run cited cross-review | {' -> '.join(session.get('review_sequence', REVIEW_SEQUENCE))} | pending | One round at a time |
+| 4 | Draft consensus packet | {session.get("facilitator", "Claude")} | pending | Escalate unresolved semantic conflicts |
 | 5 | Wait for human acceptance | Human | pending | Required before execution task materialization |
 """
 
 
-def consensus_packet_template() -> str:
-    return """# Consensus Packet
+def consensus_packet_template(session: dict[str, Any]) -> str:
+    return f"""# Consensus Packet
 
 ## Decision Summary
 
+- Session: `{session.get("session_id", "phase1-bootstrap")}`
 - Scope:
 - Accepted architecture:
 - Delivery order:
@@ -362,17 +893,16 @@ Use `LLM_READOUT_TEMPLATE.md` as the structure for this lane.
 """
 
 
-def review_round_template(round_no: int) -> str:
+def review_round_template(round_no: int, reviewers: list[str] | None = None) -> str:
+    reviewer_list = reviewers or REVIEW_SEQUENCE
+    reviewer_lines = "\n".join(f"- {reviewer}" for reviewer in reviewer_list)
     return f"""# Review Round {round_no:02d}
 
 Use cited comments only. Do not directly rewrite `starter-draft.md` unless you currently hold the baton.
 
 ## Reviewer Order
 
-- Qwen
-- Gemini
-- Copilot
-- Claude
+{reviewer_lines}
 
 ## Comments
 
@@ -386,17 +916,32 @@ def ensure_text_file(path: Path, content: str) -> None:
         path.write_text(content, encoding="utf-8")
 
 
-def ensure_artifact_files() -> None:
-    ensure_text_file(README_FILE, planning_readme_template())
+def ensure_artifact_files(session: dict[str, Any] | None = None) -> None:
+    session = session or default_session()
+    ensure_text_file(README_FILE, planning_readme_template(session))
     ensure_text_file(READOUT_TEMPLATE_FILE, readout_template())
-    ensure_text_file(CHECKLIST_FILE, backend_completion_checklist_template())
-    ensure_text_file(STARTER_DRAFT_FILE, starter_draft_template())
-    ensure_text_file(BATON_LOG_FILE, baton_log_template())
-    ensure_text_file(SUPERVISOR_QUEUE_FILE, supervisor_queue_template())
-    ensure_text_file(CONSENSUS_PACKET_FILE, consensus_packet_template())
+    if profile_has_backend_checklist(str(session.get("profile") or "")):
+        ensure_text_file(CHECKLIST_FILE, backend_completion_checklist_template())
+    ensure_text_file(STARTER_DRAFT_FILE, starter_draft_template(session))
+    ensure_text_file(BATON_LOG_FILE, baton_log_template(session))
+    ensure_text_file(SUPERVISOR_QUEUE_FILE, supervisor_queue_template(session))
+    ensure_text_file(CONSENSUS_PACKET_FILE, consensus_packet_template(session))
+    for output in session.get("expected_outputs", []):
+        output_path = str(output.get("path") or "").strip()
+        if not output_path:
+            continue
+        output_file = ROOT / output_path
+        if output_file == CONSENSUS_PACKET_FILE:
+            continue
+        if output_file.name == "gap-response-matrix.md":
+            ensure_text_file(output_file, gap_response_matrix_template())
+        elif output_file.name == "execution-materialization.md":
+            ensure_text_file(output_file, execution_materialization_template())
+        else:
+            ensure_text_file(output_file, f"# {output_file.stem.replace('-', ' ').title()}\n")
     for agent in AGENT_ORDER:
         ensure_text_file(readout_file_for(agent), readout_file_template(agent))
-    ensure_text_file(PLANNING_DIR / "review-round-01.md", review_round_template(1))
+    ensure_text_file(PLANNING_DIR / "review-round-01.md", review_round_template(1, session.get("review_sequence")))
 
 
 def read_text_or_empty(path: Path) -> str:
@@ -454,35 +999,133 @@ def mapping_entry(mapping: dict[str, Any], key: str) -> Any:
     return None
 
 
+def path_from_relative(path_value: str) -> Path:
+    return ROOT / str(path_value).strip()
+
+
+def load_orchestrator_runtime_state() -> dict[str, Any]:
+    if not ORCHESTRATOR_STATE_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def execution_mode_has_inflight_work(runtime_state: dict[str, Any]) -> bool:
+    supervisor_state = runtime_state.get("supervisor", {}) if isinstance(runtime_state.get("supervisor"), dict) else {}
+    occupancy = supervisor_state.get("mode_occupancy", {}) if isinstance(supervisor_state.get("mode_occupancy"), dict) else {}
+    execution = occupancy.get("execution", {}) if isinstance(occupancy.get("execution"), dict) else {}
+    if any(int(execution.get(key) or 0) > 0 for key in ("running", "pending", "queued")):
+        return True
+    focus_mode = str(supervisor_state.get("focus_mode") or "").strip()
+    mode_status = str(supervisor_state.get("mode_status") or "").strip()
+    return focus_mode == "execution" and mode_status == "draining"
+
+
 def load_session() -> dict[str, Any]:
-    ensure_artifact_files()
+    pointer = load_active_session_pointer()
+    configure_session_paths(path_from_relative(pointer["planning_dir"]))
     if not SESSION_FILE.exists():
-        session = default_session()
+        session = default_session(
+            str(pointer.get("session_id") or "phase1-bootstrap"),
+            str(pointer.get("phase") or DEFAULT_PHASE),
+        )
+        ensure_artifact_files(session)
         save_session(session)
         return session
     raw = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise SystemExit("planning-session.json must contain a JSON object")
-    return normalize_session(raw)
+    session = normalize_session(raw)
+    ensure_artifact_files(session)
+    return session
 
 
 def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
-    session = deep_merge_dict(default_session(), raw)
+    session_id = str(raw.get("session_id") or "phase1-bootstrap").strip() or "phase1-bootstrap"
+    phase = str(raw.get("phase") or "").strip() or phase_from_session_id(session_id, PLANNING_DIR.name)
+    configure_session_paths(planning_dir_for_session(session_id, phase))
+    profile = resolve_session_profile(session_id, phase, raw.get("profile"))
+    session = deep_merge_dict(default_session(session_id, phase, profile), raw)
+    session["session_id"] = session_id
+    session["phase"] = phase
+    session["profile"] = profile
+    session["planning_dir"] = relative_to_root(PLANNING_DIR)
+    session["session_file"] = relative_to_root(SESSION_FILE)
     session["status"] = str(session.get("status") or "inactive")
     if session["status"] not in PLANNING_STATUS_LABELS:
         session["status"] = "inactive"
 
     session["planning_mode"] = "discussion_planning"
     session["runtime_mode"] = "supervisor_managed_execution"
+    session["summary"] = str(session.get("summary") or "").strip()
+    session["objective"] = str(session.get("objective") or "").strip() or session["summary"]
     session["facilitator"] = canonical_agent(session.get("facilitator"), "Claude")
     session["baton_owner"] = canonical_agent(session.get("baton_owner"), "Codex")
     session["starter_owner"] = canonical_agent(session.get("starter_owner"), "Codex")
     session["next_reviewer"] = canonical_agent(session.get("next_reviewer"), "Qwen")
+    fixed_baton_owner = profile_fixed_baton_owner(profile)
+    if fixed_baton_owner:
+        session["starter_owner"] = fixed_baton_owner
+        session["baton_owner"] = fixed_baton_owner
 
     baton_sequence = [canonical_agent(item) for item in session.get("baton_sequence", BATON_SEQUENCE)]
     session["baton_sequence"] = [item for item in baton_sequence if item in AGENT_ORDER] or BATON_SEQUENCE
     review_sequence = [canonical_agent(item) for item in session.get("review_sequence", REVIEW_SEQUENCE)]
     session["review_sequence"] = [item for item in review_sequence if item in AGENT_ORDER] or REVIEW_SEQUENCE
+
+    session["brief_files"] = unique_strings(
+        [str(item).strip() for item in session.get("brief_files", default_brief_files(profile)) if str(item).strip()]
+    )
+
+    expected_outputs: list[dict[str, Any]] = []
+    for entry in session.get("expected_outputs", default_expected_outputs(profile)):
+        if isinstance(entry, str):
+            candidate = {"path": entry}
+        elif isinstance(entry, dict):
+            candidate = dict(entry)
+        else:
+            continue
+        path_value = str(candidate.get("path") or "").strip()
+        if not path_value:
+            continue
+        output_id = str(candidate.get("id") or Path(path_value).stem.replace("-", "_")).strip()
+        expected_outputs.append(
+            {
+                "id": output_id,
+                "path": path_value,
+                "owner": canonical_agent(candidate.get("owner"), "Claude"),
+                "status": str(candidate.get("status") or "not_started"),
+            }
+        )
+    session["expected_outputs"] = expected_outputs
+
+    lane_focus_raw = session.get("lane_focus") if isinstance(session.get("lane_focus"), dict) else {}
+    lane_focus_defaults = default_lane_focus(profile)
+    session["lane_focus"] = {
+        agent: str(mapping_entry(lane_focus_raw, agent) or lane_focus_defaults.get(agent) or "").strip()
+        for agent in AGENT_ORDER
+    }
+
+    fallback_policy_raw = session.get("fallback_policy") if isinstance(session.get("fallback_policy"), dict) else {}
+    fallback_defaults = default_fallback_policy(profile)
+    normalized_fallbacks: dict[str, dict[str, Any]] = {}
+    for agent_name in AGENT_ORDER:
+        incoming = mapping_entry(fallback_policy_raw, agent_name)
+        base = deepcopy(mapping_entry(fallback_defaults, agent_name) or {})
+        if incoming is None and not base:
+            continue
+        payload = deep_merge_dict(base, incoming if isinstance(incoming, dict) else {})
+        normalized_fallbacks[agent_name] = {
+            "waive_after_seconds": int(payload.get("waive_after_seconds") or 0),
+            "waive_on_terminal_failure": bool(payload.get("waive_on_terminal_failure", False)),
+            "issue_id": str(payload.get("issue_id") or "").strip(),
+            "summary": str(payload.get("summary") or "").strip(),
+            "covering_agents": [canonical_agent(item) for item in payload.get("covering_agents", []) if canonical_agent(item)],
+        }
+    session["fallback_policy"] = normalized_fallbacks
 
     session["consensus_status"] = str(session.get("consensus_status") or "not_started")
     if session["consensus_status"] not in CONSENSUS_STATUS_LABELS:
@@ -491,7 +1134,7 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
     if session["human_gate_status"] not in HUMAN_GATE_STATUS_LABELS:
         session["human_gate_status"] = "not_requested"
 
-    artifacts = default_artifacts()
+    artifacts = default_artifacts(profile)
     incoming_artifacts = session.get("artifacts") if isinstance(session.get("artifacts"), dict) else {}
     for key, artifact in artifacts.items():
         incoming = mapping_entry(incoming_artifacts, key)
@@ -543,7 +1186,7 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
     session["unresolved_items"] = [item for item in unresolved_items if item["id"] or item["summary"]]
 
     proposed_execution_tasks: list[dict[str, Any]] = []
-    for entry in session.get("proposed_execution_tasks", []):
+    for entry in session.get("proposed_execution_tasks", default_proposed_execution_tasks(profile)):
         if not isinstance(entry, dict):
             continue
         task_id = str(entry.get("id") or "").strip()
@@ -557,6 +1200,9 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
                 "reviewer": canonical_agent(entry.get("reviewer"), "Claude"),
                 "phase": str(entry.get("phase") or "Planning Materialized"),
                 "summary_zh": str(entry.get("summary_zh") or "").strip(),
+                "depends_on": [str(item).strip() for item in entry.get("depends_on", []) if str(item).strip()],
+                "artifacts": [str(item).strip() for item in entry.get("artifacts", []) if str(item).strip()],
+                "acceptance": [str(item).strip() for item in entry.get("acceptance", []) if str(item).strip()],
             }
         )
     session["proposed_execution_tasks"] = proposed_execution_tasks
@@ -582,10 +1228,12 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_session(session: dict[str, Any]) -> None:
-    ensure_artifact_files()
+    configure_session_paths(planning_dir_for_session(session.get("session_id"), session.get("phase")))
+    ensure_artifact_files(session)
     session["updated_at"] = iso_now()
     SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
     SESSION_FILE.write_text(json.dumps(session, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    save_active_session_pointer(session)
 
 
 def append_event(session: dict[str, Any], event_type: str, message: str, **extra: Any) -> None:
@@ -645,32 +1293,57 @@ def derive_switch_gate(session: dict[str, Any]) -> dict[str, bool]:
     }
 
 
+def artifact_template_for(session: dict[str, Any], key: str, path: Path) -> str | None:
+    if key == "planning_readme":
+        return planning_readme_template(session)
+    if key == "readout_template":
+        return readout_template()
+    if key == "backend_completion_checklist":
+        return backend_completion_checklist_template()
+    if key == "starter_draft":
+        return starter_draft_template(session)
+    if key == "baton_log":
+        return baton_log_template(session)
+    if key == "supervisor_queue":
+        return supervisor_queue_template(session)
+    if key == "consensus_packet":
+        return consensus_packet_template(session)
+    if key == "gap_response_matrix":
+        return gap_response_matrix_template()
+    if key == "execution_materialization":
+        return execution_materialization_template()
+    if path.name == "gap-response-matrix.md":
+        return gap_response_matrix_template()
+    if path.name == "execution-materialization.md":
+        return execution_materialization_template()
+    return None
+
+
 def auto_detect_artifact_activity(session: dict[str, Any]) -> None:
     activity_detected = False
 
-    if file_differs_from_template(CHECKLIST_FILE, backend_completion_checklist_template()):
-        session["artifacts"]["backend_completion_checklist"]["status"] = "active"
+    for key, artifact in session.get("artifacts", {}).items():
+        path_value = str((artifact or {}).get("path") or "").strip()
+        if not path_value or "*" in path_value:
+            continue
+        path = path_from_relative(path_value)
+        template = artifact_template_for(session, key, path)
+        if template is None or not file_differs_from_template(path, template):
+            continue
         activity_detected = True
-
-    if file_differs_from_template(STARTER_DRAFT_FILE, starter_draft_template()):
-        session["artifacts"]["starter_draft"]["status"] = "active"
-        activity_detected = True
-        if session.get("consensus_status") == "not_started":
-            session["consensus_status"] = "draft"
-
-    if file_differs_from_template(BATON_LOG_FILE, baton_log_template()):
-        session["artifacts"]["baton_log"]["status"] = "active"
-        activity_detected = True
-
-    if file_differs_from_template(SUPERVISOR_QUEUE_FILE, supervisor_queue_template()):
-        session["artifacts"]["supervisor_queue"]["status"] = "active"
-        activity_detected = True
-
-    if file_differs_from_template(CONSENSUS_PACKET_FILE, consensus_packet_template()):
-        session["artifacts"]["consensus_packet"]["status"] = "draft"
-        activity_detected = True
-        if session.get("consensus_status") == "not_started":
-            session["consensus_status"] = "draft"
+        if key == "starter_draft":
+            session["artifacts"][key]["status"] = "active"
+            if session.get("consensus_status") == "not_started":
+                session["consensus_status"] = "draft"
+            continue
+        if key == "consensus_packet":
+            session["artifacts"][key]["status"] = "draft"
+            if session.get("consensus_status") == "not_started":
+                session["consensus_status"] = "draft"
+            continue
+        current_status = str(session["artifacts"][key].get("status") or "ready")
+        if current_status in {"ready", "draft", "not_started"}:
+            session["artifacts"][key]["status"] = "active"
 
     for agent in AGENT_ORDER:
         readout_path = readout_file_for(agent)
@@ -687,7 +1360,7 @@ def auto_detect_artifact_activity(session: dict[str, Any]) -> None:
         round_no = round_number_from_path(round_path)
         if round_no is None:
             continue
-        if file_differs_from_template(round_path, review_round_template(round_no)):
+        if file_differs_from_template(round_path, review_round_template(round_no, session.get("review_sequence"))):
             activity_detected = True
             existing = existing_rounds.get(round_no)
             discovered_rounds.append(
@@ -745,6 +1418,18 @@ def build_derived_state(session: dict[str, Any]) -> dict[str, Any]:
     derived = normalize_session(session)
     derive_artifact_statuses(derived)
     derived["switch_gate"] = derive_switch_gate(derived)
+    derived["active_session"] = {
+        "session_id": derived.get("session_id"),
+        "phase": derived.get("phase"),
+        "planning_dir": derived.get("planning_dir"),
+        "session_file": derived.get("session_file"),
+        "status": derived.get("status"),
+        "consensus_status": derived.get("consensus_status"),
+        "human_gate_status": derived.get("human_gate_status"),
+        "updated_at": derived.get("updated_at"),
+        "archived": False,
+    }
+    derived["recent_sessions"] = discover_recent_sessions(active_session_id=str(derived.get("session_id") or ""))
     resolved_readout_statuses = {"submitted", "accepted", "waived"}
     actionable_item_statuses = {"resolved", "accepted", "tracking"}
     derived["counts"] = {
@@ -777,7 +1462,7 @@ def save_derived_state(session: dict[str, Any]) -> None:
 
 def sync_all(session: dict[str, Any]) -> None:
     normalized = normalize_session(session)
-    ensure_artifact_files()
+    ensure_artifact_files(normalized)
     derive_artifact_statuses(normalized)
     save_session(normalized)
     save_derived_state(normalized)
@@ -790,7 +1475,29 @@ def command_sync(session: dict[str, Any], _args: list[str]) -> None:
 def command_start(session: dict[str, Any], args: list[str]) -> None:
     if not args:
         raise SystemExit("Usage: start <session-id> [summary]")
-    session["session_id"] = args[0]
+    runtime_state = load_orchestrator_runtime_state()
+    supervisor_state = runtime_state.get("supervisor", {}) if isinstance(runtime_state.get("supervisor"), dict) else {}
+    if str(supervisor_state.get("focus_mode") or "").strip() == "execution" and execution_mode_has_inflight_work(runtime_state):
+        raise SystemExit("Cannot start a new planning session while execution mode still has inflight work. Drain execution first.")
+    session_id = str(args[0]).strip()
+    phase = phase_from_session_id(session_id, str(session.get("phase") or DEFAULT_PHASE))
+    profile_override = canonical_session_profile(os.environ.get("PLANNING_PROFILE"))
+    if os.environ.get("PLANNING_PROFILE") and not profile_override:
+        raise SystemExit(f"Unknown planning profile: {os.environ['PLANNING_PROFILE']}")
+    configure_session_paths(planning_dir_for_session(session_id, phase))
+    if SESSION_FILE.exists():
+        raw = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise SystemExit("planning-session.json must contain a JSON object")
+        if profile_override:
+            raw["profile"] = profile_override
+        target_session = normalize_session(raw)
+    else:
+        target_session = default_session(session_id, phase, profile_override)
+    session.clear()
+    session.update(target_session)
+    session["session_id"] = session_id
+    session["phase"] = phase
     if len(args) > 1:
         session["summary"] = args[1]
     session["status"] = "active"
@@ -810,6 +1517,9 @@ def command_baton(session: dict[str, Any], args: list[str]) -> None:
     owner = canonical_agent(args[0])
     if owner not in AGENT_ORDER:
         raise SystemExit(f"Unknown agent: {args[0]}")
+    fixed_baton_owner = profile_fixed_baton_owner(str(session.get("profile") or ""))
+    if fixed_baton_owner and owner != fixed_baton_owner:
+        raise SystemExit(f"Session profile keeps {fixed_baton_owner} as the fixed baton owner.")
     next_reviewer = canonical_agent(args[1]) if len(args) > 1 and args[1] else next_in_sequence(BATON_SEQUENCE, owner, "Claude")
     message = args[2] if len(args) > 2 else f"Baton moved to {owner}"
     session["status"] = "active"
@@ -966,8 +1676,11 @@ def command_propose_task(session: dict[str, Any], args: list[str]) -> None:
         "title": title,
         "owner": owner,
         "reviewer": reviewer,
-        "phase": "Planning Materialized",
-        "summary_zh": "",
+        "phase": os.environ.get("TASK_PHASE", "Planning Materialized"),
+        "summary_zh": os.environ.get("TASK_SUMMARY_ZH", "").strip(),
+        "depends_on": ai_status.parse_csv_env("TASK_DEPENDS_ON"),
+        "artifacts": ai_status.parse_csv_env("TASK_ARTIFACTS"),
+        "acceptance": ai_status.parse_csv_env("TASK_ACCEPTANCE"),
     }
     if entry is None:
         session["proposed_execution_tasks"].append(payload)
@@ -980,6 +1693,62 @@ def command_propose_task(session: dict[str, Any], args: list[str]) -> None:
         task_id=task_id,
         owner=owner,
         reviewer=reviewer,
+    )
+
+
+def upsert_materialized_task(state: dict[str, Any], payload: dict[str, Any]) -> str:
+    task_id = str(payload.get("id") or "").strip()
+    existing = ai_status.get_task(state, task_id)
+    timestamp = iso_now()
+    task_payload = {
+        "id": task_id,
+        "title": str(payload.get("title") or "").strip(),
+        "summary_zh": str(payload.get("summary_zh") or "").strip(),
+        "phase": str(payload.get("phase") or "Planning Materialized").strip() or "Planning Materialized",
+        "owner": canonical_agent(payload.get("owner"), "Codex"),
+        "reviewer": canonical_agent(payload.get("reviewer"), "Claude"),
+        "depends_on": [str(item).strip() for item in payload.get("depends_on", []) if str(item).strip()],
+        "artifacts": [str(item).strip() for item in payload.get("artifacts", []) if str(item).strip()],
+        "acceptance": [str(item).strip() for item in payload.get("acceptance", []) if str(item).strip()],
+    }
+    if existing is None:
+        state.setdefault("tasks", []).append(
+            {
+                **task_payload,
+                "status": "todo",
+                "next": "Assignment created from accepted planning session",
+                "last_update": timestamp,
+            }
+        )
+        return "created"
+
+    existing.update(task_payload)
+    existing["last_update"] = timestamp
+    existing["next"] = existing.get("next") or "Planning task metadata refreshed"
+    return "updated"
+
+
+def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
+    derived = build_derived_state(session)
+    if derived.get("human_gate_status") != "approved":
+        raise SystemExit("Human gate must be approved before materializing proposed execution tasks.")
+
+    save_derived_state(derived)
+    state = ai_status.load_state()
+    created = 0
+    updated = 0
+    for payload in derived.get("proposed_execution_tasks", []):
+        result = upsert_materialized_task(state, payload)
+        if result == "created":
+            created += 1
+        else:
+            updated += 1
+    ai_status.sync_all(state)
+    append_event(
+        session,
+        "execution_tasks_materialized",
+        f"Materialized {created} new tasks and refreshed {updated} existing tasks in ai-status.json.",
+        status="approved",
     )
 
 
@@ -998,6 +1767,7 @@ def main(argv: list[str]) -> int:
         "consensus": command_consensus,
         "human-gate": command_human_gate,
         "propose-task": command_propose_task,
+        "materialize": command_materialize,
     }
     if command not in commands:
         raise SystemExit(command_usage().rstrip())

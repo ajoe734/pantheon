@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -15,13 +16,14 @@ STATUS_FILE = ROOT / "ai-status.json"
 LOG_FILE = ROOT / "ai-activity-log.jsonl"
 CURRENT_WORK_FILE = ROOT / "current-work.md"
 DOCS_SITE_DIR = ROOT / "docs-site"
+CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 PLANNING_STATE_FILE = ROOT / ".orchestrator" / "planning-state.json"
 ORCHESTRATOR_STATE_FILE = ROOT / ".orchestrator" / "state.json"
 APPROVAL_QUEUE_FILE = ROOT / ".orchestrator" / "approval-queue.json"
 DASHBOARD_BUNDLE_FILE = ROOT / "dashboard-bundle.json"
-PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
-PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
-PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
+DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
+DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
+DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
 
 KNOWN_AGENTS = {
     "Claude": {
@@ -75,6 +77,15 @@ STATUS_LABELS = {
 DEPENDENCY_DONE_STATUSES = {"done"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 TASK_TERMINAL_SUPERSEDED = "superseded"
+DEFAULT_DELIVERY_GATES = {
+    "require_commit_hash": True,
+    "require_git_clean": False,
+    "record_remote_status": True,
+}
+DEFAULT_COMMIT_CONVENTIONS = {
+    "subject_must_include_task_id": True,
+    "required_body_fields": ["LLM-Agent", "Task-ID", "Reviewer"],
+}
 FIRST_PROMPT_PRIORITY = [
     "AI_COLLABORATION_GUIDE.md",
     "current-work.md",
@@ -85,7 +96,6 @@ FIRST_PROMPT_PRIORITY = [
     "DEVELOPMENT_WORKBREAKDOWN.md",
 ]
 OPTIONAL_CURRENT_WORK_REFERENCES = (
-    (PLANNING_README, "Planning mode"),
     ("CANONICAL_DOCUMENT_MAP.md", "Canonical map"),
     ("DEVELOPMENT_WORKBREAKDOWN.md", "Full backlog"),
 )
@@ -119,8 +129,8 @@ def default_canonical_document_layers() -> dict[str, list[str]]:
             "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
         ],
         "L2 Planning & Execution": [
-            PLANNING_README,
-            PLANNING_SESSION_FILE,
+            DEFAULT_PLANNING_README,
+            DEFAULT_PLANNING_SESSION_FILE,
             "CANONICAL_DOCUMENT_MAP.md",
             "ROADMAP.md",
             "DEVELOPMENT_WORKBREAKDOWN.md",
@@ -186,6 +196,33 @@ def human_join(items: list[str]) -> str:
     return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
+def unique_strings(items: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def planning_reference_files(planning_state: dict[str, Any] | None) -> list[str]:
+    if not planning_state:
+        return []
+    artifacts = planning_state.get("artifacts", {}) if isinstance(planning_state.get("artifacts"), dict) else {}
+    files = [
+        str(((artifacts.get("planning_readme") or {}).get("path")) or DEFAULT_PLANNING_README).strip(),
+        str(planning_state.get("session_file") or ((artifacts.get("planning_session") or {}).get("path")) or DEFAULT_PLANNING_SESSION_FILE).strip(),
+    ]
+    files.extend(str(item).strip() for item in planning_state.get("brief_files", []) if str(item).strip())
+    checklist_path = str(((artifacts.get("backend_completion_checklist") or {}).get("path")) or "").strip()
+    if checklist_path:
+        files.append(checklist_path)
+    return unique_strings(files)
+
+
 def build_onboarding_prompt(state: dict[str, Any]) -> str:
     canonical_files = canonical_file_set(state)
     prompt_files = [item for item in FIRST_PROMPT_PRIORITY if item in canonical_files]
@@ -197,7 +234,7 @@ def build_onboarding_prompt(state: dict[str, Any]) -> str:
         parts.append("Use ai-activity-log.jsonl when you need recent history.")
     planning_state = load_planning_state()
     if planning_state and planning_state.get("status") in {"active", "human_required"}:
-        planning_files = [item for item in (PLANNING_README, PLANNING_SESSION_FILE, PLANNING_CHECKLIST_FILE) if item]
+        planning_files = planning_reference_files(planning_state)[:4]
         if planning_files:
             parts.append(
                 f"Discussion planning is {planning_state['status']}; read {human_join(planning_files)} before implementation work."
@@ -428,6 +465,11 @@ def load_json_file(path: Path, default: Any) -> Any:
         return deepcopy(default)
 
 
+def load_config() -> dict[str, Any]:
+    payload = load_json_file(CONFIG_FILE, {})
+    return payload if isinstance(payload, dict) else {}
+
+
 def save_state(state: dict[str, Any]) -> None:
     STATUS_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -505,6 +547,209 @@ def parse_bool_env(name: str) -> bool | None:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise SystemExit(f"{name} must be a boolean-like string")
+
+
+def delivery_gate_settings() -> dict[str, bool]:
+    settings = dict(DEFAULT_DELIVERY_GATES)
+    config = load_config()
+    payload = config.get("delivery_gates", {})
+    if isinstance(payload, dict):
+        for key in DEFAULT_DELIVERY_GATES:
+            value = payload.get(key)
+            if isinstance(value, bool):
+                settings[key] = value
+
+    env_overrides = {
+        "TASK_REQUIRE_COMMIT_HASH": "require_commit_hash",
+        "TASK_REQUIRE_GIT_CLEAN": "require_git_clean",
+        "TASK_RECORD_REMOTE_STATUS": "record_remote_status",
+    }
+    for env_name, field_name in env_overrides.items():
+        parsed = parse_bool_env(env_name)
+        if parsed is not None:
+            settings[field_name] = parsed
+    return settings
+
+
+def commit_convention_settings() -> dict[str, Any]:
+    settings = deepcopy(DEFAULT_COMMIT_CONVENTIONS)
+    config = load_config()
+    payload = config.get("commit_conventions", {})
+    if isinstance(payload, dict):
+        subject_required = payload.get("subject_must_include_task_id")
+        if isinstance(subject_required, bool):
+            settings["subject_must_include_task_id"] = subject_required
+        required_fields = payload.get("required_body_fields")
+        if isinstance(required_fields, list):
+            normalized = [str(item).strip() for item in required_fields if str(item).strip()]
+            if normalized:
+                settings["required_body_fields"] = normalized
+
+    subject_override = parse_bool_env("TASK_REQUIRE_SUBJECT_TASK_ID")
+    if subject_override is not None:
+        settings["subject_must_include_task_id"] = subject_override
+
+    body_fields = os.environ.get("TASK_COMMIT_REQUIRED_FIELDS", "").strip()
+    if body_fields:
+        settings["required_body_fields"] = [item.strip() for item in body_fields.split(",") if item.strip()]
+    return settings
+
+
+def run_git_command(args: list[str], *, required: bool = True, failure_message: str | None = None) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        if required:
+            detail = result.stderr.strip() or result.stdout.strip() or "git command failed"
+            raise SystemExit(failure_message or detail)
+        return ""
+    return result.stdout.strip()
+
+
+def classify_push_status(ahead: int, behind: int) -> str:
+    if ahead == 0 and behind == 0:
+        return "in_sync"
+    if ahead > 0 and behind == 0:
+        return "ahead"
+    if ahead == 0 and behind > 0:
+        return "behind"
+    return "diverged"
+
+
+def parse_commit_metadata_lines(body: str) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            metadata[key] = value
+    return metadata
+
+
+def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
+    settings = delivery_gate_settings()
+    commit_rules = commit_convention_settings()
+    branch = run_git_command(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        failure_message="Cannot finalize task: git branch information is unavailable.",
+    )
+    delivery: dict[str, Any] = {
+        "recorded_at": iso_now(),
+        "branch": branch,
+        "git_clean_required": settings["require_git_clean"],
+    }
+
+    if settings["require_commit_hash"]:
+        commit_hash = run_git_command(
+            ["rev-parse", "HEAD"],
+            failure_message="Cannot finalize task: a HEAD commit hash is required before moving to done.",
+        )
+        if not commit_hash:
+            raise SystemExit("Cannot finalize task: a HEAD commit hash is required before moving to done.")
+        delivery["commit"] = commit_hash
+        subject = run_git_command(
+            ["show", "-s", "--format=%s", "HEAD"],
+            failure_message="Cannot finalize task: latest commit subject is unavailable.",
+        )
+        body = run_git_command(
+            ["show", "-s", "--format=%b", "HEAD"],
+            failure_message="Cannot finalize task: latest commit body is unavailable.",
+        )
+        author_name = run_git_command(
+            ["show", "-s", "--format=%an", "HEAD"],
+            failure_message="Cannot finalize task: latest commit author name is unavailable.",
+        )
+        author_email = run_git_command(
+            ["show", "-s", "--format=%ae", "HEAD"],
+            failure_message="Cannot finalize task: latest commit author email is unavailable.",
+        )
+        delivery["commit_subject"] = subject
+        delivery["commit_author"] = {
+            "name": author_name,
+            "email": author_email,
+        }
+
+        task_id = str(task.get("id") or "").strip()
+        if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
+            raise SystemExit(
+                f"Cannot finalize task: latest commit subject must include task id {task_id}."
+            )
+
+        metadata_fields = parse_commit_metadata_lines(body)
+        expected_fields = {
+            "LLM-Agent": actor,
+            "Task-ID": task_id,
+            "Reviewer": canonical_agent_name(task.get("reviewer")),
+        }
+        required_fields = commit_rules.get("required_body_fields", [])
+        for field_name in required_fields:
+            actual_value = metadata_fields.get(field_name)
+            if not actual_value:
+                raise SystemExit(
+                    f"Cannot finalize task: latest commit body must include `{field_name}: ...`."
+                )
+            expected_value = expected_fields.get(field_name)
+            if expected_value and actual_value != expected_value:
+                raise SystemExit(
+                    f"Cannot finalize task: latest commit body field `{field_name}` must be `{expected_value}`."
+                )
+        delivery["commit_metadata"] = metadata_fields
+
+    porcelain = run_git_command(
+        ["status", "--porcelain"],
+        failure_message="Cannot finalize task: git status is unavailable.",
+    )
+    dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
+    delivery["git_clean"] = not dirty_entries
+    delivery["dirty_entry_count"] = len(dirty_entries)
+
+    if settings["require_git_clean"] and dirty_entries:
+        raise SystemExit(
+            "Cannot finalize task: git working tree is dirty while delivery_gates.require_git_clean is enabled."
+        )
+
+    remotes_output = run_git_command(
+        ["remote"],
+        required=False,
+    )
+    remote_names = [line.strip() for line in remotes_output.splitlines() if line.strip()]
+    delivery["remote_present"] = bool(remote_names)
+    if remote_names:
+        delivery["remote_names"] = remote_names
+
+    if settings["record_remote_status"] and remote_names:
+        upstream = run_git_command(
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            required=False,
+        )
+        delivery["upstream"] = upstream or None
+        if upstream:
+            counts = run_git_command(
+                ["rev-list", "--left-right", "--count", f"{upstream}...HEAD"],
+                failure_message="Cannot finalize task: unable to compute branch push status against upstream.",
+            )
+            try:
+                behind_text, ahead_text = counts.split()
+                behind = int(behind_text)
+                ahead = int(ahead_text)
+            except ValueError as exc:
+                raise SystemExit("Cannot finalize task: malformed git push status output.") from exc
+            delivery["ahead"] = ahead
+            delivery["behind"] = behind
+            delivery["push_status"] = classify_push_status(ahead, behind)
+        else:
+            delivery["push_status"] = "no_upstream"
+
+    return delivery
 
 
 def task_metadata_from_env() -> dict[str, Any]:
@@ -783,6 +1028,9 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         "- Canonical files: " + ", ".join(f"`{item}`" for item in state["canonical_files"]),
         "- Canonical tiers: " + (", ".join(tier_labels) if tier_labels else "-"),
     ]
+    planning_reference = planning_reference_files(planning_state)
+    if planning_reference:
+        current_sprint_lines.append(f"- Planning mode: `{planning_reference[0]}`")
     for path, label in OPTIONAL_CURRENT_WORK_REFERENCES:
         if path in canonical_files:
             current_sprint_lines.append(f"- {label}: `{path}`")
@@ -926,6 +1174,26 @@ def normalize_worker_actor(worker: dict[str, Any]) -> str:
     return str(worker.get("agent_id") or worker.get("provider") or "").strip()
 
 
+def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
+    if not isinstance(payload, dict):
+        return "execution"
+    explicit = str(payload.get("dispatch_mode") or "").strip()
+    if explicit:
+        return explicit
+    request_snapshot = payload.get("request_snapshot") if isinstance(payload.get("request_snapshot"), dict) else {}
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else request_snapshot.get("metadata", {})
+    if isinstance(metadata.get("planning"), dict) and metadata.get("planning"):
+        return str(metadata["planning"].get("mode") or "discussion_planning")
+    if isinstance(metadata.get("coordination"), dict) and metadata.get("coordination"):
+        return "coordination"
+    reason = str(payload.get("reason") or request_snapshot.get("reason") or "").strip()
+    if reason.startswith("discussion_planning_"):
+        return "discussion_planning"
+    if reason.startswith("coordination:"):
+        return "coordination"
+    return "execution"
+
+
 def expected_task_actor(task: dict[str, Any]) -> str:
     if str(task.get("status") or "").lower() == "review":
         return canonical_agent_name(task.get("reviewer"))
@@ -958,7 +1226,8 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "bucket": bucket,
                 "task_status": task_status,
                 "reason": worker.get("reason") or (worker.get("request_snapshot") or {}).get("reason"),
-                "mode": worker.get("mode"),
+                "delivery_mode": worker.get("mode"),
+                "dispatch_mode": runtime_dispatch_mode(worker),
                 "last_event_at": worker.get("last_event_at"),
                 "started_at": worker.get("started_at"),
                 "last_error": worker.get("last_error"),
@@ -986,6 +1255,7 @@ def normalize_runtime_queue(orchestrator_state: dict[str, Any]) -> list[dict[str
                 "agent": canonical_agent_name(event.get("target_display_name") or event.get("target_agent") or linked_worker.get("agent_id")),
                 "provider": event.get("provider") or linked_worker.get("provider"),
                 "reason": event.get("reason") or linked_worker.get("reason") or (linked_worker.get("request_snapshot") or {}).get("reason"),
+                "dispatch_mode": runtime_dispatch_mode(event or linked_worker),
                 "run_id": event.get("run_id") or linked_worker.get("run_id"),
                 "last_event_at": event.get("last_event_at") or event.get("processed_at") or event.get("last_attempt_at") or linked_worker.get("last_event_at"),
             }
@@ -1199,6 +1469,7 @@ def build_dashboard_bundle(
         and str(task_map.get(str(event.get("task_id") or ""), {}).get("status") or "").lower() != "done"
     ]
     live_workers, mismatches = detect_truth_mismatches(state, workers, queue_events, approvals)
+    supervisor_state = orchestrator.get("supervisor") if isinstance(orchestrator.get("supervisor"), dict) else {}
 
     live_workers_by_task: dict[str, list[dict[str, Any]]] = {}
     for worker in live_workers:
@@ -1263,7 +1534,8 @@ def build_dashboard_bundle(
                 "worker_status": worker.get("status"),
                 "runtime_bucket": worker.get("bucket"),
                 "dispatch_reason": worker.get("reason"),
-                "mode": worker.get("mode"),
+                "mode": worker.get("dispatch_mode"),
+                "delivery_mode": worker.get("delivery_mode"),
                 "last_event_at": worker.get("last_event_at"),
                 "last_error": worker.get("last_error"),
                 "mismatch_flags": mismatch_index.get((task_id, str(worker.get("run_id") or "")), []),
@@ -1276,7 +1548,51 @@ def build_dashboard_bundle(
     materialized_count = sum(1 for item in proposed if str(item.get("id") or "") in task_map)
     runtime_mode = str(planning.get("runtime_mode") or "supervisor_managed_execution")
     planning_status = str(planning.get("status") or "inactive")
-    focus_mode = "planning" if planning_status in {"active", "human_required"} else "execution" if runtime_mode == "supervisor_managed_execution" else "execution"
+    supervisor_focus = str(supervisor_state.get("focus_mode") or "").strip()
+    if supervisor_focus in {"planning", "execution"}:
+        focus_mode = supervisor_focus
+        focus_mode_source = "supervisor"
+    else:
+        focus_mode = "planning" if planning_status in {"active", "human_required"} else "execution" if runtime_mode == "supervisor_managed_execution" else "execution"
+        focus_mode_source = "planning_state_fallback"
+
+    live_worker_queue_ids = {str(worker.get("queue_event_id") or "") for worker in live_workers if str(worker.get("queue_event_id") or "")}
+    computed_mode_occupancy = {
+        "planning": {"running": 0, "pending": 0, "queued": 0},
+        "execution": {"running": 0, "pending": 0, "queued": 0},
+        "coordination": {"running": 0, "pending": 0, "queued": 0},
+    }
+    dispatch_mode_map = {
+        "discussion_planning": "planning",
+        "execution": "execution",
+        "coordination": "coordination",
+    }
+    for worker in live_workers:
+        mode_name = dispatch_mode_map.get(str(worker.get("dispatch_mode") or "").strip())
+        if not mode_name:
+            continue
+        bucket_name = "running" if worker.get("bucket") == "running" else "pending"
+        computed_mode_occupancy[mode_name][bucket_name] += 1
+    for event in queue_events:
+        event_id = str(event.get("id") or "")
+        if event_id and event_id in live_worker_queue_ids:
+            continue
+        mode_name = dispatch_mode_map.get(str(event.get("dispatch_mode") or "").strip())
+        if not mode_name:
+            continue
+        computed_mode_occupancy[mode_name]["queued"] += 1
+    mode_occupancy = computed_mode_occupancy
+    raw_mode_occupancy = supervisor_state.get("mode_occupancy") if isinstance(supervisor_state.get("mode_occupancy"), dict) else {}
+    if raw_mode_occupancy:
+        normalized_occupancy = {}
+        for key in ("planning", "execution", "coordination"):
+            bucket = raw_mode_occupancy.get(key) if isinstance(raw_mode_occupancy.get(key), dict) else {}
+            normalized_occupancy[key] = {
+                "running": int(bucket.get("running") or 0),
+                "pending": int(bucket.get("pending") or 0),
+                "queued": int(bucket.get("queued") or 0),
+            }
+        mode_occupancy = normalized_occupancy
 
     lanes: dict[str, dict[str, int]] = {}
     for worker in workers:
@@ -1290,14 +1606,18 @@ def build_dashboard_bundle(
     return {
         "generated_at": iso_now(),
         "focus_mode": focus_mode,
+        "focus_mode_source": focus_mode_source,
         "runtime_summary": {
-            "supervisor_pid": (orchestrator.get("supervisor") or {}).get("pid"),
-            "heartbeat_at": (orchestrator.get("supervisor") or {}).get("last_heartbeat_at") or orchestrator.get("last_heartbeat_at"),
+            "supervisor_pid": supervisor_state.get("pid"),
+            "heartbeat_at": supervisor_state.get("last_heartbeat_at") or orchestrator.get("last_heartbeat_at"),
             "queue_depth": len(queue_events),
             "pending_approvals": len(approvals.get("pending") or []),
             "running_workers": sum(1 for worker in live_workers if worker.get("bucket") == "running"),
             "pending_workers": sum(1 for worker in live_workers if worker.get("bucket") == "pending"),
             "mismatch_count": len(mismatches),
+            "mode_status": supervisor_state.get("mode_status") or ("active" if focus_mode == "planning" else "idle"),
+            "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
+            "mode_occupancy": mode_occupancy,
             "lanes": lanes,
         },
         "execution_summary": {
@@ -1317,6 +1637,14 @@ def build_dashboard_bundle(
             "counts": planning.get("counts") or {},
             "materialized_count": materialized_count,
             "proposed_execution_tasks": len(proposed),
+            "active_session": planning.get("active_session")
+            or {
+                "session_id": planning.get("session_id"),
+                "planning_dir": planning.get("planning_dir"),
+                "session_file": planning.get("session_file"),
+                "status": planning.get("status"),
+            },
+            "recent_sessions": planning.get("recent_sessions") or [],
         },
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
@@ -1676,14 +2004,26 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
     timestamp = iso_now()
+    delivery = collect_done_delivery_metadata(task, actor)
+    delivery["recorded_at"] = timestamp
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp
     task["next"] = message
+    task["delivery"] = delivery
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
-    append_log({"ts": timestamp, "agent": actor, "type": "done", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "done",
+            "task_id": task_id,
+            "message": message,
+            "delivery": delivery,
+        }
+    )
 
 
 def command_supersede(state: dict[str, Any], args: list[str]) -> None:
