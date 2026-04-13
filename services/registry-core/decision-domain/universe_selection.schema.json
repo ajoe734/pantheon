@@ -1,0 +1,331 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/decision-domain/universe-selection/v1",
+  "title": "Pantheon UniverseSelection",
+  "description": "First-class decision object that records which instruments/symbols are eligible for trading under the current regime. This is stage 2 of the five-stage decision chain (RegimeState → UniverseSelection → SignalInference → AllocationDecision → RiskAdjudication). Universe selection is driven by regime classification, data availability, and strategy constraints.",
+  "type": "object",
+  "required": [
+    "universe_id",
+    "strategy_id",
+    "artifact_id",
+    "version",
+    "regime_ref",
+    "selected_universe",
+    "exclusion_reasons",
+    "evaluated_at",
+    "input_refs",
+    "output_refs",
+    "decision_reasoning"
+  ],
+  "properties": {
+    "universe_id": {
+      "type": "string",
+      "description": "Unique identifier for this universe selection decision."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "The strategy this universe selection applies to."
+    },
+    "artifact_id": {
+      "type": "string",
+      "description": "The strategy/model artifact version that produced this universe selection."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of this universe selection record."
+    },
+    "regime_ref": {
+      "type": "object",
+      "required": ["regime_id"],
+      "properties": {
+        "regime_id": {
+          "type": "string",
+          "description": "The regime_id from the upstream RegimeState that this selection is based on."
+        },
+        "regime_class": {
+          "type": "string",
+          "description": "Cached regime_class for quick filtering without dereferencing."
+        },
+        "regime_version": {
+          "type": "string",
+          "description": "Version of the upstream RegimeState."
+        }
+      },
+      "description": "Reference to the upstream RegimeState that drove this selection."
+    },
+    "selected_universe": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "asset_class", "inclusion_reason"],
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "The instrument symbol or identifier."
+          },
+          "asset_class": {
+            "type": "string",
+            "description": "Asset class of the instrument (e.g., equity, future, crypto, fx)."
+          },
+          "security_master_ref": {
+            "type": "string",
+            "description": "Optional SecurityMaster ID linking to BG-001 Data Plane object."
+          },
+          "contract_master_ref": {
+            "type": "string",
+            "description": "Optional ContractMaster ID linking to BG-001 Data Plane object (for derivatives)."
+          },
+          "dataset_version_ref": {
+            "type": "string",
+            "description": "Optional DatasetVersion ID confirming data availability for replay."
+          },
+          "inclusion_reason": {
+            "type": "string",
+            "description": "Why this symbol was included in the universe."
+          },
+          "weight_hint": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Optional pre-allocation weight hint for this symbol."
+          },
+          "eligibility_flags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sufficient_liquidity",
+                "sufficient_history",
+                "regime_eligible",
+                "risk_budget_compatible",
+                "data_quality_verified",
+                "trading_hours_aligned"
+              ]
+            }
+          }
+        }
+      },
+      "minItems": 0,
+      "description": "The set of instruments selected as eligible for trading under the current regime."
+    },
+    "exclusion_reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "reason"],
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "security_master_ref": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "insufficient_liquidity",
+              "insufficient_history",
+              "regime_ineligible",
+              "risk_budget_excluded",
+              "data_quality_failed",
+              "trading_hours_mismatch",
+              "correlation_filter",
+              "regulatory_restriction",
+              "manual_override"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Instruments that were considered but excluded, with reasons. Critical for replay and audit."
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when this universe selection was computed."
+    },
+    "input_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "regime_state",
+              "security_master",
+              "contract_master",
+              "dataset_version",
+              "risk_budget_policy",
+              "market_calendar_session"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "object",
+            "properties": {
+              "backend": {
+                "type": "string",
+                "enum": ["object_store", "gcs", "db", "inline"]
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "description": "Upstream objects consumed for universe selection. Must include at least one regime_state ref."
+    },
+    "output_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "signal_inference",
+              "allocation_decision",
+              "risk_adjudication",
+              "approval_decision"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Downstream decision objects that reference this universe selection."
+    },
+    "model_ref": {
+      "type": "object",
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "liquidity_filter",
+            "quality_screen",
+            "regime_filter",
+            "optimization",
+            "rule_based",
+            "ensemble",
+            "custom"
+          ]
+        },
+        "model_version": {
+          "type": "string"
+        }
+      },
+      "description": "Optional model provenance. Universe selection may be rule-based or model-driven."
+    },
+    "decision_reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reasoning summary for why the universe was selected as-is. Should reference regime context, liquidity constraints, and data availability."
+    },
+    "universe_stats": {
+      "type": "object",
+      "description": "Summary statistics about the selected universe for audit and replay.",
+      "properties": {
+        "total_candidates": {
+          "type": "integer",
+          "description": "Total number of candidate instruments before filtering."
+        },
+        "total_selected": {
+          "type": "integer",
+          "description": "Number of instruments selected."
+        },
+        "total_excluded": {
+          "type": "integer",
+          "description": "Number of instruments excluded."
+        },
+        "asset_class_breakdown": {
+          "type": "object",
+          "description": "Count of selected instruments per asset class.",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "avg_liquidity_score": {
+          "type": "number"
+        },
+        "avg_history_days": {
+          "type": "number"
+        }
+      }
+    },
+    "state": {
+      "type": "string",
+      "enum": ["proposed", "validated", "active", "superseded", "invalidated"],
+      "default": "proposed",
+      "description": "Lifecycle state of this universe selection record."
+    },
+    "superseded_by": {
+      "type": "string",
+      "description": "universe_id of a newer universe selection that supersedes this one."
+    },
+    "persona_id": {
+      "type": "string"
+    },
+    "capital_pool_id": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": ["validated", "active", "superseded"]
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["evaluated_at"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "superseded"
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["superseded_by"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "selected_universe": {
+            "maxItems": 0
+          }
+        },
+        "required": ["selected_universe"]
+      },
+      "then": {
+        "properties": {
+          "decision_reasoning": {
+            "minLength": 10,
+            "description": "An empty universe requires detailed reasoning about why no instruments are eligible."
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,513 @@
+{
+  "description": "Example payload set demonstrating a complete five-stage decision chain: RegimeState → UniverseSelection → SignalInference → AllocationDecision → RiskAdjudication. Each stage references the upstream stage and produces output_refs pointing downstream.",
+  "strategy_family": "equities_momentum_us",
+  "chain": [
+    {
+      "stage": 1,
+      "object": "RegimeState",
+      "schema_ref": "../regime_state.schema.json",
+      "example": {
+        "regime_id": "regime-20260413-001",
+        "strategy_id": "strat-equities-momentum-us-001",
+        "artifact_id": "regime-model-hmm-v2.3.1",
+        "version": "1.0.0",
+        "evaluated_at": "2026-04-13T09:30:00Z",
+        "input_refs": [
+          {
+            "ref_type": "feature_dataset",
+            "ref_id": "feat-dataset-equities-daily-v12",
+            "version": "12.0.0",
+            "storage_ref": {
+              "backend": "object_store",
+              "path": "datasets/features/equities/daily/v12/2026-04-13.parquet"
+            }
+          },
+          {
+            "ref_type": "security_master",
+            "ref_id": "secmaster-universe-russell1000",
+            "version": "2026-04-13"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "universe_selection",
+            "ref_id": "universe-20260413-001"
+          }
+        ],
+        "regime_classification": "trending",
+        "confidence": 0.78,
+        "regime_features": {
+          "volatility_percentile": 0.35,
+          "trend_strength": 0.62,
+          "momentum_score": 0.71,
+          "vix_level": 16.5
+        },
+        "market_scope_refs": [
+          {
+            "market_class": "equities",
+            "region": "us",
+            "instrument_ids": ["secmaster-universe-russell1000"]
+          }
+        ],
+        "model_ref": {
+          "model_id": "hmm-regime-4state",
+          "model_version": "2.3.1",
+          "model_type": "hmm",
+          "training_dataset_ref": "feat-dataset-equities-daily-v12"
+        },
+        "decision_reasoning": "4-state HMM infers trending regime with 78% confidence. Volatility at 35th percentile, positive momentum across 60% of Russell 1000 constituents. VIX at 16.5 supports risk-on allocation. This regime state conditions downstream universe selection for US equities momentum strategies.",
+        "decision_state": "validated",
+        "persona_id": "persona-senior-quant-001",
+        "capital_pool_id": "pool-us-equity-growth",
+        "metadata": {
+          "data_as_of": "2026-04-12T21:00:00Z",
+          "evaluation_duration_ms": 3420
+        }
+      }
+    },
+    {
+      "stage": 2,
+      "object": "UniverseSelection",
+      "schema_ref": "../universe_selection.schema.json",
+      "example": {
+        "universe_id": "universe-20260413-001",
+        "strategy_id": "strat-equities-momentum-us-001",
+        "artifact_id": "universe-selector-momentum-v1.5.0",
+        "version": "1.0.0",
+        "evaluated_at": "2026-04-13T09:30:05Z",
+        "input_refs": [
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-20260413-001",
+            "version": "1.0.0"
+          },
+          {
+            "ref_type": "feature_dataset",
+            "ref_id": "feat-dataset-equities-daily-v12",
+            "version": "12.0.0"
+          },
+          {
+            "ref_type": "security_master",
+            "ref_id": "secmaster-universe-russell1000",
+            "version": "2026-04-13"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "signal_inference",
+            "ref_id": "signal-20260413-001"
+          }
+        ],
+        "regime_ref": {
+          "regime_id": "regime-20260413-001",
+          "version": "1.0.0"
+        },
+        "selected_instruments": [
+          {
+            "instrument_type": "equity",
+            "instrument_id": "SEC-US-AAPL",
+            "weight_hint": 0.08,
+            "selection_reason": "Top-decile 12-month momentum, strong earnings revision trend"
+          },
+          {
+            "instrument_type": "equity",
+            "instrument_id": "SEC-US-NVDA",
+            "weight_hint": 0.10,
+            "selection_reason": "Leading AI semiconductor momentum, regime-aligned growth exposure"
+          },
+          {
+            "instrument_type": "equity",
+            "instrument_id": "SEC-US-MSFT",
+            "weight_hint": 0.07,
+            "selection_reason": "Stable cloud momentum, lower volatility than peers"
+          },
+          {
+            "instrument_type": "equity",
+            "instrument_id": "SEC-US-AMZN",
+            "weight_hint": 0.06,
+            "selection_reason": "AWS acceleration, improving retail margin trajectory"
+          }
+        ],
+        "universe_criteria": {
+          "min_liquidity": 5000000,
+          "min_market_cap": 10000000000,
+          "max_instruments": 20,
+          "asset_classes": ["equity"],
+          "regions": ["us"],
+          "additional_filters": ["exclude_financials", "momentum_top_quintile"]
+        },
+        "model_ref": {
+          "model_id": "momentum-universe-selector",
+          "model_version": "1.5.0",
+          "model_type": "ranking_model"
+        },
+        "decision_reasoning": "Given trending regime (regime-20260413-001, confidence 0.78), selected 4 instruments from Russell 1000 with top-decile 12-month momentum and minimum $10B market cap. Liquidity filter ensures $5M+ ADV. Universe bounded to 20 instruments max for concentrated momentum exposure. AAPL, NVDA, MSFT, AMZN selected for highest composite momentum scores.",
+        "decision_state": "validated",
+        "persona_id": "persona-senior-quant-001",
+        "capital_pool_id": "pool-us-equity-growth",
+        "metadata": {
+          "total_candidates_evaluated": 847,
+          "selection_rate": 0.0047
+        }
+      }
+    },
+    {
+      "stage": 3,
+      "object": "SignalInference",
+      "schema_ref": "../signal_inference.schema.json",
+      "example": {
+        "signal_id": "signal-20260413-001",
+        "strategy_id": "strat-equities-momentum-us-001",
+        "artifact_id": "alpha-model-ensemble-v3.1.0",
+        "version": "1.0.0",
+        "evaluated_at": "2026-04-13T09:30:10Z",
+        "input_refs": [
+          {
+            "ref_type": "universe_selection",
+            "ref_id": "universe-20260413-001",
+            "version": "1.0.0"
+          },
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-20260413-001",
+            "version": "1.0.0"
+          },
+          {
+            "ref_type": "feature_dataset",
+            "ref_id": "feat-dataset-equities-daily-v12",
+            "version": "12.0.0"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "allocation_decision",
+            "ref_id": "alloc-20260413-001"
+          }
+        ],
+        "universe_ref": {
+          "universe_id": "universe-20260413-001",
+          "version": "1.0.0"
+        },
+        "signals": [
+          {
+            "instrument_id": "SEC-US-AAPL",
+            "signal_type": "momentum",
+            "signal_value": 0.82,
+            "signal_strength": 0.76,
+            "time_horizon": "swing",
+            "confidence_interval": {
+              "lower": 0.61,
+              "upper": 0.95,
+              "coverage": 0.90
+            },
+            "decay_estimate": {
+              "half_life": 15,
+              "ic_estimate": 0.08
+            }
+          },
+          {
+            "instrument_id": "SEC-US-NVDA",
+            "signal_type": "momentum",
+            "signal_value": 0.91,
+            "signal_strength": 0.88,
+            "time_horizon": "swing",
+            "confidence_interval": {
+              "lower": 0.74,
+              "upper": 1.05,
+              "coverage": 0.90
+            },
+            "decay_estimate": {
+              "half_life": 12,
+              "ic_estimate": 0.11
+            }
+          },
+          {
+            "instrument_id": "SEC-US-MSFT",
+            "signal_type": "momentum",
+            "signal_value": 0.71,
+            "signal_strength": 0.65,
+            "time_horizon": "swing",
+            "confidence_interval": {
+              "lower": 0.52,
+              "upper": 0.85,
+              "coverage": 0.90
+            },
+            "decay_estimate": {
+              "half_life": 18,
+              "ic_estimate": 0.07
+            }
+          },
+          {
+            "instrument_id": "SEC-US-AMZN",
+            "signal_type": "momentum",
+            "signal_value": 0.68,
+            "signal_strength": 0.61,
+            "time_horizon": "swing",
+            "confidence_interval": {
+              "lower": 0.48,
+              "upper": 0.82,
+              "coverage": 0.90
+            },
+            "decay_estimate": {
+              "half_life": 14,
+              "ic_estimate": 0.06
+            }
+          }
+        ],
+        "model_ref": {
+          "model_id": "alpha-ensemble-momentum",
+          "model_version": "3.1.0",
+          "model_type": "ensemble",
+          "training_dataset_ref": "feat-dataset-equities-daily-v12",
+          "training_window": "2024-01-01/2026-04-12"
+        },
+        "decision_reasoning": "Ensemble alpha model (tree_ensemble + factor_model) infers positive momentum signals across all 4 selected instruments. NVDA leads with 0.91 signal value and 0.88 strength, driven by AI sector momentum and earnings revision acceleration. AAPL follows at 0.82 with strong consumer tech trend. All signals have swing time horizon (12-18 day half-life decay). IC estimates range 0.06-0.11, consistent with momentum factor performance in trending regimes.",
+        "decision_state": "validated",
+        "persona_id": "persona-senior-quant-001",
+        "capital_pool_id": "pool-us-equity-growth",
+        "metadata": {
+          "model_ensemble_weights": {
+            "tree_ensemble": 0.6,
+            "factor_model": 0.4
+          }
+        }
+      }
+    },
+    {
+      "stage": 4,
+      "object": "AllocationDecision",
+      "schema_ref": "../allocation_decision.schema.json",
+      "example": {
+        "allocation_decision_id": "alloc-20260413-001",
+        "strategy_id": "strat-equities-momentum-us-001",
+        "artifact_id": "allocator-signal-proportional-v1.2.0",
+        "version": "1.0.0",
+        "evaluated_at": "2026-04-13T09:30:15Z",
+        "signal_inference_id": "signal-20260413-001",
+        "allocation_method": "signal_proportional",
+        "risk_budget": {
+          "max_portfolio_var": 0.025,
+          "max_single_position_pct": 0.30,
+          "max_sector_exposure_pct": 0.50,
+          "max_gross_exposure": 1.5,
+          "max_net_exposure": 1.0,
+          "target_volatility": 0.12
+        },
+        "allocations": [
+          {
+            "instrument_id": "SEC-US-NVDA",
+            "weight": 0.28,
+            "direction": "long",
+            "notional_target": 280000,
+            "signal_score_used": 0.91,
+            "allocation_rationale": "Highest signal strength (0.88) and IC (0.11); sized to 28% within single-position limit"
+          },
+          {
+            "instrument_id": "SEC-US-AAPL",
+            "weight": 0.25,
+            "direction": "long",
+            "notional_target": 250000,
+            "signal_score_used": 0.82,
+            "allocation_rationale": "Second-highest signal strength (0.76); stable momentum trajectory"
+          },
+          {
+            "instrument_id": "SEC-US-MSFT",
+            "weight": 0.22,
+            "direction": "long",
+            "notional_target": 220000,
+            "signal_score_used": 0.71,
+            "allocation_rationale": "Lower volatility justifies 22% despite moderate signal strength"
+          },
+          {
+            "instrument_id": "SEC-US-AMZN",
+            "weight": 0.20,
+            "direction": "long",
+            "notional_target": 200000,
+            "signal_score_used": 0.68,
+            "allocation_rationale": "Lowest signal strength in universe; sized conservatively at 20%"
+          }
+        ],
+        "portfolio_summary": {
+          "total_weight_long": 0.95,
+          "total_weight_short": 0.0,
+          "net_exposure": 0.95,
+          "gross_exposure": 0.95,
+          "num_positions": 4,
+          "estimated_portfolio_var": 0.021,
+          "estimated_portfolio_volatility": 0.11
+        },
+        "input_refs": [
+          {
+            "ref_type": "signal_inference",
+            "ref_id": "signal-20260413-001",
+            "version": "1.0.0"
+          },
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-20260413-001",
+            "version": "1.0.0"
+          },
+          {
+            "ref_type": "capital_pool",
+            "ref_id": "pool-us-equity-growth"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "risk_adjudication",
+            "ref_id": "risk-20260413-001"
+          }
+        ],
+        "decision_reasoning": "Signal-proportional allocation maps ensemble signal strengths to portfolio weights. NVDA receives largest allocation (28%) based on highest IC and signal strength. Total portfolio at 95% net exposure, $1M notional target. Portfolio VaR at 2.1% (within 2.5% limit), estimated volatility 11% (below 12% target). No short positions — consistent with trending regime and momentum-only signals. Allocation awaits risk adjudication validation.",
+        "model_ref": {
+          "model_id": "signal-proportional-allocator",
+          "model_version": "1.2.0",
+          "model_type": "analytical"
+        },
+        "allocation_state": "proposed",
+        "persona_id": "persona-senior-quant-001",
+        "capital_pool_id": "pool-us-equity-growth",
+        "metadata": {
+          "rebalancing_frequency": "weekly",
+          "cash_buffer_pct": 0.05
+        }
+      }
+    },
+    {
+      "stage": 5,
+      "object": "RiskAdjudication",
+      "schema_ref": "../risk_adjudication.schema.json",
+      "example": {
+        "risk_adjudication_id": "risk-20260413-001",
+        "strategy_id": "strat-equities-momentum-us-001",
+        "artifact_id": "risk-engine-var-stress-v2.0.0",
+        "version": "1.0.0",
+        "evaluated_at": "2026-04-13T09:30:20Z",
+        "allocation_decision_id": "alloc-20260413-001",
+        "risk_outcome": "approved",
+        "risk_checks": [
+          {
+            "check_name": "max_position_size",
+            "check_result": "pass",
+            "check_value": 0.28,
+            "threshold": 0.30,
+            "check_detail": "NVDA at 28% within 30% single-position limit"
+          },
+          {
+            "check_name": "portfolio_var_limit",
+            "check_result": "pass",
+            "check_value": 0.021,
+            "threshold": 0.025,
+            "check_detail": "Portfolio VaR 2.1% within 2.5% limit"
+          },
+          {
+            "check_name": "gross_exposure_limit",
+            "check_result": "pass",
+            "check_value": 0.95,
+            "threshold": 1.5,
+            "check_detail": "Gross exposure 95% well within 150% limit"
+          },
+          {
+            "check_name": "volatility_target",
+            "check_result": "pass",
+            "check_value": 0.11,
+            "threshold": 0.12,
+            "check_detail": "Estimated volatility 11% within 12% target"
+          },
+          {
+            "check_name": "sector_concentration",
+            "check_result": "warning",
+            "check_value": 0.95,
+            "threshold": 0.50,
+            "check_detail": "All 4 positions in Technology sector; 95% sector exposure exceeds 50% guideline — acceptable for pure momentum strategy but flagged for monitoring"
+          },
+          {
+            "check_name": "stress_test_scenario",
+            "check_result": "pass",
+            "check_value": -0.085,
+            "threshold": -0.15,
+            "check_detail": "Worst-case stress (2020 COVID crash) shows -8.5% PnL, within -15% threshold"
+          }
+        ],
+        "portfolio_risk_metrics": {
+          "portfolio_var_95": 0.021,
+          "portfolio_var_99": 0.034,
+          "expected_shortfall_95": 0.028,
+          "max_drawdown_estimate": 0.092,
+          "annualized_volatility": 0.11,
+          "sharpe_ratio_estimate": 1.35,
+          "correlation_matrix_summary": {
+            "max_pairwise_correlation": 0.72,
+            "avg_pairwise_correlation": 0.58,
+            "effective_num_bets": 2.1
+          }
+        },
+        "stress_test_results": [
+          {
+            "scenario_name": "2020_covid_crash",
+            "scenario_description": "March 2020 market crash replay: S&P 500 -34%, VIX spike to 82",
+            "pnl_impact": -85000,
+            "pnl_pct_of_nav": -0.085
+          },
+          {
+            "scenario_name": "2008_financial_crisis",
+            "scenario_description": "2008 GFC replay: S&P 500 -57%, credit freeze",
+            "pnl_impact": -110000,
+            "pnl_pct_of_nav": -0.11
+          },
+          {
+            "scenario_name": "rate_shock_200bp",
+            "scenario_description": "Sudden 200bp Fed rate increase",
+            "pnl_impact": -42000,
+            "pnl_pct_of_nav": -0.042
+          }
+        ],
+        "input_refs": [
+          {
+            "ref_type": "allocation_decision",
+            "ref_id": "alloc-20260413-001",
+            "version": "1.0.0"
+          },
+          {
+            "ref_type": "signal_inference",
+            "ref_id": "signal-20260413-001",
+            "version": "1.0.0"
+          },
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-20260413-001",
+            "version": "1.0.0"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "approval_decision",
+            "ref_id": "approval-20260413-001"
+          }
+        ],
+        "decision_reasoning": "All 5 mandatory risk checks pass. Sector concentration warning (95% tech) noted but acceptable for pure momentum strategy — operator should monitor for regime change signals. Portfolio VaR 2.1% within limits, volatility 11% below 12% target. Stress tests pass: worst case is 2008 crisis at -11% PnL, within -15% threshold. Effective number of bets at 2.1 reflects concentrated tech momentum exposure. Allocation APPROVED for flow to ApprovalDecision governance gate.",
+        "model_ref": {
+          "model_id": "risk-engine-var-stress",
+          "model_version": "2.0.0",
+          "model_type": "monte_carlo",
+          "calibration_dataset_ref": "feat-dataset-equities-daily-v12"
+        },
+        "adjudication_state": "accepted",
+        "persona_id": "persona-senior-quant-001",
+        "capital_pool_id": "pool-us-equity-growth",
+        "metadata": {
+          "evaluation_duration_ms": 8750,
+          "stress_scenario_count": 12
+        }
+      }
+    }
+  ],
+  "chain_validation": {
+    "stage_1_to_2": "RegimeState regime_id 'regime-20260413-001' referenced by UniverseSelection regime_ref.regime_id",
+    "stage_2_to_3": "UniverseSelection universe_id 'universe-20260413-001' referenced by SignalInference universe_ref.universe_id",
+    "stage_3_to_4": "SignalInference signal_id 'signal-20260413-001' referenced by AllocationDecision signal_inference_id",
+    "stage_4_to_5": "AllocationDecision allocation_decision_id 'alloc-20260413-001' referenced by RiskAdjudication allocation_decision_id",
+    "stage_5_to_back_half": "RiskAdjudication output_refs points to ApprovalDecision 'approval-20260413-001', linking front-half chain to existing back-half governance gate",
+    "full_chain_status": "COMPLETE"
+  }
+}

@@ -1,0 +1,300 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/decision-domain/regime-state/v1",
+  "title": "Pantheon RegimeState",
+  "description": "First-class decision object that records the inferred market regime for a strategy evaluation window. This is stage 1 of the five-stage decision chain (RegimeState → UniverseSelection → SignalInference → AllocationDecision → RiskAdjudication). Regime classification drives all downstream selection, inference, and allocation logic.",
+  "type": "object",
+  "required": [
+    "regime_id",
+    "strategy_id",
+    "artifact_id",
+    "version",
+    "regime_class",
+    "confidence",
+    "evaluated_at",
+    "window_start",
+    "window_end",
+    "input_refs",
+    "output_refs",
+    "model_ref",
+    "decision_reasoning"
+  ],
+  "properties": {
+    "regime_id": {
+      "type": "string",
+      "description": "Unique identifier for this regime state evaluation."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "The strategy this regime inference applies to."
+    },
+    "artifact_id": {
+      "type": "string",
+      "description": "The strategy/model artifact version that produced this regime inference."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of this regime state record."
+    },
+    "regime_class": {
+      "type": "string",
+      "enum": [
+        "risk_on",
+        "risk_off",
+        "trending_up",
+        "trending_down",
+        "mean_reverting",
+        "high_volatility",
+        "low_volatility",
+        "regime_transition",
+        "mixed"
+      ],
+      "description": "The inferred market regime classification. Drives universe selection and signal model choice downstream."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Classifier confidence score [0, 1]. Low confidence should flag regime_transition or mixed regimes."
+    },
+    "regime_scores": {
+      "type": "object",
+      "description": "Full probability distribution over all regime classes. regime_class should be the argmax.",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when this regime inference was computed."
+    },
+    "window_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp marking the start of the observation window used for regime inference."
+    },
+    "window_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp marking the end of the observation window used for regime inference."
+    },
+    "input_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "dataset_version",
+              "security_master",
+              "contract_master",
+              "market_calendar_session",
+              "feature_dataset",
+              "telemetry_summary",
+              "external_macro"
+            ]
+          },
+          "ref_id": {
+            "type": "string",
+            "description": "Identifier of the referenced object (e.g., dataset_version_id, security_master_id)."
+          },
+          "storage_ref": {
+            "type": "object",
+            "properties": {
+              "backend": {
+                "type": "string",
+                "enum": ["object_store", "gcs", "db", "inline"]
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "description": "Upstream data sources and feature sets consumed for regime inference. References BG-001 Data Plane objects where applicable."
+    },
+    "output_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "universe_selection",
+              "signal_inference",
+              "allocation_decision",
+              "risk_adjudication",
+              "approval_decision"
+            ]
+          },
+          "ref_id": {
+            "type": "string",
+            "description": "ID of the downstream object that consumed this regime state."
+          }
+        }
+      },
+      "description": "Downstream decision objects that reference this regime state. Populated as the chain progresses."
+    },
+    "model_ref": {
+      "type": "object",
+      "required": ["model_family", "model_version"],
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "hmm",
+            "markov_switching",
+            "random_forest",
+            "gradient_boosting",
+            "neural_classifier",
+            "rule_based",
+            "ensemble",
+            "custom"
+          ],
+          "description": "The model family used for regime classification."
+        },
+        "model_version": {
+          "type": "string",
+          "description": "Version or commit of the regime classifier model."
+        },
+        "training_dataset_ref": {
+          "type": "string",
+          "description": "Optional reference to the dataset used to train the regime classifier."
+        }
+      },
+      "description": "Model provenance for the regime inference. Distinguishes first-class decision provenance from raw research input."
+    },
+    "decision_reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human- and machine-readable reasoning summary for the regime classification. May be a model-generated summary or structured feature importance snapshot."
+    },
+    "feature_snapshot": {
+      "type": "object",
+      "description": "Key feature values or summary statistics that drove the regime classification. Stored for replay and audit.",
+      "properties": {
+        "volatility_regime": {
+          "type": "string",
+          "enum": ["low", "normal", "elevated", "extreme"]
+        },
+        "trend_strength": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "momentum_signal": {
+          "type": "string",
+          "enum": ["negative", "neutral", "positive"]
+        },
+        "macro_environment": {
+          "type": "string",
+          "enum": ["expansion", "slowdown", "recession", "recovery", "unknown"]
+        }
+      }
+    },
+    "market_scope": {
+      "type": "object",
+      "description": "The market and instrument scope this regime applies to. Should align with BG-000 market scope policy vocabulary.",
+      "properties": {
+        "asset_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Asset classes covered (e.g., equities, futures, crypto, fx)."
+        },
+        "markets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Market identifiers (e.g., US, TW, JP, global)."
+        },
+        "security_master_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "SecurityMaster IDs this regime was inferred from. Links to BG-001 objects."
+        }
+      }
+    },
+    "state": {
+      "type": "string",
+      "enum": ["proposed", "validated", "active", "superseded", "invalidated"],
+      "default": "proposed",
+      "description": "Lifecycle state of this regime state record."
+    },
+    "superseded_by": {
+      "type": "string",
+      "description": "regime_id of a newer regime state that supersedes this one."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "Optional: the persona this regime inference is scoped to."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "description": "Optional: the capital pool this regime inference applies to."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata for downstream consumers."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": ["validated", "active", "superseded"]
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["evaluated_at"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "superseded"
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["superseded_by"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence": {
+            "maximum": 0.3
+          }
+        },
+        "required": ["confidence"]
+      },
+      "then": {
+        "properties": {
+          "regime_class": {
+            "enum": ["regime_transition", "mixed"]
+          }
+        },
+        "description": "Low-confidence inferences should be classified as regime_transition or mixed to signal uncertainty to downstream consumers."
+      }
+    }
+  ]
+}

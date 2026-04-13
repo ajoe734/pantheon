@@ -1,0 +1,345 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/decision-domain/risk-adjudication/v1",
+  "title": "Pantheon RiskAdjudication",
+  "description": "First-class decision object that records the risk assessment of a proposed allocation before it proceeds to governance approval. This is stage 5 (final) of the five-stage decision chain (RegimeState → UniverseSelection → SignalInference → AllocationDecision → RiskAdjudication). Risk adjudication validates that the allocation complies with risk budgets, concentration limits, drawdown constraints, and stress-test scenarios. Its output_refs links to the existing ApprovalDecision (back-half governance gate).",
+  "type": "object",
+  "required": [
+    "adjudication_id",
+    "strategy_id",
+    "artifact_id",
+    "version",
+    "allocation_ref",
+    "risk_assessment",
+    "verdict",
+    "evaluated_at",
+    "input_refs",
+    "output_refs",
+    "decision_reasoning"
+  ],
+  "properties": {
+    "adjudication_id": {
+      "type": "string",
+      "description": "Unique identifier for this risk adjudication."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "The strategy this risk adjudication applies to."
+    },
+    "artifact_id": {
+      "type": "string",
+      "description": "The strategy/model artifact version this adjudication covers."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of this risk adjudication record."
+    },
+    "allocation_ref": {
+      "type": "object",
+      "required": ["allocation_id"],
+      "properties": {
+        "allocation_id": {
+          "type": "string",
+          "description": "The allocation_id from the upstream AllocationDecision being assessed."
+        },
+        "allocation_version": {
+          "type": "string"
+        }
+      },
+      "description": "Reference to the upstream AllocationDecision under risk review."
+    },
+    "risk_assessment": {
+      "type": "object",
+      "required": ["overall_risk_level", "checks"],
+      "properties": {
+        "overall_risk_level": {
+          "type": "string",
+          "enum": ["within_budget", "elevated", "exceeded", "blocked"],
+          "description": "Aggregate risk verdict. 'within_budget' passes; 'exceeded' or 'blocked' should halt progression."
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["check_type", "status"],
+            "properties": {
+              "check_type": {
+                "type": "string",
+                "enum": [
+                  "max_position_weight",
+                  "max_sector_concentration",
+                  "max_leverage",
+                  "max_drawdown_exposure",
+                  "var_limit",
+                  "expected_shortfall_limit",
+                  "stress_test",
+                  "correlation_concentration",
+                  "liquidity_coverage",
+                  "turnover_limit",
+                  "tail_risk",
+                  "regime_risk",
+                  "custom"
+                ],
+                "description": "The type of risk check performed."
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pass", "warn", "fail", "skipped"],
+                "description": "Result of this check."
+              },
+              "observed_value": {
+                "type": "number",
+                "description": "The observed metric value."
+              },
+              "threshold_value": {
+                "type": "number",
+                "description": "The policy threshold."
+              },
+              "policy_ref": {
+                "type": "string",
+                "description": "Reference to the risk budget policy that defines this threshold."
+              },
+              "detail": {
+                "type": "string",
+                "description": "Additional context for this check result."
+              }
+            }
+          },
+          "description": "Individual risk check results."
+        },
+        "stress_test_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["scenario_name", "impact"],
+            "properties": {
+              "scenario_name": {
+                "type": "string",
+                "enum": [
+                  "market_crash",
+                  "rate_shock",
+                  "volatility_spike",
+                  "liquidity_dry_up",
+                  "correlation_breakdown",
+                  "regime_shift",
+                  "custom"
+                ],
+                "description": "The stress scenario name."
+              },
+              "impact": {
+                "type": "object",
+                "properties": {
+                  "estimated_pnl": {
+                    "type": "number",
+                    "description": "Estimated PnL under this scenario."
+                  },
+                  "max_drawdown": {
+                    "type": "number",
+                    "description": "Estimated maximum drawdown under this scenario."
+                  },
+                  "var_breach": {
+                    "type": "boolean",
+                    "description": "Whether VaR limit is breached."
+                  }
+                }
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pass", "warn", "fail"],
+                "description": "Whether the portfolio survives this scenario within risk budgets."
+              }
+            }
+          },
+          "description": "Stress test scenarios run against the proposed allocation."
+        }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "approved_with_conditions",
+        "requires_revision",
+        "rejected"
+      ],
+      "description": "The risk adjudication verdict. 'approved' means the allocation is within risk budget and may proceed to ApprovalDecision. 'requires_revision' or 'rejected' should halt the chain."
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Conditions that must be satisfied for approved_with_conditions verdicts. Empty or absent for approved/rejected."
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when this risk adjudication was computed."
+    },
+    "input_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "regime_state",
+              "universe_selection",
+              "signal_inference",
+              "allocation_decision",
+              "risk_budget_policy",
+              "capital_pool_state",
+              "current_portfolio_snapshot",
+              "telemetry_summary"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "object",
+            "properties": {
+              "backend": {
+                "type": "string",
+                "enum": ["object_store", "gcs", "db", "inline"]
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "description": "Upstream objects consumed for risk adjudication. Must include allocation_decision ref."
+    },
+    "output_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "approval_decision",
+              "deployment_plan",
+              "runtime_binding",
+              "evolution_decision"
+            ],
+            "description": "Downstream governance objects. approval_decision is the primary link to the back-half chain."
+          },
+          "ref_id": {
+            "type": "string",
+            "description": "ID of the downstream governance object. For approval_decision, this references the target_id or decision_id."
+          }
+        }
+      },
+      "description": "Downstream decision objects that reference this risk adjudication. The link to ApprovalDecision closes the front-half to back-half chain."
+    },
+    "model_ref": {
+      "type": "object",
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "historical_var",
+            "monte_carlo",
+            "factor_risk",
+            "stress_engine",
+            "rule_based",
+            "custom"
+          ],
+          "description": "The risk model family used for assessment."
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "risk_model_parameters": {
+          "type": "object",
+          "description": "Key parameters (e.g., confidence_level, lookback_window, factor_model).",
+          "additionalProperties": true
+        }
+      },
+      "description": "Optional risk model provenance."
+    },
+    "decision_reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reasoning summary for the risk verdict. Should explain any failed checks, condition rationale, and overall risk posture."
+    },
+    "state": {
+      "type": "string",
+      "enum": ["proposed", "validated", "active", "superseded", "invalidated"],
+      "default": "proposed",
+      "description": "Lifecycle state of this risk adjudication record."
+    },
+    "superseded_by": {
+      "type": "string",
+      "description": "adjudication_id of a newer adjudication that supersedes this one."
+    },
+    "persona_id": {
+      "type": "string"
+    },
+    "capital_pool_id": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "enum": ["approved_with_conditions"]
+          }
+        },
+        "required": ["verdict"]
+      },
+      "then": {
+        "required": ["conditions"],
+        "properties": {
+          "conditions": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "enum": ["rejected"]
+          }
+        },
+        "required": ["verdict"]
+      },
+      "then": {
+        "properties": {
+          "decision_reasoning": {
+            "minLength": 10,
+            "description": "A rejected verdict requires detailed reasoning about why the allocation exceeds risk budget."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "superseded"
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["superseded_by"]
+      }
+    }
+  ]
+}

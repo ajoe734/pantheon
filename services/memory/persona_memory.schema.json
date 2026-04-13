@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon PersonaMemory",
+  "description": "Persona-specific memory object. Accumulates knowledge, preferences, and behavioural observations that are private to a single persona. Written by the persona-memory-svc; readable by the owning persona's sessions and authorised research/consultation sessions.",
+  "type": "object",
+  "required": [
+    "memory_id",
+    "persona_id",
+    "memory_type",
+    "content",
+    "source_event_type",
+    "source_event_id",
+    "written_at",
+    "write_authority"
+  ],
+  "properties": {
+    "memory_id": {
+      "type": "string",
+      "description": "Immutable unique identifier for this memory entry (UUID)."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "The persona this memory belongs to. Scopes all read/write access."
+    },
+    "memory_type": {
+      "type": "string",
+      "enum": [
+        "episodic",
+        "semantic",
+        "preference",
+        "strategy_lesson",
+        "risk_observation",
+        "consultation_outcome"
+      ],
+      "description": "Classification of what kind of knowledge this memory encodes.\n- episodic: a specific past event or trade outcome\n- semantic: a durable fact or pattern learned over time\n- preference: operator-confirmed tuning of persona behaviour\n- strategy_lesson: a lesson distilled from a research or postmortem review\n- risk_observation: an observed risk pattern or regime flag\n- consultation_outcome: a synthesised insight from a committee/consult session"
+    },
+    "content": {
+      "type": "object",
+      "required": ["summary"],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable summary of this memory."
+        },
+        "structured_payload": {
+          "type": "object",
+          "description": "Optional machine-readable payload whose shape is memory_type-dependent.",
+          "additionalProperties": true
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Free-form retrieval tags (e.g. regime, asset_class, source_strategy)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_event_type": {
+      "type": "string",
+      "enum": [
+        "session_end",
+        "postmortem_published",
+        "evolution_decision_approved",
+        "consultation_closed",
+        "trainer_epoch_complete",
+        "operator_feedback",
+        "research_task_completed"
+      ],
+      "description": "The class of event that triggered the write-back."
+    },
+    "source_event_id": {
+      "type": "string",
+      "description": "ID of the specific source event (e.g. postmortem_id, session_id, evolution_decision_id)."
+    },
+    "written_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when this entry was written (UTC ISO-8601)."
+    },
+    "write_authority": {
+      "type": "string",
+      "enum": [
+        "persona-memory-svc",
+        "incident-svc",
+        "evolution-svc",
+        "trainer-svc",
+        "consultation-svc",
+        "research-svc"
+      ],
+      "description": "Service that wrote this entry. Only whitelisted services may write."
+    },
+    "embedding_ref": {
+      "type": ["string", "null"],
+      "description": "Reference to the vector embedding stored in the retrieval index. Set by persona-memory-svc after indexing."
+    },
+    "superseded_by": {
+      "type": ["string", "null"],
+      "description": "memory_id of the entry that supersedes this one, if any. Superseded entries are retained for lineage but excluded from active retrieval."
+    },
+    "relevance_scope": {
+      "type": "string",
+      "enum": ["persona_private", "persona_and_committee"],
+      "default": "persona_private",
+      "description": "Controls read visibility. persona_private: only the owning persona's sessions. persona_and_committee: also readable by authorised committee/consult sessions involving this persona."
+    }
+  },
+  "additionalProperties": false
+}
