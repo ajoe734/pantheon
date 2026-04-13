@@ -1,0 +1,329 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/decision-domain/allocation-decision/v1",
+  "title": "Pantheon AllocationDecision",
+  "description": "First-class decision object that records the capital allocation calculation across instruments based on inferred signals. This is stage 4 of the five-stage decision chain (RegimeState → UniverseSelection → SignalInference → AllocationDecision → RiskAdjudication). NOTE: This is a *capital allocation calculation*, distinct from the back-half ApprovalDecision which is a *governance approval gate*.",
+  "type": "object",
+  "required": [
+    "allocation_id",
+    "strategy_id",
+    "artifact_id",
+    "version",
+    "signal_ref",
+    "allocations",
+    "evaluated_at",
+    "input_refs",
+    "output_refs",
+    "model_ref",
+    "decision_reasoning"
+  ],
+  "properties": {
+    "allocation_id": {
+      "type": "string",
+      "description": "Unique identifier for this allocation decision."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "The strategy this allocation applies to."
+    },
+    "artifact_id": {
+      "type": "string",
+      "description": "The strategy/model artifact version that produced this allocation."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of this allocation decision record."
+    },
+    "regime_ref": {
+      "type": "object",
+      "required": ["regime_id"],
+      "properties": {
+        "regime_id": {
+          "type": "string"
+        },
+        "regime_class": {
+          "type": "string"
+        },
+        "regime_version": {
+          "type": "string"
+        }
+      },
+      "description": "Cached regime reference for filtering and replay."
+    },
+    "signal_ref": {
+      "type": "object",
+      "required": ["signal_id"],
+      "properties": {
+        "signal_id": {
+          "type": "string",
+          "description": "The signal_id from the upstream SignalInference that this allocation is based on."
+        },
+        "signal_version": {
+          "type": "string"
+        }
+      },
+      "description": "Reference to the upstream SignalInference."
+    },
+    "allocations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "direction", "target_weight", "target_value"],
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "The instrument symbol."
+          },
+          "security_master_ref": {
+            "type": "string",
+            "description": "Optional SecurityMaster ID for provenance linkage."
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["long", "short", "flat"],
+            "description": "Position direction after allocation optimization."
+          },
+          "target_weight": {
+            "type": "number",
+            "description": "Target portfolio weight for this instrument (may be negative for short)."
+          },
+          "target_value": {
+            "type": "number",
+            "description": "Target notional/cash value for this position."
+          },
+          "current_weight": {
+            "type": "number",
+            "description": "Current portfolio weight before rebalance. Absent for new positions."
+          },
+          "delta_weight": {
+            "type": "number",
+            "description": "Change in weight (target - current). Drives trade size."
+          },
+          "signal_direction": {
+            "type": "string",
+            "enum": ["long", "short", "neutral", "exit"],
+            "description": "Original signal direction from upstream SignalInference."
+          },
+          "signal_magnitude": {
+            "type": "number",
+            "description": "Original signal magnitude from upstream SignalInference."
+          },
+          "allocation_method": {
+            "type": "string",
+            "enum": [
+              "equal_weight",
+              "risk_parity",
+              "mean_variance",
+              "black_litterman",
+              "signal_proportional",
+              "volatility_targeting",
+              "kelly_criterion",
+              "custom"
+            ],
+            "description": "The allocation methodology used for this instrument."
+          },
+          "constraints_applied": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "max_position_weight",
+                "max_sector_weight",
+                "max_leverage",
+                "min_trade_size",
+                "liquidity_cap",
+                "turnover_limit"
+              ]
+            },
+            "description": "Constraints that were active and affected this allocation."
+          }
+        }
+      },
+      "minItems": 0,
+      "description": "Per-instrument allocation targets. May be empty if no allocation is warranted."
+    },
+    "portfolio_summary": {
+      "type": "object",
+      "description": "Aggregate portfolio-level allocation summary.",
+      "properties": {
+        "total_target_exposure": {
+          "type": "number",
+          "description": "Sum of absolute target weights (gross exposure)."
+        },
+        "net_target_exposure": {
+          "type": "number",
+          "description": "Net long minus net short weights."
+        },
+        "total_target_value": {
+          "type": "number",
+          "description": "Total notional value of the target portfolio."
+        },
+        "leverage_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Gross exposure / net capital. 1.0 = unlevered."
+        },
+        "long_weight": {
+          "type": "number"
+        },
+        "short_weight": {
+          "type": "number"
+        },
+        "cash_weight": {
+          "type": "number",
+          "description": "Implied cash position after allocation."
+        },
+        "estimated_turnover": {
+          "type": "number",
+          "description": "Estimated portfolio turnover from current to target."
+        },
+        "num_positions": {
+          "type": "integer",
+          "description": "Number of non-flat positions."
+        }
+      }
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when this allocation was computed."
+    },
+    "input_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "regime_state",
+              "universe_selection",
+              "signal_inference",
+              "risk_budget_policy",
+              "capital_pool_state",
+              "current_portfolio_snapshot"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "object",
+            "properties": {
+              "backend": {
+                "type": "string",
+                "enum": ["object_store", "gcs", "db", "inline"]
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "description": "Upstream objects consumed for allocation. Must include signal_inference ref."
+    },
+    "output_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "risk_adjudication",
+              "approval_decision"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Downstream decision objects that reference this allocation."
+    },
+    "model_ref": {
+      "type": "object",
+      "required": ["model_family"],
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "equal_weight",
+            "risk_parity",
+            "mean_variance",
+            "black_litterman",
+            "signal_proportional",
+            "volatility_targeting",
+            "kelly_criterion",
+            "custom"
+          ],
+          "description": "The allocation methodology family."
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "hyperparameters": {
+          "type": "object",
+          "description": "Key allocation hyperparameters (e.g., risk_aversion, target_volatility).",
+          "additionalProperties": true
+        }
+      }
+    },
+    "decision_reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reasoning summary for the allocation calculation. Should explain methodology, constraint interactions, and any notable deviations from raw signal proportions."
+    },
+    "state": {
+      "type": "string",
+      "enum": ["proposed", "validated", "active", "superseded", "invalidated"],
+      "default": "proposed",
+      "description": "Lifecycle state of this allocation decision record."
+    },
+    "superseded_by": {
+      "type": "string",
+      "description": "allocation_id of a newer allocation that supersedes this one."
+    },
+    "persona_id": {
+      "type": "string"
+    },
+    "capital_pool_id": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": ["validated", "active", "superseded"]
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["evaluated_at"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "superseded"
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["superseded_by"]
+      }
+    }
+  ]
+}

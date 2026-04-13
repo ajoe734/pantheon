@@ -1,0 +1,66 @@
+{
+  "regime_id": "regime-2026q1-us-equities-001",
+  "strategy_id": "strat-momentum-us-001",
+  "artifact_id": "artifact-momentum-v2.1.0",
+  "version": "1.0.0",
+  "regime_class": "trending_up",
+  "confidence": 0.78,
+  "regime_scores": {
+    "risk_on": 0.72,
+    "risk_off": 0.05,
+    "trending_up": 0.78,
+    "trending_down": 0.08,
+    "mean_reverting": 0.15,
+    "high_volatility": 0.12,
+    "low_volatility": 0.35,
+    "regime_transition": 0.10,
+    "mixed": 0.05
+  },
+  "evaluated_at": "2026-04-13T06:00:00Z",
+  "window_start": "2026-01-01T00:00:00Z",
+  "window_end": "2026-04-13T00:00:00Z",
+  "input_refs": [
+    {
+      "ref_type": "dataset_version",
+      "ref_id": "ds-us-equities-daily-20260413",
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "datasets/us_equities_daily/2026-04-13/"
+      }
+    },
+    {
+      "ref_type": "feature_dataset",
+      "ref_id": "feat-macro-regime-20260413"
+    }
+  ],
+  "output_refs": [
+    {
+      "ref_type": "universe_selection",
+      "ref_id": "universe-2026q1-us-equities-001"
+    }
+  ],
+  "model_ref": {
+    "model_family": "markov_switching",
+    "model_version": "ms-regime-v3.2.1",
+    "training_dataset_ref": "ds-regime-training-2020-2025"
+  },
+  "decision_reasoning": "Markov-switching model infers trending_up regime with 78% confidence. VIX term structure in backwardation (10th percentile), breadth indicator at 68%, and SPY 200-day SMA slope positive. Secondary probability on low_volatility (35%) supports the trend continuation thesis. No regime_transition signal — transition probability below 15% threshold.",
+  "feature_snapshot": {
+    "volatility_regime": "normal",
+    "trend_strength": 0.65,
+    "momentum_signal": "positive",
+    "macro_environment": "expansion"
+  },
+  "market_scope": {
+    "asset_classes": ["equities"],
+    "markets": ["US"],
+    "security_master_refs": ["secmaster-us-large-cap", "secmaster-us-mid-cap"]
+  },
+  "state": "validated",
+  "persona_id": "persona-momentum-trader-01",
+  "capital_pool_id": "pool-us-equity-alpha",
+  "metadata": {
+    "evaluator": "regime-evaluator-service",
+    "run_id": "regime-run-20260413-060000"
+  }
+}

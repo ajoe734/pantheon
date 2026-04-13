@@ -1,0 +1,82 @@
+{
+  "universe_id": "universe-us-equity-mom-2026q2-001",
+  "strategy_id": "strat-us-equity-momentum-v3",
+  "artifact_id": "artifact-universe-ranker-v2.1",
+  "version": "2.1.0",
+  "evaluated_at": "2026-04-13T09:01:00Z",
+  "input_refs": [
+    {
+      "ref_type": "regime_state",
+      "ref_id": "regime-us-equity-mom-2026q2-001",
+      "version": "3.2.0"
+    },
+    {
+      "ref_type": "security_master",
+      "ref_id": "sec-universe-us-large-500",
+      "version": "2026.04.01"
+    },
+    {
+      "ref_type": "feature_dataset",
+      "ref_id": "feat-us-equity-momentum-factors-2026q1",
+      "version": "1.0.0",
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "datasets/feat-us-equity-momentum-factors-2026q1.parquet"
+      }
+    }
+  ],
+  "output_refs": [],
+  "regime_ref": {
+    "regime_id": "regime-us-equity-mom-2026q2-001",
+    "version": "3.2.0"
+  },
+  "selected_instruments": [
+    {
+      "instrument_type": "equity",
+      "instrument_id": "sec-AAPL-us-common",
+      "weight_hint": 0.04,
+      "selection_reason": "Top-decile 12-1 momentum, strong earnings revision trend"
+    },
+    {
+      "instrument_type": "equity",
+      "instrument_id": "sec-NVDA-us-common",
+      "weight_hint": 0.05,
+      "selection_reason": "Highest momentum score in semi-conductor sub-sector"
+    },
+    {
+      "instrument_type": "equity",
+      "instrument_id": "sec-MSFT-us-common",
+      "weight_hint": 0.03,
+      "selection_reason": "Consistent momentum, low volatility contribution"
+    },
+    {
+      "instrument_type": "etf",
+      "instrument_id": "sec-SPY-us-etf",
+      "weight_hint": 0.10,
+      "selection_reason": "Core beta hedge, high liquidity"
+    }
+  ],
+  "universe_criteria": {
+    "min_liquidity": 10000000,
+    "min_market_cap": 5000000000,
+    "max_instruments": 50,
+    "asset_classes": ["equity", "etf"],
+    "regions": ["us"],
+    "additional_filters": ["momentum_decile_top3", "positive_earnings_revision"]
+  },
+  "model_ref": {
+    "model_id": "universe-ranker-multi-factor-v2",
+    "model_version": "2.1.0",
+    "model_type": "ranking_model"
+  },
+  "decision_reasoning": "Given trending regime (confidence=0.78), universe selection applies multi-factor ranking combining 12-1 momentum, earnings revision strength, and volatility-adjusted returns. 50 instruments selected from US equity universe of 500. Excluded instruments with negative earnings revisions or high idiosyncratic volatility. Top picks: AAPL, NVDA, MSFT for individual momentum; SPY as core beta exposure.",
+  "decision_state": "validated",
+  "persona_id": "persona-quant-mom-01",
+  "capital_pool_id": "pool-us-equity-core",
+  "metadata": {
+    "universe_size": 50,
+    "avg_momentum_score": 0.65,
+    "avg_volatility": 0.28,
+    "sector_concentration_hhi": 0.18
+  }
+}

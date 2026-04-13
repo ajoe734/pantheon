@@ -1,0 +1,311 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/decision-domain/signal-inference/v1",
+  "title": "Pantheon SignalInference",
+  "description": "First-class decision object that records the inferred trading signals (direction, magnitude, confidence) for each instrument in the selected universe. This is stage 3 of the five-stage decision chain (RegimeState → UniverseSelection → SignalInference → AllocationDecision → RiskAdjudication). Signal inference transforms market data and regime context into actionable trade directives.",
+  "type": "object",
+  "required": [
+    "signal_id",
+    "strategy_id",
+    "artifact_id",
+    "version",
+    "universe_ref",
+    "signals",
+    "evaluated_at",
+    "input_refs",
+    "output_refs",
+    "model_ref",
+    "decision_reasoning"
+  ],
+  "properties": {
+    "signal_id": {
+      "type": "string",
+      "description": "Unique identifier for this signal inference batch."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "The strategy this signal inference applies to."
+    },
+    "artifact_id": {
+      "type": "string",
+      "description": "The strategy/model artifact version that produced these signals."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of this signal inference record."
+    },
+    "regime_ref": {
+      "type": "object",
+      "required": ["regime_id"],
+      "properties": {
+        "regime_id": {
+          "type": "string",
+          "description": "The regime_id from the upstream RegimeState that contextually frames this inference."
+        },
+        "regime_class": {
+          "type": "string"
+        },
+        "regime_version": {
+          "type": "string"
+        }
+      },
+      "description": "Cached reference to the regime context. Signals are regime-conditioned."
+    },
+    "universe_ref": {
+      "type": "object",
+      "required": ["universe_id"],
+      "properties": {
+        "universe_id": {
+          "type": "string",
+          "description": "The universe_id from the upstream UniverseSelection that defines the eligible instruments."
+        },
+        "universe_version": {
+          "type": "string"
+        }
+      },
+      "description": "Reference to the upstream UniverseSelection. Signals must only reference instruments in this universe."
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "direction", "magnitude", "confidence"],
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "The instrument symbol. Must be present in the referenced universe."
+          },
+          "security_master_ref": {
+            "type": "string",
+            "description": "Optional SecurityMaster ID for provenance linkage."
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["long", "short", "neutral", "exit"],
+            "description": "Trading direction for this instrument."
+          },
+          "magnitude": {
+            "type": "number",
+            "description": "Signal strength or expected return magnitude. Units depend on the signal model."
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Signal confidence score [0, 1]."
+          },
+          "time_horizon": {
+            "type": "string",
+            "enum": ["intraday", "swing", "position", "strategic"],
+            "description": "Intended holding period for this signal."
+          },
+          "signal_type": {
+            "type": "string",
+            "enum": [
+              "momentum",
+              "mean_reversion",
+              "statistical_arbitrage",
+              "event_driven",
+              "factor",
+              "ml_ensemble",
+              "custom"
+            ],
+            "description": "The family or class of the signal model."
+          },
+          "raw_score": {
+            "type": "number",
+            "description": "Unnormalized model output before scaling to magnitude."
+          },
+          "feature_snapshot": {
+            "type": "object",
+            "description": "Key feature values that drove this signal, stored for replay.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "minItems": 0,
+      "description": "Per-instrument signal directives. May be empty if no signals pass the inference threshold."
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when this signal inference was computed."
+    },
+    "input_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "regime_state",
+              "universe_selection",
+              "dataset_version",
+              "feature_dataset",
+              "normalized_dataset",
+              "telemetry_summary"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "object",
+            "properties": {
+              "backend": {
+                "type": "string",
+                "enum": ["object_store", "gcs", "db", "inline"]
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "description": "Upstream objects consumed for signal inference. Must include regime_state and universe_selection refs."
+    },
+    "output_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "allocation_decision",
+              "risk_adjudication",
+              "approval_decision"
+            ]
+          },
+          "ref_id": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Downstream decision objects that reference this signal inference."
+    },
+    "model_ref": {
+      "type": "object",
+      "required": ["model_family", "model_version"],
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "momentum",
+            "mean_reversion",
+            "statistical_arbitrage",
+            "factor_model",
+            "gradient_boosting",
+            "neural_network",
+            "transformer",
+            "ensemble",
+            "rule_based",
+            "custom"
+          ],
+          "description": "The signal model family. Distinguishes first-class decision provenance from raw research artifacts."
+        },
+        "model_version": {
+          "type": "string",
+          "description": "Version or commit of the signal model."
+        },
+        "training_dataset_ref": {
+          "type": "string"
+        },
+        "hyperparameters": {
+          "type": "object",
+          "description": "Key hyperparameters used during inference for exact replay reproducibility.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "decision_reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Summary reasoning for the signal inference batch. May include model interpretation, feature importance, or regime-signal interaction notes."
+    },
+    "inference_stats": {
+      "type": "object",
+      "description": "Summary statistics about the signal batch for audit and replay.",
+      "properties": {
+        "total_universe_size": {
+          "type": "integer",
+          "description": "Number of instruments in the referenced universe."
+        },
+        "signals_emitted": {
+          "type": "integer",
+          "description": "Number of instruments with non-neutral signals."
+        },
+        "long_count": {
+          "type": "integer"
+        },
+        "short_count": {
+          "type": "integer"
+        },
+        "neutral_count": {
+          "type": "integer"
+        },
+        "avg_confidence": {
+          "type": "number"
+        },
+        "max_magnitude": {
+          "type": "number"
+        },
+        "min_magnitude": {
+          "type": "number"
+        }
+      }
+    },
+    "state": {
+      "type": "string",
+      "enum": ["proposed", "validated", "active", "superseded", "invalidated"],
+      "default": "proposed",
+      "description": "Lifecycle state of this signal inference record."
+    },
+    "superseded_by": {
+      "type": "string",
+      "description": "signal_id of a newer signal inference that supersedes this one."
+    },
+    "persona_id": {
+      "type": "string"
+    },
+    "capital_pool_id": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": ["validated", "active", "superseded"]
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["evaluated_at"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "superseded"
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["superseded_by"]
+      }
+    }
+  ]
+}
