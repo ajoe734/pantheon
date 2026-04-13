@@ -154,6 +154,8 @@ def generic_state(project_name: str, objective: str) -> dict:
             "AI_COLLABORATION_GUIDE.md",
             "ai-status.json",
             "ai-activity-log.jsonl",
+        ],
+        "L0.5 Derived Narrative": [
             "current-work.md",
         ],
         "L1 Runtime & Dashboard": [
@@ -230,15 +232,16 @@ The system objective is:
 Read these in order before starting work:
 
 1. `AI_COLLABORATION_GUIDE.md`
-2. `current-work.md`
-3. `ai-status.json`
-4. `ai-activity-log.jsonl`
+2. `ai-status.json`
+3. `current-work.md` as a human summary only
+4. `ai-activity-log.jsonl` only when targeted recent history is needed
 5. `docs-site/index.html`
 6. `docs/02-architecture/consensus/phase1/README.md` when discussion planning is active
 7. `docs/02-architecture/consensus/phase1/planning-session.json` when discussion planning is active
 
 Layered source of truth:
-- `L0 Collaboration & State`: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`
+- `L0 Collaboration & State`: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`
+- `L0.5 Derived Narrative`: `current-work.md`
 - `L1 Runtime & Dashboard`: `docs-site/index.html`
 - `L2 Planning & Execution`: `docs/02-architecture/consensus/phase1/README.md`, `docs/02-architecture/consensus/phase1/planning-session.json`
 
@@ -342,9 +345,9 @@ Lane: {lane_text}
 
 Before doing anything:
 1. read `AI_COLLABORATION_GUIDE.md`
-2. read `current-work.md`
-3. read `ai-status.json`
-4. read `ai-activity-log.jsonl` if you need recent history
+2. read `ai-status.json`
+3. use `current-work.md` only as a human summary
+4. read `ai-activity-log.jsonl` only if you need targeted recent history
 5. if discussion planning is active, read `docs/02-architecture/consensus/phase1/README.md` and `planning-session.json`
 6. treat generated views as derived from machine-readable state
 
@@ -441,9 +444,9 @@ This file is the first-stop onboarding guide for any LLM working inside `{projec
 Start with these files in order:
 
 1. `AI_COLLABORATION_GUIDE.md`
-2. `current-work.md`
-3. `ai-status.json`
-4. `ai-activity-log.jsonl` when you need recent history
+2. `ai-status.json`
+3. `current-work.md` as a human summary only
+4. `ai-activity-log.jsonl` only when you need targeted recent history
 5. `docs/02-architecture/consensus/phase1/README.md` and `planning-session.json` when discussion planning is active
 
 If the repo later adds project-specific architecture, backlog, or policy docs, `AI_COLLABORATION_GUIDE.md` and `ai-status.json` should be updated to point at them explicitly.
@@ -463,6 +466,7 @@ Use that output as the first prompt in Claude Code, Codex CLI, Gemini CLI, Copil
 - `ai-status.json` is the machine-readable source of truth for tasks, ownership, blockers, and handoffs
 - `ai-activity-log.jsonl` is append-only history
 - `current-work.md` is generated from state and is not the write source
+- planning-backed execution tasks should carry `source_ref` metadata back to the accepted planning packet instead of copying planning narrative
 - `docs-site/` is a read-only dashboard mirror, not the place to edit status
 
 ## 4. Status Commands

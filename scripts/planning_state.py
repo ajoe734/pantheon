@@ -289,11 +289,42 @@ def blueprint_gap_brief_files() -> list[str]:
             "Pantheon_Blueprint_Gap_Review_v1.md",
             "Pantheon_Market_Data_Scope_and_Source_Plan_v1.md",
             "ai-status.json",
-            "current-work.md",
             *l1,
             *l2,
         ]
     )
+
+
+def planning_output_path(session: dict[str, Any], artifact_id: str) -> str:
+    artifacts = session.get("artifacts") if isinstance(session.get("artifacts"), dict) else {}
+    artifact = artifacts.get(artifact_id) if isinstance(artifacts.get(artifact_id), dict) else {}
+    return str(artifact.get("path") or "").strip()
+
+
+def planning_task_source_ref(session: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "discussion_planning",
+        "session_id": str(session.get("session_id") or "").strip(),
+        "phase": str(session.get("phase") or "").strip(),
+        "profile": str(session.get("profile") or "").strip(),
+        "planning_dir": str(session.get("planning_dir") or "").strip(),
+        "session_file": str(session.get("session_file") or "").strip(),
+        "consensus_packet": planning_output_path(session, "consensus_packet"),
+        "execution_materialization": planning_output_path(session, "execution_materialization"),
+    }
+
+
+def materialization_contract(session: dict[str, Any]) -> dict[str, Any]:
+    proposed = session.get("proposed_execution_tasks") or []
+    return {
+        **planning_task_source_ref(session),
+        "source_plane": "planning",
+        "planning_mode": str(session.get("planning_mode") or "discussion_planning"),
+        "runtime_mode": str(session.get("runtime_mode") or "supervisor_managed_execution"),
+        "consensus_status": str(session.get("consensus_status") or "not_started"),
+        "human_gate_status": str(session.get("human_gate_status") or "not_requested"),
+        "proposed_execution_tasks": len(proposed),
+    }
 
 
 def default_brief_files(profile: str) -> list[str]:
@@ -635,6 +666,7 @@ This directory is the canonical workspace for `discussion_planning`.
 4. unresolved disagreements become explicit `human_required` or `tracking` items
 5. the facilitator drafts `consensus-packet.md`
 6. after human acceptance, convert `proposed_execution_tasks` into execution tasks through `scripts/planning-state.sh materialize`
+7. execution tasks should receive planning references, not copied planning narrative
 
 ## Rules
 
@@ -803,6 +835,10 @@ Use this file to answer GAP-00 through GAP-07 with:
 
 def execution_materialization_template() -> str:
     return """# Execution Materialization
+
+This file is the bridge contract from planning into execution.
+When these rows are materialized into `ai-status.json`, each execution task should keep `source_plane = planning`
+and structured `source_ref` metadata back to `planning-session.json`, `consensus-packet.md`, and this file.
 
 ## P0
 
@@ -1185,6 +1221,7 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
         )
     session["unresolved_items"] = [item for item in unresolved_items if item["id"] or item["summary"]]
 
+    source_ref_base = planning_task_source_ref(session)
     proposed_execution_tasks: list[dict[str, Any]] = []
     for entry in session.get("proposed_execution_tasks", default_proposed_execution_tasks(profile)):
         if not isinstance(entry, dict):
@@ -1192,6 +1229,15 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
         task_id = str(entry.get("id") or "").strip()
         if not task_id:
             continue
+        existing_source_ref = entry.get("source_ref") if isinstance(entry.get("source_ref"), dict) else {}
+        normalized_source_ref = {
+            **source_ref_base,
+            **{
+                str(key): str(value).strip()
+                for key, value in existing_source_ref.items()
+                if value is not None and str(value).strip()
+            },
+        }
         proposed_execution_tasks.append(
             {
                 "id": task_id,
@@ -1203,9 +1249,12 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
                 "depends_on": [str(item).strip() for item in entry.get("depends_on", []) if str(item).strip()],
                 "artifacts": [str(item).strip() for item in entry.get("artifacts", []) if str(item).strip()],
                 "acceptance": [str(item).strip() for item in entry.get("acceptance", []) if str(item).strip()],
+                "source_plane": str(entry.get("source_plane") or "planning").strip() or "planning",
+                "source_ref": normalized_source_ref,
             }
         )
     session["proposed_execution_tasks"] = proposed_execution_tasks
+    session["materialization_contract"] = materialization_contract(session)
 
     recent_events: list[dict[str, Any]] = []
     for entry in session.get("recent_events", []):
@@ -1418,6 +1467,7 @@ def build_derived_state(session: dict[str, Any]) -> dict[str, Any]:
     derived = normalize_session(session)
     derive_artifact_statuses(derived)
     derived["switch_gate"] = derive_switch_gate(derived)
+    derived["materialization_contract"] = materialization_contract(derived)
     derived["active_session"] = {
         "session_id": derived.get("session_id"),
         "phase": derived.get("phase"),
@@ -1696,7 +1746,12 @@ def command_propose_task(session: dict[str, Any], args: list[str]) -> None:
     )
 
 
-def upsert_materialized_task(state: dict[str, Any], payload: dict[str, Any]) -> str:
+def upsert_materialized_task(
+    state: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    materialization_ref: dict[str, Any] | None = None,
+) -> str:
     task_id = str(payload.get("id") or "").strip()
     existing = ai_status.get_task(state, task_id)
     timestamp = iso_now()
@@ -1710,7 +1765,15 @@ def upsert_materialized_task(state: dict[str, Any], payload: dict[str, Any]) -> 
         "depends_on": [str(item).strip() for item in payload.get("depends_on", []) if str(item).strip()],
         "artifacts": [str(item).strip() for item in payload.get("artifacts", []) if str(item).strip()],
         "acceptance": [str(item).strip() for item in payload.get("acceptance", []) if str(item).strip()],
+        "source_plane": str(payload.get("source_plane") or "planning").strip() or "planning",
+        "source_ref": payload.get("source_ref") if isinstance(payload.get("source_ref"), dict) else planning_task_source_ref(payload),
     }
+    if materialization_ref:
+        task_payload["materialization_ref"] = {
+            str(key): value
+            for key, value in materialization_ref.items()
+            if value is not None and str(value).strip()
+        }
     if existing is None:
         state.setdefault("tasks", []).append(
             {
@@ -1722,8 +1785,13 @@ def upsert_materialized_task(state: dict[str, Any], payload: dict[str, Any]) -> 
         )
         return "created"
 
-    existing.update(task_payload)
-    existing["last_update"] = timestamp
+    for key in ("source_plane", "source_ref", "materialization_ref"):
+        if key in task_payload:
+            existing[key] = task_payload[key]
+    for key in ("phase", "title", "summary_zh", "depends_on", "artifacts", "acceptance"):
+        current_value = existing.get(key)
+        if current_value in (None, "", []):
+            existing[key] = task_payload[key]
     existing["next"] = existing.get("next") or "Planning task metadata refreshed"
     return "updated"
 
@@ -1737,8 +1805,15 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
     state = ai_status.load_state()
     created = 0
     updated = 0
+    materialization_ref = {
+        "materialized_at": iso_now(),
+        "session_id": str(derived.get("session_id") or "").strip(),
+        "consensus_status": str(derived.get("consensus_status") or "").strip(),
+        "human_gate_status": str(derived.get("human_gate_status") or "").strip(),
+        "execution_materialization": planning_output_path(derived, "execution_materialization"),
+    }
     for payload in derived.get("proposed_execution_tasks", []):
-        result = upsert_materialized_task(state, payload)
+        result = upsert_materialized_task(state, payload, materialization_ref=materialization_ref)
         if result == "created":
             created += 1
         else:

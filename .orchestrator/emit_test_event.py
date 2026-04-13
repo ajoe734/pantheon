@@ -9,7 +9,7 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import agent_config_for, load_config, new_runtime_id, relpath, selected_shared_files, utc_now
+from common import agent_config_for, execution_context_files, load_config, new_runtime_id, utc_now
 from runtime_state import enqueue_event
 
 
@@ -30,7 +30,7 @@ def main() -> int:
     agent = agent_config_for(config, args.agent)
     message = (
         "你被喚醒了。\n\n"
-        "請閱讀 ai-status.json、current-work.md、ai-activity-log.jsonl，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\n"
+        "請先閱讀 task brief 與 ai-status.json，找出目前分配給你或等待你回應的 task，然後直接繼續工作。\n\n"
         f"Task ID: {args.task_id}\n"
         f"原因: {args.reason}\n"
         f"標題: {args.title}\n"
@@ -45,7 +45,7 @@ def main() -> int:
         "provider": agent.get("provider", agent["id"]),
         "reason": args.reason,
         "message": message,
-        "context_files": [relpath(path) for path in selected_shared_files(config)],
+        "context_files": execution_context_files(config, args.task_id),
         "target_files": [],
         "metadata": {"title": args.title, "manual_test": True},
     }

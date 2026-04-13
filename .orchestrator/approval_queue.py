@@ -19,7 +19,19 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import config_path, load_config, new_runtime_id, utc_now, write_activity_log, write_json
+from common import (
+    approval_tool_input_preview,
+    approval_tool_input_signature,
+    config_path,
+    load_config,
+    load_json,
+    new_runtime_id,
+    resolve_path,
+    utc_now,
+    write_activity_log,
+    write_approval_evidence,
+    write_json,
+)
 from runtime_state import default_approval_state, load_approval_state, load_runtime_state, save_approval_state
 
 
@@ -121,15 +133,41 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
         for item in state.get("pending", []):
             orphaned_note = _orphaned_worker_note(item, workers)
             if orphaned_note:
-                pruned.append(_pruned_pending_item(item, note=orphaned_note))
+                pruned_item = _pruned_pending_item(item, note=orphaned_note)
+                pruned_item["resolution_ref"] = write_approval_evidence(
+                    config,
+                    approval_id=str(item.get("approval_id") or ""),
+                    stage="pruned",
+                    payload={
+                        "provider": item.get("provider"),
+                        "task_id": item.get("task_id"),
+                        "worker_run_id": item.get("worker_run_id"),
+                        "tool_name": item.get("tool_name"),
+                        "decision": "deny",
+                        "note": orphaned_note,
+                        "request_ref": item.get("evidence_ref"),
+                    },
+                )
+                pruned.append(pruned_item)
                 continue
             if _is_stale_pending(item, now=now, stale_after_seconds=stale_after_seconds):
-                pruned.append(
-                    _pruned_pending_item(
-                        item,
-                        note=f"Auto-pruned stale approval after {int(stale_after_seconds)}s without task/worker binding.",
-                    )
+                note = f"Auto-pruned stale approval after {int(stale_after_seconds)}s without task/worker binding."
+                pruned_item = _pruned_pending_item(item, note=note)
+                pruned_item["resolution_ref"] = write_approval_evidence(
+                    config,
+                    approval_id=str(item.get("approval_id") or ""),
+                    stage="pruned",
+                    payload={
+                        "provider": item.get("provider"),
+                        "task_id": item.get("task_id"),
+                        "worker_run_id": item.get("worker_run_id"),
+                        "tool_name": item.get("tool_name"),
+                        "decision": "deny",
+                        "note": note,
+                        "request_ref": item.get("evidence_ref"),
+                    },
                 )
+                pruned.append(pruned_item)
                 continue
             keep.append(item)
         if not pruned:
@@ -148,14 +186,38 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
                 "approval_id": item.get("approval_id"),
                 "worker_run_id": item.get("worker_run_id"),
                 "decision": "deny",
+                "evidence_ref": item.get("resolution_ref") or item.get("evidence_ref"),
             },
         )
     return pruned
 
 
 def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    approval_id = new_runtime_id("apr")
+    raw_tool_input = item.get("tool_input")
+    tool_input_signature = approval_tool_input_signature(raw_tool_input if raw_tool_input is not None else {})
+    tool_input_preview = approval_tool_input_preview(raw_tool_input if raw_tool_input is not None else {})
+    evidence_ref = write_approval_evidence(
+        config,
+        approval_id=approval_id,
+        stage="request",
+        payload={
+            "provider": item.get("provider"),
+            "task_id": item.get("task_id"),
+            "worker_run_id": item.get("worker_run_id"),
+            "session_id": item.get("session_id"),
+            "tool_use_id": item.get("tool_use_id"),
+            "tool_name": item.get("tool_name"),
+            "tool_input": raw_tool_input,
+            "risk_class": item.get("risk_class"),
+            "suggested_rule": item.get("suggested_rule"),
+            "agent_id": item.get("agent_id"),
+            "request_payload": item.get("request_payload"),
+            "broker_decision": item.get("broker_decision"),
+        },
+    )
     approval = {
-        "approval_id": new_runtime_id("apr"),
+        "approval_id": approval_id,
         "status": "pending",
         "created_at": utc_now(),
         "resolved_at": None,
@@ -165,7 +227,15 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         "resume_override_active": False,
         "resume_override_consumed_at": None,
         "resume_override_consumed_reason": None,
-        **item,
+        **{
+            key: value
+            for key, value in item.items()
+            if key not in {"tool_input", "request_payload", "broker_decision"}
+        },
+        "tool_input_signature": tool_input_signature,
+        "tool_input_preview": tool_input_preview,
+        "evidence_ref": evidence_ref,
+        "resolution_ref": None,
     }
     with approval_lock(config):
         state = load_approval_state(config)
@@ -181,6 +251,7 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
             "approval_id": approval["approval_id"],
             "worker_run_id": approval.get("worker_run_id"),
             "risk_class": approval.get("risk_class"),
+            "evidence_ref": evidence_ref,
         },
     )
     return approval
@@ -220,11 +291,26 @@ def _apply_temporary_resume_rule(config: dict[str, Any], item: dict[str, Any], d
     }
 
 
+def _approval_tool_input(item: dict[str, Any]) -> dict[str, Any]:
+    tool_input = item.get("tool_input")
+    if isinstance(tool_input, dict):
+        return tool_input
+    evidence_ref = str(item.get("evidence_ref") or "").strip()
+    if not evidence_ref:
+        return {}
+    evidence_path = resolve_path(evidence_ref)
+    if evidence_path is None or not evidence_path.exists():
+        return {}
+    evidence = load_json(evidence_path, default={}) or {}
+    loaded = evidence.get("tool_input")
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def _suspend_conflicting_resume_rules(config: dict[str, Any], item: dict[str, Any], decision: str) -> dict[str, Any]:
     if decision != "allow" or item.get("provider") != "claude" or item.get("remember"):
         return item
     tool_name = item.get("tool_name")
-    tool_input = item.get("tool_input") or {}
+    tool_input = _approval_tool_input(item)
     if not isinstance(tool_name, str) or not tool_name:
         return item
     from permission_broker import suspend_matching_rules
@@ -273,6 +359,26 @@ def resolve_approval(
         }
         item = _apply_temporary_resume_rule(config, item, decision)
         item = _suspend_conflicting_resume_rules(config, item, decision)
+        item["resolution_ref"] = write_approval_evidence(
+            config,
+            approval_id=approval_id,
+            stage="resolution",
+            payload={
+                "provider": item.get("provider"),
+                "task_id": item.get("task_id"),
+                "worker_run_id": item.get("worker_run_id"),
+                "session_id": item.get("session_id"),
+                "tool_name": item.get("tool_name"),
+                "tool_input_signature": item.get("tool_input_signature"),
+                "tool_input_preview": item.get("tool_input_preview"),
+                "decision": decision,
+                "note": note,
+                "remember": remember,
+                "request_ref": item.get("evidence_ref"),
+                "resume_override_active": item.get("resume_override_active"),
+                "resume_override_rule": item.get("resume_override_rule"),
+            },
+        )
         state["pending"].pop(index)
         state.setdefault("history", []).append(item)
         save_approval_state(config, state)
@@ -288,16 +394,22 @@ def resolve_approval(
             "decision": decision,
             "worker_run_id": item.get("worker_run_id"),
             "remember": remember,
+            "evidence_ref": item.get("resolution_ref") or item.get("evidence_ref"),
         },
     )
     return item
 
 
-def _approval_signature(session_id: str | None, tool_name: str, tool_input: dict[str, Any]) -> tuple[str | None, str, str]:
+def _approval_signature(
+    session_id: str | None,
+    tool_name: str,
+    tool_input: dict[str, Any] | None = None,
+    tool_input_signature: str | None = None,
+) -> tuple[str | None, str, str]:
     return (
         session_id,
         tool_name,
-        json.dumps(tool_input, sort_keys=True, ensure_ascii=False),
+        str(tool_input_signature or approval_tool_input_signature(tool_input if tool_input is not None else {})),
     )
 
 
@@ -317,7 +429,11 @@ def find_resume_override(
             continue
         if item.get("resume_override_consumed_at"):
             continue
-        item_signature = _approval_signature(item.get("session_id"), item.get("tool_name") or "", item.get("tool_input") or {})
+        item_signature = _approval_signature(
+            item.get("session_id"),
+            item.get("tool_name") or "",
+            tool_input_signature=item.get("tool_input_signature"),
+        )
         if item_signature == signature:
             return item
     return None

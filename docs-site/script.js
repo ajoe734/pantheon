@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260411-2358";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260413-1745";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260411-2358";
+} from "./js/dashboard-core.js?v=20260413-1745";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -43,7 +43,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260411-2358";
+} from "./js/dashboard-renderers.js?v=20260413-1745";
 
 let renderInFlight = false;
 
@@ -98,15 +98,15 @@ async function render({ syncFirst = false } = {}) {
     renderControlPlaneStrip(status, planningState, orchState, dashboardBundle);
     renderFocusSummary(status, planningState, orchState, dashboardBundle);
     renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle);
-    renderBridgeCard(status, planningState);
+    renderBridgeCard(status, planningState, dashboardBundle);
     renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle);
     applyModeVisibility(status, planningState);
-    renderPlanningOverview(planningState, status);
+    renderPlanningOverview(planningState, status, dashboardBundle);
     renderPlanningArtifacts(planningState);
     renderPlanningRounds(planningState);
     renderPlanningGate(planningState, status);
     renderPlanningIssues(planningState);
-    renderPlanningProposals(planningState, status);
+    renderPlanningProposals(planningState, status, dashboardBundle);
     renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle);
     renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle);
     renderWorkload(status);

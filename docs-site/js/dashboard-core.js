@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260411-2358";
+} from "./dashboard-config.js?v=20260413-1745";
 
 export const qs = (selector) => document.querySelector(selector);
 
@@ -78,6 +78,32 @@ export function defaultDashboardBundle() {
       materialized_count: 0,
       proposed_execution_tasks: 0,
     },
+    bridge_summary: {
+      source_plane: "planning",
+      session_id: null,
+      phase: null,
+      profile: null,
+      planning_dir: null,
+      session_file: null,
+      consensus_packet: null,
+      execution_materialization: null,
+      proposed_total: 0,
+      materialized_count: 0,
+      pending_materialization_count: 0,
+      done: 0,
+      review_approved: 0,
+      in_progress: 0,
+      review: 0,
+      todo: 0,
+      blocked: 0,
+      materialized_task_ids: [],
+      pending_proposals: [],
+      active_materialized_tasks: [],
+      planning_backed_total: 0,
+      planning_backed_active: 0,
+      current_session_materialized: 0,
+      missing_source_ref_count: 0,
+    },
     worker_task_links: [],
     truth_mismatches: [],
   };
@@ -92,6 +118,7 @@ export function normalizeDashboardBundle(value) {
     runtime_summary: { ...base.runtime_summary, ...(value.runtime_summary || {}) },
     execution_summary: { ...base.execution_summary, ...(value.execution_summary || {}) },
     planning_summary: { ...base.planning_summary, ...(value.planning_summary || {}) },
+    bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
     worker_task_links: Array.isArray(value.worker_task_links) ? value.worker_task_links : [],
     truth_mismatches: Array.isArray(value.truth_mismatches) ? value.truth_mismatches : [],
   };

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+import hashlib
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
+EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
@@ -98,6 +101,14 @@ def relpath(path: Path) -> str:
         return str(path.relative_to(ROOT))
     except ValueError:
         return str(path)
+
+
+def evidence_dir(config: dict[str, Any]) -> Path:
+    configured = config.get("paths", {}).get("evidence_dir")
+    path = resolve_path(configured) if configured else EVIDENCE_DIR
+    if path is None:
+        return EVIDENCE_DIR
+    return path
 
 
 def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
@@ -231,6 +242,9 @@ def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any
         "helper_kind",
         "mutates_canonical",
         "auto_created_by",
+        "source_plane",
+        "source_ref",
+        "materialization_ref",
     ):
         if key in task:
             payload[key] = task.get(key)
@@ -257,6 +271,241 @@ def selected_shared_files(config: dict[str, Any]) -> list[Path]:
 
 def serialize_shared_files(paths: list[Path]) -> str:
     return "\n".join(f"- {relpath(path)}" for path in paths)
+
+
+def compact_whitespace(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def stable_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def approval_tool_input_signature(tool_input: Any) -> str:
+    try:
+        payload = stable_json(tool_input if tool_input is not None else {})
+    except TypeError:
+        payload = compact_whitespace(tool_input)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def approval_tool_input_preview(tool_input: Any, *, limit: int = 220) -> str:
+    if isinstance(tool_input, dict):
+        for key in ("command", "cmd", "raw_command", "query", "path", "file", "url"):
+            value = compact_whitespace(tool_input.get(key))
+            if value:
+                return value[:limit]
+        preview = compact_whitespace(stable_json(tool_input))
+        return preview[:limit]
+    if isinstance(tool_input, list):
+        preview = compact_whitespace(stable_json(tool_input))
+        return preview[:limit]
+    return compact_whitespace(tool_input)[:limit]
+
+
+def unique_strings(items: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def summarize_failure_reason(reason: str | None, provider: str | None = None, *, limit: int = 180) -> dict[str, str]:
+    raw = compact_whitespace(reason)
+    provider_label = str(provider or "").strip() or "provider"
+    if not raw:
+        return {"kind": "unknown", "summary": f"{provider_label} failure", "detail": ""}
+
+    lowered = raw.lower()
+    if "you have no quota" in lowered:
+        return {"kind": "quota", "summary": "402 You have no quota", "detail": raw[: max(420, limit)]}
+    if "free daily quota has been reached" in lowered:
+        return {"kind": "quota", "summary": "Daily quota exceeded", "detail": raw[: max(420, limit)]}
+    if "hit your limit" in lowered:
+        return {"kind": "quota", "summary": "Rate limit reached", "detail": raw[: max(420, limit)]}
+    if "rate limit" in lowered or "rate limited" in lowered or "capacity" in lowered or "quota exceeded" in lowered:
+        return {"kind": "capacity", "summary": "Capacity / rate limit failure", "detail": raw[: max(420, limit)]}
+    if "unauthorized" in lowered or "authentication" in lowered or "invalid api key" in lowered:
+        return {"kind": "auth", "summary": "Authentication failure", "detail": raw[: max(420, limit)]}
+    if "an unexpected critical error occurred" in lowered:
+        return {"kind": "unknown_critical", "summary": "Unexpected critical provider failure", "detail": raw[: max(420, limit)]}
+    return {"kind": "terminal", "summary": raw[:limit], "detail": raw[: max(420, limit)]}
+
+
+def task_brief_path(task_id: str | None) -> Path:
+    slug = normalize_agent_id(task_id or "unknown-task") or "unknown-task"
+    return TASK_BRIEFS_DIR / f"{slug}.md"
+
+
+def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for entry in reversed(load_jsonl(config_path(config, "activity_log"))):
+        if str(entry.get("task_id") or "").strip() != task_id:
+            continue
+        entries.append(entry)
+        if len(entries) >= limit:
+            break
+    entries.reverse()
+    return entries
+
+
+def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
+    if not task_id:
+        return None
+    status = load_status(config)
+    tasks = status.get("tasks", []) or []
+    task = next((item for item in tasks if str(item.get("id") or "").strip() == task_id), None)
+    if task is None:
+        return None
+    task_map = {str(item.get("id") or "").strip(): item for item in tasks}
+    deps = [task_map.get(dep_id) for dep_id in (task.get("depends_on") or [])]
+    deps = [item for item in deps if item]
+    planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
+    planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
+    source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
+    source_plane = str(task.get("source_plane") or "").strip()
+    recent = _recent_task_activity(config, task_id)
+    path = task_brief_path(task_id)
+    ensure_parent(path)
+    body = [
+        f"# Task Brief: {task_id}",
+        "",
+        "This file is generated by the orchestrator for task-scoped execution context.",
+        "Treat `ai-status.json` as the durable execution source of truth only when you need to verify or update state.",
+        "Do not read `current-work.md` by default for implementation context.",
+        "",
+        "## Task",
+        f"- Title: {task.get('title') or '-'}",
+        f"- Status: {task.get('status') or '-'}",
+        f"- Owner: {task.get('owner') or '-'}",
+        f"- Reviewer: {task.get('reviewer') or '-'}",
+        f"- Phase: {task.get('phase') or '-'}",
+        f"- Last update: {task.get('last_update') or '-'}",
+        f"- Next: {compact_whitespace(task.get('next') or '-')}",
+        "",
+        "## Summary",
+        f"{task.get('summary_zh') or '-'}",
+        "",
+        "## Dependencies",
+    ]
+    if deps:
+        body.extend(
+            f"- {dep.get('id')}: {dep.get('status')} · {compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
+            for dep in deps
+        )
+    else:
+        body.append("- none")
+    body.extend(["", "## Artifacts"])
+    artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
+    body.extend([f"- {item}" for item in artifacts] or ["- none"])
+    body.extend(["", "## Recent Task Activity"])
+    if recent:
+        body.extend(
+            f"- {entry.get('ts') or '-'} · {entry.get('agent') or '-'} · {entry.get('type') or '-'} · {compact_whitespace(entry.get('message') or '-')}"
+            for entry in recent
+        )
+    else:
+        body.append("- none")
+    body.extend(["", "## Relevant Canonical Files", "- AI_COLLABORATION_GUIDE.md", "- ai-status.json"])
+    if planning_active:
+        session_file = str(planning_state.get("session_file") or "").strip()
+        if session_file:
+            body.append(f"- {session_file}")
+        else:
+            body.append(f"- {PLANNING_SHARED_FILES[1].relative_to(ROOT)}")
+    if source_plane or source_ref:
+        body.extend(["", "## Planning Origin"])
+        body.append(f"- Source plane: {source_plane or '-'}")
+        if source_ref:
+            for label, key in (
+                ("Session", "session_id"),
+                ("Phase", "phase"),
+                ("Profile", "profile"),
+                ("Planning dir", "planning_dir"),
+                ("Session file", "session_file"),
+                ("Consensus packet", "consensus_packet"),
+                ("Execution materialization", "execution_materialization"),
+            ):
+                value = str(source_ref.get(key) or "").strip()
+                if value:
+                    body.append(f"- {label}: {value}")
+    body.extend([f"- {item}" for item in artifacts[:6] if item not in {"AI_COLLABORATION_GUIDE.md", "ai-status.json"}])
+    body.extend(
+        [
+            "",
+            "## Working Rules",
+            "- Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.",
+            "- Keep execution updates short and structured.",
+            "- If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.",
+            "",
+        ]
+    )
+    path.write_text("\n".join(body), encoding="utf-8")
+    return path
+
+
+def execution_context_files(config: dict[str, Any], task_id: str | None) -> list[str]:
+    files = ["AI_COLLABORATION_GUIDE.md", "ai-status.json"]
+    brief = write_task_brief(config, task_id)
+    if brief is not None:
+        files.insert(1, relpath(brief))
+    return unique_strings(files)
+
+
+def write_failure_evidence(
+    config: dict[str, Any],
+    *,
+    worker: dict[str, Any],
+    reason: str | None,
+    failure_kind: str | None = None,
+) -> str | None:
+    run_id = str(worker.get("run_id") or "").strip()
+    if not run_id:
+        return None
+    path = evidence_dir(config) / f"{normalize_agent_id(run_id) or run_id}.json"
+    ensure_parent(path)
+    payload = {
+        "recorded_at": utc_now(),
+        "task_id": worker.get("task_id"),
+        "run_id": run_id,
+        "provider": worker.get("provider"),
+        "agent_id": worker.get("agent_id"),
+        "failure_kind": failure_kind,
+        "reason": reason or "",
+        "log_path": worker.get("log_path"),
+        "session_id": worker.get("session_id"),
+        "queue_event_id": worker.get("queue_event_id"),
+    }
+    write_json(path, payload)
+    return relpath(path)
+
+
+def write_approval_evidence(
+    config: dict[str, Any],
+    *,
+    approval_id: str | None,
+    stage: str,
+    payload: dict[str, Any],
+) -> str | None:
+    approval_slug = normalize_agent_id(approval_id or "approval") or "approval"
+    stage_slug = normalize_agent_id(stage) or "event"
+    path = evidence_dir(config) / f"{approval_slug}-{stage_slug}.json"
+    ensure_parent(path)
+    write_json(
+        path,
+        {
+            "recorded_at": utc_now(),
+            "approval_id": approval_id,
+            "stage": stage,
+            **payload,
+        },
+    )
+    return relpath(path)
 
 
 def to_bool(value: Any) -> bool:

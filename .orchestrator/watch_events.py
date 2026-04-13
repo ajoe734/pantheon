@@ -16,6 +16,7 @@ from common import (
     agent_config_for,
     config_path,
     display_name_for,
+    execution_context_files,
     load_config,
     load_json,
     load_status,
@@ -23,8 +24,6 @@ from common import (
     relpath,
     render_template,
     resolve_path,
-    selected_shared_files,
-    serialize_shared_files,
     snapshot_task,
     utc_now,
     write_activity_log,
@@ -234,7 +233,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     template_path = resolve_path(agent.get("wake_template") or ".orchestrator/templates/wakeup.txt")
     if template_path is None:
         raise RuntimeError("Unable to resolve wake-up template path")
-    shared_files = serialize_shared_files(selected_shared_files(config))
+    context_files = event.get("context_files") or execution_context_files(config, event.get("task_id"))
     target_files = event.get("task", {}).get("artifacts") or []
     task_payload = event.get("task", {}) or {}
     sidecar_guardrails = ""
@@ -251,7 +250,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
             "- 完成後請交接給指定 reviewer，由 parent owner 決定是否吸收進主線。\n"
         )
     variables = {
-        "shared_files": shared_files,
+        "context_files": "\n".join(f"- {path}" for path in context_files) if context_files else "- AI_COLLABORATION_GUIDE.md",
         "task_id": event.get("task_id") or "(none)",
         "reason": event.get("reason") or "wakeup",
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
@@ -275,7 +274,7 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
 
     agent = agent_config_for(config, target_agent)
     message = render_wakeup_message(config, event, target_agent)
-    context_files = [relpath(path) for path in selected_shared_files(config)]
+    context_files = execution_context_files(config, event.get("task_id"))
     queue_payload = {
         "event_id": new_runtime_id("evt"),
         "created_at": utc_now(),

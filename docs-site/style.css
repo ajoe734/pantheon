@@ -65,6 +65,7 @@ h1, h2, h3, p { margin: 0; }
   background: var(--paper);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+  min-width: 0;
 }
 
 .hero {
@@ -99,6 +100,10 @@ h1 {
 .queue-copy {
   color: var(--muted);
   line-height: 1.55;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .hero-actions {
@@ -354,6 +359,23 @@ h1 {
 .alert-card.alert-ok {
   border-color: rgba(95, 111, 108, 0.18);
   background: rgba(95, 111, 108, 0.08);
+}
+
+.alert-detail {
+  margin-top: 10px;
+}
+
+.alert-detail summary {
+  cursor: pointer;
+  color: var(--teal);
+}
+
+.alert-detail-copy {
+  margin-top: 8px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .bridge-grid {
@@ -674,6 +696,20 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+}
+
+.lane-meta .chip,
+.task-meta .chip,
+.task-foot .chip,
+.sys-card-body .chip,
+.approval-item .chip,
+.delivery-layer-head .chip,
+.delivery-layer-grid .chip {
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .task-foot,

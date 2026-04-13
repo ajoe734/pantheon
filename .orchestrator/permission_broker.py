@@ -16,7 +16,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from approval_queue import consume_resume_override, create_approval, find_resume_override
-from common import ROOT, load_config, load_json, utc_now, write_activity_log, write_json
+from common import ROOT, approval_tool_input_signature, load_config, load_json, utc_now, write_activity_log, write_json
 from provider_permissions import CLAUDE_LOCAL_SETTINGS_PATH, _verified_claude_policy
 from runtime_state import load_approval_state
 
@@ -584,6 +584,7 @@ def _approval_context(payload: dict[str, Any], config: dict[str, Any]) -> dict[s
         "provider": "claude",
         "task_id": os.environ.get("ORCH_TASK_ID") or payload.get("task_id") or payload.get("taskId"),
         "worker_run_id": os.environ.get("ORCH_RUN_ID"),
+        "agent_id": os.environ.get("ORCH_AGENT_ID"),
         "session_id": payload.get("session_id") or payload.get("sessionId") or os.environ.get("ORCH_SESSION_ID"),
         "tool_use_id": payload.get("tool_use_id") or payload.get("toolUseId"),
         "expires_at": None,
@@ -627,11 +628,16 @@ def _permission_request_response(
     }
 
 
-def _approval_signature(session_id: str | None, tool_name: str, tool_input: dict[str, Any]) -> tuple[str | None, str, str]:
+def _approval_signature(
+    session_id: str | None,
+    tool_name: str,
+    tool_input: dict[str, Any] | None = None,
+    tool_input_signature: str | None = None,
+) -> tuple[str | None, str, str]:
     return (
         session_id,
         tool_name,
-        json.dumps(tool_input, sort_keys=True, ensure_ascii=False),
+        str(tool_input_signature or approval_tool_input_signature(tool_input if tool_input is not None else {})),
     )
 
 
@@ -671,11 +677,19 @@ def _matching_approval(
     pending_match = None
     history_match = None
     for item in state.get("pending", []):
-        item_signature = _approval_signature(item.get("session_id"), item.get("tool_name") or "", item.get("tool_input") or {})
+        item_signature = _approval_signature(
+            item.get("session_id"),
+            item.get("tool_name") or "",
+            tool_input_signature=item.get("tool_input_signature"),
+        )
         if item_signature == signature:
             pending_match = item
     for item in reversed(state.get("history", [])):
-        item_signature = _approval_signature(item.get("session_id"), item.get("tool_name") or "", item.get("tool_input") or {})
+        item_signature = _approval_signature(
+            item.get("session_id"),
+            item.get("tool_name") or "",
+            tool_input_signature=item.get("tool_input_signature"),
+        )
         if item_signature == signature:
             history_match = item
             break
@@ -861,6 +875,8 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
                     "tool_input": decision["tool_input"],
                     "risk_class": decision["risk_class"],
                     "suggested_rule": decision.get("suggested_rule"),
+                    "request_payload": payload,
+                    "broker_decision": decision,
                 },
             )
         effective_decision = "defer"

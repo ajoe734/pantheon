@@ -4,7 +4,17 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from common import append_jsonl, config_path, load_json, load_jsonl, utc_now, write_json
+from common import (
+    append_jsonl,
+    approval_tool_input_preview,
+    approval_tool_input_signature,
+    config_path,
+    load_json,
+    load_jsonl,
+    summarize_failure_reason,
+    utc_now,
+    write_json,
+)
 
 
 def default_state() -> dict[str, Any]:
@@ -41,6 +51,21 @@ def default_state() -> dict[str, Any]:
             "pid": None,
             "started_at": None,
             "last_heartbeat_at": None,
+            "lifecycle": "idle",
+            "last_successful_loop_at": None,
+            "last_loop_started_at": None,
+            "last_loop_finished_at": None,
+            "last_loop_duration_ms": None,
+            "last_loop_error": None,
+            "focus_mode": None,
+            "mode_status": "idle",
+            "mode_switch_requested": None,
+            "last_mode_switch_at": None,
+            "mode_occupancy": {
+                "planning": {"running": 0, "pending": 0, "queued": 0},
+                "execution": {"running": 0, "pending": 0, "queued": 0},
+                "coordination": {"running": 0, "pending": 0, "queued": 0},
+            },
         },
     }
 
@@ -74,6 +99,35 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("pid", None)
     state["supervisor"].setdefault("started_at", None)
     state["supervisor"].setdefault("last_heartbeat_at", None)
+    state["supervisor"].setdefault("lifecycle", "idle")
+    state["supervisor"].setdefault("last_successful_loop_at", None)
+    state["supervisor"].setdefault("last_loop_started_at", None)
+    state["supervisor"].setdefault("last_loop_finished_at", None)
+    state["supervisor"].setdefault("last_loop_duration_ms", None)
+    state["supervisor"].setdefault("last_loop_error", None)
+    state["supervisor"].setdefault("focus_mode", None)
+    state["supervisor"].setdefault("mode_status", "idle")
+    state["supervisor"].setdefault("mode_switch_requested", None)
+    state["supervisor"].setdefault("last_mode_switch_at", None)
+    state["supervisor"].setdefault("mode_occupancy", {})
+    for mode_name in ("planning", "execution", "coordination"):
+        bucket = state["supervisor"]["mode_occupancy"].setdefault(mode_name, {})
+        bucket.setdefault("running", 0)
+        bucket.setdefault("pending", 0)
+        bucket.setdefault("queued", 0)
+    pauses = state.get("provider_guardrails", {}).get("dispatch_pauses", {}) or {}
+    normalized_pauses: dict[str, Any] = {}
+    for provider, entry in pauses.items():
+        if not isinstance(entry, dict):
+            continue
+        summary = summarize_failure_reason(entry.get("reason"), provider)
+        normalized = deepcopy(entry)
+        normalized["summary"] = str(entry.get("summary") or summary.get("summary") or "").strip()
+        normalized["detail"] = str(entry.get("detail") or summary.get("detail") or "").strip()
+        normalized["failure_kind"] = str(entry.get("failure_kind") or summary.get("kind") or "").strip()
+        normalized["reason"] = normalized["summary"]
+        normalized_pauses[str(provider)] = normalized
+    state["provider_guardrails"]["dispatch_pauses"] = normalized_pauses
     state["version"] = 2
     return state
 
@@ -176,11 +230,29 @@ def queue_event_record(state: dict[str, Any], event_id: str) -> dict[str, Any]:
 
 def default_approval_state() -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "updated_at": None,
         "pending": [],
         "history": [],
     }
+
+
+def _normalize_approval_item(item: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(item)
+    tool_input = normalized.get("tool_input")
+    signature = str(normalized.get("tool_input_signature") or "").strip()
+    preview = str(normalized.get("tool_input_preview") or "").strip()
+    if not signature:
+        signature = approval_tool_input_signature(tool_input if tool_input is not None else {})
+    if not preview and tool_input is not None:
+        preview = approval_tool_input_preview(tool_input)
+    normalized["tool_input_signature"] = signature
+    normalized["tool_input_preview"] = preview
+    normalized.pop("tool_input", None)
+    normalized.pop("request_payload", None)
+    normalized.pop("broker_decision", None)
+    normalized.pop("permission_payload", None)
+    return normalized
 
 
 def load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
@@ -190,10 +262,16 @@ def load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
         state.update(raw)
     state.setdefault("pending", [])
     state.setdefault("history", [])
+    state["pending"] = [_normalize_approval_item(item) for item in state["pending"] if isinstance(item, dict)]
+    state["history"] = [_normalize_approval_item(item) for item in state["history"] if isinstance(item, dict)]
+    state["version"] = 2
     return state
 
 
 def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     payload = deepcopy(state)
+    payload["pending"] = [_normalize_approval_item(item) for item in payload.get("pending", []) if isinstance(item, dict)]
+    payload["history"] = [_normalize_approval_item(item) for item in payload.get("history", []) if isinstance(item, dict)]
+    payload["version"] = 2
     payload["updated_at"] = utc_now()
     write_json(config_path(config, "approval_queue"), payload)
