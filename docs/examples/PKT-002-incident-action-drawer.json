@@ -1,0 +1,96 @@
+{
+  "kill_switch_status": {
+    "kill_switch": {
+      "status": "armed",
+      "last_triggered_at": null,
+      "last_confirmed_at": "2026-04-14T09:00:00Z",
+      "active_commands": []
+    },
+    "allowedActions": {
+      "canPause": true,
+      "canRiskOff": true,
+      "canLiquidateAll": false,
+      "canHardRollback": false,
+      "canIssueSafeMode": true,
+      "secondaryPathAvailable": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T09:00:00Z",
+      "surfaces": {
+        "kill_switch": { "status": "ok" },
+        "allowedActions": { "status": "ok" }
+      }
+    }
+  },
+  "command_receipt_accepted": {
+    "receipt_id": "receipt-pkt-002-pause-001",
+    "command": "PauseExecution",
+    "status": "accepted",
+    "accepted_at": "2026-04-14T09:01:00Z",
+    "routing_path": "direct",
+    "expected_completion_at": "2026-04-14T09:01:05Z",
+    "error_message": null
+  },
+  "command_receipt_failed": {
+    "receipt_id": "receipt-pkt-002-liquidate-001",
+    "command": "LiquidateAll",
+    "status": "failed",
+    "accepted_at": "2026-04-14T09:01:00Z",
+    "routing_path": "direct",
+    "expected_completion_at": null,
+    "error_message": "Operator does not have LiquidateAll authority for this runtime binding. Required authority level: super_operator."
+  },
+  "secondary_path_active": {
+    "kill_switch": {
+      "status": "armed",
+      "last_triggered_at": null,
+      "last_confirmed_at": "2026-04-14T08:30:00Z",
+      "active_commands": []
+    },
+    "allowedActions": {
+      "canPause": true,
+      "canRiskOff": true,
+      "canLiquidateAll": false,
+      "canHardRollback": false,
+      "canIssueSafeMode": false,
+      "secondaryPathAvailable": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T09:00:00Z",
+      "surfaces": {
+        "kill_switch": { "status": "degraded" },
+        "allowedActions": { "status": "ok" }
+      },
+      "degradation": {
+        "kill_switch_reason": "Kill switch service is in cache mode. Commands will route through fallback path."
+      }
+    }
+  },
+  "fully_unavailable": {
+    "kill_switch": {
+      "status": null,
+      "last_triggered_at": null,
+      "last_confirmed_at": null,
+      "active_commands": []
+    },
+    "allowedActions": {
+      "canPause": false,
+      "canRiskOff": false,
+      "canLiquidateAll": false,
+      "canHardRollback": false,
+      "canIssueSafeMode": false,
+      "secondaryPathAvailable": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T09:00:00Z",
+      "surfaces": {
+        "kill_switch": { "status": "unavailable" },
+        "allowedActions": { "status": "unavailable" }
+      },
+      "degradation": {
+        "kill_switch_reason": "Kill switch service is fully unreachable. Contact on-call directly.",
+        "allowedActions_reason": "Action authority service is unreachable. All CTAs disabled."
+      }
+    }
+  }
+}

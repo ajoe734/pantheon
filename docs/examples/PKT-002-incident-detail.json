@@ -1,0 +1,91 @@
+{
+  "data": {
+    "incident": {
+      "incident_id": "inc-pkt-002-a",
+      "title": "SEV-1: Runtime binding breach on persona-alpha",
+      "severity": "sev1",
+      "status": "open",
+      "artifact_id": "artifact-alpha-v3",
+      "artifact_version": "3.1.0",
+      "runtime_id": "runtime-alpha-001",
+      "trace_id": "trace-pkt-002-a-001",
+      "opened_at": "2026-04-14T07:12:00Z"
+    },
+    "affected_bindings": [
+      {
+        "binding_id": "binding-alpha-live",
+        "persona_id": "persona-alpha",
+        "capital_pool_id": "pool-main",
+        "stage": "live",
+        "binding_status": "active"
+      }
+    ],
+    "kill_switch": {
+      "status": "armed",
+      "last_triggered_at": null,
+      "last_confirmed_at": "2026-04-14T09:00:00Z",
+      "active_commands": []
+    }
+  },
+  "allowedActions": {
+    "canPause": true,
+    "canRiskOff": true,
+    "canLiquidateAll": false,
+    "canHardRollback": false,
+    "canIssueSafeMode": true,
+    "canOpenActionDrawer": true
+  },
+  "meta": {
+    "snapshot_at": "2026-04-14T09:00:00Z",
+    "surfaces": {
+      "incident": { "status": "ok" },
+      "affected_bindings": { "status": "ok" },
+      "kill_switch": { "status": "ok" },
+      "allowedActions": { "status": "ok" }
+    }
+  },
+  "degraded_example": {
+    "data": {
+      "incident": {
+        "incident_id": "inc-pkt-002-a",
+        "title": "SEV-1: Runtime binding breach on persona-alpha",
+        "severity": "sev1",
+        "status": "open",
+        "artifact_id": "artifact-alpha-v3",
+        "artifact_version": "3.1.0",
+        "runtime_id": "runtime-alpha-001",
+        "trace_id": "trace-pkt-002-a-001",
+        "opened_at": "2026-04-14T07:12:00Z"
+      },
+      "affected_bindings": [],
+      "kill_switch": {
+        "status": "armed",
+        "last_triggered_at": null,
+        "last_confirmed_at": "2026-04-14T08:30:00Z",
+        "active_commands": []
+      }
+    },
+    "allowedActions": {
+      "canPause": false,
+      "canRiskOff": false,
+      "canLiquidateAll": false,
+      "canHardRollback": false,
+      "canIssueSafeMode": false,
+      "canOpenActionDrawer": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T09:00:00Z",
+      "surfaces": {
+        "incident": { "status": "ok" },
+        "affected_bindings": { "status": "degraded" },
+        "kill_switch": { "status": "degraded" },
+        "allowedActions": { "status": "unavailable" }
+      },
+      "degradation": {
+        "affected_bindings_reason": "Binding registry read surface is temporarily unavailable; last known state was 30 minutes ago.",
+        "kill_switch_reason": "Kill switch service is in cache mode; state may be stale.",
+        "allowedActions_reason": "Action authority service is unavailable; all CTAs disabled for safety."
+      }
+    }
+  }
+}

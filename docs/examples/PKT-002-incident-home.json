@@ -1,0 +1,62 @@
+{
+  "incident_list": {
+    "items": [
+      {
+        "incident_id": "inc-pkt-002-a",
+        "title": "SEV-1: Runtime binding breach on persona-alpha",
+        "severity": "sev1",
+        "status": "open",
+        "artifact_id": "artifact-alpha-v3",
+        "opened_at": "2026-04-14T07:12:00Z"
+      },
+      {
+        "incident_id": "inc-pkt-002-b",
+        "title": "SEV-2: Canary drawdown threshold exceeded on persona-beta",
+        "severity": "sev2",
+        "status": "in_progress",
+        "artifact_id": "artifact-beta-v2",
+        "opened_at": "2026-04-14T08:45:00Z"
+      }
+    ],
+    "page_info": {
+      "next_page_token": null
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T09:00:00Z",
+      "surfaces": {
+        "incident_list": { "status": "ok" }
+      }
+    }
+  },
+  "kill_switch": {
+    "kill_switch": {
+      "status": "armed",
+      "last_triggered_at": null,
+      "last_confirmed_at": "2026-04-14T08:58:00Z",
+      "active_commands": []
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T09:00:00Z",
+      "surfaces": {
+        "kill_switch": { "status": "ok" }
+      }
+    }
+  },
+  "degraded_example": {
+    "kill_switch": {
+      "status": "armed",
+      "last_triggered_at": null,
+      "last_confirmed_at": "2026-04-14T08:30:00Z",
+      "active_commands": []
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T09:00:00Z",
+      "surfaces": {
+        "kill_switch": { "status": "degraded" }
+      },
+      "degradation": {
+        "reason": "Kill switch service is operating in read-only cache mode; state may be up to 30 minutes stale."
+      }
+    }
+  }
+}
