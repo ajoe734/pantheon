@@ -17,7 +17,7 @@ This backlog expands `front-ai-trading-system` from a loose page set into the fu
 | Workbench | Objective | Existing Pantheon support | Missing canonical spec | Lovable-ready | Backend dependency | Recommended wave |
 |---|---|---|---|---|---|---|
 | Operator Console | operator command center for deployment, incident, health, runtime, and drift | strong APP-002 support for deployment, incident, post-incident, degradation, SSE | Operator Home and paper-live drift screens | partial | medium | Wave 1 |
-| Persona Workbench | persona lifecycle, bindings, profiles, and consult controls | persona-management composed view plus remaining catalog drilldown surfaces | persona management packet, explicit drilldown modules, tool profile/consult policy packet language | partial | medium | Wave 1 |
+| Persona Workbench | persona lifecycle, bindings, profiles, and consult controls | persona-management composed view plus remaining catalog drilldown surfaces | standalone persona list/detail IA, tool profile/consult policy packet language, and Wave 2 shared drilldown packets | partial | medium | Wave 1 |
 | Research Workbench | research search, analysis, tickets, launches, compares | blueprint-level direction only | full canonical packet family | no | high | Wave 3 |
 | Knowledge Workbench | institutional memory and evidence navigation | blueprint-level direction only | full canonical packet family | no | high | Wave 3 |
 | Trainer Workbench | teaching sessions and before-after review | blueprint-level direction only; current implementation is demo-grade | full canonical packet family | no | high | Wave 3 |
@@ -78,12 +78,30 @@ Primary packetization scope for `PKT-004`:
 - `Catalog drilldowns` are grouped into explicit modules instead of a vague catch-all so downstream packet work can inherit named surfaces.
 - `Tool profile` and `Consult policy` remain visible as Wave 2 Persona Workbench backlog because they still lack canonical packet language and BFF routes.
 
+Surface inventory and wave ownership:
+
+| Surface or IA scope | Module owner | Existing Pantheon support | Primary wave | Notes |
+|---|---|---|---|---|
+| `PM-01 Persona Management` composed screen | `Persona management composed screen` | `GET /api/v1/operator/persona-management/{persona_id}`; APP-002 Wave 4 persona-management sidecar | Wave 1 | source-ready packet input; preserve `meta.surfaces.*`, `snapshot`, and backend-shaped `allowedActions` |
+| `PS-01 Persona Catalog` + `PS-02 Persona Detail` | `Module A — Persona Drilldowns` | APP-002 remaining catalog sidecar; `/api/v1/personas`; `/api/v1/personas/{persona_id}` | Wave 1 grouping, Wave 2 IA shell | live read routes exist, but the standalone Persona Workbench list/detail shell copy is still missing |
+| `PS-03` to `PS-06` sessions, teaching, capability drilldowns | `Module A — Persona Drilldowns` | APP-002 remaining catalog sidecar; `/api/v1/personas/{persona_id}/sessions`; `/api/v1/sessions/{session_id}`; `/api/v1/personas/{persona_id}/teaching`; `/api/v1/personas/{persona_id}/capabilities` | Wave 1 | packet family can inherit these as explicit drilldowns without inventing new BFF routes |
+| `CP-01` to `CP-04` capital pool and binding drilldowns | `Module B — Capital / Binding Drilldowns` | APP-002 remaining catalog sidecar; `/api/v1/capital-pools`; `/api/v1/capital-pools/{pool_id}`; `/api/v1/bindings`; `/api/v1/bindings/{binding_id}` | Wave 1 | live read routes exist; selector, drawer, and shell wording are still packet work |
+| `DP-01` to `DP-04` deployment / approval drilldowns | `Module C — Deployment / Approval Drilldowns` | APP-002 remaining catalog sidecar; `/api/v1/deployment-plans`; `/api/v1/deployment-plans/{plan_id}`; `/api/v1/approval-decisions`; `/api/v1/approval-decisions/{decision_id}` | Wave 1 shared | shared with Governance packetization; do not fork a Persona-specific approval contract |
+| `RT-01` to `RT-04`, `TL-01` to `TL-03`, `LN-01` to `LN-03`, `IN-01` to `IN-05`, `EV-01` to `EV-04` | `Module D`, `Module E`, `Module F` | APP-002 remaining catalog sidecar and current BFF read routes | Wave 2 | read surfaces exist, but Persona Workbench still lacks standalone packet language and shared drilldown shells for these families |
+| `Tool profile` | standalone Persona Workbench module | persona registry fields exist, but no canonical BFF route or packet handoff yet | Wave 2 | blocked on a dedicated BFF read surface plus panel contract |
+| `Consult policy` | standalone Persona Workbench module | consult-policy model exists in policy docs, but no canonical BFF route or packet handoff yet | Wave 2 | blocked on a dedicated BFF read surface plus panel contract |
+
+Separation rule for this backlog:
+
+- put missing list/detail shell copy, drilldown wording, and panel/drawer packet language in `Missing screen-spec work`
+- put absent routes, shared cross-workbench contracts, or missing persona-specific composed views in `Backend or contract dependencies`
+
 Canonical packet and module inventory:
 
 | Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
 |---|---|---|---|---|---|---|
 | `Persona management composed screen` | persona lifecycle page with persona summary, bindings, capital pool metadata, sessions, teaching history, and backend-shaped `allowedActions` | `GET /api/v1/operator/persona-management/{persona_id}`; APP-002 Wave 4 persona-management sidecar | none for the composed packet itself; preserve `snapshot` caveat and role-gating notes in handoff copy | ready | must carry forward `meta.surfaces.*` degraded-panel semantics and backend-shaped `allowedActions` | Wave 1 |
-| `Module A — Persona Drilldowns` | `PS-01` to `PS-06`: persona catalog, persona detail, session list/detail, teaching history, capability snapshot | APP-002 remaining catalog sidecar; `/api/v1/personas`; `/api/v1/personas/{persona_id}`; `/api/v1/personas/{persona_id}/sessions`; `/api/v1/sessions/{session_id}`; `/api/v1/personas/{persona_id}/teaching`; `/api/v1/personas/{persona_id}/capabilities` | persona list shell; persona detail shell packet language; session and capability drilldown copy | partial | list/detail read surfaces still need explicit packet-ready shaping; standalone tool-profile and consult-policy routes do not exist yet | Wave 1 for catalog packetization; Wave 2 for full Persona Workbench IA |
+| `Module A — Persona Drilldowns` | `PS-01` to `PS-06`: persona catalog, persona detail, session list/detail, teaching history, capability snapshot | APP-002 remaining catalog sidecar; `/api/v1/personas`; `/api/v1/personas/{persona_id}`; `/api/v1/personas/{persona_id}/sessions`; `/api/v1/sessions/{session_id}`; `/api/v1/personas/{persona_id}/teaching`; `/api/v1/personas/{persona_id}/capabilities` | persona list shell; persona detail shell packet language; session and capability drilldown copy | partial | standalone Persona Workbench IA still needs explicit list/detail shell contracts even though the underlying read routes are live | Wave 1 for catalog packetization; Wave 2 for full Persona Workbench IA |
 | `Module B — Capital / Binding Drilldowns` | `CP-01` to `CP-04`: capital-pool list/detail and binding list/detail | APP-002 remaining catalog sidecar; `/api/v1/capital-pools`; `/api/v1/capital-pools/{pool_id}`; `/api/v1/bindings`; `/api/v1/bindings/{binding_id}` | capital pool binding panel or drawer packet spec | partial | selector and binding-detail contract language still needs canonical packet wording | Wave 1 |
 | `Module C — Deployment / Approval Drilldowns` | `DP-01` to `DP-04`: deployment plan and approval decision drilldowns linked from persona or binding journeys | APP-002 remaining catalog sidecar; `/api/v1/deployment-plans`; `/api/v1/deployment-plans/{plan_id}`; `/api/v1/approval-decisions`; `/api/v1/approval-decisions/{decision_id}` | standalone approval-decision drilldown spec | partial, shared | shared with `PKT-001`; do not duplicate the governance packet contract | Wave 1 shared |
 | `Module D — Runtime Drilldowns` | `RT-01` to `RT-04`: runtime binding detail, runtime status, rollback history | APP-002 remaining catalog sidecar; `/api/v1/runtime-bindings`; `/api/v1/runtime-bindings/{binding_id}`; `/api/v1/runtimes/{runtime_id}/status`; `/api/v1/runtimes/{runtime_id}/rollbacks` | runtime status or rollback drilldown packet | partial, shared | no Persona-specific composed view yet; remains a drilldown dependency only | Wave 2 |
@@ -96,6 +114,13 @@ Wave framing:
 
 - Wave 1 delivery for `PKT-004`: persona management composed screen, Persona Drilldowns, Capital / Binding Drilldowns, and the shared Deployment / Approval drilldown references.
 - Wave 2 follow-up for `WB-002`: standalone persona list and detail IA, Tool profile, Consult policy, plus the shared Runtime, Telemetry / Lineage, and Incident / Evolution drilldowns.
+
+Wave boundary detail:
+
+| Wave | Included Persona Workbench scope | Why it stays in that wave | Open dependency type |
+|---|---|---|---|
+| Wave 1 | `PM-01`; `PS-01` to `PS-06`; `CP-01` to `CP-04`; shared `DP-01` to `DP-04` references | all required read routes already exist, or the composed packet input is approved through APP-002 Wave 4 evidence | mostly screen-spec and packet-language work, not net-new BFF routes |
+| Wave 2 | standalone persona list/detail IA, `Tool profile`, `Consult policy`, shared `RT-*`, `TL-*`, `LN-*`, `IN-*`, `EV-*` drilldowns | these surfaces need either Persona-specific shells, new packet families, or fresh dedicated routes before Lovable handoff is honest | mixed: new BFF routes for `Tool profile` and `Consult policy`; shared contract and IA work for the rest |
 
 ## Research Workbench
 
