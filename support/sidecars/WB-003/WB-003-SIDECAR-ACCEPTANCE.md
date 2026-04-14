@@ -152,6 +152,10 @@ Before the parent task `WB-003` is accepted, the reviewer should confirm:
 
 That means a Research UI shell without BFF support may still be useful directionally, but it cannot be treated as packet-ready canonical product truth.
 
+### 3.4 Review Dispatch Normalization
+
+The sidecar reviewer assignment was auto-reassigned from `Qwen` to `Claude` during supervisor dispatch because of repeated reviewer capacity issues. This packet normalizes the visible reviewer / handoff header fields to the final reviewer assignment that actually approved the slice.
+
 ---
 
 ## 4. Handoff Packet To Reviewer
