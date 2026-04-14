@@ -19,7 +19,7 @@ This backlog expands `front-ai-trading-system` from a loose page set into the fu
 | Operator Console | operator command center for deployment, incident, health, runtime, and drift | strong APP-002 support for deployment, incident, post-incident, degradation, SSE | Operator Home and paper-live drift screens | partial | medium | Wave 1 |
 | Persona Workbench | persona lifecycle, bindings, profiles, and consult controls | persona-management composed view plus remaining catalog drilldown surfaces | standalone persona list/detail IA, tool profile/consult policy packet language, and Wave 2 shared drilldown packets | partial | medium | Wave 1 |
 | Research Workbench | research search, analysis, tickets, launches, compares | blueprint-level direction only | full canonical packet family | no | high | Wave 3 |
-| Knowledge Workbench | institutional memory and evidence navigation | blueprint-level direction only | full canonical packet family | no | high | Wave 3 |
+| Knowledge Workbench | institutional memory, evidence navigation, insight cards, and strategy specs | blueprint-level direction only; no BFF route backs any Knowledge screen | full canonical packet family (5 modules); Wave 3 internal order: Institutional Memory → Research Notes → Evidence Refs → Insight Cards → Strategy Spec | no | high — all 5 modules need net-new BFF routes before packetization can begin | Wave 3 |
 | Trainer Workbench | teaching sessions and before-after review | blueprint-level direction only; current implementation is demo-grade | full canonical packet family | no | high | Wave 3 |
 | Consultation Workbench | consult requests, committee review, debate, and red-team outputs | blueprint-level direction only | full canonical packet family | no | high | Wave 4 |
 | Governance Workbench | review queue, approval queue, promotion, rollback, and diff control | `F-042` plus operator governance semantics | every governance screen beyond Promotion Review | partial | medium | Wave 2 |
@@ -150,20 +150,20 @@ Lovable readiness:
 
 Backend dependencies and packetization prerequisites per module:
 
+### Research Ticket
+
+- backend gap: no `POST /api/v1/research/tickets` create route or `GET /api/v1/research/tickets/{id}` read route in current BFF
+- packetization prerequisite: ticket lifecycle states (open, in-progress, closed, archived) must be defined before the detail and list screens can be spec'd; this is the foundation that Search and Analyze build on
+
 ### Search
 
 - backend gap: no `GET /api/v1/research/search` route or search index adapter in current BFF
-- packetization prerequisite: define query parameters, result shape, and filter semantics before Lovable can render a real search surface
+- packetization prerequisite: define query parameters, result shape, and filter semantics before Lovable can render a real search surface; depends on Research Ticket read model for corpus identity
 
 ### Analyze
 
 - backend gap: no analysis result or metric aggregation endpoint in current BFF
 - packetization prerequisite: research-result payload contract must be agreed before an analysis view can be packet-defined; depends on the research ticket read model
-
-### Research Ticket
-
-- backend gap: no `POST /api/v1/research/ticket` create route or `GET /api/v1/research/ticket/{id}` read route in current BFF
-- packetization prerequisite: ticket lifecycle states (open, in-progress, closed, archived) must be defined before the detail and list screens can be spec'd; this is the foundation that Search and Analyze build on
 
 ### Experiment Launch
 
@@ -175,26 +175,54 @@ Backend dependencies and packetization prerequisites per module:
 - backend gap: no artifact registry read model and no diff or comparison surface in current BFF
 - packetization prerequisite: artifact identity and versioning semantics must be locked before a compare view can be packet-defined; depends on Experiment Launch producing versioned artifact references
 
+Canonical module inventory:
+
+| Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
+|---|---|---|---|---|---|---|
+| `Research Ticket` | ticket list, ticket detail, lifecycle state machine (open → in-progress → closed → archived) | blueprint-level only; no canonical BFF route | full screen packet family: list shell, detail shell, lifecycle action spec | no | `POST /api/v1/research/tickets`; `GET /api/v1/research/tickets/{id}`; lifecycle state transitions | Wave 3 — first |
+| `Search` | query input, result list, filter rail, result drilldown | blueprint-level only; no BFF search route | full screen packet: query parameters, result shape, filter semantics | no | `GET /api/v1/research/search`; search index adapter; depends on Research Ticket read model for corpus identity | Wave 3 — second |
+| `Analyze` | analysis result view, metric aggregation panel, comparative summary | blueprint-level only; no analysis endpoint | full screen packet: analysis payload contract, metric display spec | no | metric aggregation and analysis result endpoint; depends on Research Ticket read model | Wave 3 — third |
+| `Experiment Launch` | launch request form, parameter inputs, async run status, run history | blueprint-level only; no experiment state machine or launch route | full screen packet: launch request contract, async polling contract, run status display | no | `POST /api/v1/experiments/launch`; run status read model; experiment state machine; depends on Research Ticket for lineage tracking | Wave 3 — fourth |
+| `Artifact Compare` | artifact selector, version diff view, side-by-side comparison surface | blueprint-level only; no artifact registry or diff surface | full screen packet: artifact identity and versioning semantics, diff display contract | no | artifact registry read model; diff or comparison surface; depends on Experiment Launch producing versioned artifact refs | Wave 3 — fifth |
+
+Wave 3 internal ordering and dependency chain:
+
+| Position | Module | Why this order | Upstream dependency within workbench |
+|---|---|---|---|
+| 1 | Research Ticket | foundational entity that all other modules reference for lineage, corpus, and history | none — can start as soon as Wave 3 opens |
+| 2 | Search | queries the research ticket corpus and surfaces ticket-linked results | Research Ticket read model and `GET /api/v1/research/tickets/{id}` |
+| 3 | Analyze | aggregates ticket and experiment result data; needs ticket identity for scoping | Research Ticket read model |
+| 4 | Experiment Launch | tracks lineage back to the originating ticket; run status polling is a blocking UX gate | Research Ticket lineage; Analyze result contract as input context |
+| 5 | Artifact Compare | compares versioned artifacts produced by experiments; requires stable artifact identity from Launch | Experiment Launch versioned artifact refs |
+
+Separation rule for this backlog:
+
+- put missing list and detail shell copy, packet language, and form or display spec work in `Missing screen-spec work`
+- put absent BFF routes, missing state machines, or unresolved read models in `Backend or contract dependencies`
+
 Recommended wave:
 
 - Wave 3 after closed-loop infra and operator/persona packetization are settled
 - internal module order within Wave 3: Research Ticket → Search → Analyze → Experiment Launch → Artifact Compare
+- no Research Workbench module should be handed to Lovable before the corresponding BFF route and canonical packet family exist
 
 ## Knowledge Workbench
 
-Objective: expose institutional memory, evidence, strategy specs, and durable research notes.
+Objective: expose institutional memory, evidence, strategy specs, and durable research notes as navigable, queryable product surfaces backed by canonical BFF routes.
 
 Screens and modules:
 
+- `Institutional memory`
+- `Research notes`
+- `Evidence refs`
 - `Insight cards`
 - `Strategy spec`
-- `Evidence refs`
-- `Research notes`
-- `Institutional memory`
 
 Existing Pantheon support:
 
 - blueprint-level workbench definition only
+- no Pantheon-side canonical packet family in current planning artifacts
+- no BFF route backs any Knowledge Workbench screen today; the knowledge domain is entirely pre-route
 
 Missing canonical screen specs:
 
@@ -202,16 +230,65 @@ Missing canonical screen specs:
 
 Lovable readiness:
 
-- not ready
+- not ready — all five modules lack a canonical screen spec and a backed BFF route; the front repo may have directional scaffolding but it cannot be treated as authoritative until canonical packet families exist
 
-Backend dependencies:
+Backend dependencies and packetization prerequisites per module:
 
-- evidence reference read model
-- knowledge aggregation and note retrieval surfaces
+### Institutional Memory
+
+- backend gap: no `GET /api/v1/knowledge/memory` list route or `GET /api/v1/knowledge/memory/{entry_id}` detail route in current BFF; no durable knowledge-store read model
+- packetization prerequisite: the memory entry lifecycle (draft, active, archived) and the identity schema (entry type, tags, linked artifacts) must be defined before any other Knowledge Workbench module can reference institutional knowledge; this is the foundation of the entire workbench
+
+### Research Notes
+
+- backend gap: no `POST /api/v1/knowledge/notes` create route or `GET /api/v1/knowledge/notes/{note_id}` read route in current BFF
+- packetization prerequisite: note ownership and attachment semantics must be locked (which entity a note is attached to — a research ticket, a persona, a strategy spec, or a free-standing record) before the list and detail shells can be spec'd; depends on the Institutional Memory identity schema for linked-entry references
+
+### Evidence Refs
+
+- backend gap: no `GET /api/v1/knowledge/evidence` list route or `GET /api/v1/knowledge/evidence/{ref_id}` detail route in current BFF; no evidence-reference read model linking decisions or artifacts to source documents
+- packetization prerequisite: the evidence reference shape (source document identity, link type, linked decision or artifact, credibility metadata) must be agreed before a browse or detail view can be packet-defined; depends on Institutional Memory for the anchor entity and on Research Notes for source-document context
+
+### Insight Cards
+
+- backend gap: no insight aggregation endpoint and no card-surface read model in current BFF; insight cards require a synthesis layer that pulls from memory, notes, and evidence
+- packetization prerequisite: insight card identity, display contract (card header, body, linked sources), and filter semantics (by tag, linked entity, recency) must be locked before Lovable can render a real card surface; depends on Institutional Memory and Evidence Refs as source inputs to the aggregation
+
+### Strategy Spec
+
+- backend gap: no strategy-spec list route or versioned spec detail route in current BFF; no versioning or diff semantics defined for strategy documents
+- packetization prerequisite: spec lifecycle states (draft, approved, deprecated) and versioning semantics must be established before a viewer or comparison surface can be packet-defined; depends on Institutional Memory for lineage and Evidence Refs for backing citations
+
+Canonical module inventory:
+
+| Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
+|---|---|---|---|---|---|---|
+| `Institutional Memory` | memory entry list, entry detail, lifecycle state (draft, active, archived), tag and type filters | blueprint-level only; no canonical BFF route | full screen packet family: list shell, detail shell, lifecycle state machine, filter spec | no | `GET /api/v1/knowledge/memory`; `GET /api/v1/knowledge/memory/{entry_id}`; entry lifecycle transitions; identity schema (entry type, tags, linked artifacts) | Wave 3 — first |
+| `Research Notes` | note list, note detail, attach-to-entity selector, ownership view | blueprint-level only; no BFF note route | full screen packet: note ownership and attachment semantics, list shell, detail shell | no | `POST /api/v1/knowledge/notes`; `GET /api/v1/knowledge/notes/{note_id}`; attachment semantics; depends on Institutional Memory identity schema | Wave 3 — second |
+| `Evidence Refs` | evidence reference list, reference detail, linked-decision panel, source-document link | blueprint-level only; no BFF evidence route | full screen packet: evidence reference shape, link type taxonomy, credibility metadata display | no | `GET /api/v1/knowledge/evidence`; `GET /api/v1/knowledge/evidence/{ref_id}`; depends on Institutional Memory for anchor entity and Research Notes for source context | Wave 3 — third |
+| `Insight Cards` | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | blueprint-level only; no insight aggregation endpoint | full screen packet: card identity, display contract (header, body, linked sources), filter semantics | no | insight aggregation endpoint; card-surface read model; depends on Institutional Memory and Evidence Refs as aggregation inputs | Wave 3 — fourth |
+| `Strategy Spec` | spec list, versioned spec viewer, lifecycle state (draft, approved, deprecated), evidence citation panel | blueprint-level only; no strategy-spec route or versioning semantics | full screen packet: spec lifecycle, versioning semantics, citation display, diff or compare surface | no | strategy-spec list and versioned detail routes; depends on Institutional Memory for lineage and Evidence Refs for backing citations | Wave 3 — fifth |
+
+Wave 3 internal ordering and dependency chain:
+
+| Position | Module | Why this order | Upstream dependency within workbench |
+|---|---|---|---|
+| 1 | Institutional Memory | foundational identity store that all other Knowledge Workbench modules reference for anchoring, lineage, and linked-entity resolution | none — can start as soon as Wave 3 opens |
+| 2 | Research Notes | needs the Institutional Memory identity schema to define what an attached-entity reference means | Institutional Memory identity schema and `GET /api/v1/knowledge/memory/{entry_id}` |
+| 3 | Evidence Refs | references both memory entries and research notes as source context; link type taxonomy builds on both | Institutional Memory anchor entity; Research Notes source-document context |
+| 4 | Insight Cards | synthesis layer that aggregates memory, notes, and evidence into browsable cards; cannot define filter or display semantics until the input read models are stable | Institutional Memory and Evidence Refs as aggregation inputs |
+| 5 | Strategy Spec | formal specification viewer that cites evidence and traces lineage through memory entries; versioning and diff semantics build on the full knowledge graph | Institutional Memory for lineage; Evidence Refs for backing citations |
+
+Separation rule for this backlog:
+
+- put missing list and detail shell copy, packet language, filter spec, and card or diff display work in `Missing screen-spec work`
+- put absent BFF routes, missing read models, unresolved lifecycle state machines, or unresolved versioning semantics in `Backend or contract dependencies`
 
 Recommended wave:
 
-- Wave 3
+- Wave 3 after closed-loop infra and operator/persona packetization are settled
+- internal module order within Wave 3: Institutional Memory → Research Notes → Evidence Refs → Insight Cards → Strategy Spec
+- no Knowledge Workbench module should be handed to Lovable before the corresponding BFF route and canonical packet family exist
 
 ## Trainer Workbench
 
