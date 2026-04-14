@@ -36,5 +36,26 @@ Closed-loop rules:
 
 - `lovable-ui-task` keeps backward compatibility with the existing `screen` field, but new packets should also include `workbench`, `screen_id`, `ui_spec_path`, `frontend_change_spec_path`, `required_feedback`, and `delivery_dependencies`.
 - `frontend-feedback` is the canonical machine summary for `docs/pantheon-feedback/<feature>/`.
+- `frontend-feedback` is emitted for every completed UI cycle, while `bff-gap` and `ui-done` remain the authoritative branch signals for blocked versus ready-for-review outcomes.
 - `backend-delivery` is the canonical machine summary for the next Pantheon-authored delivery bundle.
+- `backend-delivery` must include `bff_contract_version`; `sdk_version` is optional and only appears when a real front-end SDK artifact exists.
+- `backend_commit`, `bff_contract_version`, and `contract_lock_path` are the minimum version-lock tuple for delivery replay and CI verification.
+- `repository_dispatch` is the primary closed-loop transport; `workflow_dispatch` is the replay path, and the legacy issue or label bus is compatibility-only.
 - Replay must re-dispatch an existing payload path and commit reference. Do not edit payload contents during replay.
+- Pantheon-authored files stay canonical in `pantheon`; front-repo mirrors do not create alternate truth.
+- Front-end feedback bundles stay canonical in `front-ai-trading-system` and are consumed through repo-relative paths rather than mirrored back into Pantheon.
+
+Canonical paths:
+
+- Pantheon responses:
+  - `.coordination/responses/<feature>-contract-ready.yaml`
+  - `.coordination/responses/<feature>-lovable-ui-task.yaml`
+  - `.coordination/responses/<feature>-backend-delivery.yaml`
+- Front-end requests:
+  - `.coordination/requests/<feature>-bff-gap.yaml`
+  - `.coordination/requests/<feature>-frontend-feedback.yaml`
+  - `.coordination/requests/<feature>-ui-done.yaml`
+- Support bundles:
+  - `docs/pantheon-handoffs/<feature>/...` for Pantheon-authored mirrored handoff artifacts
+  - `docs/pantheon-feedback/<feature>/...` for front-end-authored review and QA artifacts
+  - `docs/pantheon-delivery/<feature>/...` for Pantheon-authored delivery notes referenced by `backend-delivery`

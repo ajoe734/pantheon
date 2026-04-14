@@ -16,6 +16,7 @@ This document defines the target Pantheon Console closed loop:
 
 - All `.coordination` payloads are YAML and must include `feature_id` and `type`.
 - The feature-scoped filename is part of the protocol and must stay stable across replay.
+- All repo paths in payload fields and dispatch envelopes are repo-relative paths using forward slashes; they must not be rewritten into local absolute paths during mirror, dispatch, or replay.
 - Pantheon-authored payloads remain authoritative in `pantheon`; front-repo mirrors do not create alternate truth.
 - Front-repo feedback bundles remain authoritative in `front-ai-trading-system`; Pantheon consumes them through referenced paths instead of mirroring them back.
 - Replay must re-use an existing payload path and commit reference. Operators may re-dispatch a stalled step, but they must not mutate payload contents during replay.
@@ -82,6 +83,25 @@ This document defines the target Pantheon Console closed loop:
 | `frontend-feedback` | front -> Pantheon | carries the front-end feedback bundle for the current cycle |
 | `backend-delivery` | Pantheon -> front | carries the backend or contract delivery note for the next UI cycle |
 
+## Loop Cycle Contract
+
+The closed loop is feature-scoped. Each cycle keeps the same `<feature>` filename stem while the owning commit references advance.
+
+| Step | Canonical payload | Owner | Completion condition |
+|---|---|---|---|
+| 1 | `contract-ready` | Pantheon | Pantheon has published contract and handoff artifacts needed for UI work |
+| 2 | `lovable-ui-task` | Pantheon | front repo has a machine-readable UI task packet and mirrored handoff bundle |
+| 3 | `frontend-feedback` | front repo | the required feedback bundle exists and Pantheon can review the front-end result |
+| 4a | `bff-gap` | front repo | UI work is blocked on missing backend or contract truth and Pantheon must respond |
+| 4b | `ui-done` | front repo | UI implementation is ready for Pantheon review or integration follow-up |
+| 5 | `backend-delivery` | Pantheon | Pantheon has published the next contract, backend, or delivery-lock note for the front repo |
+
+Rules:
+
+- `frontend-feedback` is expected for every completed Lovable or front-end cycle, even when `bff-gap` or `ui-done` is also emitted.
+- `bff-gap` is the fast-fail branch for missing contract truth; `ui-done` is the ready-for-review branch; both may reference the same feature cycle as the accompanying `frontend-feedback`.
+- `backend-delivery` closes the current Pantheon response leg. If more UI work is required, Pantheon publishes a new `lovable-ui-task` for the same feature instead of mutating the prior one.
+
 ## Payload Schemas
 
 ### `lovable-ui-task`
@@ -117,6 +137,7 @@ Notes:
 - `required_feedback` must enumerate the four feedback artifact paths under `docs/pantheon-feedback/<feature>/`.
 - `delivery_dependencies` lists any contract, backend-delivery, or replay prerequisite that must exist before the next Lovable cycle.
 - `links` should carry mirrored artifact paths rather than repo-absolute local paths.
+- `gap_handoff_path` and `completion_handoff_path` stay feature-stable across replay; only the source commit changes between loop cycles.
 
 Recommended status values:
 
@@ -149,9 +170,11 @@ Semantics:
 
 - `status=completed` means the feedback bundle is ready and Pantheon should continue review or integration.
 - `status=blocked` means the UI lane is blocked even if a `bff-gap` was not emitted.
+- `feedback_path` should point to `docs/pantheon-feedback/<feature>/LOVABLE_CHANGE_FEEDBACK.md` so Pantheon has a stable human-readable summary anchor for review.
 - `changed_files` is required so Pantheon review can target the right front-end files.
 - `pantheon_review_hint` is a short machine-readable hint such as `review-ui`, `update-bff`, or `prepare-backend-delivery`.
 - `source_commit` pins the front-repo commit Pantheon should inspect during review or replay.
+- `frontend-feedback` summarizes the cycle outcome but does not replace `bff-gap` or `ui-done`; those payloads remain the authoritative branch signal for blocked versus completed UI execution.
 
 ### `backend-delivery`
 
@@ -164,19 +187,23 @@ Required fields:
 - `screen_id`
 - `status`
 - `backend_commit`
-- `contracts_version`
-- `sdk_version`
+- `bff_contract_version`
 - `delivery_note_path`
 - `contract_lock_path`
 - `followup_expectation`
 - `source_payload`
 
+Optional fields:
+
+- `sdk_version`
+
 Semantics:
 
-- `contracts_version` must identify the Pantheon contract lock used for the delivery, either as a semantic version, commit sha, or artifact hash.
-- `sdk_version` may be `n/a` during direct BFF-client wiring, but the field stays present for schema stability.
+- `bff_contract_version` must identify the Pantheon BFF or contract lock used for the delivery, either as a semantic version, commit sha, or artifact hash.
+- `sdk_version` is only present when Pantheon publishes a front-end SDK artifact. Direct BFF-client wiring must omit the field instead of fabricating placeholder values.
 - `contract_lock_path` points to a version-lock or commit-lock artifact that the front repo can use for CI validation.
 - `source_payload` points to the `frontend-feedback`, `bff-gap`, or `ui-done` payload that triggered the delivery.
+- `backend_commit`, `bff_contract_version`, and `contract_lock_path` form the minimum version-lock tuple for delivery replay or CI verification; if any of them changes, Pantheon must publish a new normal-cycle payload instead of replaying the old one.
 
 Recommended status values:
 
@@ -184,7 +211,23 @@ Recommended status values:
 - `followup-required`: delivery is partial and the front repo may proceed only for the listed scope.
 - `blocked`: Pantheon cannot yet complete the requested delivery and a human or dependency owner must intervene.
 
+## Protocol Fixtures
+
+The repo-level `.coordination` examples must remain aligned with this spec and serve as the review fixture for workflow or mirror changes:
+
+- `.coordination/responses/F-042-lovable-ui-task.yaml`
+- `.coordination/requests/F-042-frontend-feedback.example.yaml`
+- `.coordination/responses/F-042-backend-delivery.example.yaml`
+
+Rules:
+
+- fixture payloads must use repo-relative paths only
+- fixture filenames stay feature-stable so replay and mirror tooling can be regression-tested against them
+- if the schema changes, update these fixtures in the same change as the spec
+
 ## Trigger Sources
+
+`repository_dispatch` is the primary machine-to-machine trigger path for this loop. The legacy GitHub issue or label bus may remain enabled for compatibility or audit breadcrumbs, but it is not a prerequisite for normal closed-loop execution.
 
 | Trigger | Source | Effect |
 |---|---|---|
@@ -195,6 +238,32 @@ Recommended status values:
 | `pantheon.ui_done` | front repo workflow | notifies Pantheon that the UI implementation is ready for review or integration |
 | `pantheon.backend_delivery` | Pantheon workflow | delivers backend or contract completion notes back to the front repo |
 | `workflow_dispatch` replay | human operator | replays a stuck or failed loop step without reauthoring payloads |
+
+### Dispatch envelope
+
+Every `repository_dispatch` or `workflow_dispatch` replay event in this loop must carry the same canonical transport envelope:
+
+- `event_type`: one of the trigger names above
+- `feature_id`: canonical feature or packet id
+- `payload_path`: repo-relative path to the YAML payload that the receiver must load
+- `source_repo`: repo that owns the payload and commit reference
+- `source_commit`: commit sha that produced the payload or most recently validated it
+- `source_ref`: branch or tag used when a human replay targets a named ref instead of only a sha
+- `trigger_mode`: `normal` or `replay`
+- `origin_workflow`: workflow or orchestrator entrypoint that emitted the dispatch
+
+Optional fields:
+
+- `mirror_commit`: commit sha of the mirrored front-repo sync when the payload originated in Pantheon
+- `replay_of`: prior dispatch run id, workflow run id, or audit token when retrying a stalled step
+- `requested_by`: operator or automation identity that initiated the replay
+
+Rules:
+
+- The dispatch envelope references payload files by path; it must not inline mutable payload content into `client_payload`.
+- `payload_path` and `source_commit` are the minimum replay tuple. If either is unknown, the event is not replayable.
+- `source_repo` determines where `payload_path` is resolved. Pantheon never reinterprets a front-repo path as a Pantheon-local path, and vice versa.
+- `trigger_mode=replay` means transport retry only; downstream workers must treat the referenced YAML payload as immutable.
 
 ## Mirror Contract
 
@@ -246,7 +315,7 @@ Rules:
 ### Bootstrap prerequisites
 
 - the sibling checkout `../front-ai-trading-system` must exist locally for mirror validation
-- GitHub labels `pantheon-bus` and `coordination-bus` must exist if the legacy issue bus remains enabled
+- GitHub labels `pantheon-bus` and `coordination-bus` must exist if the legacy issue bus remains enabled for compatibility or audit mirroring
 - the new dispatch workflows must live on the default branch of each repo
 
 ## Failure and Replay Path
@@ -255,7 +324,7 @@ Rules:
 - if GitHub dispatch fails, operators use the manual replay workflow instead of editing payloads by hand
 - if the front repo checkout is absent locally, `LOOP-003` treats that as a hard prerequisite failure
 - if a cycle stalls after Lovable but before feedback publish, the source of truth remains the front repo commit plus `.coordination/requests`
-- if the legacy GitHub issue bus fails due to missing labels, that must not block `.coordination`-based loop execution once dispatch workflows are available
+- if the legacy GitHub issue bus fails due to missing labels, that must not block `.coordination`-based loop execution once dispatch workflows are available on the default branch
 
 ### Replay contract
 
@@ -263,6 +332,9 @@ Rules:
 - Replay must validate that `payload_path` still exists and that `type` matches `event_type` before dispatch.
 - Replay reuses the existing payload file; if content must change, a new normal-cycle payload must be published instead of mutating the replay target.
 - `backend-delivery.source_payload` and `frontend-feedback.source_commit` are the canonical join points for replaying the last Pantheon or front-repo step.
+- Replaying `pantheon.contract_ready` or `pantheon.backend_delivery` also requires the mirrored handoff bundle to exist at the referenced front-repo paths before dispatch is retried.
+- Replaying `pantheon.frontend_feedback`, `pantheon.bff_gap`, or `pantheon.ui_done` requires the front-repo commit to contain the referenced feedback bundle or request payload unchanged at `payload_path`.
+- Successful replay must preserve the original feature-scoped filename. Operators may advance the source commit to a newer validating commit only when the payload file contents remain byte-equivalent.
 
 ### Failure ownership
 
