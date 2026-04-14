@@ -1,0 +1,64 @@
+{
+  "data": {
+    "incident": {
+      "incident_id": "inc-20260409-002",
+      "title": "Deployment plan plan-F-042 stalled at paper stage",
+      "status": "resolved",
+      "artifact_id": "artifact-042",
+      "artifact_version": "v2.1.0",
+      "runtime_id": "runtime-042",
+      "trace_id": "trace-inc-20260409-002"
+    },
+    "postmortem": {
+      "postmortem_id": "pm-20260409-002",
+      "status": "published",
+      "root_cause": "Promotion gate timeout was set too low (30s) for artifact validation under load.",
+      "action_items": [
+        "Increase promotion gate timeout to 120s",
+        "Add queue-depth alerting for promotion gate"
+      ]
+    },
+    "evolution_decisions": [
+      {
+        "id": "evo-dec-001",
+        "action_type": "retrain",
+        "risk_level": "medium",
+        "status": "approved",
+        "incident_ref": "inc-20260410-001",
+        "artifact_id": "artifact-042"
+      }
+    ],
+    "lineage_edges": [
+      {
+        "id": "ln-edge-001",
+        "from_artifact_id": "artifact-041",
+        "to_artifact_id": "artifact-042",
+        "relationship": "derived_from"
+      },
+      {
+        "id": "ln-edge-002",
+        "from_artifact_id": "artifact-042",
+        "to_artifact_id": "artifact-043",
+        "relationship": "promoted_to"
+      }
+    ],
+    "telemetry_performance": {
+      "artifact_id": "artifact-042",
+      "window": "24h",
+      "summary": {
+        "total_pnl": -0.12,
+        "max_drawdown": 0.125,
+        "sharpe_ratio": -0.8
+      }
+    }
+  },
+  "meta": {
+    "snapshot_at": "2026-04-14T12:00:00Z",
+    "surfaces": {
+      "postmortem": { "status": "ok" },
+      "evolution_decisions": { "status": "ok" },
+      "lineage": { "status": "ok" },
+      "telemetry_performance": { "status": "ok" }
+    }
+  }
+}

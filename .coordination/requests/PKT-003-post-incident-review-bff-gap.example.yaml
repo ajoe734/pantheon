@@ -1,0 +1,17 @@
+feature_id: PKT-003-post-incident-review
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: post-incident-review-console
+blocking: true
+
+summary: Post-Incident Review Console UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: meta.surfaces
+    reason: Panel-level degraded-state gating cannot be rendered safely without backend authority on surface health
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

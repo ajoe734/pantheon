@@ -1,0 +1,17 @@
+feature_id: PKT-003-lineage-view
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: lineage-view
+blocking: true
+
+summary: Lineage View UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: nodes[].artifact_type
+    reason: Graph node rendering requires artifact type to distinguish node categories
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync
