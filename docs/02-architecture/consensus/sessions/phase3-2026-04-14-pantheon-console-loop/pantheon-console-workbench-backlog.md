@@ -20,7 +20,7 @@ This backlog expands `front-ai-trading-system` from a loose page set into the fu
 | Persona Workbench | persona lifecycle, bindings, profiles, and consult controls | persona-management composed view plus remaining catalog drilldown surfaces | standalone persona list/detail IA, tool profile/consult policy packet language, and Wave 2 shared drilldown packets | partial | medium | Wave 1 |
 | Research Workbench | research search, analysis, tickets, launches, compares | blueprint-level direction only | full canonical packet family | no | high | Wave 3 |
 | Knowledge Workbench | institutional memory, evidence navigation, insight cards, and strategy specs | blueprint-level direction only; no BFF route backs any Knowledge screen | full canonical packet family (5 modules); Wave 3 internal order: Institutional Memory → Research Notes → Evidence Refs → Insight Cards → Strategy Spec | no | high — all 5 modules need net-new BFF routes before packetization can begin | Wave 3 |
-| Trainer Workbench | teaching sessions and before-after review | blueprint-level direction only; current implementation is demo-grade | full canonical packet family | no | high | Wave 3 |
+| Trainer Workbench | teaching sessions and before-after review | demo-grade trainer shell plus read-only teaching-history surfaces inside Persona Management and `PS-05`; no dedicated Trainer BFF flow exists | full canonical packet family | no | high | Wave 3 |
 | Consultation Workbench | consult requests, committee review, debate, and red-team outputs | blueprint-level direction only | full canonical packet family | no | high | Wave 4 |
 | Governance Workbench | review queue, approval queue, promotion, rollback, and diff control | `F-042` plus operator governance semantics | every governance screen beyond Promotion Review | partial | medium | Wave 2 |
 | Evolution Workbench | post-incident, evolution review, lineage, inspiration, and mutation review | post-incident/evolution sidecars and lineage surfaces | inspiration and mutation review packet family | partial | medium | Wave 2 |
@@ -303,25 +303,75 @@ Screens and modules:
 
 Existing Pantheon support:
 
-- blueprint-level workbench definition only
-- front-end direction exists, but it is still demo-grade
+- blueprint-level workbench definition plus a demo-grade Trainer shell with preview or backtest refresh direction
+- read-only teaching-session history already exists inside Persona surfaces via `GET /api/v1/operator/persona-management/{persona_id}` and `GET /api/v1/personas/{persona_id}/teaching`
+- no dedicated Trainer Workbench BFF route or mutation flow exists yet; current support is evidence or drilldown only, not a standalone Trainer packet family
 
 Missing canonical screen specs:
 
-- all Trainer Workbench screens
+- all four standalone Trainer Workbench modules still need canonical packet language
+- existing teaching-history read surfaces are evidence inputs only; they do not replace a Trainer-specific screen family
 
 Lovable readiness:
 
-- not ready
+- not ready — the current shell is demo-grade and the only live support is read-only teaching history under Persona Management, not a Trainer-owned workflow
 
-Backend dependencies:
+Backend dependencies and packetization prerequisites per module:
 
-- teaching-session contracts
-- replay artifacts and comparison surfaces
+### Teaching dialog
+
+- backend gap: no canonical BFF route today for `POST /api/v1/trainer/sessions`, `GET /api/v1/trainer/sessions/:id`, or `POST /api/v1/trainer/sessions/:id/message`; these only exist in the L3 service-contract design
+- packetization prerequisite: lock the trainer-session lifecycle, transcript or event-log contract, and session header fields before a dialog shell can be packet-defined; depends on persona identity and `session_type=trainer` staying canonical
+
+### Parameter controls
+
+- backend gap: no canonical BFF route today for `POST /api/v1/trainer/sessions/:id/patch`, and no stable read model exposes the mutable control-state schema or allowed parameter ranges
+- packetization prerequisite: define the control-patch payload, validation or warning contract, and control-state diff semantics before a parameter panel can be packet-defined; depends on Teaching dialog establishing the active session context
+
+### Before/after compare
+
+- backend gap: the current Trainer page only has a demo preview or backtest refresh skeleton; there is no canonical BFF compare route or preview result payload even though the design docs name preview, rapid-eval, and before/after compare responsibilities
+- packetization prerequisite: lock the preview or rapid-eval response contract, metric taxonomy, warning shape, and degraded `preview_unavailable` semantics before a compare surface can be packet-defined; depends on Parameter controls producing a patchable candidate state
+
+### Teaching replay
+
+- backend gap: Persona surfaces expose only a teaching-session list; there is no standalone Trainer replay screen, no canonical event-stream read route, and no BFF-level commit, discard, or replay contract
+- packetization prerequisite: lock the append-only `TeachingEvent` schema, event ordering and replay cursor semantics, and before/after artifact refs before a replay surface can be packet-defined; depends on Teaching dialog and Before/after compare producing stable session evidence
+
+Canonical module inventory:
+
+| Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
+|---|---|---|---|---|---|---|
+| `Teaching dialog` | start session, show transcript, send coaching messages, display session status and actor context | blueprint workflow plus demo-grade Trainer shell; read-only teaching-session lists exist in Persona Management and `PS-05`, but no Trainer-owned dialog route exists | full dialog packet: session shell, transcript layout, event composer, status copy | no | `POST /api/v1/trainer/sessions`; `GET /api/v1/trainer/sessions/:id`; `POST /api/v1/trainer/sessions/:id/message`; trainer-session lifecycle and transcript contract | Wave 3 — first |
+| `Parameter controls` | inspect current control state, edit control patches, surface validation or warning feedback | demo-grade control editing direction only; no canonical BFF route or control-state contract | full control-panel packet: editable fields, patch confirmation, validation or warning states | no | `POST /api/v1/trainer/sessions/:id/patch`; control-state schema; allowed-range and validation contract | Wave 3 — second |
+| `Before/after compare` | preview metrics, warnings, control-state diff, and rapid-eval result summary | demo preview or backtest refresh skeleton only; no canonical compare payload | full compare packet: metric panels, diff layout, warning hierarchy, degraded preview copy | no | preview or rapid-eval route; before/after compare payload; `preview_unavailable` degraded contract | Wave 3 — third |
+| `Teaching replay` | teaching-session history, ordered event replay, commit or discard evidence, and replay entrypoint | read-only teaching-session list via Persona Management and `PS-05`; no standalone Trainer replay screen or event-detail route | full replay packet: history shell, event timeline, evidence drawer, replay action copy | no | canonical event-stream read route; commit/discard/replay contract; append-only `TeachingEvent` schema and before/after artifact refs | Wave 3 — fourth |
+
+Wave 3 internal ordering and dependency chain:
+
+| Position | Module | Why this order | Upstream dependency within workbench |
+|---|---|---|---|
+| 1 | Teaching dialog | establishes the trainer-session entity, transcript shell, and session identity that all later modules rely on | none — can start when Wave 3 opens |
+| 2 | Parameter controls | patches only make sense after a concrete teaching session and current control state exist | Teaching dialog session context and lifecycle contract |
+| 3 | Before/after compare | preview and rapid-eval outputs must compare a candidate patch against a known session state | Parameter controls patch payload and Teaching dialog session state |
+| 4 | Teaching replay | replay is only honest once session events, compare artifacts, and commit or discard evidence are stable and addressable | Teaching dialog transcript events plus Before/after compare evidence refs |
+
+Wave boundary detail:
+
+| Wave | Included Trainer Workbench scope | Why it stays in that wave | Open dependency type |
+|---|---|---|---|
+| Pre-Wave 3 evidence only | read-only teaching-session history inside Persona Management and `PS-05` | these surfaces prove teaching data exists, but they are Persona drilldowns rather than a Trainer-owned workflow | read-only evidence only; no standalone Trainer IA or mutation routes |
+| Wave 3 | `Teaching dialog`, `Parameter controls`, `Before/after compare`, `Teaching replay` | the full Trainer Workbench needs session mutation, preview, compare, and replay contracts to exist together before packetization or Lovable handoff is honest | mostly net-new BFF routes and payload contracts, not just screen copy |
+
+Separation rule for this backlog:
+
+- put dialog shell copy, control widgets, compare layouts, replay timeline copy, and degraded-state wording in `Missing screen-spec work`
+- put absent trainer mutation routes, preview or rapid-eval contracts, replay ordering semantics, and before/after artifact refs in `Backend or contract dependencies`
 
 Recommended wave:
 
-- Wave 3
+- Wave 3 remains the conservative placement even though partial read-only teaching history already exists in Persona surfaces
+- no Trainer Workbench module should be handed to Lovable before the session-mutation, compare, and replay contracts stop being L3 design intent and become canonical BFF-facing truth
 
 ## Consultation Workbench
 
