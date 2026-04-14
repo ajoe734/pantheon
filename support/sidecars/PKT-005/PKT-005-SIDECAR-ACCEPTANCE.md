@@ -256,4 +256,36 @@ For the parent task, the reviewer should keep `PKT-005` open until the residual 
 
 ---
 
+---
+
+## 5. Finalization Checkpoint (Owner Close)
+
+**Date**: 2026-04-14  
+**Status transition**: `review_approved` → `done`  
+**Closing owner**: Claude  
+
+### Final Checks Passed
+
+| Check | Outcome |
+|---|---|
+| Sidecar content reviewed and approved by Codex | ✅ Confirmed via review_notes_zh in ai-status.json |
+| No canonical L1 truth modified by this sidecar | ✅ Confirmed — this file is support-only |
+| Parent task PKT-005 blocker correctly documented | ✅ `docs/screens/PKT-005-degradation-banner.md` "SSE snapshot event" sentence noted in §3.1, §3.3, §4 |
+| Sidecar approval scope correctly bounded | ✅ Explicitly stated: sidecar approval ≠ parent PKT-005 acceptance |
+| Reviewer gates (G1–G7) carried forward for parent task review | ✅ All seven gates present in §2.5 |
+| Dependency map correct at close | ✅ LOOP-001 and LOOP-003 both done; non-blocking items documented |
+
+### Closure Note
+
+This sidecar is finalized as a support artifact for `PKT-005`. It serves as:
+
+- Acceptance scaffolding and reviewer gates for the parent packet
+- Source-ready evidence for both substrates (degradation banner and SSE reconciliation)
+- A dependency map separating formal prerequisites from non-blocking items
+- A handoff record for the Codex reviewer
+
+The parent task `PKT-005` remains in `review` state. This `done` transition applies only to this sidecar support slice. The parent task requires the `docs/screens/PKT-005-degradation-banner.md` "SSE snapshot event" wording to be removed before it can proceed to `review_approved`.
+
+---
+
 *Prepared by Claude for the `PKT-005-SIDECAR-ACCEPTANCE` sidecar slice. This file is intentionally support-only and does not modify canonical truth.*
