@@ -102,6 +102,22 @@ Rules:
 - `bff-gap` is the fast-fail branch for missing contract truth; `ui-done` is the ready-for-review branch; both may reference the same feature cycle as the accompanying `frontend-feedback`.
 - `backend-delivery` closes the current Pantheon response leg. If more UI work is required, Pantheon publishes a new `lovable-ui-task` for the same feature instead of mutating the prior one.
 
+### Closed-loop outcome branches
+
+Every feature cycle must resolve through exactly one of these front-repo branch outcomes after `lovable-ui-task` is consumed:
+
+| Branch | Required payloads | Meaning | Pantheon next action |
+|---|---|---|---|
+| UI blocked on contract truth | `frontend-feedback` + `bff-gap` | UI lane cannot proceed without backend or contract correction | publish `backend-delivery` when the blocker is resolved, then optionally emit a fresh `lovable-ui-task` |
+| UI completed and ready for review | `frontend-feedback` + `ui-done` | UI lane finished a reviewable implementation cycle | review front-end changes, then publish `backend-delivery` if Pantheon follow-up exists |
+| UI completed but not yet ready for formal handoff | `frontend-feedback` only | feedback bundle is available but no hard blocker or final completion signal was raised | Pantheon may review, request changes, or publish a replacement `lovable-ui-task` for the same feature |
+
+Rules:
+
+- `frontend-feedback` is the required machine summary for all three branches and is never skipped just because `bff-gap` or `ui-done` exists.
+- `bff-gap` and `ui-done` are mutually exclusive within the same front-repo commit for a single feature cycle.
+- If a later front-repo commit changes the branch outcome, the front repo must publish a new payload set with the same feature-stable filenames and updated commit references rather than editing the meaning of an already-dispatched commit in place.
+
 ## Payload Schemas
 
 ### `lovable-ui-task`
@@ -205,6 +221,18 @@ Semantics:
 - `source_payload` points to the `frontend-feedback`, `bff-gap`, or `ui-done` payload that triggered the delivery.
 - `backend_commit`, `bff_contract_version`, and `contract_lock_path` form the minimum version-lock tuple for delivery replay or CI verification; if any of them changes, Pantheon must publish a new normal-cycle payload instead of replaying the old one.
 
+## Dispatch Receiver Rules
+
+All receivers for `repository_dispatch` or `workflow_dispatch` replay events must enforce the same validation rules before acting on a payload:
+
+1. `feature_id` in the transport envelope must match `feature_id` inside the referenced YAML payload.
+2. `payload_path` must exist at `source_commit` in `source_repo`.
+3. The payload `type` must be valid for the incoming `event_type`.
+4. Repo-relative support-file paths referenced by the payload must stay inside the owning repo and must not be rewritten into absolute paths.
+5. Replays must use `trigger_mode=replay` and include `replay_of`.
+
+If any validation fails, the receiver must stop before mutating mirrors, task state, or downstream artifacts.
+
 Recommended status values:
 
 - `delivered`: backend or contract changes are ready for the next UI cycle.
@@ -257,6 +285,41 @@ Optional fields:
 - `mirror_commit`: commit sha of the mirrored front-repo sync when the payload originated in Pantheon
 - `replay_of`: prior dispatch run id, workflow run id, or audit token when retrying a stalled step
 - `requested_by`: operator or automation identity that initiated the replay
+
+### Event-to-payload mapping
+
+| `event_type` | Allowed payload `type` | Owning repo |
+|---|---|---|
+| `pantheon.contract_ready` | `contract-ready` | `pantheon` |
+| `pantheon.frontend_feedback` | `frontend-feedback` | `front-ai-trading-system` |
+| `pantheon.bff_gap` | `bff-gap` | `front-ai-trading-system` |
+| `pantheon.ui_done` | `ui-done` | `front-ai-trading-system` |
+| `pantheon.backend_delivery` | `backend-delivery` | `pantheon` |
+
+`pantheon.contract_ready` may trigger the mirror and `lovable-ui-task` publication flow, but the transport envelope must still point at the concrete Pantheon-owned payload that started the receiver step.
+
+## Replay Contract
+
+Replay is for transport or workflow recovery only. It is not a patch path for changing protocol meaning after publication.
+
+### Replay eligibility
+
+| Payload type | Replay allowed when | Replay forbidden when |
+|---|---|---|
+| `contract-ready` | mirror or downstream dispatch failed, but the contract packet commit is still valid | contract artifacts changed and need a new handoff cycle |
+| `lovable-ui-task` | front repo did not receive or act on the packet and the task contents are still current | acceptance, links, or required feedback changed |
+| `frontend-feedback` | Pantheon receiver or review automation failed after the front repo already published the bundle | the feedback bundle contents or changed-files summary changed |
+| `bff-gap` | Pantheon did not consume the blocker signal | blocker details changed or the blocker was resolved |
+| `ui-done` | Pantheon did not consume the completion signal | the front-end implementation commit changed |
+| `backend-delivery` | front repo did not receive the delivery note and the version-lock tuple is unchanged | `backend_commit`, `bff_contract_version`, or `contract_lock_path` changed |
+
+### Replay rules
+
+- Replay must reuse the original `payload_path` and the original owning repo for that payload type.
+- Replay may update `source_ref`, `replay_of`, and `requested_by` in the dispatch envelope, but it must not mutate the YAML payload contents.
+- If operators need to change payload fields, support-file paths, or version-lock fields, they must publish a new normal-cycle payload and emit a non-replay dispatch.
+- Replay receivers should record that the attempt was a replay, but must otherwise execute the same validation and side-effect logic as a normal dispatch.
+- Front-repo feedback bundles and Pantheon delivery bundles remain authoritative in their owning repos during replay; mirror consumers must re-read from the referenced commit instead of relying on cached local copies.
 
 Rules:
 
@@ -314,9 +377,94 @@ Rules:
 
 ### Bootstrap prerequisites
 
-- the sibling checkout `../front-ai-trading-system` must exist locally for mirror validation
-- GitHub labels `pantheon-bus` and `coordination-bus` must exist if the legacy issue bus remains enabled for compatibility or audit mirroring
-- the new dispatch workflows must live on the default branch of each repo
+#### Hard prerequisite: sibling checkout
+
+The directory `../front-ai-trading-system` (one level above the `pantheon` root, i.e., a sibling checkout of the front repo) is a **hard prerequisite** for all local mirror and validation operations.
+
+- If the sibling checkout is absent, `coordination_repo_mirror.py` and all mirror validation steps must halt immediately with a descriptive error. They must not proceed, silently skip, or produce partial output.
+- This directory must point to the canonical `front-ai-trading-system` repository checked out on its default branch (or an explicitly specified ref). A stale or partial clone is treated the same as absent.
+- Operators who cannot check out the front repo locally must route validation through the GitHub Actions mirror workflow instead of running local mirror tooling.
+- All CI validation and pre-dispatch checks in Pantheon workflows must verify that the sibling checkout or the equivalent CI workspace checkout is present and on a valid commit before executing mirror or validation steps.
+
+This is not optional for closed-loop execution. Any automation step that bypasses this check is in violation of the loop contract.
+
+#### Label bootstrap
+
+The following GitHub labels must exist on both the `pantheon` and `front-ai-trading-system` repositories before the legacy issue bus can be used for compatibility or audit mirroring:
+
+| Label | Color (suggested) | Purpose |
+|---|---|---|
+| `pantheon-bus` | `#0075ca` | marks issues or PRs that carry cross-repo coordination bus events |
+| `coordination-bus` | `#e4e669` | marks issues or PRs that carry `.coordination` protocol messages or replay records |
+
+Bootstrap procedure:
+
+1. Verify the labels exist: `gh label list --repo <owner>/pantheon` and `gh label list --repo <owner>/front-ai-trading-system`.
+2. If absent, create them:
+   ```bash
+   gh label create pantheon-bus     --color 0075ca --description "Cross-repo coordination bus event" --repo <owner>/pantheon
+   gh label create coordination-bus --color e4e669 --description ".coordination protocol message or replay record" --repo <owner>/pantheon
+   gh label create pantheon-bus     --color 0075ca --description "Cross-repo coordination bus event" --repo <owner>/front-ai-trading-system
+   gh label create coordination-bus --color e4e669 --description ".coordination protocol message or replay record" --repo <owner>/front-ai-trading-system
+   ```
+3. Record the label creation commit or API response as evidence in the loop bootstrap audit log.
+
+Rules:
+
+- Label names are stable and must not be renamed. Renaming breaks any existing label-filter queries in the legacy bus.
+- If the legacy issue bus is disabled, label creation may be deferred, but the labels must still exist on both repos before any re-enablement.
+- Label creation is a one-time bootstrap step. It does not repeat per feature cycle.
+- The new `.coordination`-based dispatch loop does not depend on these labels for normal execution. Their absence must not block dispatch-based loop steps once the required workflows are deployed.
+
+#### New dispatch workflows must be on the default branch
+
+The following workflows must be merged to the default branch of each repo before closed-loop dispatch is enabled:
+
+| Repo | Required workflow file |
+|---|---|
+| `pantheon` | `.github/workflows/coordination-dispatch-receiver.yml` |
+| `pantheon` | `.github/workflows/coordination-manual-replay.yml` |
+| `front-ai-trading-system` | `.github/workflows/pantheon-handoff-receiver.yml` |
+| `front-ai-trading-system` | `.github/workflows/pantheon-feedback-publisher.yml` |
+
+Bootstrap validation: run `gh workflow list --repo <owner>/<repo>` on both repos and confirm all four workflows appear and are in an `active` state before sending the first `repository_dispatch` event.
+
+#### Mirror validation checklist
+
+Before sending `pantheon.contract_ready` or beginning the first Lovable cycle for a feature, validate the following paths. All paths are relative to the repo root unless noted.
+
+**Handoff bundle (Pantheon-side, mirrored into front repo)**
+
+| Path | Repo | Required | Notes |
+|---|---|---|---|
+| `.coordination/responses/<feature>-contract-ready.yaml` | `pantheon` | yes | authored in Pantheon; mirrored into front repo |
+| `.coordination/responses/<feature>-lovable-ui-task.yaml` | `pantheon` | yes | authored in Pantheon; mirrored into front repo |
+| `docs/pantheon-handoffs/<feature>/` | `front-ai-trading-system` | yes | mirror target directory; must exist after mirror step |
+| `docs/pantheon-handoffs/<feature>/` (contract-ready, lovable-ui-task, prompt packet, and referenced BFF/spec artifacts) | `front-ai-trading-system` | yes | all files listed in `lovable-ui-task.links` must be present |
+
+**Request templates (Pantheon-side example fixtures)**
+
+| Path | Repo | Required | Notes |
+|---|---|---|---|
+| `.coordination/requests/<feature>-bff-gap.example.yaml` | `pantheon` | yes | template the front repo uses when raising a contract blocker |
+| `.coordination/requests/<feature>-ui-done.example.yaml` | `pantheon` | yes | template the front repo uses when signalling completion |
+
+**Feedback bundle (front-repo-side, consumed by Pantheon)**
+
+| Path | Repo | Required before `ui-done` | Notes |
+|---|---|---|---|
+| `docs/pantheon-feedback/<feature>/LOVABLE_CHANGE_FEEDBACK.md` | `front-ai-trading-system` | yes | human-readable cycle summary |
+| `docs/pantheon-feedback/<feature>/API_GAP_REQUESTS.json` | `front-ai-trading-system` | yes | structured API gap list |
+| `docs/pantheon-feedback/<feature>/UI_DECISIONS.md` | `front-ai-trading-system` | yes | front-end decision record |
+| `docs/pantheon-feedback/<feature>/QA_STATUS.md` | `front-ai-trading-system` | yes | QA and smoke-test status |
+| `.coordination/requests/<feature>-frontend-feedback.yaml` | `front-ai-trading-system` | yes | machine-readable cycle summary; references the four files above |
+
+Validation rules:
+
+- Absence of any required handoff bundle file is a Pantheon mirror failure. Fix by re-running `coordination_repo_mirror.py` or replaying `pantheon.contract_ready`.
+- Absence of any required feedback bundle file before `ui-done` is a front-repo publication failure. Pantheon must not continue automatic review until all four artifacts exist.
+- Request template paths are Pantheon fixtures and must exist in the Pantheon repo before the handoff is dispatched. They are never generated by the front repo.
+- The mirror validation checklist must be re-run at the start of each new feature cycle (i.e., each time a new `lovable-ui-task` is published for the same feature), not just at initial bootstrap.
 
 ## Failure and Replay Path
 
