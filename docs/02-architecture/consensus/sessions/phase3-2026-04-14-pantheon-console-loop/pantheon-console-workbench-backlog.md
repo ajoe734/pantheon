@@ -22,7 +22,7 @@ This backlog expands `front-ai-trading-system` from a loose page set into the fu
 | Knowledge Workbench | institutional memory, evidence navigation, insight cards, and strategy specs | blueprint-level direction only; no BFF route backs any Knowledge screen | full canonical packet family (5 modules); Wave 3 internal order: Institutional Memory → Research Notes → Evidence Refs → Insight Cards → Strategy Spec | no | high — all 5 modules need net-new BFF routes before packetization can begin | Wave 3 |
 | Trainer Workbench | teaching sessions and before-after review | demo-grade trainer shell plus read-only teaching-history surfaces inside Persona Management and `PS-05`; no dedicated Trainer BFF flow exists | full canonical packet family | no | high | Wave 3 |
 | Consultation Workbench | consult requests, committee review, debate, and red-team outputs | consultation read-surface contract, consult-policy and session semantics, and L3 request or memo design; no standalone workbench packet family | full canonical packet family | no | high | Wave 4 |
-| Governance Workbench | review queue, approval queue, promotion, rollback, and diff control | `F-042` plus operator governance semantics | every governance screen beyond Promotion Review | partial | medium | Wave 2 |
+| Governance Workbench | review queue, approval queue, promotion, rollback, and diff control | `PKT-001` Governance Review Queue, `F-042` Promotion Review, shared deployment or approval reads, and operator governance semantics | approval queue, deployment diff, rollback review, and governance audit rail | partial | medium | Wave 2 |
 | Evolution Workbench | post-incident, evolution review, lineage, inspiration, and mutation review | post-incident/evolution sidecars and lineage surfaces | inspiration and mutation review packet family | partial | medium | Wave 2 |
 
 ## Operator Console
@@ -453,38 +453,101 @@ Recommended wave:
 
 ## Governance Workbench
 
-Objective: give governance operators queue-based review, approval, promotion, rollback, and deployment diff control.
+Objective: give governance operators queue-based review, approval, promotion, rollback, and deployment diff control across all persona deployment and policy decisions.
 
 Screens and modules:
 
-- `Review queue`
-- `Approval queue`
-- `Promotion Review`
-- `Deployment diff`
-- `Rollback review`
-- `Governance audit rail`
+- `GV-01 Review queue`
+- `GV-02 Approval queue`
+- `GV-03 Promotion Review` (`F-042`)
+- `GV-04 Deployment diff`
+- `GV-05 Rollback review`
+- `GV-06 Governance audit rail`
 
 Existing Pantheon support:
 
-- `F-042 Promotion Review`
-- operator acceptance matrix for governance and deployment surfaces
+- `PKT-001 Governance Review Queue` — ready governance packet with screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task already published
+- `F-042 Promotion Review` — ready single-screen packet inside the Governance Workbench; screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task are already published
+- `PKT-001` governance and deployment review packet family — formalizes `F-042` as one Governance Workbench screen, marks `GV-01 Review queue` as ready, and preserves blocked requirements for `GV-02`, `GV-04`, `GV-05`, and `GV-06`
+- `PAPER_CANARY_LIVE_POLICY.md` — promotion stage thresholds and paper-live boundary conditions that back promotion review accept/reject logic
+- `ROLLBACK_AND_POSITION_SEMANTICS.md` — rollback action semantics and position handling that define what a rollback review surface must expose before a governance operator can safely approve a rollback
+- operator acceptance matrix — defines path semantics, CTA visibility conditions, and degraded behavior for governance and deployment surfaces; backs `allowedActions` shape for promotion and approval surfaces
+- `/api/v1/deployment-plans`, `/api/v1/deployment-plans/{plan_id}`, `/api/v1/approval-decisions`, `/api/v1/approval-decisions/{decision_id}` — live read routes already referenced in the Persona Workbench module table; shared with Governance packetization
 
 Missing canonical screen specs:
 
-- every governance screen beyond `F-042`
+- `GV-02 Approval queue` — no canonical approval queue shell, decision CTA copy, or `allowedActions` extension beyond the `F-042` precedent
+- `GV-04 Deployment diff` — no canonical diff view packet; layout schema, hunk presentation, and approval gating copy are entirely undefined
+- `GV-05 Rollback review` — no rollback review screen packet; what the reviewer must confirm and what fields the BFF must supply before approval are not yet specified
+- `GV-06 Governance audit rail` — no canonical audit trail packet, entry shape, actor labeling, or filtering affordance
 
 Lovable readiness:
 
-- partial
+- partial — `GV-01 Review queue` and `GV-03 Promotion Review` already have contract-ready packets and Lovable UI tasks; every remaining module still needs a canonical packet plus BFF backing before handoff
 
-Backend dependencies:
+Backend dependencies and packetization prerequisites per module:
 
-- approval queue read model
-- rollback review and deployment diff composed views
+### GV-01 Review queue
+
+- backend support: `GET /api/v1/operator/governance/review-queue` already provides the canonical queue projection, filter semantics, pagination contract, backend-shaped `allowedActions`, and detail-drawer payload defined by `PKT-001 Governance Review Queue`
+- packetization status: complete for the current queue packet; screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task are already published, so `GV-01` now serves as the queue baseline that later Governance modules inherit
+
+### GV-02 Approval queue
+
+- backend gap: `/api/v1/approval-decisions` provides decision-level read access but does not define a queue projection with `pending` filter, operator assignment, or `allowedActions` extension for bulk or staged approval workflows
+- packetization prerequisite: extend the `approval-decisions` contract to expose a queue view with `pending` filtering, `allowedActions.canApprove` or `canReject` authority signals, and a decision-update write path before the approval queue shell can be packet-defined; the `F-042` precedent for `allowedActions.canPromoteToPaper` is the closest existing model
+
+### GV-03 Promotion Review (`F-042`)
+
+- backend support: `GET /api/v1/operator/deployment-review/{plan_id}` and `POST /api/v1/operator/commands` are already defined in the published `F-042` contract, and the shipped example payload includes `allowedActions.canPromoteToPaper`
+- packetization status: complete for the current promotion screen; `PKT-001` formally reclassifies `F-042` inside Governance Workbench, and the ready packet now serves as the `allowedActions` and governance-outcome template for later Governance modules
+
+### GV-04 Deployment diff
+
+- backend gap: no canonical diff read model exists; the deployment plan detail route supplies the plan payload but not a structured diff against the previous deployment or a human-readable change summary
+- packetization prerequisite: define the diff data shape (old/new field pairs, semantic change labels, risk tier annotation, and per-field change reason), degraded behavior when the previous plan is unavailable, and gating conditions for approval CTA display before a diff screen can be packet-defined; depends on stable deployment plan identity from `GV-01` or `GV-02` queue context
+
+### GV-05 Rollback review
+
+- backend gap: `ROLLBACK_AND_POSITION_SEMANTICS.md` defines the semantic model, but no BFF rollback review read surface exists; the operator needs the position impact summary, affected personas, trigger reason, and rollback approval authority before the review can be safely presented
+- packetization prerequisite: lock the rollback review data shape (rollback scope, position impact summary, affected bindings, trigger reason, and `allowedActions.canApproveRollback`), the write path for rollback approval, and degraded behavior when position data is stale before a rollback review screen can be packet-defined; depends on `GV-01` queue context and stable deployment plan identity
+
+### GV-06 Governance audit rail
+
+- backend gap: no canonical governance audit trail route or read model exists; audit semantics are implied by operator acceptance matrix and deployment review policy but not surfaced as a filterable, paginated BFF endpoint
+- packetization prerequisite: define the audit entry schema (actor, action type, target resource and ID, timestamp, outcome, and optional evidence ref), filter contract (by actor, action type, target, and date range), and degraded presentation when audit data is delayed before the audit rail can be packet-defined; can be developed in parallel with other Governance modules once the audit schema is locked
+
+Canonical module inventory:
+
+| Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
+|---|---|---|---|---|---|---|
+| `GV-01 Review queue` | unified pending-items queue across deployment plans, approval decisions, and rollback requests; filter bar and queue pagination | `PKT-001 Governance Review Queue` ready packet; `GET /api/v1/operator/governance/review-queue`; published screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task | none for the current queue packet; treat it as the baseline queue pattern for later Governance modules | ready | none for the current packet; downstream modules inherit the queue item model, pagination, and backend-shaped `allowedActions` pattern | Wave 2 baseline — already packetized by `PKT-001` |
+| `GV-02 Approval queue` | pending approval decisions with `allowedActions` CTA extensions, decision confirmation drawer, and bulk approval affordance | `/api/v1/approval-decisions` and `/api/v1/approval-decisions/{decision_id}` live routes; `F-042` precedent for `allowedActions` shape | full approval queue packet: pending-filter query, `allowedActions.canApprove` and `canReject` shape, confirmation drawer copy, and decision write path | no | `allowedActions` extension for bulk or staged approval; decision-update write path via approval-decisions endpoint | Wave 2 — second |
+| `GV-03 Promotion Review` | promotion stage display, paper-live boundary copy, accept/reject CTA, `allowedActions.canPromoteToPaper` gate | `F-042` ready packet; published screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task; `PKT-001` packet family formally places it inside Governance Workbench | none for the current promotion screen; preserve the Governance Workbench framing and backend-owned authority semantics when reusing it as the model for later modules | ready | none for the current packet contract; later queue and rollback screens should reuse its backend-shaped `allowedActions` and governance outcome semantics | Wave 1 baseline — already dispatched |
+| `GV-04 Deployment diff` | side-by-side or sequential field diff, semantic change labels, risk tier annotation, per-field reason, and approval gating | deployment plan detail route exists; no structured diff model | full diff packet: diff data shape, hunk layout, semantic label copy, risk tier display, and degraded-state handling when previous plan is unavailable | no | canonical diff read model against previous deployment plan; risk tier annotation and gating semantics | Wave 2 — third |
+| `GV-05 Rollback review` | rollback scope summary, position impact table, affected bindings, trigger reason, approval CTA with `allowedActions.canApproveRollback` | `ROLLBACK_AND_POSITION_SEMANTICS.md` defines semantic model; no BFF rollback review surface | full rollback review packet: rollback data shape, position impact layout, trigger reason copy, approval CTA, and degraded-state copy for stale position data | no | BFF rollback review read surface; position impact summary; `allowedActions.canApproveRollback` authority signal and rollback approval write path | Wave 2 — fourth |
+| `GV-06 Governance audit rail` | chronological audit trail of governance actions; filter by actor, action type, target, and date range; evidence drawer | audit semantics implied by operator acceptance matrix and deployment policy; no canonical BFF audit endpoint | full audit rail packet: entry schema, filter contract, actor and action labeling, evidence drawer, and degraded-state copy when audit data is delayed | no | canonical governance audit trail BFF endpoint; audit entry schema with actor, action type, target, timestamp, and outcome | Wave 2 — parallel with GV-04 and GV-05 once audit schema is locked |
+
+Wave 2 internal ordering and dependency chain:
+
+| Position | Module | Why this order | Upstream dependency within workbench |
+|---|---|---|---|
+| baseline | GV-01 Review queue + GV-03 Promotion Review | both screens are already packetized and define the queue model, backend-shaped `allowedActions`, governance outcome semantics, and handoff pattern that the remaining Governance modules should inherit | none — both are ready baselines published through `PKT-001` and `F-042` |
+| 1 | GV-02 Approval queue | extends the ready queue baseline with decision-specific CTA authority and write path; should reuse the queue vocabulary from GV-01 and the `allowedActions` style proven by GV-03 | GV-01 queue data shape and GV-03 `allowedActions` precedent |
+| 2 | GV-04 Deployment diff | adds diff presentation on top of the deployment plan identity established by the ready queue and approval surfaces | GV-01 queue context and stable deployment plan identity from GV-02 |
+| 3 | GV-05 Rollback review | adds rollback approval on top of the position and deployment plan identity established by the queue and diff surfaces; reuses the same backend-owned authority pattern | GV-01 queue context, stable deployment plan identity, and position impact contract |
+| parallel | GV-06 Governance audit rail | audit trail is readable independently of the write-path modules; can be developed in parallel with GV-04 and GV-05 once the audit entry schema is locked | none beyond audit entry schema lock |
+
+Separation rule for this backlog:
+
+- put missing queue copy, diff layout, rollback review wording, audit rail presentation, and CTA label work in `Missing screen-spec work`
+- put absent unified queue projections, diff read models, rollback BFF surfaces, `allowedActions` authority extensions, and audit trail endpoints in `Backend or contract dependencies`
 
 Recommended wave:
 
-- Wave 2
+- Governance Workbench stays in Wave 2 because the unfinished modules (`GV-02`, `GV-04`, `GV-05`, `GV-06`) still need net-new BFF surfaces and canonical packets, but it is materially ahead of Research, Knowledge, and Trainer because `GV-01` and `GV-03` are already packetized
+- `GV-01 Review queue` and `GV-03 Promotion Review` define the ready baseline for the workbench and should not be regressed back into future missing-spec work
+- no Governance Workbench module beyond the ready baseline (`GV-01`, `GV-03`) should be handed to Lovable before the corresponding BFF surface and canonical packet family exist together
 
 ## Evolution Workbench
 
