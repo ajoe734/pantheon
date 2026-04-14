@@ -1,270 +1,222 @@
 # Market Scope & Instrument Policy v1
 
-> **Owner**: Data Plane  
-> **Reviewer**: Codex  
-> **Source of truth**: `Pantheon_Market_Data_Scope_and_Source_Plan_v1.md` §1–§3  
-> **Closure task**: `BG-000` (Blueprint Gap P0, GAP-00)  
-> **Depends on**: `PLAN-002` (planning session accepted)  
+## Document Positioning
+
+This is the **canonical v1 market universe and instrument policy** for Pantheon.
+It sits directly above the Data Plane object models (SecurityMaster, ContractMaster, MarketCalendarSession) produced in BG-001 and turns the blueprint gap review (GAP-00) and market-data scope plan into an executable specification.
+
+**Upstream truth:** `Pantheon_Market_Data_Scope_and_Source_Plan_v1.md`
+**Downstream models:** `services/data-plane/models/security_master.py`, `services/data-plane/models/contract_master.py`, `services/data-plane/models/market_calendar_session.py`
+**Related schema:** `services/data-plane/schemas/*.schema.json`
 
 ---
 
-## 1. Purpose
+## 1. v1 Market Universe
 
-This document is the **canonical v1 policy** for:
+Pantheon v1 operates across **three primary markets**:
 
-1. Which markets Pantheon formally supports
-2. Which instruments per market are in-scope for v1
-3. Which data classes per market/instrument are required vs optional
-4. Stage-eligibility (paper / canary / live) per market
-5. How this policy constrains the `StrategySpec.market_scope` and downstream Data Plane objects
-
-It replaces the free-form `symbols`, `asset_classes`, `venues`, `frequency` fields in `strategy_spec.schema.json` with a governed vocabulary that StrategySpec, SecurityMaster, ContractMaster, and the golden replay runbook all reference.
-
----
-
-## 2. v1 Market Scope
-
-Pantheon v1 formally supports **three markets**:
-
-| Market ID | Name | Timezone (canonical) | Trading Model | v1 Status |
-|---|---|---|---|---|
-| `US` | US Equities & Derivatives | America/New_York | Centralized exchanges (NYSE, Nasdaq, CBOE, CME) | **Primary** |
-| `TW` | Taiwan Equities & Derivatives | Asia/Taipei | Centralized exchanges (TWSE, TPEx, TAIFEX) | **Primary** |
-| `CRYPTO` | Cryptocurrency Spot & Derivatives | UTC | Fragmented venues (Binance, OKX, Deribit, etc.) | **Primary** |
-
-All three markets are **primary** — not optional add-ons. Every Data Plane object, research workflow, and execution path must handle all three.
-
-### Stage-Eligibility by Market
-
-| Market | Paper | Canary | Live |
+| Market Code | Market Name | Trading Hours Model | v1 Execution Target |
 |---|---|---|---|
-| `US` | ✅ v1 | ✅ v1 | ✅ v1 |
-| `TW` | ✅ v1 | ✅ v1 | ✅ v1 |
-| `CRYPTO` | ✅ v1 | ✅ v1 | ✅ v1 (venue-scoped) |
+| `US` | US Equities & Listed Derivatives | `America/New_York` | paper → canary |
+| `TW` | Taiwan Equities & Listed Derivatives | `Asia/Taipei` | paper → canary |
+| `CRYPTO` | Crypto Spot & Derivatives | `UTC` (24/7) | paper → canary → live |
 
-Crypto live execution is **venue-scoped**: strategies must declare explicit venues; cross-venue strategies are deferred to v2.
+### 1.1 Market Priority
+
+1. **Crypto** — 24/7, single-venue or cross-venue; fastest path to live execution.
+2. **US Equities** — largest universe, deepest data availability; paper-first.
+3. **Taiwan Equities** — local-market complexity (corporate actions, session rules); paper-first.
+
+All three markets must be supported by Data Plane objects from BG-001. No additional markets may be added without a formal amendment to this policy.
 
 ---
 
-## 3. v1 Instrument Scope
+## 2. Instrument Scope per Market
 
-### 3.1 US Equities & Derivatives
+### 2.1 US Market (`US`)
 
-| Instrument Category | v1 Inclusion | Data Plane Support | Execution Support | Notes |
-|---|---|---|---|---|
-| US Common Stocks | **Required** | Required | Required | NYSE, Nasdaq, NYSE American |
-| ADRs | **Required** | Required | Required | Treated as equity with foreign-underlying metadata |
-| ETFs | **Required** | Required | Required | Includes sector, factor, and thematic ETFs |
-| US Equity Options | **Required** | Required | Required | OCC-cleared; full chain snapshot + greeks |
-| Index Futures (ES, NQ, YM, RTY) | **Required** | Required | Required (research/hedge) | CME; beta overlay / hedge use |
-| Index Options (SPX, NDX) | **Required** | Required | Required | CBOE; event risk / vol proxy |
-| Single-Stock Futures | Deferred | — | — | Not required for v1 |
+| Instrument Class | v1 Scope | Execution Target | Notes |
+|---|---|---|---|
+| Common Stocks (equity) | **Required** | paper → canary | Includes ADR |
+| ETF | **Required** | paper → canary | Cross-sectional strategies |
+| Index Futures | **Required (research)** | research-only | Beta overlay / hedge; CME products |
+| Index Options | **Required (research)** | research-only | VIX / SPX for vol regime |
+| Equity Options (single-name) | **Required** | paper → canary | Vol/skew/hedging strategies |
+| Futures Options | **Deferred** | — | Blocker: requires full options chain replay |
 
-**Decision-use categories** per US instrument:
+**US Asset-Type Policy:**
+- `equity` covers common stock + ADR + ETF.
+- `future` covers CME index futures (continuous + individual contracts).
+- `option` covers single-name equity options + index options.
 
-| Use Case | Instruments | Priority |
+### 2.2 Taiwan Market (`TW`)
+
+| Instrument Class | v1 Scope | Execution Target | Notes |
+|---|---|---|---|
+| TWSE Listed Stocks | **Required** | paper → canary | 上市 |
+| TPEx Listed Stocks | **Required** | paper → canary | 上櫃 |
+| ETF | **Required** | paper → canary | Local ETF strategies |
+| TAIFEX Index Futures | **Required** | paper → canary | 台指期貨 |
+| TAIFEX Index Options | **Required** | paper → canary | 台指選擇權 |
+| Individual Stock Futures | **Deferred** | — | Blocker: contract chain depth |
+| Individual Stock Options | **Deferred** | — | Blocker: liquidity |
+
+**TW Asset-Type Policy:**
+- Must handle TWSE vs TPEx market segmentation.
+- Must handle corporate actions unique to Taiwan (除權息, 減資, 配股配息).
+- Session boundaries differ between cash and derivatives markets.
+
+### 2.3 Crypto Market (`CRYPTO`)
+
+| Instrument Class | v1 Scope | Execution Target | Notes |
+|---|---|---|---|
+| Spot (base/quote pairs) | **Required** | paper → canary → live | Venue-aware |
+| Perpetual Futures | **Required** | paper → canary → live | Funding rate mandatory |
+| Dated Futures | **Required** | paper → canary | Basis / term structure |
+| Options | **Deferred** | — | Blocker: IV surface maturity |
+
+**Crypto Asset-Type Policy:**
+- `crypto` covers spot, perpetual, and dated futures.
+- Venue fragmentation is explicit: every instrument carries a `venue` field.
+- Funding rate, OI, and liquidation data are **mandatory** data classes (not optional).
+
+---
+
+## 3. Per-Market Required Data Classes
+
+This table defines the **minimum data classes** each market must support. "Required" means the Data Plane must be able to ingest, normalize, and serve this class. "Suggested" means it must be supported by schema but is not a v1 blocker.
+
+| Data Class | US | TW | CRYPTO |
+|---|---|---|---|
+| SecurityMaster reference | Required | Required | Required |
+| OHLCV (daily) | Required | Required | Required |
+| OHLCV (intraday / minute) | Required | Required | Required |
+| Market calendar / session | Required | Required | Required |
+| Corporate actions | Required | Required | N/A |
+| Fundamentals (financials) | Suggested | Suggested | N/A |
+| Event data (earnings, macro) | Suggested | Suggested | Suggested |
+| Options chain | Suggested | Suggested | Strategy-dependent |
+| Futures chain / contract master | Suggested | Suggested | Required |
+| Greeks / IV / vol surface | Strategy-dependent | Strategy-dependent | Strategy-dependent |
+| Open interest | Suggested | Suggested | Required |
+| Funding rate | N/A | N/A | Required |
+| Borrow / shortability | Suggested | Strategy-dependent | N/A |
+| Venue microstructure | Deferred | Deferred | Suggested |
+| On-chain / crypto alt data | N/A | N/A | Suggested |
+
+### 3.1 Data Class Semantics
+
+Each data class maps to a `source_class` (defined in `DATA_SOURCE_SCOPE_MATRIX.md`):
+
+- `official_reference` — security master, contract specs, calendars, corporate actions.
+- `broker_execution` — execution-synchronous bars, fills, broker symbol mapping.
+- `research_grade` — backtest history, fundamentals, event enrichment.
+- `derivative_analytics` — options chains, IV/greeks, futures term structure.
+- `crypto_analytics` — funding, OI, liquidations, on-chain data.
+
+---
+
+## 4. Instrument Lifecycle Policy
+
+### 4.1 Listing Status Transitions
+
+All instruments tracked via `SecurityMaster.listing_status` or `ContractMaster` expiry follow this lifecycle:
+
+```
+pending → active → suspended → delisted
+```
+
+- `pending`: Listed but not yet tradable.
+- `active`: Tradable and receiving data.
+- `suspended`: Temporarily halted (circuit breaker, regulatory halt).
+- `delisted`: No longer tradable; historical data retained for replay.
+
+### 4.2 Derivative Contract Expiry
+
+- Contracts transition to a post-expiry state automatically at `expiry`.
+- Historical contracts remain queryable for replay (they are never deleted).
+- Continuous series must be linked to individual contracts via `metadata_json.continuous_mapping`.
+
+### 4.3 Symbol Renames & Corporate Actions
+
+- `symbol_native` may change; `symbol_canonical` must remain stable.
+- Corporate action events must be linked via `metadata_json.corp_action_refs[]`.
+- Price adjustment (adjusted vs unadjusted) is a **normalization-layer** concern, not a SecurityMaster concern.
+
+---
+
+## 5. Market Calendar & Session Policy
+
+Each market must have a `MarketCalendarSession` record for every trade date.
+
+### 5.1 US Calendar
+- Timezone: `America/New_York`
+- Sessions: Regular (09:30–16:00 ET)
+- Pre-market and post-market: **not in v1 scope** (must be explicitly documented as unsupported)
+- Early close dates must be flagged (`early_close_flag`)
+
+### 5.2 Taiwan Calendar
+- TWSE session: 09:00–13:30 TST
+- TPEx session: same as TWSE
+- TAIFEX (futures): extended hours (08:45–13:45 TST for regular; evening session 15:00–05:00 TST+1)
+- Must handle local holidays (春節, 清明, etc.)
+
+### 5.3 Crypto Calendar
+- 24/7, no holidays.
+- Daily bar cutoff: `00:00 UTC` (fixed, non-configurable).
+- Funding intervals: every 8 hours (00:00, 08:00, 16:00 UTC) unless venue specifies otherwise.
+- Settlement windows for dated futures must be tracked as time-bound events.
+
+---
+
+## 6. Broker / Venue Target per Market
+
+| Market | v1 Execution Venue Policy | Notes |
 |---|---|---|
-| Equities alpha & cross-sectional RV | Stocks, ADRs, ETFs | P0 |
-| Event-driven strategies | Stocks, ETFs | P0 |
-| Beta overlay / portfolio hedge | Index Futures | P0 |
-| Vol / skew / sentiment proxy | Index Options, Equity Options | P1 |
-| Options market-making | Equity Options | Deferred (v2) |
+| US | Broker-agnostic; Interactive Brokers or equivalent for paper | Live requires broker adapter |
+| TW | Broker-agnostic; local broker API for paper | Live requires Taiwan-specific broker |
+| CRYPTO | Single-venue-first (e.g., Binance, OKX, Bybit) | Cross-venue deferred |
 
-### 3.2 Taiwan Equities & Derivatives
-
-| Instrument Category | v1 Inclusion | Data Plane Support | Execution Support | Notes |
-|---|---|---|---|---|
-| TWSE Listed Stocks | **Required** | Required | Required | 上市 |
-| TPEx Listed Stocks | **Required** | Required | Required | 上櫃 |
-| ETFs | **Required** | Required | Required | Taiwan-domiciled |
-| TAIEX Futures (TX, MTX) | **Required** | Required | Required | TAIFEX; hedge / beta overlay |
-| TAIEX Options (TXO) | **Required** | Required | Required | TAIFEX; gamma / event risk proxy |
-| Individual Stock Futures | **Required** | Required | Required | TAIFEX; if strategy family needs |
-| Individual Stock Options | **Required** | Required | Required | TAIFEX; if strategy family needs |
-
-**TW-specific Data Plane requirements** (non-negotiable):
-
-- Market segmentation: TWSE vs TPEx vs TAIFEX as distinct `market_segment` values
-- Lot metadata: 現股 1000 shares/lot; 零股 support
-- Corporate actions: 除權、除息、減資、配股配息 as explicit event types
-- Session differences: 現貨 vs 衍生品 trading hours differ
-- Price limits: 漲跌幅限制 metadata per instrument
-- Investor flow (籌碼): foreign investment, trust, dealer net position as optional data class
-
-**Decision-use categories** per TW instrument:
-
-| Use Case | Instruments | Priority |
-|---|---|---|
-| Equities alpha & cross-sectional RV | TWSE stocks, TPEx stocks, ETFs | P0 |
-| Event-driven / 籌碼 strategies | Stocks, ETFs | P0 |
-| Beta overlay / hedge | TAIEX Futures | P0 |
-| Vol / event risk proxy | TAIEX Options | P1 |
-| Single-stock derivatives | Individual Stock Futures/Options | P1 |
-
-### 3.3 Cryptocurrency
-
-| Instrument Category | v1 Inclusion | Data Plane Support | Execution Support | Notes |
-|---|---|---|---|---|
-| Spot (BTC, ETH, majors) | **Required** | Required | Required | Venue-scoped |
-| Perpetual Futures (Perps) | **Required** | Required | Required | Funding rate required |
-| Dated Futures | **Required** | Required | Required | Basis / term structure |
-| Options (BTC, ETH) | **Required** | Required | Required | If strategy family needs |
-| Altcoin Spot / Perps | **Required** | Required | Required (venue-scoped) | Subject to venue support |
-
-**Crypto-specific Data Plane requirements** (non-negotiable):
-
-- Venue-aware symbol master: `venue`, `base_asset`, `quote_asset`, `contract_type`
-- Precision metadata: `tick_size`, `lot_size`, `price_precision`, `quantity_precision`
-- Funding rate: required for perps; must be in canonical schema
-- Open interest: required for perps and dated futures
-- Liquidation data: optional but recommended for risk modeling
-- 24/7 calendar: UTC day as canonical slice boundary
-- Venue fragmentation: each venue has independent symbol master; cross-venue canonical mapping is required
-
-**Decision-use categories** per crypto instrument:
-
-| Use Case | Instruments | Priority |
-|---|---|---|
-| Spot momentum / cross-sectional RV | Spot pairs | P0 |
-| Funding carry / basis / OI | Perps, Dated Futures | P0 |
-| Term structure / curve analysis | Dated Futures | P0 |
-| Vol / event risk | Options | P1 |
-| Cross-venue arbitrage | Spot, Perps | Deferred (v2) |
+### 6.1 Venue Policy
+- v1 assumes **single-venue execution per strategy**.
+- Cross-venue routing is **out of scope** for v1.
+- The `venue` field in SecurityMaster/ContractMaster must match the execution venue.
 
 ---
 
-## 4. Per-Market Required Data Classes
+## 7. Deferred Scope (Explicitly Out of v1)
 
-This matrix defines **which data classes are required vs optional** per market. It is the input to `DATA_SOURCE_SCOPE_MATRIX.md` (BG-000 deliverable 2).
+The following are **explicitly excluded** from v1:
 
-| Data Class | US | TW | CRYPTO | Canonical Object |
-|---|---|---|---|---|
-| Security Master | **Required** | **Required** | **Required** | `SecurityMaster` |
-| Contract Master | **Required** (options, futures) | **Required** (futures, options) | **Required** (perps, futures, options) | `ContractMaster` |
-| Market Calendar | **Required** | **Required** | **Required** (24/7 policy) | `MarketCalendarSession` |
-| OHLCV (daily) | **Required** | **Required** | **Required** | `RawDataset` → `NormalizedDataset` |
-| OHLCV (intraday) | **Required** (min-level) | **Required** (min-level) | **Required** (min-level) | `RawDataset` → `NormalizedDataset` |
-| Corporate Actions | **Required** | **Required** | N/A | `SecurityMaster` linkage |
-| Fundamentals | **Suggested** | **Suggested** | N/A | `RawDataset` (source_class=fundamental) |
-| Options Chain | **Required** | **Required** | **Required** (if options in scope) | `ContractMaster` + snapshots |
-| Futures Chain | **Required** | **Required** | **Required** | `ContractMaster` |
-| Greeks / IV Surface | **Suggested** | **Suggested** | **Suggested** | Derivative analytics source |
-| Open Interest | **Suggested** (eq options) | **Suggested** | **Required** (perps, futures) | `ContractMaster` linkage |
-| Funding Rate | N/A | N/A | **Required** | `ContractMaster` linkage |
-| Borrow / Shortability | **Suggested** | **Suggested** | N/A | SecurityMaster metadata |
-| Investor Flow / 籌碼 | N/A | **Suggested** | N/A | Event data class |
-| Liquidation Data | N/A | N/A | **Suggested** | Event data class |
-| On-Chain / Crypto Alt Data | N/A | N/A | **Suggested** | Alternative data class |
-| Venue Microstructure | **Deferred** | **Deferred** | **Suggested** | RawDataset (venue-level) |
+- US Options market-making (order-by-order L3 data)
+- US Futures options
+- TW individual stock futures/options
+- Crypto options
+- Cross-venue crypto execution
+- Forex (unless as metadata for crypto USD pairs)
+- Bonds
 
 ---
 
-## 5. StrategySpec Constraint
+## 8. Acceptance Criteria
 
-The `market_scope` section of `strategy_spec.schema.json` is currently free-form (`symbols: string[]`, `asset_classes: string[]`, `venues: string[]`, `frequency: string`).
+This policy is considered accepted when:
 
-This policy **constrains** those fields as follows:
-
-### 5.1 `symbols`
-
-Must reference **canonical symbols** from `SecurityMaster` or `ContractMaster`. Free-form strings are rejected at validation.
-
-Valid examples:
-- `"AAPL"` (US common stock, canonical)
-- `"2330.TW"` (TW stock with market suffix)
-- `"BTCUSDT.BINANCE"` (crypto with venue suffix)
-
-### 5.2 `asset_classes`
-
-Must be one of the recognized values:
-
-| Value | Description |
-|---|---|
-| `equity` | Common stocks, ADRs, TWSE/TPEx stocks |
-| `etf` | Exchange-traded funds |
-| `equity_option` | Equity/index options |
-| `index_future` | Index futures (ES, NQ, TX, etc.) |
-| `crypto_spot` | Crypto spot trading pairs |
-| `crypto_perp` | Crypto perpetual futures |
-| `crypto_future` | Crypto dated futures |
-| `crypto_option` | Crypto options |
-
-### 5.3 `venues`
-
-Must match registered venue identifiers:
-
-| Venue ID | Market | Type |
-|---|---|---|
-| `NYSE` | US | Equity exchange |
-| `NASDAQ` | US | Equity exchange |
-| `CBOE` | US | Options exchange |
-| `CME` | US | Futures exchange |
-| `TWSE` | TW | Equity exchange |
-| `TPEx` | TW | Equity exchange |
-| `TAIFEX` | TW | Futures/options exchange |
-| `BINANCE` | CRYPTO | Multi-product venue |
-| `OKX` | CRYPTO | Multi-product venue |
-| `DERIBIT` | CRYPTO | Options venue |
-
-Additional venues may be registered through the symbol master policy (`SYMBOL_MASTER_AND_CONTRACT_MASTER_POLICY.md`).
-
-### 5.4 `frequency`
-
-Must be one of:
-
-| Value | Description |
-|---|---|
-| `daily` | End-of-day bars |
-| `intraday` | Sub-daily bars (minute, hourly, etc.) |
-| `tick` | Individual trade prints (where available) |
-| `event` | Event-aligned datasets |
+1. [x] v1 markets defined (US, TW, CRYPTO)
+2. [x] Per-market instrument scope documented
+3. [x] Per-market required data class matrix defined
+4. [x] Instrument lifecycle policy specified
+5. [x] Market calendar policy specified
+6. [x] Broker/venue target per market documented
+7. [x] Deferred scope explicitly listed
+8. [x] Data source scope matrix companion document exists (`DATA_SOURCE_SCOPE_MATRIX.md`)
+9. [x] Symbol/contract master policy companion document exists (`SYMBOL_MASTER_AND_CONTRACT_MASTER_POLICY.md`)
+10. [ ] Source class model implemented with tests
 
 ---
 
-## 6. Broker / Venue Execution Targets
-
-Per market, the execution plane must target at least one broker-aligned data source:
-
-| Market | Execution Data Source | Purpose |
-|---|---|---|
-| `US` | Broker-aligned bars (e.g., Interactive Brokers, Alpaca) | Live execution sync, position reconciliation |
-| `TW` | Local broker API (e.g., Fugle, Sinopac) | Live execution sync, local symbol mapping |
-| `CRYPTO` | Venue API (e.g., Binance, OKX) | Live execution sync, venue-specific precision |
-
-Execution sync data is **classified as source class B** (broker-aligned) and must be reconciled against research-grade data (source class C) before use in analysis.
-
----
-
-## 7. Acceptance Criteria
-
-This policy is accepted when:
-
-1. ✅ This document exists at repo root as `MARKET_SCOPE_AND_INSTRUMENT_POLICY.md`
-2. ✅ v1 markets are explicitly listed (US, TW, CRYPTO)
-3. ✅ Per-market instrument scopes are listed with required/deferred classification
-4. ✅ Per-market data class matrix is defined
-5. ✅ StrategySpec field constraints are documented (this doc §5)
-6. ✅ Stage-eligibility (paper/canary/live) per market is defined
-7. ✅ Broker/venue execution targets are identified
-8. ✅ `DATA_SOURCE_SCOPE_MATRIX.md` references this document
-9. ✅ `SYMBOL_MASTER_AND_CONTRACT_MASTER_POLICY.md` references this document
-
----
-
-## 8. Cross-References
-
-This policy is the first of three companion documents that together close GAP-00:
-
-1. **This document**: `MARKET_SCOPE_AND_INSTRUMENT_POLICY.md` — markets, instruments, data classes, StrategySpec constraints
-2. **Source-class matrix**: `DATA_SOURCE_SCOPE_MATRIX.md` — which source classes (A–F) provide which data classes per market, paper/canary/live eligibility, ingestion pipeline
-3. **Symbol/contract master policy**: `SYMBOL_MASTER_AND_CONTRACT_MASTER_POLICY.md` — native vs canonical symbols, derivative contract naming, cross-market reconciliation, venue registration process
-
-All three documents must be read together to understand the full market/data scope for v1.
-
----
-
-## 9. Changelog
+## 9. Version History
 
 | Version | Date | Change | Author |
 |---|---|---|---|
-| `1.0` | 2026-04-13 | Initial v1 policy; closes GAP-00 / BG-000 | Qwen |
+| v1 | 2026-04-13 | Initial canonical policy | Qwen (BG-000) |
