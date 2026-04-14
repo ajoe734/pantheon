@@ -1,97 +1,165 @@
 {
-  "allocation_decision_id": "alloc-us-equity-mom-2026q2-001",
-  "strategy_id": "strat-us-equity-momentum-v3",
-  "artifact_id": "artifact-alloc-signal-proportional-v1.0",
+  "allocation_id": "alloc-20260413-001",
+  "strategy_id": "strat-equities-momentum-us-001",
+  "artifact_id": "allocator-signal-proportional-v1.2.0",
   "version": "1.0.0",
-  "evaluated_at": "2026-04-13T09:03:00Z",
-  "signal_inference_id": "signal-us-equity-mom-2026q2-001",
-  "allocation_method": "signal_proportional",
-  "risk_budget": {
-    "max_portfolio_var": 0.05,
-    "max_single_position_pct": 0.10,
-    "max_sector_exposure_pct": 0.30,
-    "max_gross_exposure": 1.5,
-    "max_net_exposure": 1.0,
-    "target_volatility": 0.15
+  "regime_ref": {
+    "regime_id": "regime-20260413-001",
+    "regime_class": "trending_up",
+    "regime_version": "1.0.0"
+  },
+  "signal_ref": {
+    "signal_id": "signal-20260413-001",
+    "signal_version": "1.0.0"
   },
   "allocations": [
     {
-      "instrument_id": "sec-NVDA-us-common",
-      "weight": 0.08,
+      "symbol": "AAPL",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-AAPL",
       "direction": "long",
-      "notional_target": 800000,
-      "signal_score_used": 0.91,
-      "allocation_rationale": "Highest signal strength; sized to single-position cap"
+      "target_weight": 0.07,
+      "target_value": 700000,
+      "current_weight": 0.03,
+      "delta_weight": 0.04,
+      "signal_direction": "long",
+      "signal_magnitude": 0.82,
+      "allocation_method": "signal_proportional",
+      "constraints_applied": [
+        "max_position_weight",
+        "liquidity_cap",
+        "turnover_limit"
+      ]
     },
     {
-      "instrument_id": "sec-AAPL-us-common",
-      "weight": 0.07,
+      "symbol": "NVDA",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-NVDA",
       "direction": "long",
-      "notional_target": 700000,
-      "signal_score_used": 0.82,
-      "allocation_rationale": "Second-highest signal, strong conviction"
+      "target_weight": 0.09,
+      "target_value": 900000,
+      "current_weight": 0.04,
+      "delta_weight": 0.05,
+      "signal_direction": "long",
+      "signal_magnitude": 0.91,
+      "allocation_method": "signal_proportional",
+      "constraints_applied": [
+        "max_position_weight",
+        "liquidity_cap",
+        "turnover_limit"
+      ]
     },
     {
-      "instrument_id": "sec-MSFT-us-common",
-      "weight": 0.05,
+      "symbol": "MSFT",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-MSFT",
       "direction": "long",
-      "notional_target": 500000,
-      "signal_score_used": 0.74,
-      "allocation_rationale": "Moderate signal, lower volatility contribution"
+      "target_weight": 0.06,
+      "target_value": 600000,
+      "current_weight": 0.02,
+      "delta_weight": 0.04,
+      "signal_direction": "long",
+      "signal_magnitude": 0.74,
+      "allocation_method": "signal_proportional",
+      "constraints_applied": [
+        "max_position_weight",
+        "liquidity_cap"
+      ]
     },
     {
-      "instrument_id": "sec-SPY-us-etf",
-      "weight": 0.10,
+      "symbol": "AMZN",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-AMZN",
       "direction": "long",
-      "notional_target": 1000000,
-      "signal_score_used": 0.45,
-      "allocation_rationale": "Strategic beta hedge, sized for liquidity and diversification"
+      "target_weight": 0.05,
+      "target_value": 500000,
+      "current_weight": 0.0,
+      "delta_weight": 0.05,
+      "signal_direction": "long",
+      "signal_magnitude": 0.63,
+      "allocation_method": "signal_proportional",
+      "constraints_applied": [
+        "max_position_weight",
+        "turnover_limit"
+      ]
     }
   ],
   "portfolio_summary": {
-    "total_weight_long": 0.30,
-    "total_weight_short": 0.0,
-    "net_exposure": 0.30,
-    "gross_exposure": 0.30,
-    "num_positions": 4,
-    "estimated_portfolio_var": 0.038,
-    "estimated_portfolio_volatility": 0.12
+    "total_target_exposure": 0.27,
+    "net_target_exposure": 0.27,
+    "total_target_value": 2700000,
+    "leverage_ratio": 0.27,
+    "long_weight": 0.27,
+    "short_weight": 0.0,
+    "cash_weight": 0.73,
+    "estimated_turnover": 0.18,
+    "num_positions": 4
   },
+  "evaluated_at": "2026-04-13T09:30:15Z",
   "input_refs": [
     {
-      "ref_type": "signal_inference",
-      "ref_id": "signal-us-equity-mom-2026q2-001",
-      "storage_ref": {
-        "backend": "object_store",
-        "path": "decisions/signal-us-equity-mom-2026q2-001.json"
-      }
+      "ref_type": "regime_state",
+      "ref_id": "regime-20260413-001"
     },
     {
       "ref_type": "universe_selection",
-      "ref_id": "universe-us-equity-mom-2026q2-001"
+      "ref_id": "universe-20260413-001"
     },
     {
-      "ref_type": "regime_state",
-      "ref_id": "regime-us-equity-mom-2026q2-001"
+      "ref_type": "signal_inference",
+      "ref_id": "signal-20260413-001"
     },
     {
-      "ref_type": "capital_pool",
-      "ref_id": "pool-us-equity-core"
+      "ref_type": "risk_budget_policy",
+      "ref_id": "risk-policy-us-equity-growth-v1"
+    },
+    {
+      "ref_type": "capital_pool_state",
+      "ref_id": "capital-pool-us-growth-20260413"
+    },
+    {
+      "ref_type": "current_portfolio_snapshot",
+      "ref_id": "portfolio-us-growth-20260413-open"
     }
   ],
-  "output_refs": [],
-  "decision_reasoning": "Signal-proportional allocation distributes capital proportional to signal strength, constrained by risk budget. NVDA receives 8% (capped at max_single_position_pct=10%). SPY receives 10% as strategic anchor. Total gross exposure 30%, well within 150% limit. Portfolio VaR 3.8% < 5% limit. Volatility 12% < 15% target. All risk budget constraints satisfied.",
-  "model_ref": {
-    "model_id": "alloc-signal-proportional-v1",
-    "model_version": "1.0.0",
-    "model_type": "analytical"
+  "output_refs": [
+    {
+      "ref_type": "risk_adjudication",
+      "ref_id": "risk-20260413-001"
+    }
+  ],
+  "market_scope": {
+    "asset_classes": [
+      "equity"
+    ],
+    "markets": [
+      "US"
+    ],
+    "security_master_refs": [
+      "SEC-US-AAPL",
+      "SEC-US-NVDA",
+      "SEC-US-MSFT",
+      "SEC-US-AMZN"
+    ],
+    "dataset_version_refs": [
+      "dataset-us-equities-daily-20260413"
+    ]
   },
-  "allocation_state": "proposed",
-  "persona_id": "persona-quant-mom-01",
-  "capital_pool_id": "pool-us-equity-core",
+  "model_ref": {
+    "model_family": "signal_proportional",
+    "model_version": "1.2.0",
+    "hyperparameters": {
+      "target_volatility": 0.15,
+      "max_position_weight": 0.1,
+      "max_gross_exposure": 1.5
+    }
+  },
+  "decision_reasoning": "The allocator converts the four long signals into a concentrated but policy-compliant basket. NVDA is clipped below the max-position cap, aggregate gross exposure stays at 27%, and turnover remains inside the weekly rebalance budget.",
+  "state": "validated",
+  "persona_id": "persona-senior-quant-001",
+  "capital_pool_id": "pool-us-equity-growth",
   "metadata": {
-    "allocation_method_detail": "signal_proportional with risk budget overlay",
-    "constraint_violations": 0,
-    "rebalancing_trigger": "scheduled_weekly"
+    "allocation_duration_ms": 640,
+    "allocation_run_id": "alloc-run-20260413-093015"
   }
 }

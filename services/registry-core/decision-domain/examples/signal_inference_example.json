@@ -1,116 +1,150 @@
 {
-  "signal_id": "signal-us-equity-mom-2026q2-001",
-  "strategy_id": "strat-us-equity-momentum-v3",
-  "artifact_id": "artifact-alpha-linear-v4.0",
-  "version": "4.0.0",
-  "evaluated_at": "2026-04-13T09:02:00Z",
-  "input_refs": [
-    {
-      "ref_type": "universe_selection",
-      "ref_id": "universe-us-equity-mom-2026q2-001",
-      "version": "2.1.0"
-    },
-    {
-      "ref_type": "regime_state",
-      "ref_id": "regime-us-equity-mom-2026q2-001",
-      "version": "3.2.0"
-    },
-    {
-      "ref_type": "feature_dataset",
-      "ref_id": "feat-us-equity-signals-2026q1",
-      "version": "1.0.0",
-      "storage_ref": {
-        "backend": "object_store",
-        "path": "datasets/feat-us-equity-signals-2026q1.parquet"
-      }
-    }
-  ],
-  "output_refs": [],
+  "signal_id": "signal-20260413-001",
+  "strategy_id": "strat-equities-momentum-us-001",
+  "artifact_id": "alpha-model-ensemble-v3.1.0",
+  "version": "1.0.0",
+  "regime_ref": {
+    "regime_id": "regime-20260413-001",
+    "regime_class": "trending_up",
+    "regime_version": "1.0.0"
+  },
   "universe_ref": {
-    "universe_id": "universe-us-equity-mom-2026q2-001",
-    "version": "2.1.0"
+    "universe_id": "universe-20260413-001",
+    "universe_version": "1.0.0"
   },
   "signals": [
     {
-      "instrument_id": "sec-AAPL-us-common",
-      "signal_type": "momentum",
-      "signal_value": 0.82,
-      "signal_strength": 0.85,
+      "symbol": "AAPL",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-AAPL",
+      "direction": "long",
+      "magnitude": 0.82,
+      "confidence": 0.76,
       "time_horizon": "swing",
-      "confidence_interval": {
-        "lower": 0.65,
-        "upper": 0.95,
-        "coverage": 0.90
-      },
-      "decay_estimate": {
-        "half_life": 21,
-        "ic_estimate": 0.08
+      "signal_type": "momentum",
+      "raw_score": 2.14,
+      "feature_snapshot": {
+        "momentum_zscore": 2.14,
+        "revision_breadth": 0.63
       }
     },
     {
-      "instrument_id": "sec-NVDA-us-common",
-      "signal_type": "momentum",
-      "signal_value": 0.91,
-      "signal_strength": 0.92,
+      "symbol": "NVDA",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-NVDA",
+      "direction": "long",
+      "magnitude": 0.91,
+      "confidence": 0.84,
       "time_horizon": "swing",
-      "confidence_interval": {
-        "lower": 0.78,
-        "upper": 0.98,
-        "coverage": 0.90
-      },
-      "decay_estimate": {
-        "half_life": 15,
-        "ic_estimate": 0.10
+      "signal_type": "momentum",
+      "raw_score": 2.42,
+      "feature_snapshot": {
+        "momentum_zscore": 2.42,
+        "revision_breadth": 0.68
       }
     },
     {
-      "instrument_id": "sec-MSFT-us-common",
-      "signal_type": "momentum",
-      "signal_value": 0.74,
-      "signal_strength": 0.76,
+      "symbol": "MSFT",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-MSFT",
+      "direction": "long",
+      "magnitude": 0.74,
+      "confidence": 0.72,
       "time_horizon": "position",
-      "confidence_interval": {
-        "lower": 0.58,
-        "upper": 0.88,
-        "coverage": 0.90
-      },
-      "decay_estimate": {
-        "half_life": 30,
-        "ic_estimate": 0.06
+      "signal_type": "momentum",
+      "raw_score": 1.87,
+      "feature_snapshot": {
+        "momentum_zscore": 1.87,
+        "revision_breadth": 0.56
       }
     },
     {
-      "instrument_id": "sec-SPY-us-etf",
-      "signal_type": "alpha",
-      "signal_value": 0.45,
-      "signal_strength": 0.50,
-      "time_horizon": "strategic",
-      "confidence_interval": {
-        "lower": 0.30,
-        "upper": 0.60,
-        "coverage": 0.95
-      },
-      "decay_estimate": {
-        "half_life": 60,
-        "ic_estimate": 0.03
+      "symbol": "AMZN",
+      "instrument_type": "equity",
+      "security_master_ref": "SEC-US-AMZN",
+      "direction": "long",
+      "magnitude": 0.63,
+      "confidence": 0.68,
+      "time_horizon": "position",
+      "signal_type": "momentum",
+      "raw_score": 1.64,
+      "feature_snapshot": {
+        "momentum_zscore": 1.64,
+        "revision_breadth": 0.51
       }
     }
   ],
+  "evaluated_at": "2026-04-13T09:30:10Z",
+  "input_refs": [
+    {
+      "ref_type": "regime_state",
+      "ref_id": "regime-20260413-001"
+    },
+    {
+      "ref_type": "universe_selection",
+      "ref_id": "universe-20260413-001"
+    },
+    {
+      "ref_type": "dataset_version",
+      "ref_id": "dataset-us-equities-daily-20260413"
+    },
+    {
+      "ref_type": "feature_dataset",
+      "ref_id": "feature-signal-us-equities-20260413"
+    },
+    {
+      "ref_type": "normalized_dataset",
+      "ref_id": "normalized-us-equities-20260413"
+    }
+  ],
+  "output_refs": [
+    {
+      "ref_type": "allocation_decision",
+      "ref_id": "alloc-20260413-001"
+    }
+  ],
   "model_ref": {
-    "model_id": "alpha-lasso-ensemble-v4",
-    "model_version": "4.0.0",
-    "model_type": "linear_regression",
-    "training_dataset_ref": "feat-us-equity-alpha-train-2020-2025",
-    "training_window": "2020-01-01/2025-12-31"
+    "model_family": "ensemble",
+    "model_version": "3.1.0",
+    "training_dataset_ref": "dataset-signal-train-2020-2025",
+    "hyperparameters": {
+      "lookback_days": 252,
+      "rebalance": "weekly"
+    }
   },
-  "decision_reasoning": "LASSO ensemble produces alpha signals for 50 instruments in the selected universe. Top signals: NVDA (0.91, half-life 15d), AAPL (0.82, half-life 21d), MSFT (0.74, half-life 30d). SPY included as strategic hedge with moderate alpha (0.45). Signal ICs range 0.03-0.10, consistent with out-of-sample expectations. All signals are long-biased consistent with trending regime.",
-  "decision_state": "validated",
-  "persona_id": "persona-quant-mom-01",
-  "capital_pool_id": "pool-us-equity-core",
+  "decision_reasoning": "The signal ensemble remains uniformly long-biased because the regime, universe, and factor inputs all reinforce growth leadership. NVDA and AAPL carry the highest conviction, while MSFT and AMZN remain above the trading threshold with longer holding horizons.",
+  "inference_stats": {
+    "total_universe_size": 4,
+    "signals_emitted": 4,
+    "long_count": 4,
+    "short_count": 0,
+    "neutral_count": 0,
+    "avg_confidence": 0.75,
+    "max_magnitude": 0.91,
+    "min_magnitude": 0.63
+  },
+  "market_scope": {
+    "asset_classes": [
+      "equity"
+    ],
+    "markets": [
+      "US"
+    ],
+    "security_master_refs": [
+      "SEC-US-AAPL",
+      "SEC-US-NVDA",
+      "SEC-US-MSFT",
+      "SEC-US-AMZN"
+    ],
+    "dataset_version_refs": [
+      "dataset-us-equities-daily-20260413"
+    ]
+  },
+  "state": "validated",
+  "persona_id": "persona-senior-quant-001",
+  "capital_pool_id": "pool-us-equity-growth",
   "metadata": {
-    "avg_signal_strength": 0.62,
-    "avg_ic": 0.065,
-    "signal_breadth": 50,
-    "avg_half_life_days": 28
+    "inference_duration_ms": 910,
+    "signal_run_id": "signal-run-20260413-093010"
   }
 }

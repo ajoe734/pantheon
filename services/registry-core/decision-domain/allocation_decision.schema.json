@@ -75,9 +75,17 @@
             "type": "string",
             "description": "The instrument symbol."
           },
+          "instrument_type": {
+            "type": "string",
+            "description": "BG-000 instrument_type vocabulary for the allocated instrument."
+          },
           "security_master_ref": {
             "type": "string",
             "description": "Optional SecurityMaster ID for provenance linkage."
+          },
+          "contract_master_ref": {
+            "type": "string",
+            "description": "Optional ContractMaster ID for derivatives provenance linkage."
           },
           "direction": {
             "type": "string",
@@ -244,6 +252,42 @@
         }
       },
       "description": "Downstream decision objects that reference this allocation."
+    },
+    "market_scope": {
+      "type": "object",
+      "description": "Inherited BG-000 market_scope envelope for the allocated portfolio slice, plus BG-001 master and dataset IDs needed to replay the position set.",
+      "properties": {
+        "asset_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "markets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "security_master_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contract_master_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataset_version_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     },
     "model_ref": {
       "type": "object",
