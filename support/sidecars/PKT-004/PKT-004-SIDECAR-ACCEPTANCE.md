@@ -309,3 +309,8 @@ For the parent task, the reviewer should reopen only if the eventual packet draf
 **Reviewer**: Codex (review_approved)
 
 All three acceptance criteria verified at finalization time. Parent task `PKT-004` reviewed and approved by Claude as reviewer in the same pass. The six-module drilldown taxonomy, Wave 1/Wave 2 classification, and BFF caveat annotations from this sidecar are absorbed into the parent backlog artifact.
+
+**Review notes absorbed from Codex approval**:
+- 複審通過：support packet 已對齊目前 ai-status 指派，parent reviewer 與 sidecar reviewer 均改為 Codex。
+- 複審通過：artifact 仍維持 support-only 範圍，只整理 acceptance checklist、dependency map 與 reviewer gates，未觸碰 canonical truth 或 runtime。
+- 複審通過：內容已覆蓋 PKT-004 所需的六模組 drilldown taxonomy、Wave 1/Wave 2 readiness 與 inherited caveats，可供 parent owner 吸收到主線 packet。
