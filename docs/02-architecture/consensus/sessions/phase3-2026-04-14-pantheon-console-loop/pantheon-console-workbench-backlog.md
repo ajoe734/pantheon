@@ -21,7 +21,7 @@ This backlog expands `front-ai-trading-system` from a loose page set into the fu
 | Research Workbench | research search, analysis, tickets, launches, compares | blueprint-level direction only | full canonical packet family | no | high | Wave 3 |
 | Knowledge Workbench | institutional memory, evidence navigation, insight cards, and strategy specs | blueprint-level direction only; no BFF route backs any Knowledge screen | full canonical packet family (5 modules); Wave 3 internal order: Institutional Memory → Research Notes → Evidence Refs → Insight Cards → Strategy Spec | no | high — all 5 modules need net-new BFF routes before packetization can begin | Wave 3 |
 | Trainer Workbench | teaching sessions and before-after review | demo-grade trainer shell plus read-only teaching-history surfaces inside Persona Management and `PS-05`; no dedicated Trainer BFF flow exists | full canonical packet family | no | high | Wave 3 |
-| Consultation Workbench | consult requests, committee review, debate, and red-team outputs | blueprint-level direction only | full canonical packet family | no | high | Wave 4 |
+| Consultation Workbench | consult requests, committee review, debate, and red-team outputs | consultation read-surface contract, consult-policy and session semantics, and L3 request or memo design; no standalone workbench packet family | full canonical packet family | no | high | Wave 4 |
 | Governance Workbench | review queue, approval queue, promotion, rollback, and diff control | `F-042` plus operator governance semantics | every governance screen beyond Promotion Review | partial | medium | Wave 2 |
 | Evolution Workbench | post-incident, evolution review, lineage, inspiration, and mutation review | post-incident/evolution sidecars and lineage surfaces | inspiration and mutation review packet family | partial | medium | Wave 2 |
 
@@ -386,24 +386,70 @@ Screens and modules:
 
 Existing Pantheon support:
 
-- blueprint-level workbench definition only
+- `PERSONA_RUNTIME_MODEL.md` and `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md` already define consult policy, `consult`, `committee`, and `red_team` session types, committee escalation conditions, and committee outputs
+- `services/control-plane/bff/CONSULTATION_SURFACE_CONTRACT.md` defines six canonical read surfaces (`CS-01` to `CS-06`) for consultation list, detail, participants, outcome, evidence, and consult policy, including degraded behavior
+- `Pantheon_總索引版系統分析文件.md`, `Pantheon_API_Service_Contract_設計版.md`, and `Pantheon_資料表_Schema_設計版.md` already name `ConsultRequest` or `ConsultMemo`, `POST /api/v1/consult/requests`, `GET /api/v1/consult/requests/:id`, and memo lifecycle semantics as design intent
+- no standalone Consultation Workbench packet family, no transcript or event-stream read surface, and no implemented BFF handlers or composed workbench IA exist today
 
 Missing canonical screen specs:
 
-- all Consultation Workbench screens
+- all four Consultation Workbench modules still need canonical packet language
+- the existing consultation surface contract is read-surface oriented and does not define a workbench IA, request composer, transcript layout, committee-board shell, or red-team memo presentation family
 
 Lovable readiness:
 
-- not ready
+- not ready — consultation object semantics and read contracts exist, but the workbench still lacks canonical screen packets and command-side or transcript truth for end-to-end flows
 
-Backend dependencies:
+Backend dependencies and packetization prerequisites per module:
 
-- consultation orchestration and transcript surfaces
-- committee and red-team domain truth
+### Consult request
+
+- backend gap: the current canonical consultation contract is GET-only and session-backed; it does not define the canonical write path that turns a request into a consultation session. `POST /api/v1/consult/requests` and `GET /api/v1/consult/requests/:id` only exist in L3 design docs today
+- packetization prerequisite: lock the `ConsultRequest` lifecycle (`created` -> `running` -> `completed` or `canceled`), target taxonomy (`persona` or `committee` or `red_team`), and the request-to-session handoff contract before a request composer or request detail screen can be packet-defined; depends on `ConsultPolicy` and persona session creation remaining canonical
+
+### Debate transcript
+
+- backend gap: current consultation read surfaces expose participants, outcome, and evidence, but no canonical transcript or ordered event-stream route exists for consult or committee conversations
+- packetization prerequisite: define the append-only transcript schema, actor labeling, event ordering, evidence attachment inline behavior, and degraded partial-transcript semantics before a transcript screen can be packet-defined; depends on stable consultation session identity from Consult request
+
+### Committee board
+
+- backend gap: committee escalation conditions and outputs are defined in policy, but no canonical board projection exists for committee membership, escalation reason, sponsor selection, synthesis rule, quorum or consensus state, or linked `committee_ref`
+- packetization prerequisite: lock committee lifecycle states, participant or referral semantics, and how committee outputs reference conflict-resolution evidence before a board screen can be packet-defined; depends on Consult request identity and Debate transcript event ordering
+
+### Red-team memo
+
+- backend gap: `red_team` exists as a session type and `ConsultMemo` design supports `red_team_findings`, but there is no canonical red-team memo list/detail route or read model in current L1 or L2 truth
+- packetization prerequisite: define how a red-team session produces a published memo, finding severity taxonomy, recommendation shape, and evidence-link contract before a memo screen can be packet-defined; depends on Consult request identity and Debate transcript or session evidence semantics
+
+Canonical module inventory:
+
+| Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
+|---|---|---|---|---|---|---|
+| `Consult request` | request composer, request detail, target selector, lifecycle state, and request-to-session status | `ConsultPolicy` is canonical in `PERSONA_RUNTIME_MODEL.md`; `ConsultRequest` object, status model, and `POST /api/v1/consult/requests` plus `GET /api/v1/consult/requests/:id` exist only in L3 design docs | full request packet family: composer shell, target-selection copy, request detail layout, lifecycle and escalation copy | no | canonical write route plus request-to-session handoff; `ConsultRequest` lifecycle and target taxonomy must be promoted beyond L3 design intent | Wave 4 — first |
+| `Debate transcript` | ordered conversation timeline, actor badges, inline evidence links, transcript replay, and degraded partial-state handling | consultation detail, participants, outcome, and evidence are defined as read contracts in `CONSULTATION_SURFACE_CONTRACT.md`, but no transcript route or event schema exists | full transcript packet: timeline layout, event grouping, inline evidence affordances, partial or stale transcript copy | no | transcript or event-stream route; append-only event schema; actor labeling and ordering semantics for consult or committee sessions | Wave 4 — second |
+| `Committee board` | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, and linked evidence | `committee` session type and escalation outcomes are canonical in `PERSONA_RUNTIME_MODEL.md` and `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`; consultation participants or outcome surfaces exist at contract level | full board packet: quorum or consensus state, escalation badges, sponsor or synthesis summary, linked evidence and referral copy | no | canonical board projection for committee membership, referral state, `committee_ref`, sponsor selection, and conflict-resolution evidence linkage | Wave 4 — third |
+| `Red-team memo` | findings summary, recommendation list, publish state, evidence drawer, and downstream review handoff | `red_team` is a canonical session type; `ConsultMemo` L3 design includes `memo_type = red_team_findings`, but no BFF-facing red-team memo route exists | full memo packet: findings layout, severity taxonomy, recommendation copy, publish-state and evidence-drawer semantics | no | canonical red-team memo list or detail read model; published memo lifecycle and evidence-link contract; red-team session-to-memo mapping | Wave 4 — fourth |
+
+Wave 4 internal ordering and dependency chain:
+
+| Position | Module | Why this order | Upstream dependency within workbench |
+|---|---|---|---|
+| 1 | Consult request | establishes the foundational request object, target taxonomy, and request-to-session handoff that every later Consultation module references | none — can start when Wave 4 opens |
+| 2 | Debate transcript | defines the ordered conversation evidence model that both committee and red-team views rely on | Consult request identity and stable session creation semantics |
+| 3 | Committee board | adds policy-driven committee state and synthesis outputs on top of the request and transcript evidence chain | Consult request identity plus Debate transcript event ordering |
+| 4 | Red-team memo | publishes finalized adversarial findings against the same request and evidence chain, after request and transcript semantics stop shifting | Consult request identity plus Debate transcript or session evidence semantics |
+
+Separation rule for this backlog:
+
+- put request-composer copy, transcript layouts, board widgets, memo presentation, and degraded-state wording in `Missing screen-spec work`
+- put absent write routes, transcript or event-stream contracts, committee board projections, and red-team memo read models in `Backend or contract dependencies`
 
 Recommended wave:
 
-- Wave 4
+- Wave 4 remains the conservative placement even though consultation read contracts now exist, because the workbench still lacks canonical request-write truth, transcript ordering truth, committee board projection, and red-team memo read models
+- internal module order within Wave 4: Consult request -> Debate transcript -> Committee board -> Red-team memo
+- no Consultation Workbench module should be handed to Lovable before the corresponding command or transcript contract and canonical packet family exist together
 
 ## Governance Workbench
 
