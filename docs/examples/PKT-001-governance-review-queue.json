@@ -1,0 +1,76 @@
+{
+  "items": [
+    {
+      "item_id": "gov-review-001",
+      "item_type": "DeploymentPlan",
+      "risk_level": "medium",
+      "submitted_at": "2026-04-14T06:15:00Z",
+      "submitted_by": "orchestrator",
+      "governance_outcome": "pending",
+      "allowedActions": {
+        "canReview": true,
+        "canForwardToApproval": true,
+        "canRequestChanges": true,
+        "canEscalate": false
+      },
+      "review_summary": {
+        "risk_assessment": "Medium risk — parameter drift within acceptable bounds; no open severity-1 or severity-2 incidents.",
+        "evidence_refs": [
+          { "ref_id": "ev-001", "type": "IncidentReport", "url": null },
+          { "ref_id": "ev-002", "type": "BacktestResult", "url": null }
+        ],
+        "linked_approval_decision_id": null
+      }
+    },
+    {
+      "item_id": "gov-review-002",
+      "item_type": "EvolutionProposal",
+      "risk_level": "high",
+      "submitted_at": "2026-04-14T05:45:00Z",
+      "submitted_by": "orchestrator",
+      "governance_outcome": "escalated",
+      "allowedActions": {
+        "canReview": false,
+        "canForwardToApproval": false,
+        "canRequestChanges": false,
+        "canEscalate": false
+      },
+      "review_summary": {
+        "risk_assessment": "High risk — escalated due to open severity-2 incident; no further routing CTAs available until resolved.",
+        "evidence_refs": [
+          { "ref_id": "ev-003", "type": "IncidentReport", "url": null }
+        ],
+        "linked_approval_decision_id": null
+      }
+    },
+    {
+      "item_id": "gov-review-003",
+      "item_type": "PersonaBinding",
+      "risk_level": "low",
+      "submitted_at": "2026-04-14T07:00:00Z",
+      "submitted_by": "orchestrator",
+      "governance_outcome": "pending",
+      "allowedActions": {
+        "canReview": true,
+        "canForwardToApproval": true,
+        "canRequestChanges": true,
+        "canEscalate": true
+      },
+      "review_summary": {
+        "risk_assessment": "Low risk — new persona binding within established capital pool; no open incidents.",
+        "evidence_refs": [],
+        "linked_approval_decision_id": null
+      }
+    }
+  ],
+  "page_info": {
+    "next_page_token": null
+  },
+  "meta": {
+    "snapshot_at": "2026-04-14T08:00:00Z",
+    "surfaces": {
+      "review_queue": { "status": "ok" },
+      "allowedActions": { "status": "ok" }
+    }
+  }
+}

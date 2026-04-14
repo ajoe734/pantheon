@@ -1,0 +1,98 @@
+{
+  "list": {
+    "items": [
+      {
+        "plan_id": "plan-pkt-001-a",
+        "artifact_id": "artifact-pkt-001-a",
+        "target_stage": "paper",
+        "risk_level": "low",
+        "governance_outcome": "approved",
+        "submitted_at": "2026-04-14T06:00:00Z"
+      },
+      {
+        "plan_id": "plan-pkt-001-b",
+        "artifact_id": "artifact-pkt-001-b",
+        "target_stage": "live",
+        "risk_level": "medium",
+        "governance_outcome": "pending",
+        "submitted_at": "2026-04-14T07:30:00Z"
+      }
+    ],
+    "page_info": {
+      "next_page_token": null
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T08:00:00Z",
+      "surfaces": {
+        "deployment_plans": { "status": "ok" },
+        "allowedActions": { "status": "ok" }
+      }
+    }
+  },
+  "detail": {
+    "deployment_plan": {
+      "id": "plan-pkt-001-b",
+      "stage": "live",
+      "artifact_id": "artifact-pkt-001-b",
+      "approval_decision_id": "approval-pkt-001-b",
+      "approval_decision": {
+        "id": "approval-pkt-001-b",
+        "outcome": "pending",
+        "reviewer": "governance",
+        "decided_at": null,
+        "risk_level": "medium",
+        "state": "pending"
+      }
+    },
+    "approval_decision": {
+      "id": "approval-pkt-001-b",
+      "outcome": "pending",
+      "reviewer": "governance",
+      "decided_at": null,
+      "risk_level": "medium",
+      "state": "pending"
+    },
+    "capital_pool": {
+      "id": "pool-main",
+      "status": "ready"
+    },
+    "bindings": [
+      {
+        "id": "binding-pkt-001-b",
+        "persona_id": "persona-beta",
+        "capital_pool_id": "pool-main"
+      }
+    ],
+    "runtime_binding": {
+      "id": "runtime-pkt-001-b",
+      "deployment_stage": "none",
+      "status": "idle"
+    },
+    "allowedActions": {
+      "canApprove": true,
+      "canReject": true,
+      "canPromoteToPaper": false
+    },
+    "latestRun": {
+      "progress": 0.0
+    },
+    "review": {
+      "riskSummary": "One unresolved severity-3 incident; no severity-1 or severity-2 blocks.",
+      "governanceOutcome": "pending",
+      "decisionState": "pending",
+      "decidedAt": null,
+      "reviewer": "governance"
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T08:00:00Z",
+      "surfaces": {
+        "deployment_plan": { "status": "ok" },
+        "approval_decision": { "status": "ok" },
+        "allowedActions": { "status": "ok" },
+        "latestRun": { "status": "ok" },
+        "review": { "status": "ok" },
+        "runtime_binding": { "status": "ok" }
+      }
+    }
+  }
+}

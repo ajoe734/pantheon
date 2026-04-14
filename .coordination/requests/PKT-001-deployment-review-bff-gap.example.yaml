@@ -1,0 +1,21 @@
+feature_id: PKT-001-deployment-review
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: deployment-review-console
+blocking: true
+
+summary: Deployment Review Console UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: allowedActions.canApprove
+    reason: Approve CTA visibility cannot be rendered safely without backend authority
+  - field: allowedActions.canReject
+    reason: Reject CTA visibility cannot be rendered safely without backend authority
+  - field: meta.surfaces
+    reason: Degradation banner cannot be rendered without per-surface status from BFF
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

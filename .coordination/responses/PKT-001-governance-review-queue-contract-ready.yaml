@@ -1,0 +1,32 @@
+feature_id: PKT-001-governance-review-queue
+type: contract-ready
+source_repo: pantheon
+screen: governance-review-queue
+status: published
+published_at: "2026-04-14T10:00:00Z"
+description: "PKT-001 Governance Review Queue contract-ready handoff. BFF contract, example payload, screen spec, and Lovable task packet are all published."
+artifacts:
+  bff_contract: docs/bff/PKT-001-governance-review-queue.md
+  screen_spec: docs/screens/PKT-001-governance-review-queue.md
+  example_payload: docs/examples/PKT-001-governance-review-queue.json
+  lovable_ui_task: .coordination/responses/PKT-001-governance-review-queue-lovable-ui-task.yaml
+endpoints:
+  - GET /api/v1/operator/governance/review-queue
+  - POST /api/v1/operator/commands
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+front_actions_required:
+  - build the Governance Review Queue list and item detail drawer
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - do not invent fields beyond this handoff packet
+  - render all routing CTAs from backend-shaped allowedActions only
+  - pass filters to the BFF as query parameters; do not filter client-side
+  - display the degradation banner when any meta.surfaces entry is degraded or unavailable
+acceptance_met:
+  - contract_ready_published: true
+  - lovable_ui_task_published: true
+  - front_repo_receives_handoff_bundle: true
