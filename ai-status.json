@@ -2,13 +2,12 @@
   "project": "pantheon",
   "sprint": "2026-04-12-blueprint-gap-convergence-planning",
   "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-13T04:25:21Z",
+  "updated_at": "2026-04-14T00:42:07Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
       "ai-status.json",
-      "ai-activity-log.jsonl",
-      "current-work.md"
+      "ai-activity-log.jsonl"
     ],
     "L1 Platform Architecture & Policy": [
       "TARGET_ARCHITECTURE.md",
@@ -45,13 +44,15 @@
       "Pantheon_總索引版系統分析文件.md",
       "Pantheon_資料表_Schema_設計版.md",
       "Pantheon_API_Service_Contract_設計版.md"
+    ],
+    "L0.5 Derived Narrative": [
+      "current-work.md"
     ]
   },
   "canonical_files": [
     "AI_COLLABORATION_GUIDE.md",
     "ai-status.json",
     "ai-activity-log.jsonl",
-    "current-work.md",
     "TARGET_ARCHITECTURE.md",
     "OPENCLAW_RUNTIME_CONTRACT.md",
     "PERSONA_RUNTIME_MODEL.md",
@@ -81,7 +82,8 @@
     "WORK_REBASELINE.md",
     "Pantheon_總索引版系統分析文件.md",
     "Pantheon_資料表_Schema_設計版.md",
-    "Pantheon_API_Service_Contract_設計版.md"
+    "Pantheon_API_Service_Contract_設計版.md",
+    "current-work.md"
   ],
   "agents": [
     {
@@ -91,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "BG-006"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex capacity/429: ./ai-status.json:6689:      \"message\": \"Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: {\\\"type\\\":\\\"user\\\",\\\"uuid\\\":\\\"6df63a68-2266-40e2-bfa0-26377c50bad9\\\",\\\"session_id\\\":\\\"9804307c-5225-40c8-9ea9-34b82c18a979\\\",\\\"parent_tool_use_id\\\":null,\\\"message\\\":{\\\"role\\\":\\\"user\\\",\\\"content\\\":[{\\\"type\\\":\\\"tool_result\\\",\\\"tool_use_id\\\":\\\"call_b6afa5a3650d4c898b3f3faa\\\",\\\"is_error\\\":false,\\\"content\\\":\\\"{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:29:17Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:29:18Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:04Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:05Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:50Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:52Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:31:37Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:31:39Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:32:24Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:32:26Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:33:12Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:33:13Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:33:58Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:34:00Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:34:46Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:34:47Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:35:33Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:35:35Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:36:21Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:36:22Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:07Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:08Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:54Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:55Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:38:41Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:38:42Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:39:29Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:39:30Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:40:17Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:40:19Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:04Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:06Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:52Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:54Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:42:39Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:42:41Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:43:26Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:43:28Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:43:46Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"sidecar_wave_sk\\\\nipped\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"underutilized but no sidecar candidates matched the catalog \\\\nor dynamic fallback\\\\\\\", \\\\\\\"ratio\\\\\\\": 0.0}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:44:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:44:16Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:01Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:03Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:48Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:50Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:46:36Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:46:37Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:47:23Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:47:24Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:10Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:12Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:58Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:59Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:49:46Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:49:48Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:50:34Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:50:35Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"wake_queued\\\\\\\", \\\\\\\"\\\\ntask_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"delivery_mode\\\\\\\"\\\\n: \\\\\\\"copilot_local\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Wake-up queued for supervisor: owned_in_progress_\\\\ndispatch\\\\\\\", \\\\\\\"queue_event_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-35d2523b\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"wake_queued\\\\\\\", \\\\\\\"\\\\ntask_id\\\\\\\": \\\\\\\"APP-002-W2-CLI-FALLBACK\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Qwen\\\\\\\", \\\\\\\"delivery_mode\\\\\\\": \\\\\\\"q\\\\nwen\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Wake-up queued for supervisor: review_ready_dispatch\\\\\\\", \\\\\\\"queue_\\\\nevent_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-08226684\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"worker_started\\\\\\\"\\\\n, \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\n\\\\\\\"copilot\\\\\\\", \\\\\\\"delivery_mode\\\\\\\": \\\\\\\"copilot_local\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Worker started via copi\\\\nlot_local: owned_in_progress_dispatch\\\\\\\", \\\\\\\"queue_event_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-\\\\n35d2523b\\\\\\\", \\\\\\\"worker_run_id\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\", \\\\\\\"parent_run_id\\\\\\\"\\\\n: null, \\\\\\\"command\\\\\\\": [\\\\\\\"copilot\\\\\\\", \\\\\\\"--autopilot\\\\\\\", \\\\\\\"-p\\\\\\\", \\\\\\\"你被喚醒了。\\\\\\\\n\\\\\\\\n請先閱讀這\\\\n些共享檔案，並以它們作為唯一共同真相：\\\\\\\\n- ai-status.json\\\\\\\\n- current-work.md\\\\\\\\n- a\\\\ni-activity-log.jsonl\\\\\\\\n- docs-site/index.html\\\\\\\\n\\\\\\\\n找出目前分配給你、等待你回應、剛\\\\n交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，\\\\n然後直接繼續工作。\\\\\\\\n\\\\\\\\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scri\\\\npts/ai_status.py`。\\\\\\\\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current\\\\n-work.md` 或 `ai-activity-log.jsonl`。\\\\\\\\n\\\\\\\\n\\\\\\\\nTask ID: APP-002-W1-FRONT-HANDOFF\\\\\\\\n\\\\n原因: owned_in_progress_dispatch\\\\\\\\n可能相關檔案:\\\\\\\\n- .coordination/responses/\\\\\\\\n- d\\\\nocs/examples/F-042-review-page.json\\\\\\\\n- docs/delivery-coordination-bus.md\\\\\\\\n\\\\\\\", \\\\\\\"--\\\\nmax-autopilot-continues\\\\\\\", \\\\\\\"12\\\\\\\", \\\\\\\"--allow-all-tools\\\\\\\", \\\\\\\"--add-dir\\\\\\\", \\\\\\\"/home/ajoe734\\\\n/code/pantheon\\\\\\\", \\\\\\\"--no-ask-user\\\\\\\"], \\\\\\\"log_path\\\\\\\": \\\\\\\"/home/ajoe734/code/pantheon/.orc\\\\nhestrator/logs/20260411T165114245974Z-copilot-copilot-8a3591.log\\\\\\\", \\\\\\\"payload_path\\\\n\\\\\\\": null}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"progress\\\\\\\", \\\\\\\"task_id\\\\\\\"\\\\n: \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Supervisor re-dispatched APP-002-W1-FR\\\\nONT-HANDOFF; task remains in progress.\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"task_dispatch_s\\\\nynced\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"dispa\\\\ntch_reason\\\\\\\": \\\\\\\"owned_in_progress_dispatch\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Supervisor re-dispatched \\\\nAPP-002-W1-FRONT-HANDOFF; task remains in progress.\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:16Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"worker_started\\\\\\\"\\\\n, \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W2-CLI-FALLBACK\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Qwen\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\\\\"qwe\\\\nn\\\\\\\", \\\\\\\"delivery_mode\\\\\\\": \\\\\\\"qwen\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Worker started via qwen: review_ready_d\\\\nispatch\\\\\\\", \\\\\\\"queue_event_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-08226684\\\\\\\", \\\\\\\"worker_run_id\\\\\\\": \\\\\\\"q\\\\nwen-20260411T165116Z-2b1ad933\\\\\\\", \\\\\\\"parent_run_id\\\\\\\": null, \\\\\\\"command\\\\\\\": [\\\\\\\"qwen\\\\\\\", \\\\\\\"-p\\\\\\\",\\\\n \\\\\\\"你被喚醒了。\\\\\\\\n\\\\\\\\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\\\\\\\\n- ai-status.\\\\njson\\\\\\\\n- current-work.md\\\\\\\\n- ai-activity-log.jsonl\\\\\\\\n- docs-site/index.html\\\\\\\\n\\\\\\\\n找出\\\\n目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你\\\\n正式收尾為 `done` 的 task，然後直接繼續工作。\\\\\\\\n\\\\\\\\n狀態更新請優先使用 `scripts/ai-\\\\nstatus.sh` 或 `python3 scripts/ai_status.py`。\\\\\\\\n不要用臨時 Python/heredoc 直接改\\\\n `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\\\\\\\\n\\\\\\\\n\\\\\\\\nTask ID: \\\\nAPP-002-W2-CLI-FALLBACK\\\\\\\\n原因: review_ready_dispatch\\\\\\\\n可能相關檔案:\\\\\\\\n- tools/pan\\\\ntheon_admin/cli.py\\\\\\\\n- services/control_plane/internal_api.py\\\\\\\\n- support/sidecars\\\\n/APP-002/APP-002-SECONDARY-CONTROL-PATH.md\\\\\\\\n\\\\\\\", \\\\\\\"--approval-mode\\\\\\\", \\\\\\\"yolo\\\\\\\", \\\\\\\"--out\\\\nput-format\\\\\\\", \\\\\\\"stream-json\\\\\\\", \\\\\\\"--include-directories\\\\\\\", \\\\\\\"/home/ajoe734/code/pantheo\\\\nn\\\\\\\", \\\\\\\"--channel\\\\\\\", \\\\\\\"CI\\\\\\\", \\\\\\\"--auth-type\\\\\\\", \\\\\\\"qwen-oauth\\\\\\\"], \\\\\\\"log_path\\\\\\\": \\\\\\\"/home/ajoe734/\\\\ncode/pantheon/.orchestrator/logs/20260411T165116085521Z-qwen-qwen-9d8e68.log\\\\\\\", \\\\\\\"\\\\npayload_path\\\\\\\": null}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:23Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:24Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:42Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"provider_dispat\\\\nch_paused\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\\\\"copilot\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"worke\\\\nr_run_id\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Paused new dispatche\\\\ns for copilot until 2026-04-11T17:51:42Z after capacity failure: 402 You have no\\\\n quota (Request ID: C132:18DEFE:2FCE21D:3A81A42:69DA7C08)\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:43Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"task_reassigned\\\\n\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Auto-reassigned ownership \\\\nfrom Copilot to Qwen after repeated Copilot capacity/429: 402 You have no quota \\\\n(Request ID: C132:18DEFE:2FCE21D:3A81A42:69DA7C08)\\\\\\\", \\\\\\\"from_owner\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"t\\\\no_owner\\\\\\\": \\\\\\\"Qwen\\\\\\\", \\\\\\\"from_reviewer\\\\\\\": \\\\\\\"Codex\\\\\\\", \\\\\\\"to_reviewer\\\\\\\": \\\\\\\"Codex\\\\\\\", \\\\\\\"worker_run_\\\\nid\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:49Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"worker_supersed\\\\ned\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\\\\"copilot\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"W\\\\norker superseded after task responsibility moved to another agent.\\\\\\\", \\\\\\\"worker_run\\\\n_id\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:52:11Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:52:13Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:52:59Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:53:01Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:53:47Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:53:49Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T\\\"}]}}\",",
-      "last_update": "2026-04-13T03:45:15Z"
+      "next": "Section 5 role matrix repaired: (1) governance.approver: S-IAPI removed — direct S-IAPI write requires governance.admin + mTLS (§4.4). (2) deployment.operator: S-CLI fallback removed — CLI deployment requires deployment.admin (§4.1). (3) runtime.operator: S-EMRG fallback removed — S-EMRG requires emergency.operator (§4.2/§4.3). (4) runtime.admin: S-EMRG removed — S-EMRG requires emergency.operator; retains S-IAPI and S-CLI per §4.2. All four rows now match the per-surface authorization tables. Ready for re-review.",
+      "last_update": "2026-04-14T00:37:19Z"
     },
     {
       "name": "Gemini",
@@ -108,8 +112,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor re-dispatched BG-004; task remains in progress.",
-      "last_update": "2026-04-13T04:24:40Z"
+      "next": "Auto-reassigned ownership from Gemini to Codex after Gemini capacity failure; Gemini dispatch paused until 2026-04-14T01:22:20Z.",
+      "last_update": "2026-04-14T00:23:43Z"
     },
     {
       "name": "Codex",
@@ -119,13 +123,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "BG-006"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota (Request ID: E3D5:1AE5A7:6887D13:84865FC:69DC7012)",
-      "last_update": "2026-04-13T04:24:57Z"
+      "next": "Started implementation; reviewing phase2 planning context and locating canonical artifact target.",
+      "last_update": "2026-04-14T00:27:02Z"
     },
     {
       "name": "Copilot",
@@ -138,8 +140,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Supervisor re-dispatched BG-006; task remains in progress.",
-      "last_update": "2026-04-13T04:24:42Z"
+      "next": "Supervisor auto-started BG-003-SIDECAR-REVIEW after successful dispatch.",
+      "last_update": "2026-04-13T23:28:15Z"
     },
     {
       "name": "Qwen",
@@ -149,16 +151,13 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "working",
+      "status": "finalize",
       "current_task_ids": [
-        "BG-000",
-        "BG-003",
-        "BG-004",
-        "BG-007"
+        "BG-005-SIDECAR-REVIEW"
       ],
       "branch": "feat/qwen-code-agent",
-      "next": "Supervisor re-dispatched BG-003; task remains in progress.",
-      "last_update": "2026-04-13T04:25:21Z"
+      "next": "Supervisor resumed BG-005-SIDECAR-REVIEW for finalize after successful dispatch.",
+      "last_update": "2026-04-14T00:42:07Z"
     }
   ],
   "tasks": [
@@ -3396,6 +3395,24 @@
         "ahead": 1,
         "behind": 0,
         "push_status": "ahead"
+      },
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
       }
     },
     {
@@ -3403,38 +3420,131 @@
       "title": "Canonicalize market scope, instrument policy, and source-class matrix",
       "summary_zh": "把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。",
       "phase": "Blueprint Gap P0",
-      "owner": "Qwen",
-      "reviewer": "Codex",
+      "owner": "Codex",
+      "reviewer": "Claude",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "in_progress",
-      "next": "Supervisor re-dispatched BG-000; task remains in progress.",
-      "last_update": "2026-04-13T04:25:19Z"
+      "status": "done",
+      "next": "Finalized the approved market scope policy package. Committed the three canonical GAP-00 documents and closed the reviewer-noted companion-doc checklist hygiene; BG-001 remains the follow-on for DatasetVersion formalization.",
+      "last_update": "2026-04-14T00:26:32Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "review_notes_zh": [
+        "審查通過：三份 BG-000 政策文件已確認存在且內容一致。市場範圍（US/TW/CRYPTO）、標的政策、source-class matrix 與 symbol/contract 身份模型均完整且互相引用正確。9/10 上游問題已明確回答；DatasetVersion 已適當延後至 BG-001。MARKET_SCOPE_AND_INSTRUMENT_POLICY.md 驗收條件第 8/9 項的核取方塊尚未勾選，但 companion docs 已存在，這是 owner-close 的表面修補項，不構成內容缺失。",
+        "後續：owner (Gemini) 執行 done 收尾；建議補齊 ai-status.json artifacts 陣列及 MARKET_SCOPE_AND_INSTRUMENT_POLICY.md 第 8/9 項核取方塊。"
+      ],
+      "review_file": "support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-14T00:26:32Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "0a6aeb6f7d367e51f6bd7ee908bf44d040d73827",
+        "commit_subject": "BG-000 finalize policy package checkpoint",
+        "commit_author": {
+          "name": "Codex",
+          "email": "codex@pantheon.local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-000",
+          "Reviewer": "Claude"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 81,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": null,
+        "push_status": "no_upstream"
+      }
     },
     {
       "id": "BG-001",
       "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
       "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
       "phase": "Blueprint Gap P0",
-      "owner": "Qwen",
+      "owner": "Claude",
       "reviewer": "Codex",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "review_approved",
-      "next": "Codex review approved. Owner finalizing as done.",
-      "last_update": "2026-04-13T04:21:37Z",
+      "status": "done",
+      "next": "Finalized after review approval. Revalidated 37 unit tests and the data-plane smoke test on 2026-04-13; all seven schemas, four models, and availability-discipline artifacts are accepted.",
+      "last_update": "2026-04-13T07:37:24Z",
       "review_notes_zh": [
         "reviewer cleanup: MarketCalendarSession holiday-session schema now matches the model and README rule for empty open/close times",
         "reviewer cleanup: model validation now enforces schema enums, DatasetVersion lineage refs, and timestamp defaults so model/schema drift is caught automatically",
         "verification rerun: python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py' -v; python3 services/data-plane/smoke_test.py; python3 -m py_compile services/data-plane/models/*.py services/data-plane/tests/*.py services/data-plane/smoke_test.py all passed"
       ],
-      "review_file": "services/data-plane/review_bg001_codex_approved_zh.md"
+      "review_file": "services/data-plane/review_bg001_codex_approved_zh.md",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T07:37:24Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "46fdd385753255aa9373fbddb043a14f9772819f",
+        "commit_subject": "BG-001 Finalize security master, contract master, market calendar, and dataset lineage objects",
+        "commit_author": {
+          "name": "ajoe734",
+          "email": "ajoe734@local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Claude",
+          "Task-ID": "BG-001",
+          "Reviewer": "Codex"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 78,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": "origin/master",
+        "ahead": 3,
+        "behind": 0,
+        "push_status": "ahead"
+      }
     },
     {
       "id": "BG-002",
@@ -3478,6 +3588,24 @@
         "ahead": 8,
         "behind": 0,
         "push_status": "ahead"
+      },
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
       }
     },
     {
@@ -3485,16 +3613,77 @@
       "title": "Formalize decision-front objects and adjudication boundaries",
       "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
       "phase": "Blueprint Gap P0",
-      "owner": "Qwen",
-      "reviewer": "Codex",
+      "owner": "Codex",
+      "reviewer": "Qwen",
       "depends_on": [
         "PLAN-002"
       ],
-      "artifacts": [],
-      "acceptance": [],
-      "status": "in_progress",
-      "next": "Supervisor re-dispatched BG-003; task remains in progress.",
-      "last_update": "2026-04-13T04:25:21Z"
+      "artifacts": [
+        "services/registry-core/decision-domain/regime_state.schema.json",
+        "services/registry-core/decision-domain/universe_selection.schema.json",
+        "services/registry-core/decision-domain/signal_inference.schema.json",
+        "services/registry-core/decision-domain/allocation_decision.schema.json",
+        "services/registry-core/decision-domain/risk_adjudication.schema.json",
+        "services/registry-core/decision-domain/examples/five_stage_chain.json"
+      ],
+      "acceptance": [
+        "5 JSON Schema draft-07 files produced and validated",
+        "All schemas contain required common fields (strategy_id, artifact_id, version, evaluated_at, input_refs, output_refs, decision_reasoning/model_ref)",
+        "Five-stage chain example payload validates end-to-end against all schemas",
+        "Chain links to existing ApprovalDecision back-half governance gate",
+        "Schemas reference BG-000 market scope vocabulary and BG-001 SecurityMaster/ContractMaster IDs",
+        "Research vs decision provenance distinction documented in all schema descriptions"
+      ],
+      "status": "done",
+      "next": "Owner finalize complete. BG-003 closed as done after re-running python3 services/registry-core/decision-domain/validate_schemas.py and python3 scripts/validate_bg003.py; all five schemas, README alignment, five-stage chain validation, and ApprovalDecision linkage remain green.",
+      "last_update": "2026-04-14T00:11:15Z",
+      "terminal_outcome": "completed",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "review_notes_zh": [
+        "審查通過：五個 decision-domain schema 全部通過驗證，chain 端到端驗證正確，與 ApprovalDecision 後段治理門連接正確，BG-000/BG-001 引用完整，研究與決策 provenance 區分已文件化。"
+      ],
+      "review_file": "services/registry-core/decision-domain/review_bg003_qwen.md",
+      "delivery": {
+        "recorded_at": "2026-04-14T00:11:15Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "6ca9c609ceb03fb413a2a96b004c2c3096da6e91",
+        "commit_subject": "BG-003 finalize metadata checkpoint",
+        "commit_author": {
+          "name": "Codex",
+          "email": "codex@pantheon.local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-003",
+          "Reviewer": "Qwen"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 85,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": null,
+        "push_status": "no_upstream"
+      }
     },
     {
       "id": "BG-004",
@@ -3508,16 +3697,61 @@
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "in_progress",
-      "next": "Auto-reassigned ownership from Gemini to Qwen after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
-      "last_update": "2026-04-13T04:25:17Z"
+      "status": "done",
+      "next": "Finalized after re-review approval. MEMORY_LAYER_DESIGN_NOTE plus persona/institutional memory schemas are aligned; consultation_closed coverage and retrieval example session_id are both verified.",
+      "last_update": "2026-04-13T07:37:10Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T07:37:10Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "18c10cec98cbf401f3810d834b8d28945ec0ce60",
+        "commit_subject": "BG-004 Finalize memory layer design note",
+        "commit_author": {
+          "name": "ajoe734",
+          "email": "ajoe734@local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Qwen",
+          "Task-ID": "BG-004",
+          "Reviewer": "Codex"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 78,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": "origin/master",
+        "ahead": 2,
+        "behind": 0,
+        "push_status": "ahead"
+      }
     },
     {
       "id": "BG-005",
       "title": "Define golden replay scenario and acceptance runbook",
       "summary_zh": "定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。",
       "phase": "Blueprint Gap P0",
-      "owner": "Codex",
+      "owner": "Claude",
       "reviewer": "Qwen",
       "depends_on": [
         "BG-000",
@@ -3526,41 +3760,144 @@
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-12T14:57:33Z"
+      "status": "review_approved",
+      "next": "Supervisor resumed BG-005 for finalize after successful dispatch.",
+      "last_update": "2026-04-14T00:42:04Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "review_notes_zh": [
+        "審查通過",
+        "1. 兩組 golden replay scenario（US equities + TW TAIFEX）已完整定義，DatasetVersion/五階段決策鏈/DeploymentPlan/RuntimeBinding refs 都與 BG-000/BG-001/BG-003 對齊。2. 13 項 acceptance criterion 涵蓋 frozen state、available-time、telemetry、lineage、durable store、regression test，可接受。3. EX-001 deferral 明確記錄，scope exclusions 清楚。4. 需追蹤事項：(a) five_stage_chain_tw_derivs.json 在 Step 2 被引用但尚未存在，需在實作時補上；(b) runbook 引用的 6 個驗證腳本尚未實作，這對 runbook 定義階段可接受，但需在 BG-005 收尾或追隨任務中完成。"
+      ],
+      "review_file": "GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md"
     },
     {
       "id": "BG-006",
       "title": "Operational reassign: move BG-006 onto healthy Copilot lane while Claude is paused and Codex is backoff-paused.",
       "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
       "phase": "Blueprint Gap P1",
-      "owner": "Codex",
-      "reviewer": "Qwen",
-      "depends_on": [
-        "PLAN-002"
-      ],
-      "artifacts": [],
-      "acceptance": [],
-      "status": "in_progress",
-      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota (Request ID: E3D5:1AE5A7:6887D13:84865FC:69DC7012)",
-      "last_update": "2026-04-13T04:24:57Z"
-    },
-    {
-      "id": "BG-007",
-      "title": "Publish product-facing glossary and stage-status language pack",
-      "summary_zh": "整理 glossary、action→object map 與 stage/status wording 的對外語言包。",
-      "phase": "Blueprint Gap P2",
-      "owner": "Qwen",
+      "owner": "Claude",
       "reviewer": "Codex",
       "depends_on": [
         "PLAN-002"
       ],
       "artifacts": [],
       "acceptance": [],
-      "status": "in_progress",
-      "next": "Reopened after review: replace task-ID/vague source citations with concrete canonical docs; restore real persona lifecycle wording; clarify governance-vs-DB binding statuses; fix non-canonical action/object mappings. See docs/review_bg007_codex.md.",
-      "last_update": "2026-04-13T03:26:00Z"
+      "status": "review",
+      "next": "Section 5 role matrix repaired: (1) governance.approver: S-IAPI removed — direct S-IAPI write requires governance.admin + mTLS (§4.4). (2) deployment.operator: S-CLI fallback removed — CLI deployment requires deployment.admin (§4.1). (3) runtime.operator: S-EMRG fallback removed — S-EMRG requires emergency.operator (§4.2/§4.3). (4) runtime.admin: S-EMRG removed — S-EMRG requires emergency.operator; retains S-IAPI and S-CLI per §4.2. All four rows now match the per-surface authorization tables. Ready for re-review.",
+      "last_update": "2026-04-14T00:37:19Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BG-007",
+      "title": "Publish product-facing glossary and stage-status language pack",
+      "summary_zh": "整理 glossary、action→object map 與 stage/status wording 的對外語言包。",
+      "phase": "Blueprint Gap P2",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "docs/PRODUCT_FACING_GLOSSARY_AND_LANGUAGE_PACK.md",
+        "docs/review_bg007_codex.md"
+      ],
+      "acceptance": [
+        "published glossary translates canonical terms with concrete source citations",
+        "action-to-object map uses ArtifactRecord, ApprovalDecision, DeploymentPlan, RuntimeBinding, and EvolutionDecision semantics",
+        "stage/status wording separates deployment stage, persona lifecycle, binding governance truth vs read-model projection, evolution, and runtime status",
+        "document includes 20 action rows, 12 alert messages, and 8 tooltips"
+      ],
+      "status": "done",
+      "next": "Owner finalized the reviewer-approved glossary and language pack and closed BG-007.",
+      "last_update": "2026-04-13T14:17:04Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-13T07:05:23Z",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      },
+      "review_notes_zh": [
+        "審查通過：所有 canonical source 均以實際文件名稱引用，無 task ID",
+        "Persona lifecycle 7 階梯（draft→research_only→consultable→paper_owner→live_owner→frozen/retired）與 PERSONA_RUNTIME_MODEL.md 完全一致",
+        "Binding governance truth（pending/active/suspended/revoked/expired）與 read-model projection（active/inactive）正確分離，來源標注 BINDING_AND_DEPLOYMENT_SEMANTICS.md 正確",
+        "Action→object map 已採用 ArtifactRecord/ApprovalDecision/DeploymentPlan/RuntimeBinding/EvolutionDecision 正確物件名稱，與 registry/runtime-manager contract 一致",
+        "RuntimeBinding 狀態列表（active/pending_pause/paused/retired/failed）與 services/execution/runtime-manager/contract.md 完全吻合",
+        "Kill switch action row 正確描述『繞過常規排隊，不繞過權限邊界』，符合 KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+        "Freeze action row 正確標注 EvolutionDecision 加 optional DeploymentPlan，符合 EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+        "所有引用文件路徑均確認存在於 repo",
+        "計數正確：20 action rows, 12 alert messages, 8 tooltips"
+      ],
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T14:17:04Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "738bee5657b1b5ee08442f797e8a67ac79f8db89",
+        "commit_subject": "BG-007 publish product-facing glossary and language pack",
+        "commit_author": {
+          "name": "Codex",
+          "email": "codex@pantheon.local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-007",
+          "Reviewer": "Claude"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 80,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": null,
+        "push_status": "no_upstream"
+      }
     },
     {
       "id": "PLAN-002-SIDECAR-ACCEPTANCE",
@@ -3569,7 +3906,7 @@
       "phase": "Planning Bootstrap",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md"
@@ -3579,8 +3916,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Ownership updated",
-      "last_update": "2026-04-13T03:40:00Z",
+      "next": "Finalized the sidecar acceptance packet after the owner-close refresh. Parent PLAN-002 is already done; this packet remains support-only historical evidence, and no canonical truth or runtime implementation was changed. Commit c0aa176.",
+      "last_update": "2026-04-13T07:05:18Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "PLAN-002",
@@ -3592,7 +3929,34 @@
         "acceptance packet 仍維持 support-only scope，未修改 canonical truth",
         "可交回 Claude 做 final done closure，供 parent PLAN-002 reviewer flow 引用"
       ],
-      "review_file": "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md"
+      "review_file": "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T07:05:18Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "c0aa176fd16a45b0a54419a17c4eda606ed968cf",
+        "commit_subject": "PLAN-002-SIDECAR-ACCEPTANCE finalize refresh",
+        "commit_author": {
+          "name": "ajoe734",
+          "email": "ajoe734@local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "PLAN-002-SIDECAR-ACCEPTANCE",
+          "Reviewer": "Claude"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 99,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": "origin/master",
+        "ahead": 11,
+        "behind": 0,
+        "push_status": "ahead"
+      }
     },
     {
       "id": "PLAN-002-SIDECAR-REVIEW",
@@ -3660,7 +4024,7 @@
       "phase": "Blueprint Gap P1",
       "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "PLAN-002"
       ],
@@ -3672,14 +4036,16 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Reviewer check complete. The packet stays within support-only scope, the BG-002 artifact/dependency story is coherent, and it is acceptable as reviewer support evidence for the parent task. Approving so it no longer blocks Claude dispatch.",
-      "last_update": "2026-04-13T03:39:58Z",
+      "next": "Support-only acceptance packet is already reviewer-approved and is being absorbed into the parent closure path so Qwen capacity can return to primary work.",
+      "last_update": "2026-04-13T12:36:16Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BG-002",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "terminal_outcome": "superseded",
+      "superseded_by": "BG-002"
     },
     {
       "id": "BG-003-SIDECAR-ACCEPTANCE",
@@ -3688,7 +4054,7 @@
       "phase": "Blueprint Gap P0",
       "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [
         "PLAN-002"
       ],
@@ -3700,14 +4066,404 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Reviewer check complete. Packet is support-only, dependency map is consistent with current shared truth, and the checklist is suitable as a preparatory acceptance instrument for the parent task. Approving so the parent owner can close it when available.",
-      "last_update": "2026-04-13T03:39:53Z",
+      "next": "Support-only acceptance packet is already reviewer-approved and is being absorbed into the parent closure path so Qwen capacity can return to primary work.",
+      "last_update": "2026-04-13T12:36:17Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BG-003",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "terminal_outcome": "superseded",
+      "superseded_by": "BG-003"
+    },
+    {
+      "id": "BG-000-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BG-000 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BG-000，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "done",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-000/BG-000-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Finalized the BG-000 sidecar acceptance packet after the owner-close refresh. The packet remains support-only evidence: it verifies the three published BG-000 policy docs, preserves the explicit DatasetVersion gap note, and leaves the four parent reconciliation items for the parent owner. Commit 7124fe7.",
+      "last_update": "2026-04-13T07:15:14Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-000",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：依附件清單確認三份 BG-000 政策文件已存在且結構一致；9/10 上游問題已有明確依據；DatasetVersion 問題已正確標記為 BG-001 後續；四項 owner-close 待辦亦已清楚列出",
+        "後續：Codex 以 owner 身分執行 done 收尾；parent owner 再決定是否吸收 cleanup notes"
+      ],
+      "review_file": "support/sidecars/BG-000/BG-000-SIDECAR-ACCEPTANCE.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T07:15:14Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "7124fe712377d645cc2c3668bfc7332df4608fa5",
+        "commit_subject": "BG-000-SIDECAR-ACCEPTANCE finalize refresh",
+        "commit_author": {
+          "name": "ajoe734",
+          "email": "ajoe734@local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-000-SIDECAR-ACCEPTANCE",
+          "Reviewer": "Claude"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 100,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": "origin/master",
+        "ahead": 12,
+        "behind": 0,
+        "push_status": "ahead"
+      }
+    },
+    {
+      "id": "BG-007-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BG-007 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BG-007，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Blueprint Gap P2",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "done",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-007/BG-007-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Finalized the reviewer-approved BG-007 acceptance packet in commit 481f000; sidecar remains support-only and leaves parent BG-007 fixes to the parent owner.",
+      "last_update": "2026-04-13T07:23:09Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-007",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：acceptance packet 準確反映 BG-007 現況",
+        "所有引用文件均已確認存在",
+        "BG-006 仍在 review 狀態與 packet 描述一致"
+      ],
+      "review_file": "support/sidecars/BG-007/BG-007-SIDECAR-ACCEPTANCE.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T07:23:09Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "481f0004ee5f2061e5b4dcacbb2fe349087321ad",
+        "commit_subject": "BG-007-SIDECAR-ACCEPTANCE finalize refresh",
+        "commit_author": {
+          "name": "ajoe734",
+          "email": "ajoe734@local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-007-SIDECAR-ACCEPTANCE",
+          "Reviewer": "Claude"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 104,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": "origin/master",
+        "ahead": 13,
+        "behind": 0,
+        "push_status": "ahead"
+      }
+    },
+    {
+      "id": "BG-006-SIDECAR-REVIEW",
+      "title": "Prepare BG-006 review packet and evidence summary",
+      "summary_zh": "平行支援 BG-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Blueprint Gap P1",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "done",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-006/BG-006-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Committed the support-only review packet and completed owner finalization. Parent BG-006 remains in review under Claude/Qwen; this slice closes with reviewer-approved evidence only.",
+      "last_update": "2026-04-13T07:46:23Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-006",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過",
+        "GAP-06 覆蓋圖完整，L1 對齊 spot-check 無衝突，非阻塞缺口已誠實標記為 backlog",
+        "可作為 BG-006 父任務審查的支援材料"
+      ],
+      "review_file": "support/sidecars/BG-006/BG-006-SIDECAR-REVIEW.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-13T07:46:23Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "3e4baf558aa809294fcbc9ed884fedcd2f9ec8ec",
+        "commit_subject": "BG-006-SIDECAR-REVIEW Finalize support review packet",
+        "commit_author": {
+          "name": "ajoe734",
+          "email": "ajoe734@local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-006-SIDECAR-REVIEW",
+          "Reviewer": "Claude"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 62,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": "origin/master",
+        "ahead": 1,
+        "behind": 0,
+        "push_status": "ahead"
+      }
+    },
+    {
+      "id": "BG-000-SIDECAR-REVIEW",
+      "title": "Prepare BG-000 review packet and evidence summary",
+      "summary_zh": "平行支援 BG-000，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "done",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Owner finalized approved review packet after refreshing the sidecar snapshot to match durable state; packet remains support-only evidence for Gemini's BG-000 closeout.",
+      "last_update": "2026-04-14T00:18:22Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-000",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：review packet 結構完整，證據交叉比對正確。三份 canonical 文件存在且語彙一致。9/10 上游問題已回答，DatasetVersion 適度延後至 BG-001。建議 parent owner (Gemini) 直接收尾。"
+      ],
+      "review_file": "support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-14T00:18:22Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "74a82bb7ea83eaf7b70f569953255ac454f60088",
+        "commit_subject": "BG-000-SIDECAR-REVIEW: finalize metadata checkpoint",
+        "commit_author": {
+          "name": "Codex",
+          "email": "codex@pantheon.local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-000-SIDECAR-REVIEW",
+          "Reviewer": "Qwen"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 84,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": null,
+        "push_status": "no_upstream"
+      }
+    },
+    {
+      "id": "BG-006-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BG-006 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BG-006，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Blueprint Gap P1",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "status": "done",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-006/BG-006-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Finalized the reviewer-approved BG-006 acceptance packet in commit 8bcd8f4; sidecar remains support-only and leaves parent BG-006 repairs to the parent owner.",
+      "last_update": "2026-04-14T00:21:12Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-006",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：sidecar acceptance packet 結構完整，claims 經 repo-truth 來源驗證正確。CLI/internal fallback 確實已實作但 root matrix 標為 not implemented 是正確的 blocking issue；BFF-outage routing 確實誤指 S-EMRG；runtime-manager outage 描述確實過度樂觀。此 support artifact 適合作為 parent repair 的 close checklist。"
+      ],
+      "review_file": "support/sidecars/BG-006/BG-006-SIDECAR-ACCEPTANCE.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-14T00:21:12Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "8bcd8f4ec0e5423ed37fa76d1cdf9d317c2b0e32",
+        "commit_subject": "BG-006-SIDECAR-ACCEPTANCE finalize refresh",
+        "commit_author": {
+          "name": "Codex",
+          "email": "codex@pantheon.local"
+        },
+        "commit_metadata": {
+          "LLM-Agent": "Codex",
+          "Task-ID": "BG-006-SIDECAR-ACCEPTANCE",
+          "Reviewer": "Qwen"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 83,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": null,
+        "push_status": "no_upstream"
+      }
+    },
+    {
+      "id": "BG-003-SIDECAR-REVIEW",
+      "title": "Prepare BG-003 review packet and evidence summary",
+      "summary_zh": "平行支援 BG-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "done",
+      "depends_on": [
+        "PLAN-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Owner finalized the review-approved sidecar packet. All acceptance criteria met: support artifact created at support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md, no canonical truth modified, review approved by Codex. Sidecar retained as support-only evidence for completed BG-003.",
+      "last_update": "2026-04-14T00:16:17Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-003",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：sidecar review packet 已校正為 parent BG-003 完成後的狀態，證據鏈、acceptance 對照與 closeout 語境一致，可作為支援性留存材料。"
+      ],
+      "review_file": "support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "recorded_at": "2026-04-14T00:16:17Z",
+        "branch": "master",
+        "git_clean_required": false,
+        "commit": "07039ce8f840f2a3b7ed0b11fa044f78ecde49dd",
+        "commit_subject": "BG-003-SIDECAR-REVIEW: Add sidecar review packet for completed BG-003",
+        "commit_author": {
+          "name": "Codex",
+          "email": "codex@pantheon.local"
+        },
+        "commit_metadata": {
+          "Task-ID": "BG-003-SIDECAR-REVIEW",
+          "LLM-Agent": "Qwen",
+          "Reviewer": "Codex",
+          "Co-authored-by": "Qwen-Coder <qwen-coder@alibabacloud.com>"
+        },
+        "git_clean": false,
+        "dirty_entry_count": 85,
+        "remote_present": true,
+        "remote_names": [
+          "origin"
+        ],
+        "upstream": null,
+        "push_status": "no_upstream"
+      }
+    },
+    {
+      "id": "BG-005-SIDECAR-REVIEW",
+      "title": "Prepare BG-005 review packet and evidence summary",
+      "summary_zh": "平行支援 BG-005，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Blueprint Gap P0",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "status": "review_approved",
+      "depends_on": [
+        "BG-000",
+        "BG-001",
+        "BG-003"
+      ],
+      "artifacts": [
+        "support/sidecars/BG-005/BG-005-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Supervisor resumed BG-005-SIDECAR-REVIEW for finalize after successful dispatch.",
+      "last_update": "2026-04-14T00:42:07Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BG-005",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過｜Evidence covers all 13 acceptance criteria; two follow-up items (five_stage_chain_tw_derivs.json + six verification scripts) correctly categorized as non-blocking implementation-wave items"
+      ],
+      "review_file": "support/sidecars/BG-005/BG-005-SIDECAR-REVIEW.md"
     }
   ],
   "handoffs": [
@@ -7569,24 +8325,27 @@
       "from": "Codex",
       "to": "Qwen",
       "message": "Reviewer check complete. Packet is support-only, dependency map is consistent with current shared truth, and the checklist is suitable as a preparatory acceptance instrument for the parent task. Approving so the parent owner can close it when available.",
-      "status": "pending",
-      "created_at": "2026-04-13T03:39:53Z"
+      "status": "done",
+      "created_at": "2026-04-13T03:39:53Z",
+      "resolved_at": "2026-04-13T12:36:17Z"
     },
     {
       "task_id": "BG-002-SIDECAR-ACCEPTANCE",
       "from": "Codex",
       "to": "Qwen",
       "message": "Reviewer check complete. The packet stays within support-only scope, the BG-002 artifact/dependency story is coherent, and it is acceptable as reviewer support evidence for the parent task. Approving so it no longer blocks Claude dispatch.",
-      "status": "pending",
-      "created_at": "2026-04-13T03:39:58Z"
+      "status": "done",
+      "created_at": "2026-04-13T03:39:58Z",
+      "resolved_at": "2026-04-13T12:36:16Z"
     },
     {
       "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
       "from": "Claude",
       "to": "Codex",
       "message": "Ownership updated",
-      "status": "pending",
-      "created_at": "2026-04-13T03:40:00Z"
+      "status": "done",
+      "created_at": "2026-04-13T03:40:00Z",
+      "resolved_at": "2026-04-13T07:01:10Z"
     },
     {
       "task_id": "BG-002",
@@ -7611,8 +8370,447 @@
       "from": "Codex",
       "to": "Qwen",
       "message": "Codex review approved. Owner finalizing as done.",
+      "status": "done",
+      "created_at": "2026-04-13T04:24:23Z",
+      "resolved_at": "2026-04-13T05:51:33Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All three canonical artifacts produced and verified: (1) MARKET_SCOPE_AND_INSTRUMENT_POLICY.md — v1 markets (US, TW, CRYPTO), instrument scopes, data-class matrix, StrategySpec constraints, stage-eligibility. (2) DATA_SOURCE_SCOPE_MATRIX.md — source-class matrix (A–F) for all three markets, 10 market-data questions answered, truth ownership explicit, paper/canary/live eligibility defined. (3) SYMBOL_MASTER_AND_CONTRACT_MASTER_POLICY.md — SecurityMaster and ContractMaster schemas, per-market symbol mapping rules, delisting/rename policy, StrategySpec integration path. All acceptance criteria met. Moving to review for Codex.",
+      "status": "done",
+      "created_at": "2026-04-13T05:51:23Z",
+      "resolved_at": "2026-04-13T05:53:04Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review approved. The three GAP-00 canonical policies are coherent with the source plan, mutually cross-referenced, and satisfy the review gate. Owner may finalize BG-000 as done.",
+      "status": "done",
+      "created_at": "2026-04-13T05:53:04Z",
+      "resolved_at": "2026-04-13T05:56:27Z"
+    },
+    {
+      "task_id": "BG-004",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Both Codex review findings fixed: (1) added consultation_closed to institutional_memory source_event_type enum; (2) added required session_id to worked retrieval example. JSON schemas validated. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-13T05:54:40Z",
+      "resolved_at": "2026-04-13T05:55:58Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All 5 decision-front schemas + chain example payload produced and validated. Artifacts: 5 .schema.json files + five_stage_chain.json example. All 12 acceptance criteria met. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-13T05:55:17Z",
+      "resolved_at": "2026-04-13T07:00:47Z"
+    },
+    {
+      "task_id": "BG-004",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Re-review complete: MEMORY_LAYER_DESIGN_NOTE and both memory schemas are aligned. consultation_closed is present in InstitutionalMemoryEntry.source_event_type, the worked retrieval example includes required session_id, and both schema files parse successfully. Approving for Qwen final closure.",
+      "status": "done",
+      "created_at": "2026-04-13T05:55:58Z",
+      "resolved_at": "2026-04-13T07:37:10Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "OPERATOR_ACCEPTANCE_MATRIX.md produced. Covers all 5 surfaces (S-BFF, S-IAPI, S-CLI, S-EMRG, S-SUPP), canonical objects per operation, role matrix, degraded-mode routing rules, and acceptance evidence table. Please review against GAP-06 criteria in Pantheon_Blueprint_Gap_Review_v1.md §4 / §5.",
+      "status": "done",
+      "created_at": "2026-04-13T05:59:21Z",
+      "resolved_at": "2026-04-13T12:34:27Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All code, schemas, and tests committed (d4fe7a2); Codex review already completed — re-submitting to formalize status progression",
+      "status": "done",
+      "created_at": "2026-04-13T05:59:59Z",
+      "resolved_at": "2026-04-13T06:56:51Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Reviewer cleanup and verification are already captured in d4fe7a2; owner should finalize BG-001 from review_approved to done.",
+      "status": "done",
+      "created_at": "2026-04-13T06:56:51Z",
+      "resolved_at": "2026-04-13T06:57:10Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review changes requested: five_stage_chain.json does not validate against the five published schemas, README.md documents old field names, and acceptance evidence does not prove end-to-end validation. See services/registry-core/decision-domain/review_bg003_codex.md and re-handoff after schema/example/README alignment passes.",
+      "status": "done",
+      "created_at": "2026-04-13T07:00:47Z",
+      "resolved_at": "2026-04-13T07:00:47Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Restoring review_approved: supervisor incorrectly downgraded status from review_approved to in_progress during owned_finalize_dispatch (supervisor bug fixed in this commit). Review by Codex was fully valid and captured in d4fe7a2.",
+      "status": "done",
+      "created_at": "2026-04-13T07:00:50Z",
+      "resolved_at": "2026-04-13T07:12:07Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restoring review_approved after finalize-dispatch drift: reviewer endorsement was already recorded, and the packet is now refreshed for the current Codex-owned owner-close context.",
+      "status": "done",
+      "created_at": "2026-04-13T07:05:08Z",
+      "resolved_at": "2026-04-13T07:05:18Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet created at support/sidecars/BG-000/BG-000-SIDECAR-ACCEPTANCE.md. Verified the three BG-000 policy docs exist and are coherent enough for downstream use. Flagged owner-close issues: stale parent summary, empty parent artifacts array, missing explicit DatasetVersion answer, and review-state drift between activity history and durable status. Please review the sidecar packet.",
+      "status": "done",
+      "created_at": "2026-04-13T07:10:48Z",
+      "resolved_at": "2026-04-13T07:11:58Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet is accurate, complete, and within scope. Three BG-000 docs verified present and coherent. DatasetVersion gap and 4 parent reconciliation items correctly surfaced. Packet approved — returning to Codex for owner-close.",
+      "status": "done",
+      "created_at": "2026-04-13T07:11:58Z",
+      "resolved_at": "2026-04-13T07:12:08Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Restoring review_approved: supervisor incorrectly downgraded from review_approved to in_progress during owned_finalize_dispatch. Codex review was fully valid and captured in commit d4fe7a2 — all 7 schemas, 4 models, 29 unit tests, and 38 smoke checks verified.",
+      "status": "done",
+      "created_at": "2026-04-13T07:13:17Z",
+      "resolved_at": "2026-04-13T07:20:42Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restoring review_approved after finalize-dispatch drift: Claude reviewer approval is already recorded in the task brief and review notes; proceeding to owner-close.",
+      "status": "done",
+      "created_at": "2026-04-13T07:15:09Z",
+      "resolved_at": "2026-04-13T07:15:14Z"
+    },
+    {
+      "task_id": "BG-007-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet is ready at support/sidecars/BG-007/BG-007-SIDECAR-ACCEPTANCE.md. It confirms BG-007 has a real glossary draft but is not parent-acceptance-ready yet: the packet captures the soft BG-006 sequencing dependency, the reopen findings, and the owner-close metadata cleanup still needed.",
+      "status": "done",
+      "created_at": "2026-04-13T07:19:17Z",
+      "resolved_at": "2026-04-13T07:20:21Z"
+    },
+    {
+      "task_id": "BG-007-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: packet accurately captures BG-007 parent state, all referenced artifacts verified on disk, BG-006/BG-007 status matches packet claims. Sidecar scope is correctly bounded to support-only. Return to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T07:20:21Z",
+      "resolved_at": "2026-04-13T07:20:42Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Restoring review_approved: supervisor incorrectly downgraded from review_approved to in_progress during owned_finalize_dispatch. Codex review captured in d4fe7a2 — all 7 schemas, 4 models, 37 unit tests verified and passing.",
+      "status": "done",
+      "created_at": "2026-04-13T07:21:55Z",
+      "resolved_at": "2026-04-13T07:37:24Z"
+    },
+    {
+      "task_id": "BG-007-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restoring review_approved after finalize-dispatch drift: Claude reviewer approval is already recorded in the task brief and review notes; proceeding to owner-close.",
+      "status": "done",
+      "created_at": "2026-04-13T07:23:09Z",
+      "resolved_at": "2026-04-13T07:23:09Z"
+    },
+    {
+      "task_id": "BG-006-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only review packet is ready at support/sidecars/BG-006/BG-006-SIDECAR-REVIEW.md. It confirms BG-006 still sits in review, maps OPERATOR_ACCEPTANCE_MATRIX.md against GAP-06 required fields, spot-checks alignment with BFF HA / kill-switch / binding semantics, and keeps remaining drill/cutover items explicit as backlog rather than claimed completion.",
+      "status": "done",
+      "created_at": "2026-04-13T07:42:26Z",
+      "resolved_at": "2026-04-13T07:44:01Z"
+    },
+    {
+      "task_id": "BG-006-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: sidecar packet correctly maps OPERATOR_ACCEPTANCE_MATRIX.md against GAP-06 required fields, spot-checks align with BFF HA / kill-switch / binding L1 policies, and non-blocking gaps are honestly disclosed as backlog. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T07:44:01Z",
+      "resolved_at": "2026-04-13T07:46:23Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Operator acceptance matrix is ready for reviewer pass on a healthy lane; continue GAP-06 review against the existing criteria.",
+      "status": "done",
+      "created_at": "2026-04-13T12:34:27Z",
+      "resolved_at": "2026-04-13T14:33:12Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "BG-000 artifacts are complete and aligned; continue with reviewer pass on a healthy lane.",
+      "status": "done",
+      "created_at": "2026-04-13T12:34:29Z",
+      "resolved_at": "2026-04-13T14:09:06Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Review packet is ready at support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md. It confirms the three BG-000 policy docs satisfy the phase2 materialization contract, flags the missing explicit DatasetVersion closure note, and isolates parent-state hygiene items (empty artifacts array, provider brief only in consensus packet). Please review the sidecar packet and decide whether to absorb any notes into the parent BG-000 closeout.",
+      "status": "done",
+      "created_at": "2026-04-13T12:50:15Z",
+      "resolved_at": "2026-04-13T14:33:48Z"
+    },
+    {
+      "task_id": "BG-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reworked docs/PRODUCT_FACING_GLOSSARY_AND_LANGUAGE_PACK.md with concrete canonical sources instead of task IDs, restored the real persona lifecycle wording, separated binding governance truth from read-model projection, and corrected the action-to-object map to ArtifactRecord/ApprovalDecision/DeploymentPlan/RuntimeBinding/EvolutionDecision semantics. The current artifact now contains 20 action rows, 12 alert messages, and 8 tooltips for review.",
+      "status": "done",
+      "created_at": "2026-04-13T14:02:11Z",
+      "resolved_at": "2026-04-13T14:12:12Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Review approved. Three canonical policy docs are coherent, complete, and satisfy the materialization contract. DatasetVersion gap correctly deferred to BG-001. Returning to owner (Gemini) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T14:09:06Z",
+      "resolved_at": "2026-04-14T00:23:54Z"
+    },
+    {
+      "task_id": "BG-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all canonical sources verified on disk, persona lifecycle and binding separation correct, action-to-object semantics match contracts. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T14:12:12Z",
+      "resolved_at": "2026-04-13T14:17:04Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Aligned decision-domain schemas, examples, README, and validation evidence to one canonical contract. validate_schemas.py and validate_bg003.py both pass; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-13T14:32:49Z",
+      "resolved_at": "2026-04-13T14:33:28Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini terminal: Unexpected critical provider failure",
+      "status": "done",
+      "created_at": "2026-04-13T14:33:12Z",
+      "resolved_at": "2026-04-13T14:37:12Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T14:33:28Z",
+      "resolved_at": "2026-04-13T15:09:11Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Gemini to Qwen after repeated Gemini terminal: Unexpected critical provider failure",
+      "status": "done",
+      "created_at": "2026-04-13T14:33:48Z",
+      "resolved_at": "2026-04-13T23:29:21Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: root OPERATOR_ACCEPTANCE_MATRIX.md regresses CLI/internal fallback truth and misroutes pause/rollback to S-EMRG. See docs/reviews/BG-006-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-13T14:37:12Z",
+      "resolved_at": "2026-04-13T14:37:12Z"
+    },
+    {
+      "task_id": "BG-006-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet is ready at support/sidecars/BG-006/BG-006-SIDECAR-ACCEPTANCE.md. It captures the current reopened BG-006 state, dependency map, parent close checklist, and the concrete blockers preventing parent acceptance (CLI/internal fallback truth, BFF-outage routing, runtime-manager degradation wording, and parent metadata hygiene).",
+      "status": "done",
+      "created_at": "2026-04-13T15:04:38Z",
+      "resolved_at": "2026-04-13T23:30:43Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T15:09:11Z",
+      "resolved_at": "2026-04-13T23:28:26Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T23:28:26Z",
+      "resolved_at": "2026-04-13T23:31:31Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: sidecar review packet is coherent, evidence is well-cross-referenced, and the recommendation to treat remaining gaps as owner-close hygiene is sound. Parent BG-000 has already progressed to review_approved, strengthening the case for immediate finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T23:29:21Z",
+      "resolved_at": "2026-04-14T00:18:22Z"
+    },
+    {
+      "task_id": "BG-006-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T23:30:43Z",
+      "resolved_at": "2026-04-14T00:09:47Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: all 6 acceptance criteria pass. Five schemas validated, chain end-to-end correct, ApprovalDecision linkage confirmed, BG-000/BG-001 references complete, research vs decision provenance distinction documented.",
+      "status": "done",
+      "created_at": "2026-04-13T23:31:31Z",
+      "resolved_at": "2026-04-14T00:11:15Z"
+    },
+    {
+      "task_id": "BG-006-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved — dependency map and close checklist verified against repo-truth sources",
+      "status": "done",
+      "created_at": "2026-04-14T00:09:47Z",
+      "resolved_at": "2026-04-14T00:21:12Z"
+    },
+    {
+      "task_id": "BG-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet complete at support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md. All 6 BG-003 acceptance criteria verified, evidence summary ready. Codex to intake for parent task finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T00:12:13Z",
+      "resolved_at": "2026-04-14T00:14:34Z"
+    },
+    {
+      "task_id": "BG-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved. Packet refreshed for post-closeout context; evidence is coherent and sufficient as a support-only record for completed BG-003.",
+      "status": "done",
+      "created_at": "2026-04-14T00:14:34Z",
+      "resolved_at": "2026-04-14T00:16:18Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-14T00:23:54Z",
+      "resolved_at": "2026-04-14T00:26:32Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three blocking findings addressed in root OPERATOR_ACCEPTANCE_MATRIX.md: (1) S-CLI rows corrected from 'not implemented' to 'spec defined' for deployment, runtime pause, and kill-switch. (2) BFF-unavailable degraded behavior for pause and rollback now routes to S-IAPI/S-CLI, not S-EMRG. S-CLI pause row description updated to clarify it is the admin CLI direct path, not the kill-switch fast path. (3) runtime-manager outage row now lists RT-01–RT-04 as degraded/unavailable, removing the overstated 'BFF read unaffected' claim. (4) Routing rule 2 updated to separate general fallback (S-IAPI/S-CLI) from kill-switch emergency path (S-EMRG). (5) Section 9 open item updated from 'S-CLI spec future work' to 'S-CLI production hardening'. Evidence table entry for CLI fallback drill updated to remove stale '(CLI not implemented)' qualifier. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-14T00:30:57Z",
+      "resolved_at": "2026-04-14T00:34:07Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review requested: previous CLI/routing/runtime-manager fixes are in place, but Section 5 role matrix still contradicts the per-surface authorization rows. See docs/reviews/BG-006-review-codex.md and align fallback surface access with the operation tables before resubmitting.",
+      "status": "done",
+      "created_at": "2026-04-14T00:34:07Z",
+      "resolved_at": "2026-04-14T00:34:07Z"
+    },
+    {
+      "task_id": "BG-005",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md delivered: two golden replay scenarios (US equities momentum + TW TAIFEX derivatives) with pinned DatasetVersion refs, five-stage decision chain refs, DeploymentPlan/RuntimeBinding refs, expected telemetry/durable-store outputs, and 13-criterion acceptance checklist. EX-001 deferral is documented. Ready for Qwen review against GAP-05 acceptance evidence requirements.",
+      "status": "done",
+      "created_at": "2026-04-14T00:36:01Z",
+      "resolved_at": "2026-04-14T00:37:26Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Section 5 role matrix repaired: (1) governance.approver: S-IAPI removed — direct S-IAPI write requires governance.admin + mTLS (§4.4). (2) deployment.operator: S-CLI fallback removed — CLI deployment requires deployment.admin (§4.1). (3) runtime.operator: S-EMRG fallback removed — S-EMRG requires emergency.operator (§4.2/§4.3). (4) runtime.admin: S-EMRG removed — S-EMRG requires emergency.operator; retains S-IAPI and S-CLI per §4.2. All four rows now match the per-surface authorization tables. Ready for re-review.",
       "status": "pending",
-      "created_at": "2026-04-13T04:24:23Z"
+      "created_at": "2026-04-14T00:37:19Z"
+    },
+    {
+      "task_id": "BG-005",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Review approved: golden replay scenarios and acceptance runbook are structurally complete and aligned with GAP-05 evidence requirements. Two follow-up items noted: (1) five_stage_chain_tw_derivs.json referenced but missing; (2) six verification scripts not yet implemented (acceptable for runbook definition, needs tracking).",
+      "status": "pending",
+      "created_at": "2026-04-14T00:37:26Z"
+    },
+    {
+      "task_id": "BG-005-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "BG-005 sidecar review packet created at support/sidecars/BG-005/BG-005-SIDECAR-REVIEW.md; all 13 acceptance criteria verified; two follow-up items noted for implementation wave",
+      "status": "done",
+      "created_at": "2026-04-14T00:40:57Z",
+      "resolved_at": "2026-04-14T00:41:58Z"
+    },
+    {
+      "task_id": "BG-005-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Sidecar review packet approved: all 13 acceptance criteria verified with evidence; two non-blocking follow-up items noted for implementation wave",
+      "status": "pending",
+      "created_at": "2026-04-14T00:41:58Z"
     }
   ],
   "blockers": [
@@ -7689,12 +8887,12 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 6,
-      "active": 0,
+      "total": 9,
+      "active": 1,
       "blocked": 0,
-      "done": 6,
-      "review": 0,
-      "review_approved": 0,
+      "done": 7,
+      "review": 1,
+      "review_approved": 1,
       "todo": 0
     },
     "Gemini": {
@@ -7707,22 +8905,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 72,
-      "active": 1,
+      "total": 78,
+      "active": 0,
       "blocked": 0,
-      "done": 69,
+      "done": 78,
       "review": 0,
-      "review_approved": 1,
-      "todo": 2
+      "review_approved": 0,
+      "todo": 0
     },
     "Qwen": {
-      "total": 44,
-      "active": 4,
+      "total": 42,
+      "active": 0,
       "blocked": 0,
-      "done": 37,
+      "done": 41,
       "review": 0,
-      "review_approved": 3,
-      "todo": 4
+      "review_approved": 1,
+      "todo": 0
     },
     "Copilot": {
       "total": 16,
