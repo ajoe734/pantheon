@@ -1,180 +1,150 @@
 # OpenClaw Integration — Pin and Adapter Boundary
 
-Last updated: 2026-04-10
-Owner: OSS-001 (Qwen)
-Reviewer: Codex
-Status: locked v1 pin
-Upstream: https://github.com/openclaw/openclaw
+Last updated: 2026-04-15
+Owner: BP5-OSS-001 (Codex)
+Reviewer: Claude
+Status: governed baseline pinned
+Upstream repo: https://github.com/openclaw/openclaw
+Canonical runtime contract: `OPENCLAW_RUNTIME_CONTRACT.md`
 
-## 1. Pinned Upstream Release
+## 1. Locked Upstream Pin
 
 | Field | Value |
 |---|---|
-| **Repository** | `https://github.com/openclaw/openclaw` |
-| **Release tag** | `v2026.4.7` |
-| **Commit SHA** | `5050017` |
-| **Release date** | 2026-04-08 |
-| **Image reference** | `openclaw/openclaw:v2026.4.7` |
-| **Official site** | `https://openclaw.im/` |
+| Repository | `https://github.com/openclaw/openclaw` |
+| Selected stable tag | `v2026.4.7` |
+| Selected commit | `5050017543011b61df67744ebc6368d889c25a95` |
+| Release date | `2026-04-08` |
+| npm package | `openclaw@2026.4.7` |
+| Container image | `ghcr.io/openclaw/openclaw:2026.4.7` |
+| Container digest | `sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c` |
+| Website | `https://openclaw.ai` |
+| Docs | `https://docs.openclaw.ai` |
 
-### Pin Rationale
+## 2. Why This Pin Still Holds
 
-- **Stable release**, not a pre-release or beta.
-- **2-day stability window** at time of pin (released 2026-04-08, pinned 2026-04-10).
-- Selecting `v2026.4.7` instead of `v2026.4.9` (latest) to allow upstream to stabilize before adopting — avoids day-of-release regressions.
-- The versioning scheme (`v2026.M.D`) is date-based; we should expect frequent minor releases. Pinning by **tag + commit SHA** ensures immutability.
+This repo is intentionally **not** following the newest tag blindly.
 
-### Upgrade Policy
+As of `2026-04-15`, the upstream release state is:
 
-When upgrading:
-1. Monitor upstream releases for at least **48 hours** before pinning.
-2. Re-run the smoke-test suite (§5) against the new pin.
-3. Update this file with the new tag, SHA, and date.
-4. Record the change in `ai-activity-log.jsonl` with `type: oss_pin_change`.
+- latest stable release: `v2026.4.14`, published `2026-04-14`
+- latest prerelease: `v2026.4.15-beta.1`, published `2026-04-15`
 
----
+We are keeping `v2026.4.7` for `BP5-OSS-001` because:
 
-## 2. Integration Mode
+- `v2026.4.14` is newer but has not satisfied the repo's 48-hour soak policy yet
+- `v2026.4.15-beta.1` is a prerelease and therefore not eligible for the governed baseline
+- the task goal here is to lock one reproducible source + adapter seam, not to chase the moving latest release
 
-**Option C: Run upstream OpenClaw as a separate runtime and adapt its outputs.**
+Upgrade rule:
 
-This means:
-- OpenClaw runs as an independent service (Docker/Kubernetes).
-- Pantheon communicates with it via its external API.
-- No vendoring, no source modification, no local rewrite.
-- The `openclaw-gateway-adapter` in Pantheon is the sole integration seam.
+1. wait at least 48 hours after a stable upstream release is published
+2. re-run `scripts/openclaw-smoke-test.sh`
+3. update this file, `governance.md`, `evidence_pack.md`, and `OSS_INTEGRATION_CHECKLIST.md`
+4. record the pin change in `ai-activity-log.jsonl`
 
-### Rejected Options
+## 3. Integration Mode
 
-- **Option A (Vendor/submodule):** Rejected — too large a TypeScript runtime, high coupling before clean adapter seam.
-- **Option B (Rebuild in LEAN):** Rejected — accidental fork, defeats OSS adoption purpose.
+Pantheon integrates OpenClaw as an **external runtime dependency**, not as vendored source and not as a local rewrite.
 
----
+Accepted mode:
 
-## 3. Adapter Boundary
+- upstream GitHub source remains upstream-owned
+- Pantheon may consume the published package / container artifacts
+- Pantheon implements one governed boundary: `openclaw-gateway-adapter`
 
-The `openclaw-gateway-adapter` is Pantheon's responsibility boundary. It maps Pantheon domain objects to OpenClaw runtime objects and vice versa.
+Rejected modes:
 
-### 3.1 Adapter Responsibilities
+- vendoring or submodule-copying the OpenClaw source tree into Pantheon
+- re-implementing OpenClaw runtime behavior inside LEAN or Pantheon services
+- treating OpenClaw as the owner of registry, promotion, execution, or telemetry truth
 
-| Responsibility | Direction | Contract |
+## 4. Verified Upstream Runtime Surface
+
+`BP5-OSS-001` only locks surfaces that were actually verified against the pinned upstream artifacts.
+
+Verified upstream surface:
+
+- the Git tag `v2026.4.7` resolves to commit `5050017543011b61df67744ebc6368d889c25a95`
+- the GHCR image `ghcr.io/openclaw/openclaw:2026.4.7` is published and pullable
+- the container can execute `openclaw --help`
+- the container can execute `openclaw gateway --help`
+- the upstream Docker docs define a gateway process with HTTP health endpoints `/healthz` and `/readyz` once a configured gateway is running
+
+Not verified here, and therefore **not** part of the locked upstream promise:
+
+- any upstream `/control/*` REST API
+- any direct upstream notion of Pantheon `StrategySpec` or `WorkflowHandoff`
+- any direct upstream write path into Pantheon registry, governance, telemetry, or LEAN
+
+## 5. Governed Adapter Boundary
+
+The governed seam is the Pantheon-side `openclaw-gateway-adapter`. The implementation home is reserved under `integrations/openclaw/adapter/`.
+
+Adapter responsibilities:
+
+| Responsibility | Direction | Notes |
 |---|---|---|
-| Agent provisioning | Pantheon → OpenClaw | `create_agent`, `update_agent`, `deactivate_agent` |
-| Session lifecycle | Pantheon → OpenClaw | `create_session`, `resume_session`, `terminate_session`, `get_session_status` |
-| Tool resolution & invocation | Pantheon → OpenClaw | `resolve_tools`, `invoke_tool`, `list_tools` |
-| Skill resolution | Pantheon → OpenClaw | `resolve_skills`, `attach_shared_skill`, `attach_local_skill` |
-| Multi-agent consultation | Pantheon → OpenClaw | `spawn_subagent`, `send_session_message`, `collect_replies` |
-| Workflow/cron/hooks | Pantheon → OpenClaw | `schedule_job`, `trigger_workflow`, `get_job_status`, `cancel_job` |
-| Event telemetry extraction | OpenClaw → Pantheon | Event envelope (§3.3) |
-| Error classification | OpenClaw → Pantheon | Three-layer error model (§3.4) |
+| agent provisioning | Pantheon -> OpenClaw | map persona and capability snapshots into upstream agent/runtime concepts |
+| session lifecycle | Pantheon -> OpenClaw | create, resume, terminate, and inspect runtime sessions |
+| tool / skill mapping | Pantheon -> OpenClaw | filter through Pantheon RBAC before any upstream resolution |
+| consultation routing | Pantheon -> OpenClaw | bridge consult requests and sub-agent orchestration |
+| workflow handoff capture | OpenClaw -> Pantheon | capture raw upstream output for governed normalization |
+| normalization | Pantheon | emit canonical `StrategySpec` + `WorkflowHandoff` |
+| error governance | Pantheon | classify upstream failures into known / transport / unknown buckets |
 
-### 3.2 Runtime Object Mapping
+Boundary invariants:
 
-| Pantheon Object | OpenClaw Object | Adapter Mapping |
-|---|---|---|
-| `Persona` | Agent definition | `persona_id` → `agent_id`, `effective_capability_set` → tool/skill allowlist |
-| `CapabilitySnapshot` | Effective tool/skill set | Computed by adapter from Pantheon RBAC, then passed to `create_session` |
-| `TeachingSession` | Trainer session | `session_type: "trainer"` |
-| `ConsultRequest` | Consult/sub-agent session | Adapter creates consult group, manages message routing |
-| `WorkflowTemplate` | Workflow invocation | Adapter serializes Pantheon workflow ref + context into OpenClaw payload |
+- adapter code lives on the Pantheon side only
+- adapter may expose Pantheon-internal facade endpoints later, but those endpoints are **not** treated as native OpenClaw API
+- adapter is the only allowed place to map OpenClaw runtime objects to Pantheon domain objects
+- OpenClaw never receives authority over registry state, approval state, capital pools, runtime bindings, or LEAN deployment
 
-### 3.3 Event Telemetry Envelope
+## 6. Pantheon Adapter Facade
 
-Every event emitted by the adapter must conform to this shape:
-
-```json
-{
-  "event_type": "string (see §3.3a)",
-  "persona_id": "string",
-  "session_id": "string | null",
-  "trace_id": "string",
-  "request_id": "string | null",
-  "actor_type": "persona | operator | system",
-  "environment": "paper | canary | live",
-  "timestamp": "ISO 8601 (RFC 3339)",
-  "payload": "object (event-specific)"
-}
-```
-
-#### 3.3a Required Event types
-
-Per `OPENCLAW_RUNTIME_CONTRACT.md` §11:
-
-- `agent.created`, `agent.updated`, `agent.deactivated`
-- `session.created`, `session.terminated`, `session.degraded`, `session.quarantined`
-- `circuit_breaker.opened`, `circuit_breaker.half_open`, `circuit_breaker.closed`
-- `consult.spawned`
-- `workflow.triggered`
-- `cron.job.started`, `cron.job.failed`
-- `tool.invoked`, `tool.denied`
-- `error.unknown_upstream`
-
-### 3.4 Error Classification
-
-Per `OPENCLAW_RUNTIME_CONTRACT.md` §9:
-
-| Layer | Examples | Adapter Action |
-|---|---|---|
-| **Known typed errors** | `AGENT_NOT_FOUND`, `SESSION_NOT_FOUND`, `CAPABILITY_DENIED`, `TOOL_INVOCATION_FAILED`, etc. | Map to Pantheon error domain, retry if `retryable: true` |
-| **Transport/system errors** | `NETWORK_PARTITION`, `OOM_KILL`, `CONNECTION_REFUSED`, etc. | Exponential backoff, circuit breaker if persistent |
-| **unknown_upstream_error** | Anything not mappable | §3.4a fallback |
-
-#### 3.4a unknown_upstream_error Fallback
-
-1. **Preserve raw envelope** — raw payload, stderr/stdout, response code, context.
-2. **Return safe degraded result** — `consult_unavailable`, `preview_unavailable`, `review_assist_unavailable`, or deny-by-default.
-3. **Isolate agent runtime** — mark session `degraded`, trip circuit breaker on repeat.
-4. **Escalate as incident** — 3 consecutive unknown errors within 5 minutes → open incident.
-
----
-
-## 4. Security and Isolation Requirements
-
-| Requirement | Enforcement |
-|---|---|
-| Per-agent workspace | Adapter ensures unique `workspace_ref` per persona |
-| Per-agent auth profile | No credential sharing across persona sessions |
-| No shared agentDir | Validated at provisioning time |
-| Secret isolation | Broker secrets never exposed to OpenClaw global scope |
-| Capability filtering | Pantheon RBAC evaluated before any tool/skill resolution call |
-| Audit trail | Every session has `persona_id`, `session_id`, `trace_id`, `request_id`, `actor_type`, `environment` |
-
----
-
-## 5. Smoke-Test Overview
-
-See `smoke_test.md` for the full executable plan.
-
-Minimal proof required:
-1. Pinned upstream runtime can start (Docker)
-2. One minimal approved workflow can be invoked
-3. That workflow emits a governed handoff payload
-4. The payload normalizes into local `StrategySpec`
-5. The normalized output validates against local schema
-
----
-
-## 6. Adapter Facade API
-
-The adapter exposes these endpoints to Pantheon internal services:
+The following facade is a **future Pantheon internal surface**, derived from `OPENCLAW_RUNTIME_CONTRACT.md`. It is not claimed to be a native upstream OpenClaw endpoint set.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/control/personas/{persona_id}/sessions` | Create session for persona |
-| `POST` | `/control/sessions/{session_id}/invoke` | Invoke tool/session action |
-| `POST` | `/control/consult/spawn` | Spawn sub-agent consultation |
-| `GET` | `/control/sessions/{session_id}` | Query session status |
-| `GET` | `/control/personas/{persona_id}/capabilities` | Resolve effective capabilities |
-| `POST` | `/control/jobs` | Schedule workflow/cron job |
-| `GET` | `/control/jobs/{job_id}` | Query job status |
+| `POST` | `/control/personas/{persona_id}/sessions` | create a governed runtime session for one persona |
+| `POST` | `/control/sessions/{session_id}/invoke` | invoke one governed session action |
+| `POST` | `/control/consult/spawn` | spawn a governed consultation session |
+| `GET` | `/control/sessions/{session_id}` | read Pantheon-side session state |
+| `GET` | `/control/personas/{persona_id}/capabilities` | resolve Pantheon-filtered capabilities |
+| `POST` | `/control/jobs` | schedule a Pantheon-governed workflow or cron job |
+| `GET` | `/control/jobs/{job_id}` | read Pantheon job status |
 
----
+## 7. Smoke Baseline for BP5-OSS-001
 
-## 7. Open Questions (Deferred to Implementation)
+The smoke baseline is intentionally narrower than `BP5-OSS-002`.
 
-| Question | Decision Needed By | Owner |
-|---|---|---|
-| Exact transport (HTTP/gRPC/queue) for adapter ↔ OpenClaw communication | Before adapter implementation | Platform architect |
-| Which workflow family is the first production smoke test (research ingest, approval, or deployment) | Before adapter implementation | Platform architect |
-| OpenClaw health-check endpoint and readiness probe definition | Before deployment | Platform SRE |
-| Rate limiting and quota policy per persona/session | Before production deployment | Platform architect |
+`BP5-OSS-001` proves:
+
+1. the selected Git tag and container artifact both exist
+2. the pinned container exposes the expected CLI / gateway command surface
+3. a raw upstream-style handoff fixture can be normalized into canonical Pantheon objects with the repo's current schemas
+
+The executable entrypoint is:
+
+```bash
+bash scripts/openclaw-smoke-test.sh
+```
+
+Supporting fixture:
+
+- `integrations/openclaw/fixtures/raw_research_handoff.minimal.json`
+
+Normalization script:
+
+- `services/control-plane/specs/normalize_handoff.py`
+
+## 8. Out of Scope for BP5-OSS-001
+
+The following are explicitly deferred to `BP5-OSS-002`:
+
+- deciding the final transport between Pantheon and the OpenClaw gateway
+- bootstrapping a configured OpenClaw gateway with Pantheon-specific auth/runtime settings
+- invoking a real workflow through a live adapter path
+- proving end-to-end job execution and raw output capture from a configured runtime
+
+That separation is intentional: this task locks the upstream source and the governed seam first, so the next task can implement against a stable target instead of undocumented assumptions.
