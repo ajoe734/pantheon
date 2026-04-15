@@ -5,7 +5,7 @@
 **Reviewer**: Qwen  
 **Phase**: Blueprint Gap P1  
 **Depends On**: PLAN-002 (done)  
-**Last Updated**: 2026-04-13  
+**Last Updated**: 2026-04-15  
 
 _Drafted during Claude helper-claim; finalized by Codex after ownership moved back on 2026-04-13._
 
@@ -54,9 +54,9 @@ For production-path classification, three tiers apply:
 
 | Framework | Role in Research Plane | Integration Status | Production-Path Tier | Current Owner | Example Strategy Family | Missing Proof to Advance |
 |---|---|---|---|---|---|---|
-| **MLflow** | Primary experiment registry backend; stores run metadata, artifact references, and model lineage | `smoke-tested` | **Production Research Path** | Codex | All research families (cross-cutting) | `integration.md` and `governance.md` per canonical checklist format; follow-on backend-generalization step |
-| **DSPy** | Persona policy optimization; prompt/weight optimization for persona decision modules | `smoke-tested` | **Production Research Path** | Copilot | Persona policy optimization | `integration.md` and `governance.md` per canonical checklist format (see `integrations/oss-002/regrade_report.md`) |
-| **imitation** | Behavior cloning; supervised imitation learning from trader trajectory data | `smoke-tested` | **Production Research Path** | Copilot | Trader behavior cloning | `integration.md` and `governance.md` per canonical checklist format (see `integrations/oss-002/regrade_report.md`) |
+| **MLflow** | Primary experiment registry backend; stores run metadata, artifact references, and model lineage | `governed` | **Production Research Path** | Codex | All research families (cross-cutting) | Follow-on backend-generalization step before enabling W&B parity |
+| **DSPy** | Persona policy optimization; prompt/weight optimization for persona decision modules | `governed` | **Production Research Path** | Codex | Persona policy optimization | Keep smoke and deny-regression evidence refreshed when the pin or backend changes |
+| **imitation** | Behavior cloning; supervised imitation learning from trader trajectory data | `governed` | **Production Research Path** | Codex | Trader behavior cloning | Keep BC-only scope and smoke evidence refreshed when the pin or backend changes |
 | **OpenClaw** | Experiment orchestration / runtime coordination; upstream runtime wrapping local workflows | `adapter-started` | **Activation-Ready** | Codex | All research families (orchestration layer) | Upstream repo dependency path; `openclaw-gateway-adapter` implementation; pinned-image smoke test |
 | **Qlib** | Supervised alpha research; cross-sectional feature engineering, LightGBM/LSTM alpha signal discovery | `criteria-defined` | **Activation-Ready** | Qwen | Cross-sectional equity alpha | Version pin; data pipeline adapter; single-model smoke test (see `services/learning/qlib/ACTIVATION_CRITERIA.md`) |
 | **TRL** | Preference learning; DPO/RLHF training from governed feedback preference pairs | `criteria-defined` | **Activation-Ready** | Qwen | Persona preference alignment | ≥200 FB-002 events + ≥100 preference pairs; active imitation baseline; version pin; smoke test (see `services/learning/trl/ACTIVATION_CRITERIA.md`) |
@@ -83,16 +83,16 @@ Research Intake
   └─ RS-003: Replication gate (done)
        │
        ├─ Persona Policy Optimization
-       │     └─ DSPy (smoke-tested) ──→ MLflow registry
+       │     └─ DSPy (governed) ──→ MLflow registry
        │
        ├─ Behavior Cloning
-       │     └─ imitation (smoke-tested) ──→ MLflow registry
+       │     └─ imitation (governed) ──→ MLflow registry
        │
        └─ Experiment Registry
-             └─ MLflow (smoke-tested, primary backend)
+             └─ MLflow (governed, primary backend)
 ```
 
-All three smoke-tested backends (DSPy, imitation, MLflow) feed into the canonical artifact/registry path via:
+All three governed backends (DSPy, imitation, MLflow) feed into the canonical artifact/registry path via:
 
 - `artifact_state`: `draft` → `candidate` → `approved`
 - `deployment_summary.current_stage`: `none` → `paper` → `canary` → `live`
@@ -142,12 +142,12 @@ For production-path backends (DSPy, imitation, MLflow):
 | Local adapter defined | ✓ | ✓ | ✓ |
 | Governed I/O boundaries | ✓ | ✓ | ✓ |
 | Smoke test passes | ✓ | ✓ | ✓ |
-| `integration.md` artifact | Pending | Pending | Pending |
-| `governance.md` artifact | Pending | Pending | Pending |
+| `integration.md` artifact | ✓ | ✓ | ✓ |
+| `governance.md` artifact | ✓ | ✓ | ✓ |
 | `artifact_state` vocabulary | ✓ | ✓ | ✓ |
 | `deployment_summary.current_stage` vocabulary | ✓ | ✓ | ✓ |
 
-**Finding**: All three production-path backends are smoke-tested and use canonical registry vocabulary. The outstanding gap is the formal `integration.md` and `governance.md` checklist artifacts, which are required by `OSS_INTEGRATION_CHECKLIST.md` but not yet written.
+**Finding**: All three production-path backends are now governed and use canonical registry vocabulary. Their checklist evidence is anchored by `integrations/dspy/`, `integrations/imitation/`, and `integrations/mlflow/`, each with `integration.md`, `governance.md`, and executable smoke-test references.
 
 For activation-ready backends (Qlib, TRL, RL stack):
 
@@ -164,13 +164,11 @@ For activation-ready backends (Qlib, TRL, RL stack):
 
 ### Inconsistency Risks
 
-1. **Missing checklist artifacts for smoke-tested backends**: DSPy, imitation, and MLflow lack `integration.md` and `governance.md`. Until these are written, the integration evidence is incomplete per `OSS_INTEGRATION_CHECKLIST.md` §Required Evidence Per Component.
+1. **vectorbt / statsmodels / QuantLib have no tasks**: These backends are named in the complete Blueprint but have no tasks materialized. They represent a planning gap, not a delivery gap — they were not in scope for the current sprint but need task materialization before activation-ready status can be claimed.
 
-2. **vectorbt / statsmodels / QuantLib have no tasks**: These backends are named in the complete Blueprint but have no tasks materialized. They represent a planning gap, not a delivery gap — they were not in scope for the current sprint but need task materialization before activation-ready status can be claimed.
+2. **OpenClaw adapter is in progress but not smoke-tested end-to-end**: OpenClaw affects orchestration semantics for all backends. Its baseline is pinned, but the real gateway adapter and full workflow execution path still need closure.
 
-3. **OpenClaw adapter is in progress but not smoke-tested**: OpenClaw affects orchestration semantics for all backends. Its `adapter-started` status means experiment orchestration across backends is not yet provably consistent.
-
-4. **Ray Tune version pinned but no governed adapter**: `DockerfileLeanFoundationARM` already pins `ray[tune]`, but no adapter exists. This creates a false sense of integration readiness.
+3. **Ray Tune version pinned but no governed adapter**: `DockerfileLeanFoundationARM` already pins `ray[tune]`, but no adapter exists. This creates a false sense of integration readiness.
 
 ---
 
@@ -178,7 +176,7 @@ For activation-ready backends (Qlib, TRL, RL stack):
 
 ### Current Status
 
-Research Plane has three smoke-tested backends on the production path (DSPy, imitation, MLflow), plus five activation-ready backends with explicit entry gates (OpenClaw, Qlib, TRL, FinRL/RLlib/Tune, W&B). Three blueprint-required backends (vectorbt, statsmodels, QuantLib) have no integration work started.
+Research Plane has three governed backends on the production path (DSPy, imitation, MLflow), plus five activation-ready backends with explicit entry gates (OpenClaw, Qlib, TRL, FinRL/RLlib/Tune, W&B). Three blueprint-required backends (vectorbt, statsmodels, QuantLib) have no integration work started.
 
 ### Existing Evidence
 
@@ -190,10 +188,12 @@ Research Plane has three smoke-tested backends on the production path (DSPy, imi
 - `services/registry/experiments/WANDB_ACTIVATION.md`: W&B activation criteria (OSS-003)
 - `integrations/openclaw/`: OpenClaw adapter work in progress
 - `integrations/oss-002/regrade_report.md`: DSPy/imitation/MLflow regrade evidence
-- `services/research/dspy/`: DSPy research integration
-- `services/research/imitation/`: imitation research integration
-- `services/research/mlflow/`: MLflow research integration
-- `services/research/qlib/`: Qlib research integration scaffold
+- `integrations/dspy/`: DSPy canonical evidence pack
+- `integrations/imitation/`: imitation canonical evidence pack
+- `integrations/mlflow/`: MLflow canonical evidence pack
+- `services/learning/dspy/`: DSPy runnable adapter implementation
+- `services/learning/imitation/`: imitation runnable adapter implementation
+- `services/registry/experiments/`: MLflow runnable adapter implementation
 
 ### Why It Is a Real Gap
 
@@ -215,7 +215,6 @@ The gap is real but scoped: the platform has a valid production research path fo
 
 | Gap Item | Action Required | Target |
 |---|---|---|
-| Missing `integration.md` / `governance.md` for DSPy, imitation, MLflow | Write per-component docs | Near-term |
 | OpenClaw gateway adapter + smoke test | Implement and test | Near-term |
 | Qlib version pin + data adapter + smoke test | Activate per OSS-003 criteria | Mid-term |
 | TRL version pin + pair-construction pipeline + smoke test | Activate after imitation baseline | Mid-term |
@@ -232,7 +231,7 @@ The gap is real but scoped: the platform has a valid production research path fo
 - [x] Cross-backend consistency assessment
 - [x] Activation order queue
 - [x] GAP-02 response in blueprint format
-- [ ] `integration.md` + `governance.md` for DSPy, imitation, MLflow (follow-on work)
+- [x] `integration.md` + `governance.md` for DSPy, imitation, MLflow
 - [ ] Qlib smoke test (activation-gated on OSS-003 entry criteria)
 - [ ] vectorbt / statsmodels / QuantLib task materialization
 
@@ -243,7 +242,7 @@ Follow-on activation work: P1 continuation and P2 wave.
 
 ### Production Sign-off Impact
 
-**Medium-high.** The production research path for persona optimization and behavior cloning is smoke-tested. However, the supervised alpha path (Qlib) and the quantitative research tool set (vectorbt, statsmodels, QuantLib) are not yet available, which limits the Research Plane's ability to cover all complete-blueprint research problem types before production sign-off.
+**Medium-high.** The production research path for persona optimization and behavior cloning is now governed. However, the supervised alpha path (Qlib) and the quantitative research tool set (vectorbt, statsmodels, QuantLib) are not yet available, which limits the Research Plane's ability to cover all complete-blueprint research problem types before production sign-off.
 
 ---
 
