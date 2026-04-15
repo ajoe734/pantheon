@@ -1,11 +1,11 @@
-"""Protected Internal API for APP-002 Incident Control Path
+"""Protected Internal API for APP-002 Incident Control Path.
 
 Implements endpoints for pause, rollback, kill-switch, and deployment approval
-with real execution through the runtime-manager fast path.  Authentication and
+with real execution through the runtime-manager fast path. Authentication and
 MFA are lightweight stubs suitable for integration and unit testing.
 
 Incident control actions (pause / rollback / kill-switch) are executed through
-the authoritative KillSwitchController and RuntimeBinding state machine, with
+the authoritative KillSwitchController and runtime-manager service path, with
 full audit trail persisted to the command state store.
 """
 from flask import Flask, request, jsonify
@@ -27,7 +27,7 @@ _KILL_SWITCH_MODULE_PATH = os.getenv(
     "PANTHEON_KILL_SWITCH_MODULE",
     os.path.join(
         os.path.dirname(__file__),
-        "..", "..", "execution", "runtime-manager", "kill_switch_controller.py",
+        "..", "execution", "runtime-manager", "kill_switch_controller.py",
     ),
 )
 
@@ -75,35 +75,47 @@ def _get_controller():
 
 
 # --------------------------------------------------------------------------- #
-# RuntimeBinding store integration
+# runtime-manager service path integration
 # --------------------------------------------------------------------------- #
 
-_RUNTIME_BINDING_MODULE_PATH = os.getenv(
-    "PANTHEON_RUNTIME_BINDING_MODULE",
+_RUNTIME_MANAGER_CLIENT_MODULE_PATH = os.getenv(
+    "PANTHEON_RUNTIME_MANAGER_CLIENT_MODULE",
     os.path.join(
         os.path.dirname(__file__),
-        "..", "..", "execution", "runtime-manager", "runtime_binding.py",
+        "..", "runtime-manager", "runtime_manager_client.py",
     ),
 )
 
-_RuntimeBindingStore = None
-_RuntimeBindingStatus = None
-_RollbackActionType = None
+_RuntimeManagerClient = None
+_RuntimeManagerClientError = None
+_runtime_manager_client = None
 
 
-def _ensure_runtime_binding_imported():
-    global _RuntimeBindingStore, _RuntimeBindingStatus, _RollbackActionType
-    if _RuntimeBindingStore is not None:
+def _ensure_runtime_manager_client_imported():
+    global _RuntimeManagerClient, _RuntimeManagerClientError
+    if _RuntimeManagerClient is not None:
         return
     import importlib.util
-    spec = importlib.util.spec_from_file_location("runtime_binding", _RUNTIME_BINDING_MODULE_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "pantheon_runtime_manager_client",
+        _RUNTIME_MANAGER_CLIENT_MODULE_PATH,
+    )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"Cannot load runtime_binding from {_RUNTIME_BINDING_MODULE_PATH!r}")
+        raise RuntimeError(
+            f"Cannot load runtime_manager_client from {_RUNTIME_MANAGER_CLIENT_MODULE_PATH!r}"
+        )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    _RuntimeBindingStore = mod.RuntimeBindingStore
-    _RuntimeBindingStatus = mod.RuntimeBindingStatus
-    _RollbackActionType = mod.RollbackActionType
+    _RuntimeManagerClient = mod.RuntimeManagerClient
+    _RuntimeManagerClientError = mod.RuntimeManagerClientError
+
+
+def _get_runtime_manager_client():
+    global _runtime_manager_client
+    if _runtime_manager_client is None:
+        _ensure_runtime_manager_client_imported()
+        _runtime_manager_client = _RuntimeManagerClient()
+    return _runtime_manager_client
 
 
 # --------------------------------------------------------------------------- #
@@ -239,22 +251,18 @@ def pause_runtime(binding_id):
     duration = body.get("duration_seconds", body.get("duration", 3600))
     reason = body.get("reason", "")
 
-    _ensure_kill_switch_imported()
-    _ensure_runtime_binding_imported()
+    client = _get_runtime_manager_client()
 
     command_id = f"cmd-runtime-{pause_action}-{binding_id}-{int(datetime.now(timezone.utc).timestamp())}"
 
     try:
-        store = _RuntimeBindingStore()
-        binding = store.get(binding_id)
+        binding = client.get(binding_id)
 
         if binding is None:
-            # Degraded-mode fallback: when the RuntimeBindingStore is unreachable
-            # or has no pre-seeded bindings, we still execute the command with a
-            # full audit trail.  The operator is warned via the BFF degraded
-            # metadata that the binding status could not be verified before the
-            # action was taken.  §BFF-HA §3.2 — control actions must never be
-            # silently dropped; they must either execute or fail with guidance.
+            # Degraded-mode fallback: the command path itself remains the
+            # runtime-manager, but the target binding could not be verified.
+            # We preserve the audit trail and instruct the operator to confirm
+            # state through the secondary control path before proceeding.
             now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             if pause_action == "pause":
                 status_before = "unverifiable"
@@ -281,8 +289,8 @@ def pause_runtime(binding_id):
                     "audit_id": audit_id,
                     "degraded_mode": True,
                     "degraded_note": (
-                        "RuntimeBindingStore did not have a record for this binding. "
-                        "Command executed without verified target state. "
+                        "runtime-manager did not have a record for this binding. "
+                        "Command recorded without verified target state. "
                         "Confirm binding status via secondary control path before proceeding."
                     ),
                 },
@@ -311,20 +319,20 @@ def pause_runtime(binding_id):
                     "reason": reason,
                     "degraded_mode": True,
                     "degraded_note": (
-                        "Binding not found in RuntimeBindingStore. "
+                        "Binding not found via runtime-manager. "
                         "Verify target state via secondary control path."
                     ),
                 }),
                 202,
             )
 
-        status_before = binding.status.value if hasattr(binding.status, 'value') else binding.status
+        status_before = binding.get("status", "unknown")
 
         if pause_action == "pause":
             # Transition: active -> pending_pause -> paused
             if status_before in ("active",):
-                store.transition_status(binding_id, "pending_pause")
-                store.transition_status(binding_id, "paused")
+                client.transition(binding_id, "pending_pause")
+                client.transition(binding_id, "paused")
                 status_after = "paused"
             elif status_before in ("pending_pause", "paused"):
                 status_after = status_before  # idempotent
@@ -333,7 +341,7 @@ def pause_runtime(binding_id):
         else:
             # Resume: paused -> active
             if status_before == "paused":
-                store.transition_status(binding_id, "active")
+                client.transition(binding_id, "active")
                 status_after = "active"
             elif status_before == "active":
                 status_after = "active"  # idempotent
@@ -386,6 +394,32 @@ def pause_runtime(binding_id):
             }),
             202,
         )
+    except _RuntimeManagerClientError as exc:
+        status_code = exc.status_code or (
+            503 if exc.error_code == "RUNTIME_MANAGER_UNAVAILABLE" else 409
+        )
+        record = {
+            "command_id": command_id,
+            "type": "PauseRuntime",
+            "target": {"type": "RuntimeBinding", "id": binding_id},
+            "status": "failed",
+            "submitted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "result": None,
+            "error": {
+                "code": exc.error_code or "RUNTIME_MANAGER_ERROR",
+                "message": str(exc),
+            },
+        }
+        _record_command(command_id, record)
+        return (
+            jsonify(
+                {
+                    "error": record["error"],
+                    "command_id": command_id,
+                }
+            ),
+            status_code,
+        )
     except Exception as exc:
         record = {
             "command_id": command_id,
@@ -431,18 +465,16 @@ def execute_rollback():
     rollback_to = body.get("rollback_to_version", "previous")
     action_type = body.get("rollback_action_type", "replace")
 
-    _ensure_kill_switch_imported()
-    _ensure_runtime_binding_imported()
+    client = _get_runtime_manager_client()
 
     command_id = f"cmd-rb-{target_id}-{int(datetime.now(timezone.utc).timestamp())}"
     rollback_id = f"rb-{target_id}-{uuid.uuid4().hex[:8]}"
 
     try:
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        store = _RuntimeBindingStore()
 
         # Try to find the target binding
-        binding = store.get(target_id) if target_type == "runtime" else None
+        binding = client.get(target_id) if target_type == "runtime" else None
 
         if binding is None:
             # Degraded-mode fallback: same audit discipline as the kill-switch
@@ -466,8 +498,8 @@ def execute_rollback():
                     "audit_id": f"audit-{rollback_id}",
                     "degraded_mode": True,
                     "degraded_note": (
-                        "RuntimeBindingStore did not have a record for this binding. "
-                        "Rollback executed without verified target state. "
+                        "runtime-manager did not have a record for this binding. "
+                        "Rollback recorded without verified target state. "
                         "Confirm binding status via secondary control path before proceeding."
                     ),
                 },
@@ -501,23 +533,23 @@ def execute_rollback():
                 202,
             )
 
-        status_before = binding.status.value if hasattr(binding.status, 'value') else binding.status
+        status_before = binding.get("status", "unknown")
 
         # Execute rollback action matrix
         if action_type == "replace":
             # Hot-swap: retire old binding, activate new
-            store.transition_status(target_id, "retired")
+            client.retire(target_id, retired_at=now)
             status_after = "retired"
         elif action_type == "pause_then_replace":
             # Drain then swap
             if status_before == "active":
-                store.transition_status(target_id, "pending_pause")
-                store.transition_status(target_id, "paused")
-            store.transition_status(target_id, "retired")
+                client.transition(target_id, "pending_pause")
+                client.transition(target_id, "paused")
+            client.retire(target_id, retired_at=now)
             status_after = "retired"
         elif action_type == "liquidate_then_replace":
             # Flatten positions then swap
-            store.transition_status(target_id, "retired")
+            client.retire(target_id, retired_at=now)
             status_after = "retired"
         else:
             raise RuntimeError(f"Unknown rollback action type: {action_type}")
@@ -569,6 +601,32 @@ def execute_rollback():
                 "tracking_url": f"/api/internal/v1/commands/{command_id}",
             }),
             202,
+        )
+    except _RuntimeManagerClientError as exc:
+        status_code = exc.status_code or (
+            503 if exc.error_code == "RUNTIME_MANAGER_UNAVAILABLE" else 409
+        )
+        record = {
+            "command_id": command_id,
+            "type": "ExecuteRollback",
+            "target": {"type": target_type.title(), "id": target_id},
+            "status": "failed",
+            "submitted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "result": None,
+            "error": {
+                "code": exc.error_code or "RUNTIME_MANAGER_ERROR",
+                "message": str(exc),
+            },
+        }
+        _record_command(command_id, record)
+        return (
+            jsonify(
+                {
+                    "error": record["error"],
+                    "command_id": command_id,
+                }
+            ),
+            status_code,
         )
     except Exception as exc:
         record = {

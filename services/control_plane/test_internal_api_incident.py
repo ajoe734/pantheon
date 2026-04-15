@@ -1,8 +1,9 @@
 """Direct integration test for incident control-path execution.
 
 Tests the KillSwitchController and RuntimeBinding integration without
-requiring Flask.  Validates that the internal API's execution logic
-correctly dispatches through the real controllers.
+requiring Flask for the low-level state machine checks, then verifies that the
+protected internal API routes runtime mutations through the runtime-manager
+service path instead of touching RuntimeBindingStore directly.
 """
 import json
 import os
@@ -13,6 +14,9 @@ import unittest
 # Ensure runtime-manager modules are importable
 RM_DIR = os.path.join(os.path.dirname(__file__), "..", "execution", "runtime-manager")
 sys.path.insert(0, RM_DIR)
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 from kill_switch_controller import (
     KillSwitchController,
@@ -29,6 +33,49 @@ from runtime_binding import (
     RollbackActionType,
     RuntimeBinding,
 )
+
+import services.control_plane.internal_api as internal_api
+
+
+class FakeRuntimeManagerClient:
+    """Small in-memory runtime-manager facade for boundary tests."""
+
+    def __init__(self):
+        self.bindings = {}
+        self.calls = []
+
+    def seed(self, binding_id: str, *, status: str = RuntimeBindingStatus.ACTIVE.value):
+        self.bindings[binding_id] = {
+            "binding_id": binding_id,
+            "status": status,
+            "capital_pool_id": "pool-test",
+            "artifact_id": "artifact-v1",
+            "artifact_version": "v1.0.0",
+            "deployment_mode": "live",
+            "plan_id": f"plan-{binding_id}",
+            "persona_capital_binding_id": f"pcb-{binding_id}",
+        }
+
+    def get(self, binding_id: str):
+        self.calls.append(("get", binding_id))
+        binding = self.bindings.get(binding_id)
+        return dict(binding) if binding is not None else None
+
+    def transition(self, binding_id: str, new_status: str):
+        self.calls.append(("transition", binding_id, new_status))
+        binding = dict(self.bindings[binding_id])
+        binding["status"] = new_status
+        self.bindings[binding_id] = binding
+        return dict(binding)
+
+    def retire(self, binding_id: str, *, retired_at: str | None = None):
+        self.calls.append(("retire", binding_id, retired_at))
+        binding = dict(self.bindings[binding_id])
+        binding["status"] = RuntimeBindingStatus.RETIRED.value
+        if retired_at:
+            binding["retired_at"] = retired_at
+        self.bindings[binding_id] = binding
+        return dict(binding)
 
 
 class TestKillSwitchDirectDispatch(unittest.TestCase):
@@ -324,6 +371,93 @@ class TestIncidentControlPathIntegration(unittest.TestCase):
         self.assertEqual(cmd["status"], "executed")
         self.assertEqual(cmd["result"]["status_after"], "retired")
         self.assertTrue(cmd["result"]["position_lineage_updated"])
+
+
+class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
+    """Protected internal API must route binding writes through runtime-manager."""
+
+    def setUp(self):
+        self.fake_client = FakeRuntimeManagerClient()
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.prev_client = internal_api._runtime_manager_client
+        self.prev_command_state_file = internal_api._COMMAND_STATE_FILE
+        internal_api._runtime_manager_client = self.fake_client
+        internal_api._COMMAND_STATE_FILE = os.path.join(self.tmpdir.name, "commands.json")
+        self.client = internal_api.app.test_client()
+
+    def tearDown(self):
+        internal_api._runtime_manager_client = self.prev_client
+        internal_api._COMMAND_STATE_FILE = self.prev_command_state_file
+        self.tmpdir.cleanup()
+
+    @staticmethod
+    def _headers():
+        return {
+            "Authorization": "Bearer internal-test-token",
+            "Content-Type": "application/json",
+        }
+
+    def test_pause_route_uses_runtime_manager_client(self):
+        binding_id = "binding-pause-001"
+        self.fake_client.seed(binding_id, status=RuntimeBindingStatus.ACTIVE.value)
+
+        response = self.client.post(
+            f"/api/internal/v1/runtimes/{binding_id}/pause",
+            headers=self._headers(),
+            json={"pause_action": "pause", "duration_seconds": 120, "reason": "boundary-test"},
+        )
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(payload["status_after"], RuntimeBindingStatus.PAUSED.value)
+        self.assertEqual(
+            self.fake_client.calls,
+            [
+                ("get", binding_id),
+                ("transition", binding_id, RuntimeBindingStatus.PENDING_PAUSE.value),
+                ("transition", binding_id, RuntimeBindingStatus.PAUSED.value),
+            ],
+        )
+
+    def test_pause_route_degraded_mode_when_binding_unverifiable(self):
+        response = self.client.post(
+            "/api/internal/v1/runtimes/missing-binding/pause",
+            headers=self._headers(),
+            json={"pause_action": "pause", "duration_seconds": 30},
+        )
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(payload["degraded_mode"])
+        self.assertEqual(self.fake_client.calls, [("get", "missing-binding")])
+
+    def test_rollback_route_uses_runtime_manager_client(self):
+        binding_id = "binding-rollback-001"
+        self.fake_client.seed(binding_id, status=RuntimeBindingStatus.ACTIVE.value)
+
+        response = self.client.post(
+            "/api/internal/v1/rollbacks/execute",
+            headers=self._headers(),
+            json={
+                "rollback_target_type": "runtime",
+                "target_id": binding_id,
+                "rollback_to_version": "fallback-v2",
+                "rollback_action_type": RollbackActionType.PAUSE_THEN_REPLACE.value,
+            },
+        )
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(payload["status_after"], RuntimeBindingStatus.RETIRED.value)
+        self.assertEqual(self.fake_client.calls[0], ("get", binding_id))
+        self.assertEqual(
+            self.fake_client.calls[1:3],
+            [
+                ("transition", binding_id, RuntimeBindingStatus.PENDING_PAUSE.value),
+                ("transition", binding_id, RuntimeBindingStatus.PAUSED.value),
+            ],
+        )
+        self.assertEqual(self.fake_client.calls[3][0:2], ("retire", binding_id))
 
 
 if __name__ == "__main__":
