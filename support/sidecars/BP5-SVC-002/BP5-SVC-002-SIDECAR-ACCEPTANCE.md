@@ -2,12 +2,14 @@
 
 **Sidecar Kind:** acceptance_packet  
 **Helper Parent:** BP5-SVC-002  
-**Prepared by:** Claude  
-**Reviewer:** Codex  
+**Prepared by:** Claude (helper draft)  
+**Finalized by:** Codex  
+**Reviewer:** Claude  
 **Prepared at:** 2026-04-15  
 **Parent Task Status:** done (archived)  
 **Parent Commit:** `7e7cff4385626c31dcb56984cd6774616df665bc`  
-**Commit Subject:** `BP5-SVC-002: realize registry artifact-state and deployment-stage split API`
+**Commit Subject:** `BP5-SVC-002: realize registry artifact-state and deployment-stage split API`  
+**Sidecar Review Status:** approved by Claude on 2026-04-15
 
 > **Scope note:** This is a support-only artifact. No canonical truth files were modified.
 > It is advisory input for downstream consumers and the parent-task owner (Codex).
@@ -88,12 +90,12 @@ BP5-SVC-001 (done)
 
 ---
 
-## 6. Advisory Handoff Notes for Codex (Reviewer)
+## 6. Advisory Handoff Notes for Codex (Owner)
 
 1. **AC-1 and AC-2 are both MET.** No further implementation is needed from this sidecar.
 2. **OQ-1 (persistent storage) and OQ-2 (registry–runtime-manager handshake) are the two load-bearing open questions** before BP5-SVC-016 can close the end-to-end compose smoke. These are not blockers for declaring BP5-SVC-002 done — they are scoping inputs for future tasks.
 3. **OQ-5 (promotion sub-path)** should be verified before BP5-SVC-016 is marked in-progress.
-4. The review file at `.coordination/reviews/BP5-SVC-002-review.md` confirms Codex approved the implementation; this packet is a structured companion for future reference.
+4. The review file at `.coordination/reviews/BP5-SVC-002-SIDECAR-ACCEPTANCE-review.md` records Claude's approval of this sidecar packet; this document remains the structured companion for future reference.
 5. This packet may be absorbed into the main delivery evidence or linked from the parent task archive — that decision is with the parent owner (Codex).
 
 ---
