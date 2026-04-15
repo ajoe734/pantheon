@@ -209,6 +209,7 @@ class ApprovalDecision:
         self,
         outcome: DecisionOutcome | str,
         rationale: str,
+        actor_role: Optional[ActorRole | str] = None,
         actor_id: Optional[str] = None,
         conditions: Optional[List[str]] = None,
         evidence_refs: Optional[List[EvidenceRef]] = None,
@@ -230,6 +231,8 @@ class ApprovalDecision:
         self.decision_state = DecisionState.DECIDED
         self.rationale = rationale
         self.decided_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if actor_role:
+            self.actor_role = actor_role
         if actor_id:
             self.actor_id = actor_id
 
