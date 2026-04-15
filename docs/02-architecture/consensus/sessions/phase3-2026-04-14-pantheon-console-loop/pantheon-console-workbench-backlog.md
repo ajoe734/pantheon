@@ -568,39 +568,114 @@ Recommended wave:
 
 ## Evolution Workbench
 
-Objective: expose post-incident, evolution review, lineage, inspiration, and mutation review as one coherent workbench.
+Objective: expose post-incident review, evolution decision review, lineage tracing, inspiration graph, and mutation review as one coherent workbench backed by canonical BFF surfaces and explicit execution authority boundaries.
 
 Screens and modules:
 
-- `Post-Incident Review`
-- `Evolution Center`
-- `Lineage`
-- `Inspiration Graph`
-- `Mutation review`
+- `EW-01 Post-Incident Review` (cross-listed with `OC-08`; primary definition lives in Operator Console)
+- `EW-02 Evolution Center`
+- `EW-03 Lineage View`
+- `EW-04 Inspiration Graph`
+- `EW-05 Mutation Review`
 
 Existing Pantheon support:
 
-- post-incident and evolution sidecars
-- lineage and telemetry read surfaces
+- `PKT-003 Post-Incident and Evolution packet family` — three screens are packet-ready: Post-Incident Review Console, Evolution Center, and Lineage View; two screens (Inspiration Graph and Mutation Review) are explicitly blocked with gap requirements
+- `APP-002-W3-POSTINCIDENT-EVOLUTION sidecar` — the source sidecar that PKT-003 upgrades into canonical packet families; defines composed views, degraded-panel gating, and W3-inherited read surface caveats
+- `GET /api/v1/operator/post-incident-review/{incident_id}` — composed post-incident view with postmortem refs and evolution evidence summary
+- `GET /api/v1/evolution-decisions`, `GET /api/v1/evolution-decisions/{decision_id}`, `GET /api/v1/freeze-orders`, `GET /api/v1/rollbacks` — the four EV read surfaces that back Evolution Center
+- `GET /api/v1/lineage`, `GET /api/v1/lineage/edges/{edge_id}`, `GET /api/v1/lineage/graph` — the three LN read surfaces that back Lineage View
+- `PKT-005 Degradation Banner and SSE Substrate` — cross-cutting substrates inherited by all Evolution Workbench screens; SSE subscription is optional for read-only surfaces but banner inheritance is required
 
 Missing canonical screen specs:
 
-- inspiration graph
-- mutation review
-- final Evolution Workbench IA
+- `EW-04 Inspiration Graph` — blocked on a dedicated BFF inspiration surface (`GET /api/v1/lineage/inspiration/{artifact_id}`); screen spec, BFF contract, and example payload do not yet exist
+- `EW-05 Mutation Review` — blocked on EVO-004 execution boundary settlement plus a dedicated BFF mutation review route; all four EVO-004 action paths (freeze, rollback, retrain, redeploy) must be explicitly settled before any mutation surface can be packetized
+- final Evolution Workbench IA shell that composes EW-01 through EW-05 into a unified workbench navigation model
 
 Lovable readiness:
 
-- partial
+- partial — `EW-01 Post-Incident Review Console`, `EW-02 Evolution Center`, and `EW-03 Lineage View` have contract-ready packets and Lovable UI tasks published through `PKT-003`; `EW-04` and `EW-05` are not ready pending BFF surface work and EVO-004 boundary settlement
 
-Backend dependencies:
+Backend dependencies and packetization prerequisites per module:
 
-- final mutation and execute boundary
-- lineage or inspiration graph shaping for front-end packetization
+### EW-01 Post-Incident Review
+
+- backend support: `GET /api/v1/incidents?status=resolved`, `GET /api/v1/operator/post-incident-review/{incident_id}`, `GET /api/v1/postmortems` — all live; composed view includes postmortem refs and evolution evidence summary
+- packetization status: complete for the current packet via `PKT-003`; screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task are already published; known W3 caveats (`time_range` filter partial, `root_type` no-op) are carried forward
+- live-state dependency: `meta.surfaces.*` degraded-panel gating is required; Lovable must pass `meta.staleness` and `meta.surfaces` into the shared degradation banner rather than deriving panel health locally
+
+### EW-02 Evolution Center
+
+- backend support: `GET /api/v1/evolution-decisions` (EV-01), `GET /api/v1/evolution-decisions/{decision_id}` (EV-02), `GET /api/v1/freeze-orders` (EV-03), `GET /api/v1/rollbacks` (EV-04) — all four EV surfaces are implemented; read-only views are non-blocking despite the execution boundary gap
+- packetization status: complete for the current packet via `PKT-003`; ready for Lovable; published screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task exist
+- live-state dependency: `time_range` filter is ignored on EV-04 (`GET /api/v1/rollbacks`) in v1; document as W3 inherited caveat in handoff copy; SSE subscription is optional for Evolution Center read-only surfaces
+
+### EW-03 Lineage View
+
+- backend support: `GET /api/v1/lineage` (LN-01), `GET /api/v1/lineage/edges/{edge_id}` (LN-02), `GET /api/v1/lineage/graph` (LN-03) — all three LN surfaces are implemented
+- packetization status: complete for the current packet via `PKT-003`; ready with the LN-03 caveat that `root_type` is a no-op in v1 and the graph renders by `root_id` only; published screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task exist
+- live-state dependency: LN-03 `root_type` filtering requires registry metadata not yet in v1; document this limitation in the Lineage View spec and Lovable handoff copy; do not expose `root_type` as a working filter until the registry metadata prerequisite lands
+
+### EW-04 Inspiration Graph
+
+- backend gap: no inspiration surface exists in current BFF; `GET /api/v1/lineage/inspiration/{artifact_id}` is required but not yet implemented; the response must be BFF-composed with `artifact_id`, `inspiration_edges[]` (each carrying `source_artifact_id`, `relationship_type`, `influence_weight`), `meta.snapshot_at`, and `meta.surfaces.inspiration`; the UI must not construct an inspiration graph from raw lineage edges client-side
+- packetization prerequisite: the BFF inspiration surface must be implemented and its field shape locked before a screen spec or example payload can be created; depends on LN-03 lineage graph primitives being stable and the lineage `root_type` registry prerequisite being resolved so that creative lineage edges are addressable
+- live-state dependency: `meta.surfaces.inspiration` staleness must be reflected in the degradation banner once the BFF route exists; the banner must not be sourced from client-side graph traversal
+
+### EW-05 Mutation Review
+
+- backend gap: no mutation review surface or execute boundary exists; `GET /api/v1/operator/mutation-review/{decision_id}` and `POST /api/v1/operator/commands` extended with `ApproveMutation` and `RejectMutation` commands are required but not yet implemented; the EVO-004 execution boundary decision (covering freeze, rollback, retrain, and redeploy action paths) must be recorded as an L1 policy update before this packet is opened
+- packetization prerequisite: EVO-004 must explicitly settle all four action paths — **freeze** (who may issue a freeze order and under what conditions), **rollback** (what constitutes a safe rollback target and who can authorize it), **retrain** (whether retrain is an operator-triggered action or an autonomous evolution step), and **redeploy** (how redeployment after a retrain or rollback is gated and which approval chain applies); only after EVO-004 is settled can the composed mutation review shape (`evolution_decision`, `proposed_changes`, `risk_assessment`, `required_approvals`, `allowedActions.canApproveMutation`, `allowedActions.canRejectMutation`, `meta.surfaces`) be locked
+- live-state dependency: `allowedActions.canApproveMutation` and `allowedActions.canRejectMutation` must be backend-shaped authority signals consistent with the EVO-004 policy; the mutation review CTA must never be visible unless both signals are present and truthy; `meta.surfaces` degraded state must suppress the approval CTA entirely if the mutation evidence surface is unavailable
+
+Canonical module inventory:
+
+| Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
+|---|---|---|---|---|---|---|
+| `EW-01 Post-Incident Review` | resolved-incident index, composed post-incident review, postmortem references, and evolution evidence summary; cross-listed with `OC-08` in Operator Console | `PKT-003` ready packet; `GET /api/v1/incidents?status=resolved`; `GET /api/v1/operator/post-incident-review/{incident_id}`; `GET /api/v1/postmortems`; W3 sidecar composed view and degraded-panel gating rules | none for the current packet; carry forward TL/LN caveat wording and reviewer-role expectations from the W3 packet family | ready | none for the current packet beyond inherited W3 caveats (`time_range` filters partial, `root_type` no-op) already documented in `PKT-003`; `meta.surfaces.*` banner inheritance required | Wave 1 baseline — already packetized by `PKT-003` |
+| `EW-02 Evolution Center` | evolution decision list and detail, freeze order index, rollback history, and read-only operator review surface | `PKT-003` ready packet; `GET /api/v1/evolution-decisions`; `GET /api/v1/evolution-decisions/{decision_id}`; `GET /api/v1/freeze-orders`; `GET /api/v1/rollbacks`; all four EV read surfaces implemented | none for the current packet; execution boundary gap is non-blocking for the read-only view; carry forward EV-04 `time_range` caveat in handoff copy | ready | none for the current read-only packet; mutation and execution actions are explicitly deferred to `EW-05 Mutation Review` and EVO-004 settlement | Wave 2 — first |
+| `EW-03 Lineage View` | lineage edge list, edge detail, and lineage graph for root artifact or decision tracing | `PKT-003` ready packet; `GET /api/v1/lineage` (LN-01); `GET /api/v1/lineage/edges/{edge_id}` (LN-02); `GET /api/v1/lineage/graph` (LN-03); W3 sidecar LN surface definitions | none for the current packet; document LN-03 `root_type` no-op caveat explicitly in screen spec and Lovable handoff copy | ready (with caveat) | none for the current packet; `LN-03 root_type` type-based filtering requires registry metadata not in v1; do not expose as a working filter | Wave 2 — second |
+| `EW-04 Inspiration Graph` | creative lineage graph for a given artifact, showing related artifacts, creative inspiration edges, strategy tags, and influence-weight display | no inspiration surface in current BFF; lineage graph primitives exist via LN-01 to LN-03 but must not be used client-side to construct inspiration graphs | full screen packet: inspiration edge display, influence-weight visualization, strategy-tag rail, `meta.surfaces.inspiration` staleness handling | not ready | `GET /api/v1/lineage/inspiration/{artifact_id}`; BFF-composed inspiration graph with `inspiration_edges[]` shape; `meta.snapshot_at` and `meta.surfaces.inspiration` fields; depends on LN-03 lineage primitives being stable | Wave 2 — third (after BFF inspiration route is implemented) |
+| `EW-05 Mutation Review` | composed mutation review screen with evolution decision context, proposed changes, risk assessment, required approvals, and backend-shaped approve/reject CTA | no mutation review surface or execute boundary exists; EV read routes and `OC-08` post-incident context provide evidence inputs but not a mutation authority surface | full screen packet: mutation review layout, risk assessment display, approval and rejection CTA copy, `allowedActions` authority check, degraded-state handling when mutation evidence surface is unavailable | not ready | EVO-004 execution boundary settlement (freeze, rollback, retrain, redeploy); `GET /api/v1/operator/mutation-review/{decision_id}`; `POST /api/v1/operator/commands` extended with `ApproveMutation` and `RejectMutation`; `allowedActions.canApproveMutation` and `allowedActions.canRejectMutation` authority signals | Wave 3 — first (after EVO-004 boundary settled and BFF route implemented) |
+
+Wave framing:
+
+- Wave 1 establishes the ready Evolution Workbench baseline through `EW-01 Post-Incident Review`: the composed post-incident review surface is already packetized via `PKT-003` and shared with the Operator Console as `OC-08`.
+- Wave 2 delivers the read-only Evolution Workbench core: `EW-02 Evolution Center`, `EW-03 Lineage View`, and `EW-04 Inspiration Graph` (the last pending BFF inspiration route delivery). All three are evolution read surfaces that operators use before any mutation decision is made.
+- Wave 3 adds mutation authority through `EW-05 Mutation Review` only after EVO-004 execution boundary policy is locked as an L1 canonical update and the BFF mutation review surface is implemented.
+
+Wave 2 and Wave 3 internal ordering and dependency chain:
+
+| Position | Module | Why this order | Upstream dependency within workbench |
+|---|---|---|---|
+| Wave 1 baseline | `EW-01 Post-Incident Review` | this ready packet and composed view defines the canonical evidence inputs that evolution decisions and lineage reviews build on; cross-shared with Operator Console as `OC-08` | none — already packetized via `PKT-003` |
+| Wave 2 — 1 | `EW-02 Evolution Center` | evolution decision list and freeze/rollback history establish the central review context for the workbench; the lineage and inspiration views need a stable decision identity to anchor their graph queries | inherits `EW-01` evidence inputs and `PKT-005` degradation banner; EV read surfaces already live |
+| Wave 2 — 2 | `EW-03 Lineage View` | lineage graph builds on the decision identity established by Evolution Center; LN-01 to LN-03 read surfaces are already live and the LN-03 caveat is documented | inherits stable evolution decision identity from `EW-02`; `LN-03 root_type` caveat must be documented before Lovable handoff |
+| Wave 2 — 3 | `EW-04 Inspiration Graph` | inspiration graph is a BFF-composed creative lineage view that extends the raw lineage primitives; requires the BFF inspiration route to exist before packetization begins | depends on LN-03 lineage graph primitives being stable and the BFF `GET /api/v1/lineage/inspiration/{artifact_id}` route being implemented |
+| Wave 3 — 1 | `EW-05 Mutation Review` | mutation authority surface must come after the full read-only review context (evolution decisions, lineage, inspiration) is stable; EVO-004 policy lock is a hard prerequisite that must precede both the BFF route and the screen packet | depends on EVO-004 L1 policy update, `EW-02` evolution decision identity, and the BFF mutation review route; do not open this packet before EVO-004 is recorded in canonical policy |
+
+Live-state and evidence dependencies before Lovable packetization:
+
+| Module | Live-state or evidence gate | Must be resolved before packetization? |
+|---|---|---|
+| `EW-01 Post-Incident Review` | `meta.surfaces.*` degraded-panel gating; banner inheritance from `PKT-005` | already resolved in `PKT-003`; carry forward in handoff copy |
+| `EW-02 Evolution Center` | EV-04 `time_range` filter caveat; `meta.surfaces` banner inheritance | already documented as W3 inherited caveat; non-blocking |
+| `EW-03 Lineage View` | LN-03 `root_type` no-op caveat; `meta.surfaces` banner inheritance | already documented; must be explicit in Lovable handoff copy |
+| `EW-04 Inspiration Graph` | `meta.surfaces.inspiration` staleness signal; BFF-composed graph shape (no client-side construction from raw lineage edges) | BFF route must exist and field shape must be locked before screen spec can be opened |
+| `EW-05 Mutation Review` | `allowedActions.canApproveMutation` and `canRejectMutation` backend-shaped signals; CTA must be hidden when mutation evidence surface is degraded or unavailable; EVO-004 boundary policy | EVO-004 must be recorded in L1 policy AND BFF route must be implemented before any mutation screen spec work can begin |
+
+Separation rule for this backlog:
+
+- put missing screen copy, approval/rejection CTA wording, graph display spec, lineage panel layout, and degraded-state copy in `Missing screen-spec work`
+- put absent BFF routes (inspiration graph route, mutation review route), unresolved EVO-004 action boundary policy, and missing `allowedActions` authority signals in `Backend or contract dependencies`
 
 Recommended wave:
 
-- Wave 2
+- Evolution Workbench starts in Wave 1 because the post-incident read surface is already packetized.
+- Wave 2 delivers the read-only evolution review core: Evolution Center, Lineage View, and Inspiration Graph (the last after BFF inspiration route lands).
+- Wave 3 adds `EW-05 Mutation Review` only after EVO-004 execution boundary policy is formally locked as an L1 update and the BFF mutation review route is implemented.
+- no Evolution Workbench module should be handed to Lovable before its live-state and evidence dependencies are resolved; in particular, `EW-05` must not be handed off until the `allowedActions` mutation authority signals are backend-shaped and the `meta.surfaces` degradation gate is wired through to the CTA
 
 ## Cross-Cutting Notes
 
