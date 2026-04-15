@@ -158,3 +158,183 @@ class StrategyReadModelResponse(BaseModel):
     latest_status: Optional[str] = None
     plan_count: int
     plans: List[DeploymentPlanSummary] = Field(default_factory=list)
+
+
+class SagaStatusBody(str, Enum):
+    AWAITING_BINDING = "awaiting_binding"
+    AWAITING_RUNTIME_LOAD = "awaiting_runtime_load"
+    COMPLETED = "completed"
+    COMPENSATING = "compensating"
+    FAILED = "failed"
+    ABORTED = "aborted"
+
+
+class SagaStepBody(str, Enum):
+    BINDING_REQUESTED = "binding_requested"
+    RUNTIME_LOAD_REQUESTED = "runtime_load_requested"
+    RUNTIME_ACTIVE = "runtime_active"
+    COMPENSATION_REQUESTED = "compensation_requested"
+    COMPENSATED = "compensated"
+
+
+class OutboxStatusBody(str, Enum):
+    PENDING = "pending"
+    PUBLISHED = "published"
+    FAILED = "failed"
+
+
+class ReceiptStatusBody(str, Enum):
+    APPLIED = "applied"
+    DUPLICATE = "duplicate"
+    OUT_OF_ORDER = "out_of_order"
+
+
+class CompensationCommandBody(str, Enum):
+    ABORT_PLAN = "abort_plan"
+    MARK_BINDING_FAILED_INACTIVE = "mark_binding_failed_inactive"
+    REQUEST_ROLLBACK = "request_rollback"
+    ENTER_SAFE_MODE_AND_RAISE_INCIDENT = "enter_safe_mode_and_raise_incident"
+
+
+class SagaStepRecordBody(BaseModel):
+    step: SagaStepBody
+    status: SagaStatusBody
+    event_id: str
+    sequence_no: int
+    emitted_at: str
+    note: Optional[str] = None
+
+
+class SagaEventEnvelopeBody(BaseModel):
+    event_id: str
+    event_type: str
+    aggregate_type: str
+    aggregate_id: str
+    sequence_no: int
+    causal_parent_id: Optional[str] = None
+    event_time: str
+    emitted_at: str
+    trace_id: str
+    idempotency_key: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OutboxRecordBody(BaseModel):
+    owner_service: str
+    event: SagaEventEnvelopeBody
+    status: OutboxStatusBody
+    delivery_attempts: int
+    published_at: Optional[str] = None
+    last_error: Optional[str] = None
+
+
+class InboxReceiptBody(BaseModel):
+    consumer_name: str
+    event_id: str
+    idempotency_key: str
+    aggregate_type: str
+    aggregate_id: str
+    sequence_no: int
+    trace_id: str
+    status: ReceiptStatusBody
+    processed_at: str
+    notes: Optional[str] = None
+
+
+class CompensationDecisionBody(BaseModel):
+    command_type: CompensationCommandBody
+    owner_service: str
+    plan_status: str
+    binding_status: str
+    write_scope: str
+    runtime_action: Optional[str] = None
+    incident_required: bool = False
+    safe_mode: bool = False
+    reason: Optional[str] = None
+
+
+class DeploymentSagaBody(BaseModel):
+    saga_id: str
+    plan_id: str
+    approval_decision_id: str
+    strategy_id: str
+    artifact_id: str
+    artifact_version: str
+    capital_pool_id: str
+    current_stage: str
+    target_stage: str
+    runtime_action: str
+    rollback_action_type: Optional[str] = None
+    status: SagaStatusBody
+    current_step: SagaStepBody
+    trace_id: str
+    created_at: str
+    updated_at: str
+    binding_id: Optional[str] = None
+    runtime_id: Optional[str] = None
+    last_sequence_no: int
+    last_event_id: Optional[str] = None
+    failure_reason: Optional[str] = None
+    compensation: Optional[CompensationDecisionBody] = None
+    metadata: Optional[Dict[str, Any]] = None
+    history: List[SagaStepRecordBody] = Field(default_factory=list)
+
+
+class DeploymentSagaBootstrapBody(BaseModel):
+    saga: DeploymentSagaBody
+    outbox_event: OutboxRecordBody
+
+
+class DeploymentExecutionProjectionBody(BaseModel):
+    metadata_key: str
+    artifact_key: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DispatchDeploymentPlanRequest(BaseModel):
+    trace_id: Optional[str] = None
+    saga_id: Optional[str] = None
+    source_task_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+    registry_entry: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class DeploymentDispatchResponse(BaseModel):
+    plan: DeploymentPlanBody
+    strategy_id: str
+    version: str
+    target_stage: str
+    execution_context: str
+    artifact_loader_contract: str
+    deployment_contract: str
+    consistency_contract: str
+    execution_projection: DeploymentExecutionProjectionBody
+    deployment_saga: DeploymentSagaBootstrapBody
+    replayed: bool = False
+
+
+class RecordBindingCreatedRequest(BaseModel):
+    binding_id: str
+    runtime_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+class RecordRuntimeActiveRequest(BaseModel):
+    binding_id: Optional[str] = None
+    runtime_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+class RecordSagaFailureRequest(BaseModel):
+    reason: str
+    failed_step: Optional[SagaStepBody] = None
+
+
+class FinalizeCompensationRequest(BaseModel):
+    note: Optional[str] = None
+    terminal_status: Optional[SagaStatusBody] = None
+
+
+class ConsumeOutboxEventRequest(BaseModel):
+    consumer_name: str

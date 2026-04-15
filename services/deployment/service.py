@@ -1,9 +1,13 @@
 """
-BP5-SVC-004: Deployable DeploymentPlan and stage-transition planner API.
+BP5-SVC-005: Deployable deployment planning and orchestration service.
 
-This service wraps the canonical control-plane deployment-plan domain with a
-file-backed FastAPI surface so callers can create, validate, list, and read
-deployment plans without importing platform objects directly.
+This service wraps the canonical control-plane deployment-plan and
+deployment-saga domains with a file-backed FastAPI surface so callers can:
+
+- create and validate deployment plans
+- bootstrap the DEP-002 deployment saga and first outbox event
+- record saga progress and compensation decisions
+- inspect outbox / inbox state for replay and idempotency verification
 """
 from __future__ import annotations
 
@@ -33,23 +37,58 @@ from deployment_plan import (  # type: ignore
     ScheduleWindow,
     StagePlanner,
 )
+from deployment_saga import (  # type: ignore
+    CompensationDecision,
+    DeploymentSaga,
+    DeploymentSagaBootstrap,
+    DeploymentSagaError,
+    DeploymentSagaStore,
+    InboxReceipt,
+    OutboxRecord,
+)
 
 try:
     from .models import (
+        CompensationDecisionBody,
+        ConsumeOutboxEventRequest,
         CreateDeploymentPlanRequest,
+        DeploymentDispatchResponse,
+        DeploymentExecutionProjectionBody,
         DeploymentPlanBody,
         DeploymentPlanSummary,
+        DeploymentSagaBody,
+        DeploymentSagaBootstrapBody,
+        DispatchDeploymentPlanRequest,
+        FinalizeCompensationRequest,
+        InboxReceiptBody,
+        OutboxRecordBody,
         PlanStatusBody,
+        RecordBindingCreatedRequest,
+        RecordRuntimeActiveRequest,
+        RecordSagaFailureRequest,
         StrategyReadModelResponse,
         UpdatePlanStatusRequest,
         ValidateDeploymentPlanResponse,
     )
 except ImportError:
     from models import (  # type: ignore
+        CompensationDecisionBody,
+        ConsumeOutboxEventRequest,
         CreateDeploymentPlanRequest,
+        DeploymentDispatchResponse,
+        DeploymentExecutionProjectionBody,
         DeploymentPlanBody,
         DeploymentPlanSummary,
+        DeploymentSagaBody,
+        DeploymentSagaBootstrapBody,
+        DispatchDeploymentPlanRequest,
+        FinalizeCompensationRequest,
+        InboxReceiptBody,
+        OutboxRecordBody,
         PlanStatusBody,
+        RecordBindingCreatedRequest,
+        RecordRuntimeActiveRequest,
+        RecordSagaFailureRequest,
         StrategyReadModelResponse,
         UpdatePlanStatusRequest,
         ValidateDeploymentPlanResponse,
@@ -75,11 +114,13 @@ def _resolve_governance_dir() -> Path:
 
 DATA_DIR = _resolve_governance_dir()
 PLAN_STORE_PATH = DATA_DIR / "deployment_plans.json"
+SAGA_STORE_PATH = DATA_DIR / "deployment_sagas.json"
 APPROVAL_STORE_PATH = DATA_DIR / "approval_decisions.json"
 _REGISTRY_SNAPSHOT_ENV = os.getenv("PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH", "").strip()
 REGISTRY_SNAPSHOT_PATH = Path(_REGISTRY_SNAPSHOT_ENV).expanduser() if _REGISTRY_SNAPSHOT_ENV else None
 
 store = DeploymentPlanStore(str(PLAN_STORE_PATH))
+saga_store = DeploymentSagaStore(str(SAGA_STORE_PATH))
 
 
 class DeploymentPlannerService:
@@ -119,7 +160,7 @@ class DeploymentPlannerService:
             else None
         )
         rollback = (
-            RollbackRef(**request.rollback.model_dump())
+            RollbackRef(**request.rollback.model_dump(mode="json"))
             if request.rollback is not None
             else None
         )
@@ -282,6 +323,193 @@ class DeploymentPlannerService:
         )
 
 
+class DeploymentOrchestrationService:
+    """Deployment-facing orchestration facade over the canonical DEP-002 store."""
+
+    def __init__(
+        self,
+        *,
+        planner_service: DeploymentPlannerService,
+        saga_store: DeploymentSagaStore,
+    ) -> None:
+        self.planner_service = planner_service
+        self.saga_store = saga_store
+
+    def dispatch_plan(
+        self,
+        plan_id: str,
+        request: DispatchDeploymentPlanRequest,
+    ) -> tuple[DeploymentPlan, Dict[str, Any], DeploymentSagaBootstrap, bool]:
+        plan = self.planner_service.get_plan(plan_id)
+        existing = self.saga_store.get(request.saga_id or f"deployment-saga-{plan.plan_id}")
+        if existing is None and PlanStatus(plan.status) != PlanStatus.APPROVED:
+            raise DeploymentPlanError(
+                f"DeploymentPlan '{plan_id}' must be approved before dispatch; got '{plan.status}'"
+            )
+
+        registry_entry = self._resolve_registry_entry_for_plan(plan, request.registry_entry)
+        projection = self.planner_service.planner.build_execution_projection(plan, registry_entry)
+
+        if existing is not None:
+            first_outbox = self._find_outbox_event(existing.saga_id, sequence_no=1)
+            if first_outbox is None:
+                raise DeploymentSagaError(
+                    f"DeploymentSaga '{existing.saga_id}' exists without the bootstrap outbox event"
+                )
+            bootstrap = DeploymentSagaBootstrap(saga=existing, outbox_event=first_outbox)
+            return plan, projection.__dict__, bootstrap, True
+
+        metadata = dict(request.metadata or {})
+        if request.workflow_id:
+            metadata.setdefault("workflow_id", request.workflow_id)
+        if request.source_task_id:
+            metadata.setdefault("source_task_id", request.source_task_id)
+
+        bootstrap = self.saga_store.bootstrap_for_plan(
+            plan,
+            trace_id=request.trace_id or f"deploy-trace-{uuid.uuid4()}",
+            saga_id=request.saga_id,
+            metadata=metadata or None,
+        )
+        return plan, projection.__dict__, bootstrap, False
+
+    def list_sagas(
+        self,
+        *,
+        plan_id: str | None = None,
+        status: str | None = None,
+    ) -> list[DeploymentSaga]:
+        sagas = self.saga_store.list_all()
+        if plan_id:
+            sagas = [saga for saga in sagas if saga.plan_id == plan_id]
+        if status:
+            sagas = [saga for saga in sagas if _enum_value(saga.status) == status]
+        return sorted(sagas, key=lambda saga: saga.created_at, reverse=True)
+
+    def get_saga(self, saga_id: str) -> DeploymentSaga:
+        saga = self.saga_store.get(saga_id)
+        if saga is None:
+            raise DeploymentSagaError(f"DeploymentSaga '{saga_id}' not found")
+        return saga
+
+    def record_binding_created(
+        self,
+        saga_id: str,
+        request: RecordBindingCreatedRequest,
+    ) -> OutboxRecord:
+        return self.saga_store.record_binding_created(
+            saga_id,
+            binding_id=request.binding_id,
+            runtime_id=request.runtime_id,
+            note=request.note,
+        )
+
+    def record_runtime_active(
+        self,
+        saga_id: str,
+        request: RecordRuntimeActiveRequest,
+    ) -> OutboxRecord:
+        return self.saga_store.record_runtime_active(
+            saga_id,
+            binding_id=request.binding_id,
+            runtime_id=request.runtime_id,
+            note=request.note,
+        )
+
+    def record_failure(
+        self,
+        saga_id: str,
+        request: RecordSagaFailureRequest,
+    ) -> CompensationDecision:
+        return self.saga_store.record_failure(
+            saga_id,
+            reason=request.reason,
+            failed_step=request.failed_step.value if request.failed_step else None,
+        )
+
+    def finalize_compensation(
+        self,
+        saga_id: str,
+        request: FinalizeCompensationRequest,
+    ) -> OutboxRecord:
+        return self.saga_store.finalize_compensation(
+            saga_id,
+            note=request.note,
+            terminal_status=request.terminal_status.value if request.terminal_status else None,
+        )
+
+    def list_outbox(
+        self,
+        *,
+        owner_service: str | None = None,
+        aggregate_id: str | None = None,
+    ) -> list[OutboxRecord]:
+        records = self.saga_store.pending_outbox()
+        if owner_service:
+            records = [record for record in records if record.owner_service == owner_service]
+        if aggregate_id:
+            records = [record for record in records if record.event.aggregate_id == aggregate_id]
+        return sorted(records, key=lambda record: (record.event.aggregate_id, record.event.sequence_no))
+
+    def list_inbox(
+        self,
+        *,
+        consumer_name: str | None = None,
+        aggregate_id: str | None = None,
+        status: str | None = None,
+    ) -> list[InboxReceipt]:
+        receipts = self.saga_store.inbox_receipts(consumer_name=consumer_name)
+        if aggregate_id:
+            receipts = [receipt for receipt in receipts if receipt.aggregate_id == aggregate_id]
+        if status:
+            receipts = [receipt for receipt in receipts if _enum_value(receipt.status) == status]
+        return sorted(receipts, key=lambda receipt: (receipt.aggregate_id, receipt.processed_at))
+
+    def consume_outbox_event(
+        self,
+        event_id: str,
+        *,
+        consumer_name: str,
+    ) -> InboxReceipt:
+        event = self._find_outbox_event_by_event_id(event_id)
+        if event is None:
+            raise DeploymentSagaError(f"Outbox event '{event_id}' not found")
+        return self.saga_store.consume_event(consumer_name, event.event)
+
+    def _resolve_registry_entry_for_plan(
+        self,
+        plan: DeploymentPlan,
+        explicit_registry_entry: Mapping[str, Any] | None,
+    ) -> Mapping[str, Any]:
+        if explicit_registry_entry is not None:
+            return explicit_registry_entry
+        snapshot_path = self.planner_service.registry_snapshot_path
+        if snapshot_path and snapshot_path.exists():
+            record = _load_record(
+                snapshot_path,
+                key_candidates=("registry_id", "id"),
+                target_key=plan.artifact_id,
+            )
+            if record is not None:
+                return record
+        raise DeploymentPlanError(
+            "dispatch requires registry_entry payload unless artifact_id resolves from "
+            "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
+        )
+
+    def _find_outbox_event(self, saga_id: str, *, sequence_no: int) -> OutboxRecord | None:
+        for record in self.saga_store.pending_outbox():
+            if record.event.aggregate_id == saga_id and record.event.sequence_no == sequence_no:
+                return record
+        return None
+
+    def _find_outbox_event_by_event_id(self, event_id: str) -> OutboxRecord | None:
+        for record in self.saga_store.pending_outbox():
+            if record.event.event_id == event_id:
+                return record
+        return None
+
+
 def _enum_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
@@ -333,21 +561,62 @@ def _plan_summary(plan: DeploymentPlan) -> DeploymentPlanSummary:
     )
 
 
+def _saga_body(saga: DeploymentSaga) -> DeploymentSagaBody:
+    return DeploymentSagaBody(**saga.to_dict())
+
+
+def _outbox_body(record: OutboxRecord) -> OutboxRecordBody:
+    return OutboxRecordBody(**record.to_dict())
+
+
+def _inbox_body(receipt: InboxReceipt) -> InboxReceiptBody:
+    return InboxReceiptBody(**receipt.to_dict())
+
+
+def _compensation_body(decision: CompensationDecision) -> CompensationDecisionBody:
+    return CompensationDecisionBody(**decision.to_dict())
+
+
+def _bootstrap_body(bootstrap: DeploymentSagaBootstrap) -> DeploymentSagaBootstrapBody:
+    return DeploymentSagaBootstrapBody(
+        saga=_saga_body(bootstrap.saga),
+        outbox_event=_outbox_body(bootstrap.outbox_event),
+    )
+
+
+def _execution_context_for_stage(target_stage: DeploymentStage | str) -> str:
+    stage = DeploymentStage(target_stage)
+    if stage == DeploymentStage.PAPER:
+        return "paper"
+    if stage in {DeploymentStage.CANARY, DeploymentStage.LIVE}:
+        return "live"
+    return "status"
+
+
 planner_service = DeploymentPlannerService(
     plan_store=store,
     approval_store_path=APPROVAL_STORE_PATH,
     registry_snapshot_path=REGISTRY_SNAPSHOT_PATH,
 )
+orchestration_service = DeploymentOrchestrationService(
+    planner_service=planner_service,
+    saga_store=saga_store,
+)
 
 app = FastAPI(
     title="Pantheon Deployment Service",
-    description="DeploymentPlan and stage-transition planner API per BP5-SVC-004",
-    version="0.1.0",
+    description="DeploymentPlan and DEP-002 deployment saga API per BP5-SVC-004/BP5-SVC-005",
+    version="0.2.0",
 )
 
 
 @app.exception_handler(DeploymentPlanError)
 async def deployment_plan_error_handler(request: Request, exc: DeploymentPlanError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(DeploymentSagaError)
+async def deployment_saga_error_handler(request: Request, exc: DeploymentSagaError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -403,6 +672,34 @@ async def update_deployment_plan_status(plan_id: str, body: UpdatePlanStatusRequ
         raise HTTPException(status_code=status_code, detail=message)
 
 
+@app.post(
+    "/api/deployment/plans/{plan_id}/dispatch",
+    response_model=DeploymentDispatchResponse,
+)
+async def dispatch_deployment_plan(plan_id: str, body: DispatchDeploymentPlanRequest):
+    try:
+        plan, execution_projection, bootstrap, replayed = orchestration_service.dispatch_plan(plan_id, body)
+    except (DeploymentPlanError, DeploymentSagaError) as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+    projection = DeploymentExecutionProjectionBody(**execution_projection)
+    return DeploymentDispatchResponse(
+        plan=_plan_body(plan),
+        strategy_id=plan.strategy_id,
+        version=plan.artifact_version,
+        target_stage=_enum_value(plan.target_stage),
+        execution_context=_execution_context_for_stage(plan.target_stage),
+        artifact_loader_contract="EX-001",
+        deployment_contract="DEP-001",
+        consistency_contract="DEP-002",
+        execution_projection=projection,
+        deployment_saga=_bootstrap_body(bootstrap),
+        replayed=replayed,
+    )
+
+
 @app.get(
     "/api/deployment/strategies/{strategy_id}/read-model",
     response_model=StrategyReadModelResponse,
@@ -412,6 +709,106 @@ async def get_strategy_read_model(strategy_id: str, capital_pool_id: str | None 
         strategy_id=strategy_id,
         capital_pool_id=capital_pool_id,
     )
+
+
+@app.get("/api/deployment/sagas", response_model=List[DeploymentSagaBody])
+async def list_deployment_sagas(
+    plan_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+):
+    return [_saga_body(saga) for saga in orchestration_service.list_sagas(plan_id=plan_id, status=status)]
+
+
+@app.get("/api/deployment/sagas/{saga_id}", response_model=DeploymentSagaBody)
+async def get_deployment_saga(saga_id: str):
+    try:
+        return _saga_body(orchestration_service.get_saga(saga_id))
+    except DeploymentSagaError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/deployment/sagas/{saga_id}/binding-created", response_model=OutboxRecordBody)
+async def record_saga_binding_created(saga_id: str, body: RecordBindingCreatedRequest):
+    try:
+        return _outbox_body(orchestration_service.record_binding_created(saga_id, body))
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "unknown saga" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.post("/api/deployment/sagas/{saga_id}/runtime-active", response_model=OutboxRecordBody)
+async def record_saga_runtime_active(saga_id: str, body: RecordRuntimeActiveRequest):
+    try:
+        return _outbox_body(orchestration_service.record_runtime_active(saga_id, body))
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "unknown saga" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.post("/api/deployment/sagas/{saga_id}/failure", response_model=CompensationDecisionBody)
+async def record_saga_failure(saga_id: str, body: RecordSagaFailureRequest):
+    try:
+        return _compensation_body(orchestration_service.record_failure(saga_id, body))
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "unknown saga" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.post(
+    "/api/deployment/sagas/{saga_id}/compensation/finalize",
+    response_model=OutboxRecordBody,
+)
+async def finalize_saga_compensation(saga_id: str, body: FinalizeCompensationRequest):
+    try:
+        return _outbox_body(orchestration_service.finalize_compensation(saga_id, body))
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "unknown saga" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.get("/api/deployment/outbox", response_model=List[OutboxRecordBody])
+async def list_deployment_outbox(
+    owner_service: str | None = Query(default=None),
+    aggregate_id: str | None = Query(default=None),
+):
+    records = orchestration_service.list_outbox(
+        owner_service=owner_service,
+        aggregate_id=aggregate_id,
+    )
+    return [_outbox_body(record) for record in records]
+
+
+@app.post("/api/deployment/outbox/{event_id}/consume", response_model=InboxReceiptBody)
+async def consume_deployment_outbox_event(event_id: str, body: ConsumeOutboxEventRequest):
+    try:
+        return _inbox_body(
+            orchestration_service.consume_outbox_event(
+                event_id,
+                consumer_name=body.consumer_name,
+            )
+        )
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.get("/api/deployment/inbox", response_model=List[InboxReceiptBody])
+async def list_deployment_inbox(
+    consumer_name: str | None = Query(default=None),
+    aggregate_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+):
+    receipts = orchestration_service.list_inbox(
+        consumer_name=consumer_name,
+        aggregate_id=aggregate_id,
+        status=status,
+    )
+    return [_inbox_body(receipt) for receipt in receipts]
 
 
 @app.get("/health")

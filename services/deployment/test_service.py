@@ -49,6 +49,32 @@ def _seed_registry_snapshot(path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _plan_payload(
+    *,
+    plan_id: str | None = None,
+    current_stage: str | None = None,
+    target_stage: str = "paper",
+    rollback_action: str = "replace",
+) -> dict:
+    payload = {
+        "approval_decision_id": "approval-001",
+        "registry_id": "reg-strat-001-1.2.0",
+        "capital_pool_id": "pool-001",
+        "sponsor_persona_id": "persona-ops",
+        "target_stage": target_stage,
+        "rollback": {
+            "target_artifact_id": "reg-strat-001-1.1.0",
+            "target_version": "1.1.0",
+            "action_type": rollback_action,
+        },
+    }
+    if plan_id:
+        payload["plan_id"] = plan_id
+    if current_stage:
+        payload["current_stage"] = current_stage
+    return payload
+
+
 @pytest.fixture()
 def client():
     tempdir = tempfile.mkdtemp(prefix="deployment_service_")
@@ -278,3 +304,204 @@ def test_invalid_status_transition_rejected(client):
     )
     assert response.status_code == 400
     assert "Invalid plan status transition" in response.json()["detail"]
+
+
+def test_dispatch_bootstraps_saga_and_persists_outbox(client):
+    test_client, governance_dir = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-paper-dispatch-001"),
+    )
+    assert created.status_code == 201
+
+    dispatch = test_client.post(
+        "/api/deployment/plans/plan-paper-dispatch-001/dispatch",
+        json={
+            "trace_id": "trace-dispatch-001",
+            "workflow_id": "pantheon.deploy",
+            "source_task_id": "BP5-SVC-005",
+        },
+    )
+    assert dispatch.status_code == 200, dispatch.text
+    body = dispatch.json()
+    assert body["deployment_contract"] == "DEP-001"
+    assert body["consistency_contract"] == "DEP-002"
+    assert body["execution_context"] == "paper"
+    assert body["replayed"] is False
+    assert body["deployment_saga"]["saga"]["status"] == "awaiting_binding"
+    assert body["deployment_saga"]["outbox_event"]["event"]["event_type"] == "runtime.binding.requested"
+    assert body["deployment_saga"]["outbox_event"]["event"]["sequence_no"] == 1
+    assert body["execution_projection"]["metadata"]["deployment_plan_id"] == "plan-paper-dispatch-001"
+
+    persisted = json.loads((governance_dir / "deployment_sagas.json").read_text(encoding="utf-8"))
+    assert "deployment-saga-plan-paper-dispatch-001" in persisted["sagas"]
+    assert len(persisted["outbox"]) == 1
+
+
+def test_dispatch_is_idempotent_for_existing_saga(client):
+    test_client, _ = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-paper-dispatch-002"),
+    )
+    assert created.status_code == 201
+
+    first = test_client.post(
+        "/api/deployment/plans/plan-paper-dispatch-002/dispatch",
+        json={"trace_id": "trace-dispatch-002"},
+    )
+    assert first.status_code == 200
+
+    second = test_client.post(
+        "/api/deployment/plans/plan-paper-dispatch-002/dispatch",
+        json={"trace_id": "trace-dispatch-002-retry"},
+    )
+    assert second.status_code == 200
+    assert second.json()["replayed"] is True
+
+    outbox = test_client.get("/api/deployment/outbox")
+    assert outbox.status_code == 200
+    assert len(outbox.json()) == 1
+    assert outbox.json()[0]["event"]["sequence_no"] == 1
+
+
+def test_saga_progress_and_inbox_replay_receipts(client):
+    test_client, _ = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-paper-saga-001"),
+    )
+    assert created.status_code == 201
+
+    dispatch = test_client.post(
+        "/api/deployment/plans/plan-paper-saga-001/dispatch",
+        json={"trace_id": "trace-saga-001"},
+    )
+    assert dispatch.status_code == 200
+    saga_id = dispatch.json()["deployment_saga"]["saga"]["saga_id"]
+    seq1_event_id = dispatch.json()["deployment_saga"]["outbox_event"]["event"]["event_id"]
+
+    binding = test_client.post(
+        f"/api/deployment/sagas/{saga_id}/binding-created",
+        json={"binding_id": "binding-001", "runtime_id": "runtime-001"},
+    )
+    assert binding.status_code == 200
+    assert binding.json()["event"]["sequence_no"] == 2
+
+    active = test_client.post(
+        f"/api/deployment/sagas/{saga_id}/runtime-active",
+        json={"binding_id": "binding-001", "runtime_id": "runtime-001"},
+    )
+    assert active.status_code == 200
+    seq3_event_id = active.json()["event"]["event_id"]
+
+    seq1 = test_client.post(
+        f"/api/deployment/outbox/{seq1_event_id}/consume",
+        json={"consumer_name": "runtime-projector"},
+    )
+    assert seq1.status_code == 200
+    assert seq1.json()["status"] == "applied"
+
+    duplicate = test_client.post(
+        f"/api/deployment/outbox/{seq1_event_id}/consume",
+        json={"consumer_name": "runtime-projector"},
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "duplicate"
+
+    out_of_order = test_client.post(
+        f"/api/deployment/outbox/{seq3_event_id}/consume",
+        json={"consumer_name": "runtime-projector"},
+    )
+    assert out_of_order.status_code == 200
+    assert out_of_order.json()["status"] == "out_of_order"
+
+    outbox = test_client.get("/api/deployment/outbox", params={"aggregate_id": saga_id})
+    seq2_event_id = next(
+        record["event"]["event_id"]
+        for record in outbox.json()
+        if record["event"]["sequence_no"] == 2
+    )
+
+    seq2 = test_client.post(
+        f"/api/deployment/outbox/{seq2_event_id}/consume",
+        json={"consumer_name": "runtime-projector"},
+    )
+    assert seq2.status_code == 200
+    assert seq2.json()["status"] == "applied"
+
+    seq3 = test_client.post(
+        f"/api/deployment/outbox/{seq3_event_id}/consume",
+        json={"consumer_name": "runtime-projector"},
+    )
+    assert seq3.status_code == 200
+    assert seq3.json()["status"] == "applied"
+
+    receipts = test_client.get(
+        "/api/deployment/inbox",
+        params={"consumer_name": "runtime-projector", "aggregate_id": saga_id},
+    )
+    assert receipts.status_code == 200
+    assert [receipt["status"] for receipt in receipts.json()] == [
+        "applied",
+        "duplicate",
+        "out_of_order",
+        "applied",
+        "applied",
+    ]
+
+
+def test_post_activation_failure_uses_plan_rollback_action_and_finalize(client):
+    test_client, _ = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(
+            plan_id="plan-live-saga-001",
+            current_stage="canary",
+            target_stage="live",
+            rollback_action="pause_then_replace",
+        ),
+    )
+    assert created.status_code == 201
+
+    dispatch = test_client.post(
+        "/api/deployment/plans/plan-live-saga-001/dispatch",
+        json={"trace_id": "trace-live-saga-001"},
+    )
+    assert dispatch.status_code == 200
+    saga_id = dispatch.json()["deployment_saga"]["saga"]["saga_id"]
+
+    binding = test_client.post(
+        f"/api/deployment/sagas/{saga_id}/binding-created",
+        json={"binding_id": "binding-live-001", "runtime_id": "runtime-live-001"},
+    )
+    assert binding.status_code == 200
+
+    active = test_client.post(
+        f"/api/deployment/sagas/{saga_id}/runtime-active",
+        json={"binding_id": "binding-live-001", "runtime_id": "runtime-live-001"},
+    )
+    assert active.status_code == 200
+
+    failure = test_client.post(
+        f"/api/deployment/sagas/{saga_id}/failure",
+        json={
+            "reason": "severe mismatch after cutover",
+            "failed_step": "runtime_active",
+        },
+    )
+    assert failure.status_code == 200
+    assert failure.json()["command_type"] == "request_rollback"
+    assert failure.json()["runtime_action"] == "pause_then_replace"
+
+    finalized = test_client.post(
+        f"/api/deployment/sagas/{saga_id}/compensation/finalize",
+        json={"note": "rollback request issued"},
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["event"]["event_type"] == "deployment.saga.failed"
+
+    saga = test_client.get(f"/api/deployment/sagas/{saga_id}")
+    assert saga.status_code == 200
+    assert saga.json()["status"] == "failed"
+    assert saga.json()["compensation"]["command_type"] == "request_rollback"
