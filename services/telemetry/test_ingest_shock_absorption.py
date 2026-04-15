@@ -30,6 +30,7 @@ from services.telemetry.dead_letter import (
     DeadLetterEntry,
     TAG_SCHEMA_VIOLATION,
     TAG_BINDING_MISMATCH,
+    TAG_TEMPORAL_VIOLATION,
     TAG_BUFFER_OVERFLOW,
     TAG_RETRY_EXHAUSTED,
     TAG_WRITER_ERROR,
@@ -722,6 +723,267 @@ class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("backpressure", stats)
 
         await svc.stop(graceful=True)
+
+
+# ---------------------------------------------------------------------------
+# 7. RuntimeBinding Evidence Cross-Validation Tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeBinding:
+    """Minimal fake RuntimeBinding for testing binding_store lookups."""
+
+    def __init__(self, **overrides: object) -> None:
+        self.binding_id = overrides.get("binding_id", "550e8400-e29b-41d4-a716-446655440001")
+        self.runtime_id = overrides.get("runtime_id", "lean-worker-1")
+        self.capital_pool_id = overrides.get("capital_pool_id", "pool-alpha")
+        self.artifact_id = overrides.get("artifact_id", "artifact-123")
+        self.artifact_version = overrides.get("artifact_version", "1.0.0")
+        self.deployment_mode = overrides.get("deployment_mode", "paper")
+        self.effective_at = overrides.get("effective_at", "2026-01-01T00:00:00Z")
+        self.retired_at = overrides.get("retired_at", None)
+        self.plan_id = overrides.get("plan_id", "plan-456")
+        self.persona_capital_binding_id = overrides.get(
+            "persona_capital_binding_id", "pcb-789"
+        )
+
+
+class _FakeBindingStore:
+    """Minimal fake RuntimeBindingStore that maps binding_id → _FakeBinding."""
+
+    def __init__(self, bindings: dict[str, _FakeBinding] | None = None) -> None:
+        self._bindings: dict[str, _FakeBinding] = bindings or {}
+
+    def get_binding(self, binding_id: str) -> _FakeBinding | None:
+        return self._bindings.get(binding_id)
+
+
+def _make_store_with_default() -> _FakeBindingStore:
+    """Return a store with a single default binding matching _make_event() defaults."""
+    b = _FakeBinding()
+    return _FakeBindingStore(bindings={b.binding_id: b})
+
+
+class TestRuntimeBindingEvidenceValidation(unittest.IsolatedAsyncioTestCase):
+
+    async def test_valid_event_with_binding_store_accepted(self):
+        """Event whose fields match the canonical binding is accepted."""
+        svc = TelemetryIngestService(
+            binding_store=_make_store_with_default(),
+            batch_size=10,
+            batch_interval=0.1,
+        )
+        await svc.start()
+        result = await svc.ingest(_make_event(event_id="valid-binding"))
+        self.assertTrue(result)
+        await svc.stop(graceful=True)
+        self.assertEqual(svc.stats()["service"]["total_ingested"], 1)
+
+    async def test_unknown_binding_id_rejected(self):
+        """Event whose binding_id is absent from the store is rejected."""
+        store = _FakeBindingStore(bindings={})  # empty — binding not found
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        result = await svc.ingest(_make_event(event_id="unknown-binding"))
+        self.assertFalse(result)
+        await svc.stop(graceful=True)
+        dlq = svc.get_dlq_entries(tag_filter=TAG_BINDING_MISMATCH)
+        self.assertGreater(len(dlq), 0)
+
+    async def test_runtime_id_mismatch_rejected(self):
+        """Event with mismatched runtime_id is rejected."""
+        store = _make_store_with_default()
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        result = await svc.ingest(_make_event(event_id="rt-mismatch", runtime_id="wrong-worker"))
+        self.assertFalse(result)
+        await svc.stop(graceful=True)
+        dlq = svc.get_dlq_entries(tag_filter=TAG_BINDING_MISMATCH)
+        self.assertGreater(len(dlq), 0)
+
+    async def test_deployment_stage_mismatch_rejected(self):
+        """Event whose deployment_stage differs from binding.deployment_mode is rejected."""
+        store = _make_store_with_default()  # binding.deployment_mode = "paper"
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        # Event claims canary but binding says paper
+        result = await svc.ingest(
+            _make_event(event_id="stage-mismatch", deployment_stage="canary")
+        )
+        self.assertFalse(result)
+        await svc.stop(graceful=True)
+        dlq = svc.get_dlq_entries(tag_filter=TAG_BINDING_MISMATCH)
+        self.assertGreater(len(dlq), 0)
+
+    async def test_temporal_violation_before_effective_at_rejected(self):
+        """Event created_at before binding effective_at is rejected."""
+        b = _FakeBinding(effective_at="2026-06-01T00:00:00Z")
+        store = _FakeBindingStore(bindings={b.binding_id: b})
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        # created_at precedes effective_at
+        result = await svc.ingest(
+            _make_event(event_id="before-effective", created_at="2026-01-01T00:00:00Z")
+        )
+        self.assertFalse(result)
+        await svc.stop(graceful=True)
+        dlq = svc.get_dlq_entries(tag_filter=TAG_TEMPORAL_VIOLATION)
+        self.assertGreater(len(dlq), 0)
+
+    async def test_temporal_violation_after_retired_at_rejected(self):
+        """Event created_at after binding retired_at is rejected."""
+        b = _FakeBinding(
+            effective_at="2026-01-01T00:00:00Z",
+            retired_at="2026-03-01T00:00:00Z",
+        )
+        store = _FakeBindingStore(bindings={b.binding_id: b})
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        # created_at is after retired_at
+        result = await svc.ingest(
+            _make_event(event_id="after-retired", created_at="2026-04-10T12:00:00Z")
+        )
+        self.assertFalse(result)
+        await svc.stop(graceful=True)
+        dlq = svc.get_dlq_entries(tag_filter=TAG_TEMPORAL_VIOLATION)
+        self.assertGreater(len(dlq), 0)
+
+    async def test_event_within_temporal_window_accepted(self):
+        """Event created_at within [effective_at, retired_at] is accepted."""
+        b = _FakeBinding(
+            effective_at="2026-01-01T00:00:00Z",
+            retired_at="2026-12-31T23:59:59Z",
+        )
+        store = _FakeBindingStore(bindings={b.binding_id: b})
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        result = await svc.ingest(
+            _make_event(event_id="in-window", created_at="2026-04-10T12:00:00Z")
+        )
+        self.assertTrue(result)
+        await svc.stop(graceful=True)
+
+
+# ---------------------------------------------------------------------------
+# 8. Idempotent Deduplication Tests
+# ---------------------------------------------------------------------------
+
+
+class TestIdempotentDeduplication(unittest.IsolatedAsyncioTestCase):
+
+    async def test_duplicate_event_id_counted_once(self):
+        """Ingesting the same event_id twice counts as one ingested event."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        event = _make_event(event_id="dup-001")
+        r1 = await svc.ingest(event)
+        r2 = await svc.ingest(event)
+
+        self.assertTrue(r1)
+        self.assertTrue(r2)  # duplicate returns True (idempotent)
+
+        await svc.stop(graceful=True)
+        stats = svc.stats()["service"]
+        self.assertEqual(stats["total_ingested"], 1)
+        self.assertEqual(stats["total_duplicates"], 1)
+
+    async def test_unique_event_ids_all_ingested(self):
+        """Events with distinct event_ids are all counted."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        for i in range(5):
+            await svc.ingest(_make_event(event_id=f"unique-{i}"))
+
+        await svc.stop(graceful=True)
+        self.assertEqual(svc.stats()["service"]["total_ingested"], 5)
+
+
+# ---------------------------------------------------------------------------
+# 9. Replay Policy Tests
+# ---------------------------------------------------------------------------
+
+
+class TestReplayPolicy(unittest.IsolatedAsyncioTestCase):
+
+    async def test_binding_invalid_events_not_replayed_by_default(self):
+        """replay_dlq() must not forward binding-invalid DLQ entries."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        # Ingest events that fail evidence (missing binding_id)
+        for i in range(3):
+            bad = _make_event(event_id=f"bad-binding-{i}")
+            del bad["binding_id"]
+            await svc.ingest(bad)
+
+        # DLQ should have 3 binding-mismatch entries
+        self.assertEqual(len(svc.get_dlq_entries(tag_filter=TAG_BINDING_MISMATCH)), 3)
+
+        # replay_dlq() with no filter must replay 0 events
+        replayed = await svc.replay_dlq()
+        self.assertEqual(replayed, 0, "Binding-invalid events must not be replayed by default")
+
+        await svc.stop(graceful=True)
+
+    async def test_write_failure_events_replayed_by_default(self):
+        """replay_dlq() replays write-failure entries through the ingest path."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        # Manually inject write-failure DLQ entries (valid events that could not be written)
+        for i in range(2):
+            svc._dlq.reject(
+                _make_event(event_id=f"write-fail-{i}"),
+                tags=[TAG_WRITER_ERROR],
+                reason="simulated db error",
+            )
+
+        replayed = await svc.replay_dlq()
+        self.assertEqual(replayed, 2, "Write-failure events must be replayed")
+
+        await svc.stop(graceful=True)
+
+    async def test_replay_deduplicates_across_write_failure_tags(self):
+        """If the same event appears under multiple write-failure tags, replay it once."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        shared_event = _make_event(event_id="shared-ev")
+        svc._dlq.reject(shared_event, tags=[TAG_WRITER_ERROR], reason="first")
+        svc._dlq.reject(shared_event, tags=[TAG_RETRY_EXHAUSTED], reason="second")
+
+        replayed = await svc.replay_dlq()
+        self.assertEqual(replayed, 1, "Same event_id should be replayed only once")
+
+        await svc.stop(graceful=True)
+
+    async def test_replay_with_explicit_tag_filter_re_validates(self):
+        """replay_dlq(tag_filter=TAG_WRITER_ERROR) re-validates events through ingest()."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        valid_event = _make_event(event_id="write-fail-valid")
+        svc._dlq.reject(valid_event, tags=[TAG_WRITER_ERROR], reason="transient error")
+
+        replayed = await svc.replay_dlq(tag_filter=TAG_WRITER_ERROR)
+        self.assertEqual(replayed, 1)
+
+        await svc.stop(graceful=True)
+
+    async def test_stats_includes_dedup_and_duplicate_counts(self):
+        """Stats must expose dedup_tracked_ids and total_duplicates."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+        await svc.ingest(_make_event(event_id="s1"))
+        await svc.ingest(_make_event(event_id="s1"))  # duplicate
+        await svc.stop(graceful=True)
+
+        stats = svc.stats()["service"]
+        self.assertIn("total_duplicates", stats)
+        self.assertIn("dedup_tracked_ids", stats)
+        self.assertEqual(stats["total_duplicates"], 1)
 
 
 # ---------------------------------------------------------------------------
