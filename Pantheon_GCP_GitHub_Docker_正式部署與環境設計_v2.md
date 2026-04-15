@@ -1,7 +1,7 @@
 # Pantheon 正式部署與環境設計
 
 ## 版本
-- 文件版本：v1
+- 文件版本：v2
 - 文件定位：正式交付草案
 - 適用範圍：Pantheon 主平台、pantheon-lean、front-ai-trading-system
 - 目標環境：GCP + GitHub + Docker
@@ -222,9 +222,134 @@ flowchart TB
 
 ---
 
-## 4. Deployable service inventory
+## 4. Wave 1 Baseline and Deployable Service Inventory
 
-### 4.1 v1 建議的正式 deployable services
+### 4.1 BP5-SVC-001 baseline rule
+
+本節是 `BP5-SVC-001` 的正式 baseline contract，適用於：
+
+- 單 VM `docker compose` 測試環境
+- 後續 GCP / cloud container 化部署
+- `BP5-SVC-002` 到 `BP5-SVC-016` 的 service realization 工作
+
+若本節和後面較舊的 target-state service 分拆清單有衝突，**以本節為準**，直到 Wave 1 service honesty gate 完成。
+
+### 4.2 Wave 1 service boundary / owner split
+
+| Service family | 主要職責 | 明確不擁有的 truth | 現況 / Wave 1 決議 |
+|---|---|---|---|
+| `runtime-control` | side-effectful operator commands；pause / rollback / kill-switch / deployment approval command dispatch；`RuntimeBinding` mutation fast path | `ApprovalDecision`、`DeploymentPlan`、`EvolutionDecision` canonical records | Wave 1 直接包裝 `services/control_plane/internal_api.py`；保留 Flask，FastAPI parity 是 follow-on，不阻擋 baseline 鎖定 |
+| `governance-api` | `ApprovalDecision`、`DeploymentPlan`、`CapitalPool`、`PersonaCapitalBinding`、`EvolutionDecision` 的 read/write API；deployment/evolution governance flow | `RuntimeBinding` write authority；kill-switch fast path；telemetry canonical writes | Wave 1 明確承接 evolution decision / action，不把這兩類 endpoint 放在 `runtime-control` |
+| `telemetry-ingest` | event intake、schema validation、buffer、retry、DLQ、canonical telemetry write path 前置 shock absorption | lineage query；runtime control；BFF aggregation | Wave 1 為既有 `TelemetryIngestService` 包 HTTP wrapper，不重開 telemetry semantics |
+| `lineage-read` | lineage projection / read model query；BFF / UI read-facing lineage surfaces | telemetry ingest；incident / evolution decision writes；BFF 內建深度 join | Wave 1 為既有 `LineageReadService` 包 HTTP wrapper；BFF 不自行做深度 lineage join |
+| `bff` | auth / RBAC facade；read model composition；command submission facade；UI realtime feed | canonical domain writes；runtime control truth；deployment state truth；telemetry truth | BFF 仍是 read-oriented facade；snapshot/default seed 只能作 bootstrap-local fallback，不得作 `core-vm` 或 cloud 正常路徑 |
+| `delivery-platform` | `router`、`persona`、`feedback`，以及 optional `web` / `cron` 的 ingress / handoff / feedback entrypoints | governance/runtime/evidence canonical truth | `router` / `persona` 沿用既有 deployable apps；`feedback` 進 Wave 1；`web` / `cron` 保持 optional profile |
+
+### 4.3 Wave 1 core service inventory
+
+| Compose service id | Repo path / source | Default port | Default profile | Notes |
+|---|---|---|---|---|
+| `router` | `services/control-plane/router/` | `8001` | `core-vm` | existing FastAPI ingress |
+| `persona` | `services/control-plane/persona/` | `8002` | `core-vm` | existing FastAPI persona hub |
+| `bff` | `services/control-plane/bff/` | `8003` | `core-vm` | resolve current `8001` collision by moving BFF off router port |
+| `feedback` | `services/control-plane/feedback/` | `8004` | `core-vm` | existing FastAPI feedback ingest/query surface |
+| `runtime-control` | `services/control_plane/internal_api.py` | `5001` | `core-vm` | keeps current command URL contract used by BFF |
+| `governance-api` | `services/control-plane/governance/` + related runtime/governance stores | `5002` | `core-vm` | new HTTP wrapper family in Wave 1 |
+| `telemetry-ingest` | `services/telemetry/ingest_svc.py` | `5003` | `core-vm` | new HTTP wrapper over existing service class |
+| `lineage-read` | `services/telemetry/lineage_read/service.py` | `5004` | `core-vm` | new HTTP wrapper over existing service class |
+| `signal-store` | Redis | `6379` | `core-vm` | shared signal / buffer dependency already used by router/persona/runtime paths |
+| `web` | `services/channels/web/` | `8000` | `optional-web` | thin router proxy; not part of Wave 1 honesty gate |
+| `cron` | `services/control-plane/cron/` | n/a | `optional-cron` | workflow runner; no default public port contract |
+| `mlflow-server` | `services/research/mlflow/` | `5000` | `research` | optional research profile only |
+| `lean` / future `runtime-manager` | `lean/`, `services/execution/runtime-manager/` | internal | `execution-lab` | paper / mock execution only in single-VM tests; not a default profile gate |
+
+### 4.4 Canonical port and health registry
+
+| Service | Port contract | Health surface | Rule |
+|---|---|---|---|
+| `router` | `8001` | `GET /health` | existing surface stays unchanged |
+| `persona` | `8002` | `GET /health` | existing surface stays unchanged |
+| `bff` | `8003` | `GET /health` | local runner must stop using `8001` once containerized |
+| `feedback` | `8004` | `GET /health` | keep FastAPI health contract |
+| `runtime-control` | `5001` | `GET /__health__` | Wave 1 compatibility surface; later `/health` alias is allowed but not required for BP5-SVC-001 |
+| `governance-api` | `5002` | `GET /health` | wrapper service must expose standard health route |
+| `telemetry-ingest` | `5003` | `GET /health` | wrapper service must expose standard health route |
+| `lineage-read` | `5004` | `GET /health` | wrapper service must expose standard health route |
+| `signal-store` | `6379` | Redis native ping | infra dependency, not an HTTP service |
+
+### 4.5 Canonical env contract
+
+#### Service discovery
+
+| Env var | Canonical meaning | Typical single-VM value |
+|---|---|---|
+| `ROUTER_URL` | public router base URL for thin channels | `http://router:8001` |
+| `PERSONA_URL` | persona service base URL | `http://persona:8002` |
+| `PANTHEON_BFF_URL` | operator BFF base URL | `http://bff:8003` |
+| `PANTHEON_INTERNAL_API_URL` | runtime-control base URL | `http://runtime-control:5001` |
+| `PANTHEON_GOVERNANCE_API_URL` | governance-api base URL | `http://governance-api:5002` |
+| `PANTHEON_TELEMETRY_INGEST_URL` | telemetry-ingest base URL | `http://telemetry-ingest:5003` |
+| `PANTHEON_LINEAGE_READ_URL` | lineage-read base URL | `http://lineage-read:5004` |
+| `REDIS_URL` | shared Redis / signal-store URL | `redis://signal-store:6379` |
+| `MLFLOW_TRACKING_URI` | MLflow endpoint for optional research workers | `http://mlflow-server:5000` |
+
+#### Stateful data roots
+
+| Env var | Canonical meaning | Typical single-VM value |
+|---|---|---|
+| `BFF_DATA_DIR` | BFF local command/read cache directory | `/var/lib/pantheon/bff` |
+| `BFF_READ_SURFACE_STATE` | BFF read-surface freshness state | `fresh` |
+| `PANTHEON_GOVERNANCE_DATA_DIR` | governance snapshots / file-backed stores root | `/var/lib/pantheon/governance` |
+| `PANTHEON_RUNTIME_DATA_DIR` | runtime-binding / command-state root | `/var/lib/pantheon/runtime` |
+| `PANTHEON_TELEMETRY_DATA_DIR` | telemetry spill / DLQ / projector root | `/var/lib/pantheon/telemetry` |
+| `TRADER_FEEDBACK_STORE_PATH` | feedback event store path | `/var/lib/pantheon/feedback/trader_feedback_events.jsonl` |
+| `PANTHEON_COMMAND_STATE_FILE` | runtime-control command-state file | `/var/lib/pantheon/runtime/commands.json` |
+
+#### Env rules
+
+- `BFF_READ_SURFACE_STATE=fresh` 是 `core-vm` 與 cloud 正常路徑的預設；seed/default data 只能在明確標示的 bootstrap-local 模式下使用。
+- `PANTHEON_GOVERNANCE_DATA_DIR` 與 `PANTHEON_RUNTIME_DATA_DIR` 是 BFF、governance-api、runtime-control 之間共享的 file-backed baseline contract；後續 service 化可把底層實作換成 DB / object store，但 env 名稱不改。
+- 若 cloud runtime 強制注入 `PORT`，服務 wrapper 必須優先讀 `PORT`，但仍保留本節列出的預設 port 作為 local/compose contract。
+
+### 4.6 Canonical volume / persistence contract
+
+| Named volume | Mount path | Consumer services | Canonical contents |
+|---|---|---|---|
+| `pantheon-bff-data` | `/var/lib/pantheon/bff` | `bff` | `commands.jsonl`, read-surface cache, temporary operator state |
+| `pantheon-governance-data` | `/var/lib/pantheon/governance` | `governance-api`, `bff` | `approval_decisions.json`, `deployment_plans.json`, `capital_pools.json`, `persona_capital_bindings.json`, `evolution_decisions.json` |
+| `pantheon-runtime-data` | `/var/lib/pantheon/runtime` | `runtime-control`, future `runtime-manager`, `bff` | `commands.json`, `runtime_bindings.json`, runtime action receipts |
+| `pantheon-feedback-data` | `/var/lib/pantheon/feedback` | `feedback` | trader feedback event log |
+| `pantheon-telemetry-data` | `/var/lib/pantheon/telemetry` | `telemetry-ingest`, `lineage-read` | DLQ spill, projector state, lineage materialization inputs |
+| `lean-data` | `/Lean/Data` | `lean` | LEAN data directory |
+
+### 4.7 Compose profile and single-VM resource boundary
+
+| Profile | Included by default | Purpose | Boundary rule |
+|---|---|---|---|
+| `core-vm` | yes | honest Wave 1 control / governance / evidence stack | must boot without optional research, web, or live execution dependencies |
+| `optional-web` | no | thin web channel proxy | not a compose acceptance gate |
+| `optional-cron` | no | scheduled workflow runner | not a compose acceptance gate |
+| `research` | no | MLflow + research / learning workers | must declare explicit CPU / memory limits on the single-VM target |
+| `execution-lab` | no | paper/mock runtime-manager + LEAN lab profile | kept outside the default profile until Wave 1 service stack is proven |
+
+單 VM baseline 目標仍然是測試環境的 `8 vCPU / 16–32 GB RAM` 級別，因此：
+
+- `research` 與 `execution-lab` 不能和 `core-vm` 一起默認啟動
+- optional profiles 必須有明確 resource caps，避免把整合失敗和資源爭用混在一起
+- `web` / `cron` 不屬於 Wave 1 honesty gate；是否納入預設 profile 不再是 blocker
+
+### 4.8 Cloud continuity rule
+
+未來 cloud 部署沿用本節 contract 的原則如下：
+
+- service id、責任邊界、discovery env 名稱、data-root 名稱都不改
+- 單 VM named volume 可在 cloud 端映射為 Cloud SQL、GCS、managed disk、或 managed buffer，但 service 看到的 canonical env 仍維持本節命名
+- `runtime-control`、`governance-api`、`telemetry-ingest`、`lineage-read`、`bff` 在 cloud 只是換 runtime substrate，不重新發明 API family 或 ownership split
+- `router` / `persona` / `feedback` 仍屬 delivery-platform family；`web` / `cron` 保持 optional，除非後續 wave 另行升格
+
+### 4.9 Longer-horizon deployable services
+
+以下清單仍可作為後續 finer-grained target-state 參考，但 **不覆蓋** 4.1-4.8 的 Wave 1 baseline：
 
 1. `app-bff-svc`
 2. `openclaw-adapter-svc`
@@ -243,7 +368,7 @@ flowchart TB
 15. `telemetry-incident-svc`
 16. `evolution-svc`
 
-### 4.2 先留在 service 內部的 module
+### 4.10 先留在 service 內部的 module
 
 以下模組先不拆成獨立 deployable service：
 - `policy-engine`
@@ -254,7 +379,7 @@ flowchart TB
 - `signal-inference`
 - `allocation-aggregator`
 
-### 4.3 不屬於 Pantheon 主 service 的外部 substrate
+### 4.11 不屬於 Pantheon 主 service 的外部 substrate
 
 - `OpenClaw`：upstream agent/runtime substrate
 - `pantheon-lean / LEAN`：execution substrate
@@ -263,6 +388,8 @@ flowchart TB
 ---
 
 ## 5. GCP services mapping
+
+本節的 GCP runtime 對映仍可保留未來 finer-grained service 拆分，但在 Wave 1 實作時，請先以 4.1-4.8 的 service family 為 deployable units。
 
 ## 5.1 Cloud Run mapping
 
@@ -378,6 +505,9 @@ flowchart TB
 
 ## 6.2 Path-to-service mapping
 
+Wave 1 先以 4.1-4.8 的 service family 為準；
+下表保留較細的 target-state path 拆分，供後續 service 進一步拆細時使用。
+
 | Repo / path | 對應服務 / 組件 |
 |---|---|
 | `pantheon/services/control-plane/bff/` | `app-bff-svc` |
@@ -404,6 +534,9 @@ flowchart TB
 ## 7. Docker image strategy
 
 ## 7.1 image families
+
+Wave 1 image 命名可先直接對應 4.3 的 baseline service ids；
+以下 image families 仍可視為後續 finer-grained 拆分的目標名單。
 
 ### control-plane images
 - `pantheon/app-bff`
@@ -487,6 +620,20 @@ flowchart LR
 6. changed-service Docker build dry run
 7. security / dependency scan
 
+### Stage 0 machine-readable gate
+
+- machine-readable stage-0 service matrix: `.github/pantheon-stage0-matrix.json`
+- stage-0 workflow entry: `.github/workflows/stage-0-ci.yml`
+- local / CI matrix validator and changed-path detector: `python3 scripts/ci_stage0.py validate` and `python3 scripts/ci_stage0.py detect-changes --base <sha> --head <sha>`
+
+這三個檔案一起構成 Stage 0 的正式 gate。後續若要新增或升格 service，不得只改 workflow condition，必須同步更新 matrix 與本文件。
+
+### Stage 0 changed-path policy
+
+- 只要變更 `.github/pantheon-stage0-matrix.json`、`.github/workflows/stage-0-ci.yml`、`scripts/ci_stage0.py`、`docker-compose*.yml`、或本文件，Stage 0 必須觸發 full verify/build sweep，而不是只跑單一 service。
+- `core-vm` inventory 中已 containerize 的 target 走 Docker build dry run；尚未 containerize 的 target 必須在 matrix 內明確標成 verification-only，並保留對應 unit / smoke / syntax checks。
+- `research` 與 `execution-lab` profile 的 image dry run 也由同一份 matrix 管理，避免 worker / LEAN / runtime-manager 之間繼續靠隱性路徑判斷。
+
 ### smoke test 最低覆蓋
 - promotion gate
 - deployment saga
@@ -494,6 +641,14 @@ flowchart LR
 - telemetry ingest
 - lineage read
 - BFF key surfaces
+
+目前 baseline smoke floor 直接對應下列 repo scripts：
+- `services/registry/promotion/smoke_test_gate.py`
+- `services/control-plane/governance/smoke_test_deployment_saga.py`
+- `services/execution/runtime-manager/smoke_test_runtime_binding.py`
+- `services/telemetry/smoke_test_ingest.py`
+- `python3 -m unittest discover -s services/telemetry/lineage_read -p 'test_*.py'`
+- `services/control-plane/bff/smoke_test.py`
 
 ---
 
