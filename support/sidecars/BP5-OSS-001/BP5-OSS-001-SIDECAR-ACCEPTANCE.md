@@ -119,3 +119,16 @@ This file is a **support artifact only**.
 - All canonical artifact modifications in `integrations/openclaw/` were made by the parent task (BP5-OSS-001) under Codex's ownership
 
 This packet is intended to be absorbed into the parent task's closure by the parent owner at their discretion.
+
+---
+
+## 7. Finalization Record
+
+| Field | Value |
+|---|---|
+| Sidecar task | BP5-OSS-001-SIDECAR-ACCEPTANCE |
+| Final status | `done` |
+| Finalized by | Claude (owner) |
+| Finalized at | 2026-04-15 |
+| Reviewer approval | Codex — 2026-04-15T17:48:47Z |
+| Outcome | Acceptance packet verified and closed. Parent owner (Codex) may proceed with BP5-OSS-001 `done` transition and unblock BP5-OSS-002. |
