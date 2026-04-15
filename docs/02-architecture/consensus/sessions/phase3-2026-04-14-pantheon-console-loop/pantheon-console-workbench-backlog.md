@@ -29,44 +29,61 @@ This backlog expands `front-ai-trading-system` from a loose page set into the fu
 
 Objective: give operators one coherent control surface for runtime state, deployment, incidents, system health, and degraded operation.
 
-Screens and modules:
+Surface inventory and wave ownership:
 
-- `Operator Home`
-- `Deployment Review Console`
-- `Incident Response Console`
-- `Post-Incident Review Console`
-- `Alerts rail`
-- `Health and runtime status`
-- `Paper/live drift view`
-- `Global degradation banner`
-- `SSE and reconciliation substrate`
+| Surface or IA scope | Module owner | Existing Pantheon support | Primary wave | Notes |
+|---|---|---|---|---|
+| `Operator Home` dashboard shell | `OC-01 Operator Home dashboard` | no dedicated composed view yet; can only assemble from existing operator primitives such as governance queue, incident list, runtime status, telemetry summary, and kill-switch status | Wave 2 | keep this as backlog definition only; do not pretend the current loose pages equal a canonical home screen |
+| `Alerts rail` | `OC-02 Alerts rail` | incident list, governance review queue, kill-switch status, and SSE events provide alert-like ingredients, but there is no canonical operator alert feed or severity schema | Wave 2 | depends on a dedicated alert taxonomy instead of ad hoc badges across screens |
+| `Health status` + `Runtime state` | `OC-03 Health status board`; `OC-04 Runtime state board` | `GET /api/v1/runtimes/{runtime_id}/status`; `GET /api/v1/telemetry/{runtime_id}/summary`; `GET /api/v1/kill-switch/status`; degraded-path runbook and operator acceptance semantics | Wave 2 | live read primitives exist, but there is no composed operator-health packet or shell copy yet |
+| `Paper/live drift view` | `OC-05 Paper / Live Drift view` | paper-live boundary policy exists; promotion review already uses paper-live stage semantics; evolution decisions and drift evidence types exist in governance contracts | Wave 2 | still missing a dedicated drift read model and operator-facing review surface |
+| `Deployment Review Console` | `OC-06 Deployment Review Console` | `PKT-001`; `GET /api/v1/operator/deployment-review/{plan_id}`; operator command route; published screen spec, contract, example payload, and Lovable packet | Wave 1 baseline | ready packet should be reused, not redefined |
+| `Incident Response Console` | `OC-07 Incident Response Console` | `PKT-002`; incident home, detail, and action drawer packet family; kill-switch status and command receipts already modeled | Wave 1 baseline | ready packet family already defines degraded-state and fallback rules |
+| `Post-Incident Review Console` | `OC-08 Post-Incident Review Console` | `PKT-003`; `GET /api/v1/operator/post-incident-review/{incident_id}` plus postmortem and evidence reads | Wave 1 baseline | ready packet family already carries W3 inherited caveats |
+| `Global degradation banner` | `OC-09 Global degradation banner` | `PKT-005`; `meta.staleness` + `meta.surfaces.*` inheritance rules are already packetized | Wave 1 baseline | cross-cutting substrate; not a standalone page |
+| `SSE and reconciliation substrate` | `OC-10 SSE reconciliation substrate` | `PKT-005`; three SSE endpoints plus replay, heartbeat, reconnect, and reconciler rules | Wave 1 baseline | cross-cutting substrate shared by runtime, incident, and kill-switch surfaces |
 
-Existing Pantheon support:
+Separation rule for this backlog:
 
-- `F-042 Promotion Review` packet and prompt already exist
-- APP-002 sidecars define deployment review, incident response, post-incident review, degradation banner, and SSE semantics
-- operator acceptance matrix defines path semantics, permissions, and degraded behavior
+- put dashboard shell copy, alerts vocabulary, health/runtime panel wording, and drift review screen language in `Missing screen-spec work`
+- put absent composed views, alert or drift read models, and cross-surface aggregation contracts in `Backend or contract dependencies`
 
-Missing canonical screen specs:
+Canonical module inventory:
 
-- Operator Home dashboard
-- paper/live drift screen
-- alerts and health as one operator-home packet family rather than loose pages
+| Module | Screen or surface scope | Existing Pantheon support | Missing screen-spec work | Lovable readiness | Backend or contract dependencies | Recommended wave |
+|---|---|---|---|---|---|---|
+| `OC-01 Operator Home dashboard` | top-level operator landing screen with summary cards for incidents, governance queue, runtime health, safe-mode state, and escalation shortcuts | no canonical Operator Home packet today; only underlying inputs exist via `GET /api/v1/operator/governance/review-queue`, `GET /api/v1/incidents`, `GET /api/v1/runtimes/{runtime_id}/status`, `GET /api/v1/telemetry/{runtime_id}/summary`, and `GET /api/v1/kill-switch/status` | full home-screen packet: dashboard layout, summary-card hierarchy, escalation CTA wording, empty vs degraded states, and cross-panel refresh rules | no | needs a dedicated composed operator-home read model or an explicit aggregation contract over the existing routes; must preserve backend-owned degradation semantics instead of deriving health locally | Wave 2 — fourth |
+| `OC-02 Alerts rail` | chronological alert strip or drawer for active incidents, pending governance risk, kill-switch changes, and runtime anomalies | incident list, governance review queue, kill-switch status, and SSE event streams expose raw alert ingredients; no canonical operator alert feed exists | full alerts packet: alert severity labels, grouping rules, acknowledgement affordance, and stale-data copy | no | needs a canonical alert feed or aggregation contract with stable alert ids, severity taxonomy, linked target refs, and acknowledgement semantics | Wave 2 — third |
+| `OC-03 Health status board` | control-plane and data-surface health overview, degraded-surface summary, safe-mode state, and secondary control path guidance | `GET /api/v1/kill-switch/status`; degraded operator path guide; `PKT-005` degradation banner; operator acceptance matrix degraded-behavior rules | full health-board packet: health sections, surface grouping, operator guidance copy, and escalation ordering | partial | needs either a dedicated health composed view or a canonical merge contract over `meta.surfaces`, kill-switch status, and degraded-path guidance so the UI does not invent health logic | Wave 2 — second |
+| `OC-04 Runtime state board` | live runtime roster, current stage, runtime status, telemetry summary, rollback-history entry points, and last-updated timestamps | `GET /api/v1/runtimes/{runtime_id}/status`; `GET /api/v1/telemetry/{runtime_id}/summary`; runtime-related SSE stream; RT and TL read surfaces from the remaining catalog sidecar | runtime roster shell, status badge language, stale/runtime mismatch copy, and drilldown entry rules | partial | lacks a canonical multi-runtime list or composed board route; single-runtime primitives exist, but operator-home runtime inventory still needs an aggregation contract | Wave 2 — first |
+| `OC-05 Paper / Live Drift view` | paper-vs-live comparison screen showing promotion baseline, observed drift, evidence refs, and required follow-up decision path | paper-live boundary and comparison semantics exist in `PAPER_CANARY_LIVE_POLICY.md`; promotion review already carries stage boundary logic; evolution decisions and `drift_report` evidence types exist in governance contracts | full drift packet: comparison layout, metric grouping, evidence drawer, drift-threshold copy, and escalation or review CTA wording | no | requires a dedicated paper-live drift BFF surface with baseline snapshot, live observations, threshold evaluation, evidence refs, and backend-shaped follow-up actions; current policy and decision schemas are not a front-end packet by themselves | Wave 2 — fifth |
+| `OC-06 Deployment Review Console` | deployment plan review, binding and pool context, runtime binding summary, rollback history, and operator command CTA | `PKT-001` ready packet; `GET /api/v1/operator/deployment-review/{plan_id}`; `POST /api/v1/operator/commands`; published screen spec, BFF contract, example payload, contract-ready handoff, and Lovable UI task | none for the current packet; preserve the deployment-review framing and backend-shaped `allowedActions` semantics when embedding it inside the larger Operator Console IA | ready | none for the current packet contract; downstream Operator Home summaries should link to this screen instead of duplicating its approval logic | Wave 1 baseline — already packetized |
+| `OC-07 Incident Response Console` | incident home, incident detail, and incident action drawer for emergency response | `PKT-002` ready packet family; `GET /api/v1/incidents`; `GET /api/v1/operator/incident-response/{incident_id}`; `GET /api/v1/kill-switch/status`; `POST /api/v1/operator/commands` | none for the current packet family; preserve degraded-state, secondary control path, and command-receipt wording | ready | none for the current packet family; Operator Console shell should inherit, not fork, the existing incident control semantics | Wave 1 baseline — already packetized |
+| `OC-08 Post-Incident Review Console` | resolved-incident index, composed post-incident review, postmortem references, and evolution evidence summary | `PKT-003` ready packet; `GET /api/v1/incidents?status=resolved`; `GET /api/v1/operator/post-incident-review/{incident_id}`; `GET /api/v1/postmortems` | none for the current packet; carry forward TL/LN caveat wording and reviewer-role expectations from the W3 packet family | ready | none for the current packet beyond the inherited W3 caveats (`time_range` filters partial, `root_type` no-op) already documented in `PKT-003` | Wave 1 baseline — already packetized |
+| `OC-09 Global degradation banner` | shared non-dismissable banner for degraded or unavailable surfaces across all operator screens | `PKT-005` ready substrate; derived from `meta.staleness` and `meta.surfaces.*`; screen spec, BFF contract, example payload, and Lovable packet are already published | none for the current substrate; future screens must inherit the existing banner states and copy rather than invent new degradation variants | ready | no new backend route; every downstream screen must pass through backend-owned `meta` fields exactly as defined in `PKT-005` | Wave 1 baseline — already packetized |
+| `OC-10 SSE reconciliation substrate` | shared live-update layer for runtime, incident, and kill-switch state across operator screens | `PKT-005` ready substrate; `GET /api/v1/runtime/{runtime_id}/events/stream`; `GET /api/v1/incidents/stream`; `GET /api/v1/kill-switch/updates`; reconnect and replay semantics are already defined | none for the current substrate; future screens only need subscription-scope and reconciliation-hook wiring in their own packet notes | ready | no new backend route for the current substrate; downstream screens must reuse the canonical replay, heartbeat, and reconnect contract instead of custom polling loops | Wave 1 baseline — already packetized |
 
-Lovable readiness:
+Wave framing:
 
-- ready or near-ready: deployment review, incident response, post-incident review, degradation banner shell
-- not yet ready: operator home and drift screens
+- Wave 1 establishes the ready Operator Console baseline through `OC-06` to `OC-10`: deployment review, incident response, post-incident review, degradation banner, and SSE substrate.
+- Wave 2 turns the loose operator shell into a real workbench by defining `OC-01` to `OC-05`: runtime board, health board, alerts rail, operator home dashboard, and paper-live drift.
 
-Backend dependencies:
+Wave 2 internal ordering and dependency chain:
 
-- live dashboard or drift read models
-- explicit runtime and health composed views if current BFF surfaces are not enough
+| Position | Module | Why this order | Upstream dependency within workbench |
+|---|---|---|---|
+| baseline | `OC-06` to `OC-10` | these ready packets and substrates already define the canonical operator patterns for degraded-state handling, live updates, and action authority | none — all are already packetized via `PKT-001`, `PKT-002`, `PKT-003`, and `PKT-005` |
+| 1 | `OC-04 Runtime state board` | runtime-state inventory is the minimum missing operator shell because active incident, health, and drift views all need stable runtime identity and last-known state | inherits SSE substrate and RT/TL primitives from the Wave 1 baseline |
+| 2 | `OC-03 Health status board` | health view can reuse runtime inventory plus degradation banner semantics to present control-plane health without inventing new action rules | depends on stable runtime board aggregation and `PKT-005` degradation semantics |
+| 3 | `OC-02 Alerts rail` | alerts should be layered after runtime and health taxonomy are defined so severity and routing rules are not invented screen-by-screen | depends on runtime-state vocabulary, health grouping, incident feeds, and governance queue identity |
+| 4 | `OC-01 Operator Home dashboard` | home screen should summarize already-defined runtime, health, and alert modules instead of forcing each of those contracts to be invented inside one mega packet | depends on `OC-02`, `OC-03`, and `OC-04` summary contracts |
+| 5 | `OC-05 Paper / Live Drift view` | drift review is the farthest-from-ready operator module because it depends on policy thresholds, evidence identity, and a net-new comparison read model, not just shell IA | depends on paper-live boundary semantics plus stable runtime and alert context from the earlier Wave 2 modules |
 
 Recommended wave:
 
-- Wave 1 for deployment, incident, post-incident, degradation, and SSE packetization
-- Wave 2 for operator home, drift, and the remaining operator shell
+- Operator Console starts in Wave 1 because the core command surfaces and cross-cutting substrates are already packetized.
+- Operator Home, alerts, health, runtime board, and paper-live drift stay in Wave 2 because they still need net-new operator-shell contracts or composed views before Lovable handoff is honest.
+- no Wave 2 Operator Console module should be handed to Lovable before the corresponding aggregation contract or dedicated BFF surface exists alongside the canonical packet family
 
 ## Persona Workbench
 
