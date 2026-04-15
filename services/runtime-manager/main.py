@@ -5,6 +5,7 @@ within the Execution Plane.  All routes enforce the pre-conditions from:
 
     services/execution/runtime-manager/contract.md
     BINDING_AND_DEPLOYMENT_SEMANTICS.md §19 (RUN-001)
+    ROLLBACK_AND_POSITION_SEMANTICS.md
 
 Route summary
 -------------
@@ -24,6 +25,15 @@ POST  /api/runtime-bindings/<binding_id>/retire
 POST  /api/runtime-bindings/<binding_id>/transition
     Advance a binding through the allowed status state machine.
     Body: { "new_status": "pending_pause" | "paused" | "active" | "failed" }
+
+POST  /api/rollback
+    Execute a rollback action (replace | pause_then_replace | liquidate_then_replace).
+    Body: RollbackRequest fields (see service.py for field documentation).
+    Returns: old_binding, new_binding, cutover_at, position_lineage.
+
+GET   /api/rollback/history
+    List rollback bindings (those with a rollback_parent set).
+    Optional query param: pool_id — filter by capital_pool_id.
 
 GET   /__health__
     Liveness probe.
@@ -285,6 +295,88 @@ def get_active_binding(pool_id):
         return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), 409
     except Exception as exc:
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/rollback", methods=["POST"])
+def execute_rollback():
+    """Execute a canonical rollback action.
+
+    Implements all three strategies from ROLLBACK_AND_POSITION_SEMANTICS.md §3:
+      - replace: hot-swap; retire old, create new replacement
+      - pause_then_replace: drain active binding to paused, then replace
+      - liquidate_then_replace: retire old with liquidation semantics, create replacement
+
+    Required body fields:
+      current_binding_id, action_type,
+      replacement_plan_id, replacement_artifact_id, replacement_artifact_version,
+      replacement_persona_capital_binding_id, replacement_allowed_deployment_scope
+
+    Optional:
+      replacement_plan_status, replacement_persona_capital_binding_status,
+      replacement_deployment_mode, replacement_runtime_id,
+      replacement_start_paused, loader_checks_passed, opened_by_artifact_id
+
+    Returns 201 with { action_type, old_binding, new_binding, cutover_at, position_lineage }.
+    """
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    body = request.get_json(force=True) or {}
+
+    required_fields = [
+        "current_binding_id",
+        "action_type",
+        "replacement_plan_id",
+        "replacement_artifact_id",
+        "replacement_artifact_version",
+        "replacement_persona_capital_binding_id",
+        "replacement_allowed_deployment_scope",
+    ]
+    missing = [f for f in required_fields if not body.get(f)]
+    if missing:
+        return (
+            jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
+            400,
+        )
+
+    svc = _get_service()
+    try:
+        result = svc.rollback(body)
+        return jsonify(result), 201
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "PRECONDITION_FAILED", "message": str(exc)}}), 422
+    except RuntimeBindingError as exc:
+        code = 404 if "not found" in str(exc).lower() else 422
+        return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), code
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/rollback/history", methods=["GET"])
+def rollback_history():
+    """Return all bindings that have a rollback_parent set (i.e. replacement bindings).
+
+    Optional query params:
+      pool_id — filter by capital_pool_id
+    """
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    pool_id = request.args.get("pool_id")
+
+    svc = _get_service()
+    if pool_id:
+        bindings = svc.list_by_pool(pool_id)
+    else:
+        bindings = svc.list_all()
+
+    rollback_bindings = [b.to_dict() for b in bindings if b.rollback_parent is not None]
+    return jsonify({
+        "rollbacks": rollback_bindings,
+        "count": len(rollback_bindings),
+    }), 200
 
 
 if __name__ == "__main__":

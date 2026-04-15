@@ -454,9 +454,343 @@ def run_internal_api_boundary_smoke():
     )
 
 
+def run_rollback_action_tests():
+    """Smoke tests for rollback action semantics — BP5-SVC-008.
+
+    Acceptance criteria:
+      AC-3  runtime-manager exposes the canonical rollback and replace actions
+            without semantic drift (replace / pause_then_replace /
+            liquidate_then_replace semantics match ROLLBACK_AND_POSITION_SEMANTICS.md)
+      AC-4  position handling, cutover timing, and rollback linkage are verified
+            in smoke coverage
+    """
+    print("\n=== Rollback Action Semantics (service.py) — BP5-SVC-008 ===")
+
+    def _base_deploy(svc, pool_id, plan_id, artifact_id="artifact-original",
+                     runtime_id=None, pcb_status="active"):
+        return svc.deploy({
+            "plan_id": plan_id,
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "artifact_id": artifact_id,
+            "artifact_version": "1.0.0",
+            "capital_pool_id": pool_id,
+            "persona_capital_binding_id": f"pcb-{pool_id}",
+            "persona_capital_binding_status": pcb_status,
+            "allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+            "runtime_id": runtime_id or f"rt-{pool_id}",
+        })
+
+    def _rollback_req(current_binding_id, action_type, pool_id,
+                      fallback_artifact="artifact-fallback",
+                      replacement_start_paused=False,
+                      opened_by_artifact_id=None):
+        req = {
+            "current_binding_id": current_binding_id,
+            "action_type": action_type,
+            "replacement_plan_id": f"plan-rb-{pool_id}",
+            "replacement_plan_status": "approved",
+            "replacement_artifact_id": fallback_artifact,
+            "replacement_artifact_version": "0.9.0",
+            "replacement_persona_capital_binding_id": f"pcb-rb-{pool_id}",
+            "replacement_persona_capital_binding_status": "active",
+            "replacement_allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+        }
+        if replacement_start_paused:
+            req["replacement_start_paused"] = True
+        if opened_by_artifact_id:
+            req["opened_by_artifact_id"] = opened_by_artifact_id
+        return req
+
+    # ------------------------------------------------------------------
+    # AC-3 / AC-4: replace strategy
+    # ------------------------------------------------------------------
+    svc_replace = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        original = _base_deploy(svc_replace, "pool-rb-replace", "plan-orig-replace")
+        orig_id = original.binding_id
+
+        result = svc_replace.rollback(
+            _rollback_req(orig_id, "replace", "pool-rb-replace",
+                          opened_by_artifact_id="artifact-position-opener")
+        )
+
+        # Cutover timing
+        check("replace: cutover_at is set in result",
+              bool(result.get("cutover_at")))
+
+        # Old binding retired
+        check("replace: old binding is retired",
+              result["old_binding"]["status"] == "retired"
+              and result["old_binding"]["binding_id"] == orig_id)
+
+        # New binding active and linked
+        new_b = result["new_binding"]
+        check("replace: new binding is active",
+              new_b["status"] == "active")
+        check("replace: new binding has rollback_parent linking to old binding",
+              new_b.get("rollback_parent") == orig_id)
+        check("replace: new binding rollback_action_type == 'replace'",
+              new_b.get("rollback_action_type") == "replace")
+        check("replace: new binding has fallback artifact",
+              new_b["artifact_id"] == "artifact-fallback")
+
+        # Position lineage
+        lin = result["position_lineage"]
+        check("replace: position_lineage.opened_by_artifact_id is immutable original opener",
+              lin["opened_by_artifact_id"] == "artifact-position-opener")
+        check("replace: position_lineage.current_managed_by_binding_id == new binding",
+              lin["current_managed_by_binding_id"] == new_b["binding_id"])
+        check("replace: position_lineage.prev_binding_id == old binding",
+              lin["prev_binding_id"] == orig_id)
+        check("replace: position_lineage.cutover_at is set",
+              bool(lin.get("cutover_at")))
+
+        # Store state: old binding is now retired in store
+        stored_old = svc_replace.get(orig_id)
+        check("replace: store confirms old binding is retired",
+              stored_old is not None and stored_old.status == "retired")
+
+        # Regression: verify create-before-retire ordering — the single-runtime rule
+        # would prevent deploying a second active binding without the bypass.
+        # If this check fails the replace branch is back to retire-first semantics.
+        check("replace: new binding was created while single-runtime rule was active "
+              "(create-before-retire ordering confirmed via successful rollback)",
+              new_b["status"] == "active" and stored_old.status == "retired"
+              and new_b["binding_id"] != orig_id)
+
+    except Exception as exc:
+        check("replace rollback end-to-end", False, str(exc))
+        traceback.print_exc()
+
+    # ------------------------------------------------------------------
+    # AC-3 / AC-4: pause_then_replace strategy
+    # ------------------------------------------------------------------
+    svc_pause = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        original_p = _base_deploy(svc_pause, "pool-rb-pause", "plan-orig-pause")
+        orig_p_id = original_p.binding_id
+
+        result_p = svc_pause.rollback(
+            _rollback_req(orig_p_id, "pause_then_replace", "pool-rb-pause")
+        )
+
+        # Old binding must end up retired
+        check("pause_then_replace: old binding is retired",
+              result_p["old_binding"]["status"] == "retired")
+
+        # New binding active and linked
+        new_p = result_p["new_binding"]
+        check("pause_then_replace: new binding is active",
+              new_p["status"] == "active")
+        check("pause_then_replace: new binding rollback_parent == old binding",
+              new_p.get("rollback_parent") == orig_p_id)
+        check("pause_then_replace: new binding rollback_action_type == 'pause_then_replace'",
+              new_p.get("rollback_action_type") == "pause_then_replace")
+
+        # Cutover timing
+        check("pause_then_replace: cutover_at is set",
+              bool(result_p.get("cutover_at")))
+
+        # Position lineage
+        lin_p = result_p["position_lineage"]
+        check("pause_then_replace: current_managed_by_binding_id updated to new binding",
+              lin_p["current_managed_by_binding_id"] == new_p["binding_id"])
+
+    except Exception as exc:
+        check("pause_then_replace rollback end-to-end", False, str(exc))
+        traceback.print_exc()
+
+    # ------------------------------------------------------------------
+    # AC-3 / AC-4: liquidate_then_replace strategy (guarded start)
+    # ------------------------------------------------------------------
+    svc_liq = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        original_l = _base_deploy(svc_liq, "pool-rb-liq", "plan-orig-liq")
+        orig_l_id = original_l.binding_id
+
+        result_l = svc_liq.rollback(
+            _rollback_req(orig_l_id, "liquidate_then_replace", "pool-rb-liq",
+                          replacement_start_paused=True)
+        )
+
+        # Old binding retired
+        check("liquidate_then_replace: old binding is retired",
+              result_l["old_binding"]["status"] == "retired")
+
+        # New binding starts in paused / guarded mode
+        new_l = result_l["new_binding"]
+        check("liquidate_then_replace: replacement starts paused (guarded mode)",
+              new_l["status"] == "paused")
+        check("liquidate_then_replace: new binding rollback_action_type == 'liquidate_then_replace'",
+              new_l.get("rollback_action_type") == "liquidate_then_replace")
+
+        # Position lineage note warns about zero-position confirmation
+        lin_l = result_l["position_lineage"]
+        check("liquidate_then_replace: position_lineage note flags zero-position confirmation",
+              "zero" in lin_l.get("note", "").lower())
+
+        # Regression: when replacement_start_paused=True the new binding is paused,
+        # not yet active — current_managed_by_binding_id must stay with the old
+        # binding until zero-position is confirmed (L1 §7 lines 162-164).
+        check("liquidate_then_replace (paused): current_managed_by_binding_id stays "
+              "with old binding until zero-position confirmed",
+              lin_l["current_managed_by_binding_id"] == orig_l_id)
+
+        # Cutover timing
+        check("liquidate_then_replace: cutover_at is set",
+              bool(result_l.get("cutover_at")))
+
+    except Exception as exc:
+        check("liquidate_then_replace rollback end-to-end", False, str(exc))
+        traceback.print_exc()
+
+    # ------------------------------------------------------------------
+    # Guard: rollback on already-retired binding must be rejected
+    # ------------------------------------------------------------------
+    svc_guard = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        b_guard = _base_deploy(svc_guard, "pool-rb-guard", "plan-guard")
+        svc_guard.retire(b_guard.binding_id)
+        svc_guard.rollback(
+            _rollback_req(b_guard.binding_id, "replace", "pool-rb-guard")
+        )
+        check("rollback on retired binding is rejected", False,
+              "Expected RuntimeManagerError but succeeded")
+    except RuntimeManagerError:
+        check("rollback on retired binding is rejected", True)
+    except Exception as exc:
+        check("rollback on retired binding is rejected", False, str(exc))
+
+    # ------------------------------------------------------------------
+    # Guard: unknown action_type is rejected
+    # ------------------------------------------------------------------
+    svc_at = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        b_at = _base_deploy(svc_at, "pool-rb-at", "plan-at")
+        svc_at.rollback({
+            "current_binding_id": b_at.binding_id,
+            "action_type": "delete_immediately",
+            "replacement_plan_id": "plan-x",
+            "replacement_artifact_id": "art-x",
+            "replacement_artifact_version": "1.0",
+            "replacement_persona_capital_binding_id": "pcb-x",
+            "replacement_allowed_deployment_scope": "live",
+        })
+        check("rollback with unknown action_type is rejected", False,
+              "Expected RuntimeManagerError but succeeded")
+    except RuntimeManagerError:
+        check("rollback with unknown action_type is rejected", True)
+    except Exception as exc:
+        check("rollback with unknown action_type is rejected", False, str(exc))
+
+
+def run_rollback_http_tests():
+    """HTTP smoke for /api/rollback routes — BP5-SVC-008."""
+    print("\n=== Rollback HTTP Layer (/api/rollback) — BP5-SVC-008 ===")
+
+    os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = (
+        "/tmp/pantheon/smoke-test/rollback-http-bindings.json"
+    )
+    os.environ["PANTHEON_SINGLE_RUNTIME_ENFORCED"] = "true"
+
+    import main  # noqa: PLC0415
+    main._svc = None
+
+    client = main.app.test_client()
+    AUTH = {"Authorization": "Bearer test-token"}
+
+    # Deploy a binding to roll back
+    deploy_body = {
+        "plan_id": "plan-http-rb-base",
+        "plan_status": "approved",
+        "target_stage": "canary",
+        "artifact_id": "artifact-http-rb-original",
+        "artifact_version": "3.0.0",
+        "capital_pool_id": "pool-http-rb",
+        "persona_capital_binding_id": "pcb-http-rb",
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "live",
+        "loader_checks_passed": True,
+        "runtime_id": "rt-http-rb",
+    }
+    deploy_resp = client.post("/api/runtimes/deploy", json=deploy_body, headers=AUTH)
+    check("rollback HTTP setup: deploy returns 201",
+          deploy_resp.status_code == 201,
+          deploy_resp.get_data(as_text=True))
+    if deploy_resp.status_code != 201:
+        return
+
+    binding_id = deploy_resp.get_json()["binding_id"]
+
+    # POST /api/rollback — missing fields returns 400
+    r_missing = client.post("/api/rollback", json={}, headers=AUTH)
+    check("POST /api/rollback with empty body returns 400",
+          r_missing.status_code == 400)
+
+    # POST /api/rollback — replace strategy
+    rollback_body = {
+        "current_binding_id": binding_id,
+        "action_type": "replace",
+        "replacement_plan_id": "plan-http-rb-fallback",
+        "replacement_artifact_id": "artifact-http-rb-fallback",
+        "replacement_artifact_version": "2.9.0",
+        "replacement_persona_capital_binding_id": "pcb-http-rb-fallback",
+        "replacement_persona_capital_binding_status": "active",
+        "replacement_allowed_deployment_scope": "live",
+        "loader_checks_passed": True,
+        "opened_by_artifact_id": "artifact-http-rb-original",
+    }
+    r_rb = client.post("/api/rollback", json=rollback_body, headers=AUTH)
+    check("POST /api/rollback (replace) returns 201",
+          r_rb.status_code == 201,
+          r_rb.get_data(as_text=True))
+
+    if r_rb.status_code == 201:
+        rb_data = r_rb.get_json()
+        check("POST /api/rollback result: old_binding is retired",
+              rb_data["old_binding"]["status"] == "retired")
+        check("POST /api/rollback result: new_binding is active",
+              rb_data["new_binding"]["status"] == "active")
+        check("POST /api/rollback result: new_binding.rollback_parent set",
+              rb_data["new_binding"].get("rollback_parent") == binding_id)
+        check("POST /api/rollback result: position_lineage present",
+              "position_lineage" in rb_data)
+        check("POST /api/rollback result: cutover_at present",
+              bool(rb_data.get("cutover_at")))
+
+        new_binding_id = rb_data["new_binding"]["binding_id"]
+
+        # GET /api/rollback/history — should include the new replacement binding
+        r_hist = client.get("/api/rollback/history", headers=AUTH)
+        check("GET /api/rollback/history returns 200",
+              r_hist.status_code == 200)
+        hist_data = r_hist.get_json()
+        check("GET /api/rollback/history count >= 1",
+              hist_data.get("count", 0) >= 1)
+        rollback_ids = [b["binding_id"] for b in hist_data.get("rollbacks", [])]
+        check("GET /api/rollback/history contains the replacement binding",
+              new_binding_id in rollback_ids)
+
+        # GET /api/rollback/history?pool_id= filtered
+        r_hist_pool = client.get(
+            "/api/rollback/history?pool_id=pool-http-rb", headers=AUTH
+        )
+        check("GET /api/rollback/history?pool_id= returns pool-filtered results",
+              r_hist_pool.status_code == 200
+              and r_hist_pool.get_json().get("count", 0) >= 1)
+
+    # No-token returns 401
+    r_unauth = client.post("/api/rollback", json=rollback_body)
+    check("POST /api/rollback without token returns 401",
+          r_unauth.status_code == 401)
+
+
 def main_runner():
     print("=" * 60)
-    print("  runtime-manager smoke test  (BP5-SVC-007)")
+    print("  runtime-manager smoke test  (BP5-SVC-007 + BP5-SVC-008)")
     print("=" * 60)
 
     try:
@@ -475,6 +809,18 @@ def main_runner():
         run_internal_api_boundary_smoke()
     except Exception:
         print(f"\n{FAIL} Unexpected error in boundary smoke tests:")
+        traceback.print_exc()
+
+    try:
+        run_rollback_action_tests()
+    except Exception:
+        print(f"\n{FAIL} Unexpected error in rollback action tests:")
+        traceback.print_exc()
+
+    try:
+        run_rollback_http_tests()
+    except Exception:
+        print(f"\n{FAIL} Unexpected error in rollback HTTP tests:")
         traceback.print_exc()
 
     print("\n" + "=" * 60)

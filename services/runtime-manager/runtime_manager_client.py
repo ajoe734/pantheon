@@ -137,6 +137,16 @@ class RuntimeManagerClient:
         binding = self._local().retire(binding_id, retired_at=retired_at)
         return binding.to_dict()
 
+    def rollback(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a canonical rollback action through the runtime-manager.
+
+        Dispatches to POST /api/rollback (HTTP mode) or service.rollback() (local mode).
+        Returns { action_type, old_binding, new_binding, cutover_at, position_lineage }.
+        """
+        if self._use_http():
+            return self._request_json("POST", "/api/rollback", request)
+        return self._local().rollback(request)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
