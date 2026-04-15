@@ -1,0 +1,422 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "setup": [
+      "python3 -m pip install --upgrade pip",
+      "python3 -m pip install -r services/control-plane/bff/requirements.txt -r services/control-plane/feedback/requirements.txt pytest"
+    ],
+    "commands": [
+      "python3 -m py_compile scripts/ci_stage0.py scripts/test_ci_stage0.py services/control-plane/router/main.py services/control-plane/persona/persona_registry.py services/control-plane/feedback/main.py services/control_plane/internal_api.py services/control-plane/governance/deployment_saga.py services/execution/runtime-manager/runtime_binding.py services/telemetry/ingest_svc.py services/telemetry/lineage_read/service.py",
+      "python3 -m unittest scripts/test_ci_stage0.py",
+      "python3 services/registry-core/decision-domain/validate_schemas.py",
+      "python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py'",
+      "python3 services/registry/promotion/smoke_test_gate.py",
+      "python3 services/control-plane/governance/smoke_test_deployment_saga.py",
+      "python3 services/execution/runtime-manager/smoke_test_runtime_binding.py",
+      "python3 services/telemetry/smoke_test_ingest.py",
+      "python3 -m unittest discover -s services/telemetry/lineage_read -p 'test_*.py'",
+      "python3 services/control-plane/bff/smoke_test.py"
+    ]
+  },
+  "global_paths": [
+    ".github/pantheon-stage0-matrix.json",
+    ".github/workflows/stage-0-ci.yml",
+    "scripts/ci_stage0.py",
+    "scripts/test_ci_stage0.py",
+    "docker-compose.yml",
+    "docker-compose.remote-dev.yml",
+    "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md"
+  ],
+  "targets": [
+    {
+      "id": "router",
+      "family": "delivery-platform",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/control-plane/router"
+      ],
+      "changed_paths": [
+        "services/control-plane/router/**"
+      ],
+      "verify": {
+        "commands": [
+          "python3 -m py_compile services/control-plane/router/main.py"
+        ]
+      },
+      "build": {
+        "context": "services/control-plane/router",
+        "dockerfile": "services/control-plane/router/Dockerfile",
+        "tag": "pantheon-stage0/router"
+      }
+    },
+    {
+      "id": "persona",
+      "family": "delivery-platform",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/control-plane/persona"
+      ],
+      "changed_paths": [
+        "services/control-plane/persona/**"
+      ],
+      "verify": {
+        "commands": [
+          "python3 -m unittest discover -s services/control-plane/persona -p 'test_*.py'",
+          "python3 services/control-plane/persona/smoke_test_persona_registry.py"
+        ]
+      },
+      "build": {
+        "context": "services/control-plane/persona",
+        "dockerfile": "services/control-plane/persona/Dockerfile",
+        "tag": "pantheon-stage0/persona"
+      }
+    },
+    {
+      "id": "bff",
+      "family": "control-plane",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/control-plane/bff"
+      ],
+      "changed_paths": [
+        "services/control-plane/bff/**"
+      ],
+      "verify": {
+        "setup": [
+          "python3 -m pip install -r services/control-plane/bff/requirements.txt"
+        ],
+        "commands": [
+          "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/frontend/sse_reconciler.py services/frontend/adapter.py",
+          "python3 services/control-plane/bff/test_command_executor.py",
+          "python3 services/control-plane/bff/test_read_store_deployment.py",
+          "python3 services/control-plane/bff/test_read_store_incident.py",
+          "python3 services/control-plane/bff/test_persona_management.py",
+          "python3 services/control-plane/bff/test_w3_surfaces.py",
+          "python3 services/control-plane/bff/test_w4_remaining_catalog.py",
+          "python3 services/control-plane/bff/smoke_test.py",
+          "python3 services/control-plane/bff/smoke_test_incident.py"
+        ]
+      }
+    },
+    {
+      "id": "feedback",
+      "family": "delivery-platform",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/control-plane/feedback"
+      ],
+      "changed_paths": [
+        "services/control-plane/feedback/**"
+      ],
+      "verify": {
+        "setup": [
+          "python3 -m pip install -r services/control-plane/feedback/requirements.txt"
+        ],
+        "commands": [
+          "python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py'"
+        ]
+      }
+    },
+    {
+      "id": "runtime-control",
+      "family": "control-plane",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/control_plane",
+        "tests"
+      ],
+      "changed_paths": [
+        "services/control_plane/**",
+        "tests/run_internal_api_smoke.py"
+      ],
+      "verify": {
+        "commands": [
+          "python3 tests/run_internal_api_smoke.py"
+        ]
+      }
+    },
+    {
+      "id": "governance-api",
+      "family": "control-plane",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/control-plane/governance"
+      ],
+      "changed_paths": [
+        "services/control-plane/governance/**"
+      ],
+      "verify": {
+        "setup": [
+          "python3 -m pip install pytest"
+        ],
+        "commands": [
+          "python3 -m pytest services/control-plane/governance/test_capital_pool.py services/control-plane/governance/test_persona_capital_binding.py -q",
+          "python3 -m unittest discover -s services/control-plane/governance -p 'test_approval_decision.py'",
+          "python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_plan.py'",
+          "python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_saga.py'",
+          "python3 -m unittest discover -s services/control-plane/governance -p 'test_evolution_decision.py'",
+          "python3 -m unittest discover -s services/control-plane/governance -p 'test_evolution_controller.py'",
+          "python3 services/control-plane/governance/smoke_test_approval_decision.py",
+          "python3 services/control-plane/governance/smoke_test_capital_pool.py",
+          "python3 services/control-plane/governance/smoke_test_deployment_plan.py",
+          "python3 services/control-plane/governance/smoke_test_deployment_saga.py",
+          "python3 services/control-plane/governance/smoke_test_evolution_decision.py",
+          "python3 services/control-plane/governance/smoke_test_evolution_controller.py"
+        ]
+      }
+    },
+    {
+      "id": "telemetry-ingest",
+      "family": "evidence",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/telemetry"
+      ],
+      "changed_paths": [
+        "services/telemetry/*.py",
+        "services/telemetry/*.json",
+        "services/telemetry/*.md"
+      ],
+      "verify": {
+        "setup": [
+          "python3 -m pip install jsonschema"
+        ],
+        "commands": [
+          "python3 -m unittest discover -s services/telemetry -p 'test_ingest_shock_absorption.py'",
+          "python3 services/telemetry/smoke_test_ingest.py"
+        ]
+      }
+    },
+    {
+      "id": "lineage-read",
+      "family": "evidence",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/telemetry/lineage_read"
+      ],
+      "changed_paths": [
+        "services/telemetry/lineage_read/**"
+      ],
+      "verify": {
+        "commands": [
+          "python3 -m unittest discover -s services/telemetry/lineage_read -p 'test_*.py'"
+        ]
+      }
+    },
+    {
+      "id": "signal-store",
+      "family": "infra",
+      "profile": "core-vm",
+      "repo_paths": [
+        "services/signal-store"
+      ],
+      "changed_paths": [
+        "services/signal-store/**"
+      ],
+      "verify": {
+        "commands": [
+          "python3 -m py_compile services/signal-store/client.py"
+        ]
+      }
+    },
+    {
+      "id": "web",
+      "family": "delivery-platform",
+      "profile": "optional-web",
+      "repo_paths": [
+        "services/channels/web"
+      ],
+      "changed_paths": [
+        "services/channels/web/**"
+      ],
+      "verify": {
+        "commands": [
+          "python3 -m py_compile services/channels/web/main.py"
+        ]
+      }
+    },
+    {
+      "id": "cron",
+      "family": "delivery-platform",
+      "profile": "optional-cron",
+      "repo_paths": [
+        "services/control-plane/cron"
+      ],
+      "changed_paths": [
+        "services/control-plane/cron/**"
+      ],
+      "verify": {
+        "setup": [
+          "python3 -m pip install jsonschema"
+        ],
+        "commands": [
+          "python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py'",
+          "python3 services/control-plane/cron/smoke_test.py"
+        ]
+      }
+    },
+    {
+      "id": "mlflow-server",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/research/mlflow"
+      ],
+      "changed_paths": [
+        "services/research/mlflow/**"
+      ],
+      "build": {
+        "context": "services/research/mlflow",
+        "dockerfile": "services/research/mlflow/Dockerfile",
+        "tag": "pantheon-stage0/mlflow-server"
+      }
+    },
+    {
+      "id": "lean",
+      "family": "execution",
+      "profile": "execution-lab",
+      "repo_paths": [
+        "lean"
+      ],
+      "changed_paths": [
+        "lean/**"
+      ],
+      "build": {
+        "context": "lean",
+        "dockerfile": "lean/Dockerfile",
+        "tag": "pantheon-stage0/lean"
+      }
+    },
+    {
+      "id": "runtime-manager",
+      "family": "execution",
+      "profile": "execution-lab",
+      "repo_paths": [
+        "services/execution/runtime-manager"
+      ],
+      "changed_paths": [
+        "services/execution/runtime-manager/**"
+      ],
+      "verify": {
+        "commands": [
+          "python3 -m unittest discover -s services/execution/runtime-manager -p 'test_*.py'",
+          "python3 services/execution/runtime-manager/smoke_test_runtime_binding.py",
+          "python3 services/execution/runtime-manager/smoke_test_kill_switch_controller.py"
+        ]
+      }
+    },
+    {
+      "id": "dspy-worker",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/learning/dspy"
+      ],
+      "changed_paths": [
+        "services/learning/dspy/**"
+      ],
+      "build": {
+        "context": "services/learning/dspy",
+        "dockerfile": "services/learning/dspy/Dockerfile",
+        "tag": "pantheon-stage0/dspy-worker"
+      }
+    },
+    {
+      "id": "imitation-worker",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/learning/imitation"
+      ],
+      "changed_paths": [
+        "services/learning/imitation/**"
+      ],
+      "build": {
+        "context": "services/learning/imitation",
+        "dockerfile": "services/learning/imitation/Dockerfile",
+        "tag": "pantheon-stage0/imitation-worker"
+      }
+    },
+    {
+      "id": "research-base",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/research"
+      ],
+      "changed_paths": [
+        "services/research/Dockerfile",
+        "services/research/requirements.txt"
+      ],
+      "build": {
+        "context": "services/research",
+        "dockerfile": "services/research/Dockerfile",
+        "tag": "pantheon-stage0/research-base"
+      }
+    },
+    {
+      "id": "research-dspy",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/research/dspy"
+      ],
+      "changed_paths": [
+        "services/research/dspy/**"
+      ],
+      "build": {
+        "context": "services/research/dspy",
+        "dockerfile": "services/research/dspy/Dockerfile",
+        "tag": "pantheon-stage0/research-dspy"
+      }
+    },
+    {
+      "id": "research-finrl",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/research/finrl"
+      ],
+      "changed_paths": [
+        "services/research/finrl/**"
+      ],
+      "build": {
+        "context": "services/research/finrl",
+        "dockerfile": "services/research/finrl/Dockerfile",
+        "tag": "pantheon-stage0/research-finrl"
+      }
+    },
+    {
+      "id": "research-imitation",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/research/imitation"
+      ],
+      "changed_paths": [
+        "services/research/imitation/**"
+      ],
+      "build": {
+        "context": "services/research/imitation",
+        "dockerfile": "services/research/imitation/Dockerfile",
+        "tag": "pantheon-stage0/research-imitation"
+      }
+    },
+    {
+      "id": "research-qlib",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/research/qlib"
+      ],
+      "changed_paths": [
+        "services/research/qlib/**"
+      ],
+      "build": {
+        "context": "services/research/qlib",
+        "dockerfile": "services/research/qlib/Dockerfile",
+        "tag": "pantheon-stage0/research-qlib"
+      }
+    }
+  ]
+}
