@@ -1,0 +1,20 @@
+feature_id: PKT-005-sse-substrate
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: sse-reconciliation-substrate
+blocking: true
+
+summary: SSE Reconciliation Substrate UI is blocked on missing or malformed event fields from the BFF SSE streams.
+
+missing:
+  - field: event.id
+    reason: last_event_id replay cannot function without a stable unique event ID on every emitted event
+  - field: event.data.runtime_id
+    reason: runtime events cannot be filtered client-side without this field in the data payload
+
+acceptance:
+  - Pantheon confirms all five event types emit the required data fields as documented in the BFF contract
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

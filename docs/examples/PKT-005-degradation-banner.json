@@ -1,0 +1,97 @@
+{
+  "_comment": "PKT-005 degradation banner example payloads. Each example shows the meta fields from a composed view that drive a different banner variant.",
+
+  "examples": {
+    "fresh_no_banner": {
+      "_description": "All surfaces ok — no banner displayed",
+      "meta": {
+        "snapshot_at": "2026-04-14T12:00:00Z",
+        "staleness": null,
+        "surfaces": {
+          "deployment_plan": { "status": "ok" },
+          "capital_pool": { "status": "ok" },
+          "runtime_binding": { "status": "ok" },
+          "approval_decisions": { "status": "ok" }
+        }
+      }
+    },
+
+    "degraded_banner": {
+      "_description": "One surface degraded — show DEGRADED banner",
+      "meta": {
+        "snapshot_at": "2026-04-14T12:00:00Z",
+        "staleness": {
+          "served_from": "replica",
+          "last_known_at": "2026-04-14T11:57:30Z",
+          "max_age_minutes": 3
+        },
+        "surfaces": {
+          "deployment_plan": { "status": "ok" },
+          "capital_pool": { "status": "degraded" },
+          "runtime_binding": { "status": "ok" },
+          "approval_decisions": { "status": "ok" }
+        }
+      }
+    },
+
+    "stale_banner": {
+      "_description": "Cache-served response — show STALE banner with age. Per-surface status is 'degraded' (not 'stale'). The STALE variant is triggered by meta.staleness.served_from='cache', which takes priority over the DEGRADED variant in the decision tree.",
+      "meta": {
+        "snapshot_at": "2026-04-14T12:00:00Z",
+        "staleness": {
+          "served_from": "cache",
+          "last_known_at": "2026-04-14T11:45:00Z",
+          "max_age_minutes": 15
+        },
+        "surfaces": {
+          "incident": { "status": "ok" },
+          "runtime_status": { "status": "degraded" },
+          "kill_switch": { "status": "ok" },
+          "telemetry": { "status": "ok" }
+        }
+      }
+    },
+
+    "partial_banner": {
+      "_description": "Mixed surface health — show PARTIAL banner listing each surface",
+      "meta": {
+        "snapshot_at": "2026-04-14T12:00:00Z",
+        "staleness": {
+          "served_from": "cache",
+          "last_known_at": "2026-04-14T11:58:00Z"
+        },
+        "surfaces": {
+          "incident": { "status": "ok" },
+          "runtime_status": { "status": "degraded" },
+          "kill_switch": { "status": "unavailable" },
+          "telemetry": { "status": "ok" }
+        }
+      }
+    },
+
+    "split_read_pkt002_incident_home": {
+      "_description": "PKT-002 Incident Home split-read merged surface map. incident_list comes from GET /api/v1/incidents; kill_switch comes from GET /api/v1/kill-switch/status. Because kill_switch is degraded, the DEGRADED banner renders.",
+      "_note": "This is a client-assembled merged map, not a single BFF response.",
+      "meta": {
+        "snapshot_at": "2026-04-14T12:00:00Z",
+        "staleness": null,
+        "surfaces": {
+          "incident_list": { "status": "ok" },
+          "kill_switch": { "status": "degraded" }
+        }
+      }
+    },
+
+    "critical_bff_down": {
+      "_description": "BFF request itself failed — show CRITICAL banner. This example represents a synthetic error state the client constructs when the fetch throws.",
+      "meta": {
+        "snapshot_at": null,
+        "staleness": {
+          "served_from": "none",
+          "last_check_at": "2026-04-14T12:00:00Z"
+        },
+        "surfaces": {}
+      }
+    }
+  }
+}

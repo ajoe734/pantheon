@@ -1,0 +1,34 @@
+feature_id: PKT-005-sse-substrate
+type: contract-ready
+source_repo: pantheon
+screen: sse-reconciliation-substrate
+status: published
+published_at: "2026-04-14T13:30:00Z"
+description: "PKT-005 SSE Reconciliation Substrate contract-ready handoff. Three live BFF SSE endpoints, event wire format, replay semantics, reconnect manager spec, and reconciliation rules are published."
+artifacts:
+  bff_contract: docs/bff/PKT-005-sse-substrate.md
+  screen_spec: docs/screens/PKT-005-sse-substrate.md
+  example_payload: docs/examples/PKT-005-sse-substrate.json
+  lovable_ui_task: .coordination/responses/PKT-005-sse-substrate-lovable-ui-task.yaml
+endpoints:
+  - GET /api/v1/runtime/{runtime_id}/events/stream
+  - GET /api/v1/incidents/stream
+  - GET /api/v1/kill-switch/updates
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+front_actions_required:
+  - implement a shared SSE client layer with reconnect manager (exponential backoff 1s-30s, last_event_id tracking)
+  - implement idempotent event reconciler that skips already-applied events by id
+  - subscribe to relevant stream(s) on screen mount; unsubscribe on unmount
+  - do not use SSE as the initial data source; always fetch the composed view first, then apply SSE events on top
+  - filter runtime events by data.runtime_id client-side (server-side filtering not yet active)
+  - show SSE connection state (connected / reconnecting / disconnected) in the screen footer
+  - do not add raw EventSource calls in component files; all stream wiring must go through the shared client layer
+  - if any required event data field is missing, emit a bff-gap handoff
+acceptance_met:
+  contract_ready_published: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true

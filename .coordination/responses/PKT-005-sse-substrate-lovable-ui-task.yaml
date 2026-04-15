@@ -1,0 +1,48 @@
+feature_id: PKT-005-sse-substrate
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: operator-console
+screen: sse-reconciliation-substrate
+screen_id: surface-operator-sse-reconciliation
+ui_spec_path: docs/screens/PKT-005-sse-substrate.md
+frontend_change_spec_path: null
+allowed_endpoints:
+  - GET /api/v1/runtime/{runtime_id}/events/stream
+  - GET /api/v1/incidents/stream
+  - GET /api/v1/kill-switch/updates
+constraints:
+  - use existing bff client only; add SSE handling inside the shared client layer, not in component files
+  - do not add raw EventSource calls in component files
+  - do not import demo providers
+  - if any required event data field is absent, emit a bff-gap handoff instead of silently discarding the event
+  - SSE must be additive on top of the initial composed view read; never use SSE as the sole data source on mount
+  - reconnect must use exponential backoff (1s to 30s) with last_event_id replay
+  - reconciler must be idempotent
+acceptance:
+  - shared SSE client is implemented with reconnect manager
+  - runtime stream subscribed on Deployment Review and Incident Response screens
+  - incident stream subscribed on Incident Response and Post-Incident Review screens
+  - kill-switch stream subscribed on Incident Response screen
+  - last_event_id stored and sent on reconnect
+  - replayed events do not produce duplicate UI updates
+  - kill_switch_activated event immediately disables runtime action buttons on Incident Response screen
+  - SSE connection state shown in screen footer
+  - no raw EventSource or fetch in component files
+required_feedback:
+  - docs/pantheon-feedback/PKT-005-sse-substrate/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-005-sse-substrate/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-005-sse-substrate/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-005-sse-substrate/QA_STATUS.md
+delivery_dependencies:
+  - .coordination/responses/PKT-005-sse-substrate-contract-ready.yaml
+links:
+  bff_spec_path: docs/bff/PKT-005-sse-substrate.md
+  example_payload_paths:
+    - docs/examples/PKT-005-sse-substrate.json
+  gap_handoff_path: .coordination/requests/PKT-005-sse-substrate-bff-gap.yaml
+  gap_handoff_template: .coordination/requests/PKT-005-sse-substrate-bff-gap.example.yaml
+  completion_handoff_path: .coordination/requests/PKT-005-sse-substrate-ui-done.yaml
+  completion_handoff_template: .coordination/requests/PKT-005-sse-substrate-ui-done.example.yaml
