@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import services.telemetry.main as _main
 from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.lineage_read import LineageReadService
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -72,6 +73,72 @@ def _make_event(binding_id: str = _KNOWN_BINDING_ID, event_id: str = "evt-001") 
     }
 
 
+_LINEAGE_CORPUS = {
+    "metadata": {
+        "task_id": "LIN-002-HTTP",
+        "projection_updated_at": "2026-04-15T12:00:00Z",
+    },
+    "node_sets": {
+        "capital_pools": [
+            {
+                "pool_id": "pool-alpha",
+                "single_runtime_enforced": True,
+                "created_at": "2026-04-15T12:00:00Z",
+            }
+        ],
+        "persona_capital_bindings": [
+            {
+                "binding_id": "pcb-789",
+                "capital_pool_id": "pool-alpha",
+                "created_at": "2026-04-15T12:00:00Z",
+            }
+        ],
+        "deployment_plans": [
+            {
+                "plan_id": "plan-456",
+                "capital_pool_id": "pool-alpha",
+                "binding_id": "pcb-789",
+                "artifact_id": "artifact-123",
+                "artifact_version": "1.0.0",
+                "created_at": "2026-04-15T12:00:00Z",
+            }
+        ],
+        "runtime_bindings": [
+            {
+                "binding_id": _KNOWN_BINDING_ID,
+                "runtime_id": "lean-worker-1",
+                "capital_pool_id": "pool-alpha",
+                "artifact_id": "artifact-123",
+                "artifact_version": "1.0.0",
+                "plan_id": "plan-456",
+                "persona_capital_binding_id": "pcb-789",
+                "status": "active",
+                "effective_at": "2026-04-15T12:00:00Z",
+            }
+        ],
+        "telemetry_events": [
+            {
+                "event_id": "evt-lineage-001",
+                "event_type": "pnl_snapshot",
+                "binding_id": _KNOWN_BINDING_ID,
+                "plan_id": "plan-456",
+                "capital_pool_id": "pool-alpha",
+                "persona_capital_binding_id": "pcb-789",
+                "artifact_id": "artifact-123",
+                "artifact_version": "1.0.0",
+                "runtime_id": "lean-worker-1",
+                "trace_id": "trace-http-001",
+                "strategy_id": "strategy-http-001",
+                "registry_id": "registry-http-001",
+                "event_produced_at": "2026-04-15T12:00:30Z",
+            }
+        ],
+    },
+    "query_families": [],
+    "benchmark_cases": [],
+}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -105,8 +172,12 @@ class TestMainRoutes(unittest.TestCase):
         # _get_service() and _run_async() work from Flask route handlers.
         _main._loop = loop
         _main._svc = svc
+        lineage_svc = LineageReadService()
+        lineage_svc.load_corpus(_LINEAGE_CORPUS)
+        _main._lineage_svc = lineage_svc
 
         cls._svc = svc
+        cls._lineage_svc = lineage_svc
         cls.client = _main.app.test_client()
 
     @classmethod
@@ -116,6 +187,7 @@ class TestMainRoutes(unittest.TestCase):
                 cls._svc.stop(graceful=True), cls._loop
             ).result(timeout=5)
         _main._svc = None
+        _main._lineage_svc = None
         if cls._loop and cls._loop.is_running():
             cls._loop.call_soon_threadsafe(cls._loop.stop)
         _main._loop = None
@@ -161,6 +233,36 @@ class TestMainRoutes(unittest.TestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400)
+
+    # --- lineage: runtime binding projection ---
+
+    def test_runtime_binding_projection_returns_200(self):
+        resp = self.client.get(
+            f"/api/telemetry/lineage/runtime-bindings/{_KNOWN_BINDING_ID}/projection"
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["target_type"], "runtime_binding")
+        self.assertEqual(data["target_id"], _KNOWN_BINDING_ID)
+        self.assertIs(data["derived_only"], True)
+        self.assertEqual(data["binding_status"], "active")
+
+    def test_telemetry_event_trace_returns_200(self):
+        resp = self.client.get("/api/telemetry/lineage/events/evt-lineage-001/trace")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["target_type"], "telemetry_event")
+        self.assertEqual(data["target_id"], "evt-lineage-001")
+        self.assertEqual(data["event_type"], "pnl_snapshot")
+        self.assertIn("trace-http-001", data["refs"]["trace_ids"])
+        self.assertIn("strategy-http-001", data["refs"]["strategy_ids"])
+        self.assertIn("registry-http-001", data["refs"]["registry_ids"])
+
+    def test_missing_lineage_target_returns_404(self):
+        resp = self.client.get("/api/telemetry/lineage/events/evt-does-not-exist/trace")
+        self.assertEqual(resp.status_code, 404)
+        data = resp.get_json()
+        self.assertEqual(data["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
 
 
 if __name__ == "__main__":

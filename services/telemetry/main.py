@@ -37,6 +37,18 @@ POST  /api/telemetry/replay
       tag — if provided, replay only entries with this tag (default: write-failures)
     Returns { replayed: <count> }.
 
+GET   /api/telemetry/lineage/runtime-bindings/<binding_id>/projection
+    Return the derived-only runtime binding lineage projection.
+
+GET   /api/telemetry/lineage/capital-pools/<pool_id>/projection
+    Return the derived-only capital pool lineage projection.
+
+GET   /api/telemetry/lineage/events/<event_id>/trace
+    Return the derived-only telemetry event trace.
+
+GET   /api/telemetry/lineage/plans/<plan_id>/forensic-trace
+    Return the rollback-aware forensic plan trace.
+
 GET   /__health__
     Liveness probe.
 
@@ -70,6 +82,11 @@ TELEMETRY_BATCH_INTERVAL
 TELEMETRY_MAX_RETRIES
     Max retries for transient write failures (default 5).
 
+LINEAGE_READ_CORPUS_PATH
+    Optional path to the LIN-001A lineage benchmark corpus used to bootstrap
+    the lineage read HTTP surface. Defaults to
+    services/registry/lineage/lin001a_benchmark_corpus.json.
+
 PANTHEON_RUNTIME_MANAGER_URL
     Base URL of the authoritative runtime-manager service
     (e.g. http://runtime-manager:8081).  When set, the ingest service wires
@@ -99,6 +116,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request
 
 from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
+from .lineage_read import LineageReadService
 
 log = logging.getLogger(__name__)
 
@@ -197,9 +215,13 @@ class _RuntimeBindingAdapter:
 # ---------------------------------------------------------------------------
 
 _svc: TelemetryIngestService | None = None
+_lineage_svc: LineageReadService | None = None
 
 _DEFAULT_SCHEMA_PATH = str(Path(__file__).resolve().parent / "telemetry_event.schema.json")
 _DEFAULT_STORAGE_DIR = "/tmp/pantheon/telemetry"
+_DEFAULT_LINEAGE_CORPUS_PATH = (
+    Path(__file__).resolve().parent.parent / "registry" / "lineage" / "lin001a_benchmark_corpus.json"
+)
 
 
 def _build_service() -> TelemetryIngestService:
@@ -273,6 +295,39 @@ def _get_service() -> TelemetryIngestService:
     return _svc
 
 
+def _build_lineage_service() -> LineageReadService | None:
+    """Bootstrap the lineage read service from the canonical LIN-001A corpus."""
+    corpus_path = Path(
+        os.getenv("LINEAGE_READ_CORPUS_PATH", str(_DEFAULT_LINEAGE_CORPUS_PATH))
+    ).resolve()
+    if not corpus_path.exists():
+        log.warning(
+            "LineageReadService disabled: corpus file not found at %s",
+            corpus_path,
+        )
+        return None
+
+    svc = LineageReadService()
+    try:
+        corpus = json.loads(corpus_path.read_text())
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Failed to load lineage corpus from %s", corpus_path)
+        raise RuntimeError(f"Failed to load lineage corpus: {exc}") from exc
+
+    svc.load_corpus(corpus)
+    log.info("LineageReadService bootstrapped from %s", corpus_path)
+    return svc
+
+
+def _get_lineage_service() -> LineageReadService:
+    global _lineage_svc
+    if _lineage_svc is None:
+        raise RuntimeError(
+            "Lineage read service unavailable; ensure LINEAGE_READ_CORPUS_PATH exists"
+        )
+    return _lineage_svc
+
+
 # ---------------------------------------------------------------------------
 # App lifecycle
 # ---------------------------------------------------------------------------
@@ -280,18 +335,48 @@ def _get_service() -> TelemetryIngestService:
 app = Flask(__name__)
 
 
+def _lineage_query_response(query_family: str, **params):
+    """Execute a lineage query family and map service-level errors to HTTP."""
+    try:
+        result = _get_lineage_service().query(query_family, **params)
+    except RuntimeError as exc:
+        return jsonify({"error": {"code": "LINEAGE_UNAVAILABLE", "message": str(exc)}}), 503
+    except ValueError as exc:
+        return jsonify({"error": {"code": "INVALID_LINEAGE_QUERY", "message": str(exc)}}), 400
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Unexpected lineage read error for %s", query_family)
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+    node_not_found = any(
+        marker.get("code") == "node_not_found"
+        for marker in result.get("conflict_markers", [])
+    )
+    if node_not_found:
+        return jsonify({
+            "error": {
+                "code": "LINEAGE_TARGET_NOT_FOUND",
+                "message": f"No lineage target found for {query_family}",
+                "query_family": query_family,
+                "params": params,
+            }
+        }), 404
+
+    return jsonify(result), 200
+
+
 def startup():
     """Start the background event loop and the ingest service."""
-    global _loop, _loop_thread, _svc
+    global _loop, _loop_thread, _svc, _lineage_svc
     _loop, _loop_thread = _start_background_loop()
     _svc = _build_service()
+    _lineage_svc = _build_lineage_service()
     _run_async(_svc.start())
     log.info("TelemetryIngestService started")
 
 
 def shutdown():
     """Gracefully stop the ingest service."""
-    global _svc, _loop
+    global _svc, _loop, _lineage_svc
     if _svc is not None:
         try:
             _run_async(_svc.stop(graceful=True), timeout=15.0)
@@ -301,6 +386,7 @@ def shutdown():
     if _loop is not None:
         _loop.call_soon_threadsafe(_loop.stop)
         _loop = None
+    _lineage_svc = None
     log.info("TelemetryIngestService stopped")
 
 
@@ -411,6 +497,42 @@ def replay_dlq():
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
     return jsonify({"replayed": count}), 200
+
+
+@app.route("/api/telemetry/lineage/runtime-bindings/<binding_id>/projection", methods=["GET"])
+def runtime_binding_projection(binding_id: str):
+    """Return the derived-only runtime binding lineage projection."""
+    return _lineage_query_response(
+        "runtime_binding_projection",
+        binding_id=binding_id,
+    )
+
+
+@app.route("/api/telemetry/lineage/capital-pools/<pool_id>/projection", methods=["GET"])
+def capital_pool_projection(pool_id: str):
+    """Return the derived-only capital pool lineage projection."""
+    return _lineage_query_response(
+        "capital_pool_projection",
+        pool_id=pool_id,
+    )
+
+
+@app.route("/api/telemetry/lineage/events/<event_id>/trace", methods=["GET"])
+def telemetry_event_trace(event_id: str):
+    """Return the derived-only telemetry event lineage trace."""
+    return _lineage_query_response(
+        "telemetry_event_trace",
+        event_id=event_id,
+    )
+
+
+@app.route("/api/telemetry/lineage/plans/<plan_id>/forensic-trace", methods=["GET"])
+def forensic_plan_trace(plan_id: str):
+    """Return the rollback-aware forensic lineage trace for one plan."""
+    return _lineage_query_response(
+        "forensic_plan_trace",
+        plan_id=plan_id,
+    )
 
 
 # ---------------------------------------------------------------------------
