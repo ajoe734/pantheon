@@ -1,6 +1,16 @@
 """Tests for PersonaCapitalBinding and PersonaCapitalBindingStore (CAP-001)."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
 import pytest
-from services.control_plane.governance.persona_capital_binding import (
+
+_GOV_DIR = Path(__file__).resolve().parent
+if str(_GOV_DIR) not in sys.path:
+    sys.path.insert(0, str(_GOV_DIR))
+
+from persona_capital_binding import (
     PersonaCapitalBinding,
     PersonaCapitalBindingError,
     PersonaCapitalBindingStore,
@@ -19,7 +29,7 @@ def make_binding(**kwargs) -> PersonaCapitalBinding:
         "persona_id": "persona-alpha",
         "capital_pool_id": "pool-001",
         "role": "advisor",
-        "allowed_deployment_scope": "live",
+        "allowed_deployment_scope": "none",
         "status": "pending",
         "created_at": "2026-04-10T00:00:00Z",
     }
@@ -85,13 +95,13 @@ class TestPersonaCapitalBindingConstruction:
         assert b.is_active is True
 
     def test_permits_deployment_to_when_active(self):
-        b = make_active_binding(allowed_deployment_scope="canary")
+        b = make_active_binding(role="live_owner", allowed_deployment_scope="canary")
         assert b.permits_deployment_to("paper") is True
         assert b.permits_deployment_to("canary") is True
         assert b.permits_deployment_to("live") is False
 
     def test_permits_deployment_to_when_inactive(self):
-        b = make_binding(allowed_deployment_scope="live")
+        b = make_binding(role="live_owner", allowed_deployment_scope="live")
         assert b.permits_deployment_to("paper") is False
 
     def test_to_dict_roundtrip(self):
@@ -117,6 +127,26 @@ class TestValidateBinding:
     def test_active_with_approval_decision(self):
         b = make_active_binding()
         assert validate_binding(b) == []
+
+    def test_advisor_role_cannot_claim_deployment_scope(self):
+        b = make_binding(allowed_deployment_scope="paper")
+        errors = validate_binding(b)
+        assert any("deployment ceiling" in e for e in errors)
+
+    def test_paper_owner_cannot_claim_canary_scope(self):
+        b = make_binding(role="paper_owner", allowed_deployment_scope="canary")
+        errors = validate_binding(b)
+        assert any("deployment ceiling" in e for e in errors)
+
+    def test_invalid_effective_window_rejected(self):
+        b = make_binding(
+            role="live_owner",
+            allowed_deployment_scope="paper",
+            effective_from="2026-04-12T00:00:00Z",
+            effective_to="2026-04-11T00:00:00Z",
+        )
+        errors = validate_binding(b)
+        assert any("effective_to" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------
@@ -264,9 +294,39 @@ class TestDeploymentAdmissibility:
 
     def test_persona_may_not_deploy_when_inactive(self):
         store = PersonaCapitalBindingStore()
-        store.create(make_binding(allowed_deployment_scope="live"))
+        store.create(make_binding(role="live_owner", allowed_deployment_scope="live"))
         assert store.persona_may_deploy_to("persona-alpha", "pool-001", "paper") is False
 
     def test_persona_no_binding_returns_false(self):
         store = PersonaCapitalBindingStore()
         assert store.persona_may_deploy_to("unknown", "pool-001", "paper") is False
+
+    def test_advisor_binding_never_permits_deployment(self):
+        store = PersonaCapitalBindingStore()
+        store.create(make_binding(role="advisor", allowed_deployment_scope="none"))
+        store.activate("binding-001", "appr-001")
+        assert store.persona_may_deploy_to("persona-alpha", "pool-001", "paper") is False
+
+    def test_future_effective_window_is_not_yet_admissible(self):
+        store = PersonaCapitalBindingStore()
+        store.create(
+            make_binding(
+                role="live_owner",
+                allowed_deployment_scope="paper",
+                effective_from="2099-01-01T00:00:00Z",
+            )
+        )
+        store.activate("binding-001", "appr-001")
+        assert store.persona_may_deploy_to("persona-alpha", "pool-001", "paper") is False
+
+    def test_expired_effective_window_is_not_admissible(self):
+        store = PersonaCapitalBindingStore()
+        store.create(
+            make_binding(
+                role="live_owner",
+                allowed_deployment_scope="paper",
+                effective_to="2000-01-01T00:00:00Z",
+            )
+        )
+        store.activate("binding-001", "appr-001")
+        assert store.persona_may_deploy_to("persona-alpha", "pool-001", "paper") is False

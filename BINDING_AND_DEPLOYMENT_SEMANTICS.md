@@ -120,6 +120,12 @@ status
 - `paper_owner`
 - `live_owner`
 
+role 也決定 deployment ceiling：
+
+- `advisor`：只允許 `allowed_deployment_scope = none`
+- `paper_owner`：最高只允許 `allowed_deployment_scope = paper`
+- `live_owner`：可允許 `paper` / `canary` / `live`
+
 ### 4.3 `allowed_deployment_scope` 語意
 - `none`
 - `paper`
@@ -369,6 +375,16 @@ allowed_deployment_scope 約束 deployment_mode 的上限
 - `GET /api/bindings/{binding_id}`
 - `GET /api/bindings?capital_pool_id=...`
 - `GET /api/bindings?persona_id=...`
+- `GET /api/bindings/admissibility?persona_id=...&capital_pool_id=...&target_stage=...`
+
+### Capital Pool Plane canonical service boundary
+
+`CapitalPool` 與 `PersonaCapitalBinding` 的正式 service boundary 由
+`services/capital/` 提供。
+
+- pool / binding 的 write path 必須走此 service
+- Runtime Manager / Persona Plane / BFF 的治理 read path 應讀取此 service
+  提供的 admissibility / live-owner / snapshot surfaces，而不是各自直接改 store
 
 ### Deployment APIs
 - `POST /api/deployments/plans`
@@ -396,6 +412,8 @@ allowed_deployment_scope 約束 deployment_mode 的上限
 7. `RuntimeBinding.deployment_mode` 表達實際部署狀態，兩者語義獨立
 8. binding 可先於 artifact 存在；deploy 必須同時依賴 binding + approved artifact
 9. runtime binding 只在 deploy 執行成功後才建立
+10. `services/capital/` 是 `CapitalPool` / `PersonaCapitalBinding` 的 canonical service boundary
+11. binding admissibility read path 必須同時考慮 role ceiling、`allowed_deployment_scope`、binding status、與 pool governance status
 
 ---
 

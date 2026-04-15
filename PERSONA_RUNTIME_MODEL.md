@@ -344,6 +344,15 @@ metadata                    — arbitrary session metadata
 
 **Consistency invariant:** `runtime_binding_id`, `deployment_stage`, and `capital_pool_id` are co-dependent — all three must be set together or all absent. Setting `deployment_stage` or `capital_pool_id` without `runtime_binding_id` is a contract violation.
 
+deployment-bound session bootstrap 應透過 `services/capital/` 的治理 read path
+解析 capital / binding context，而不是直接改寫 binding store：
+
+- `GET /api/bindings/admissibility?persona_id=...&capital_pool_id=...&target_stage=...`
+- `GET /api/capital-pools/{pool_id}/live-owner`
+
+`SessionPersona` 只攜帶解析後的 `capital_pool_id` / `runtime_binding_id` /
+`deployment_stage` context；它不是 binding writer。
+
 ### CapabilitySnapshot
 ```text
 snapshot_id

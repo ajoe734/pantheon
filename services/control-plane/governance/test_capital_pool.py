@@ -1,6 +1,16 @@
 """Tests for CapitalPool and CapitalPoolStore (CAP-001)."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
 import pytest
-from services.control_plane.governance.capital_pool import (
+
+_GOV_DIR = Path(__file__).resolve().parent
+if str(_GOV_DIR) not in sys.path:
+    sys.path.insert(0, str(_GOV_DIR))
+
+from capital_pool import (
     CapitalPool,
     CapitalPoolError,
     CapitalPoolStore,

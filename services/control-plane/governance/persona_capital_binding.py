@@ -80,6 +80,23 @@ class BindingStatus(str, Enum):
     EXPIRED = "expired"
 
 
+_ROLE_SCOPE_CEILING: Dict[str, DeploymentScope] = {
+    BindingRole.ADVISOR.value: DeploymentScope.NONE,
+    BindingRole.PAPER_OWNER.value: DeploymentScope.PAPER,
+    BindingRole.LIVE_OWNER.value: DeploymentScope.LIVE,
+}
+
+
+def _parse_effective_timestamp(value: str) -> datetime:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 # ---------------------------------------------------------------------------
 # PersonaCapitalBinding dataclass
 # ---------------------------------------------------------------------------
@@ -162,15 +179,27 @@ class PersonaCapitalBinding:
     def is_active(self) -> bool:
         return self.status == BindingStatus.ACTIVE.value
 
+    def is_within_effective_window(self, at: Optional[datetime] = None) -> bool:
+        """Return True when the binding is inside its validity window."""
+        now = at or datetime.now(timezone.utc)
+        if self.effective_from and now < _parse_effective_timestamp(self.effective_from):
+            return False
+        if self.effective_to and now >= _parse_effective_timestamp(self.effective_to):
+            return False
+        return True
+
     def permits_deployment_to(self, target_scope: str) -> bool:
         """
         Return True if this binding authorises deployment to the given scope.
         The binding must be active.
         """
-        if not self.is_active:
+        if not self.is_active or not self.is_within_effective_window():
+            return False
+        target = DeploymentScope(target_scope)
+        role_ceiling = _ROLE_SCOPE_CEILING[self.role]
+        if not role_ceiling.permits(target):
             return False
         self_scope = DeploymentScope(self.allowed_deployment_scope)
-        target = DeploymentScope(target_scope)
         return self_scope.permits(target)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -203,6 +232,22 @@ def validate_binding(binding: PersonaCapitalBinding) -> List[str]:
         errors.append("capital_pool_id must not be empty")
     if binding.status == BindingStatus.ACTIVE.value and not binding.approval_decision_id:
         errors.append("approval_decision_id is required before a binding can be active")
+    role_ceiling = _ROLE_SCOPE_CEILING[binding.role]
+    declared_scope = DeploymentScope(binding.allowed_deployment_scope)
+    if not role_ceiling.permits(declared_scope):
+        errors.append(
+            "allowed_deployment_scope exceeds the deployment ceiling for the binding role: "
+            f"role={binding.role!r} ceiling={role_ceiling.value!r} scope={binding.allowed_deployment_scope!r}"
+        )
+    if binding.effective_from and binding.effective_to:
+        try:
+            effective_from = _parse_effective_timestamp(binding.effective_from)
+            effective_to = _parse_effective_timestamp(binding.effective_to)
+        except ValueError as exc:
+            errors.append(f"Invalid effective window timestamp: {exc}")
+        else:
+            if effective_to <= effective_from:
+                errors.append("effective_to must be later than effective_from")
     return errors
 
 
@@ -315,6 +360,9 @@ class PersonaCapitalBindingStore:
                 "updated_at": utc_now(),
             }
         )
+        errors = validate_binding(updated)
+        if errors:
+            raise PersonaCapitalBindingError(f"Invalid binding: {errors}")
         self._bindings[binding_id] = updated
         self._save()
         return updated
