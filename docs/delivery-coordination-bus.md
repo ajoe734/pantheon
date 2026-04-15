@@ -91,8 +91,11 @@ This design keeps Lovable high leverage without making the entire pipeline depen
 
 - `repository_dispatch` is the target transport for normal cross-repo machine triggers.
 - `workflow_dispatch` is the replay path for a stalled or failed step.
+- The legacy issue or label bus is compatibility-only once dispatch workflows exist on the default branch; missing labels must not block `.coordination` execution.
 - Replay must point at an existing payload path and commit ref; it is a transport retry, not a payload-edit workflow.
 - If a payload needs different contents, Pantheon or the front repo must publish a new payload and run a normal loop step instead of replaying the old one.
+
+For `backend-delivery`, Pantheon must publish a real `bff_contract_version` or equivalent contract lock identifier. `sdk_version` is optional and only appears when a versioned front-end SDK artifact actually exists.
 
 ## 8. Front Repo Bootstrap
 

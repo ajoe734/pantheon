@@ -4,7 +4,10 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260413-1745";
+} from "./dashboard-config.js?v=20260414-0825";
+
+export const DISPLAY_TIME_ZONE = "Asia/Taipei";
+export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
 
 export const qs = (selector) => document.querySelector(selector);
 
@@ -78,6 +81,19 @@ export function defaultDashboardBundle() {
       materialized_count: 0,
       proposed_execution_tasks: 0,
     },
+    coordination_summary: {
+      last_scan_at: null,
+      counts: {
+        tracked_features: 0,
+        lovable_ready: 0,
+        mirrored_to_target_repo: 0,
+        waiting_for_lovable: 0,
+        ui_done_received: 0,
+        frontend_feedback_received: 0,
+        open_bff_gaps: 0,
+      },
+      features: [],
+    },
     bridge_summary: {
       source_plane: "planning",
       session_id: null,
@@ -118,6 +134,12 @@ export function normalizeDashboardBundle(value) {
     runtime_summary: { ...base.runtime_summary, ...(value.runtime_summary || {}) },
     execution_summary: { ...base.execution_summary, ...(value.execution_summary || {}) },
     planning_summary: { ...base.planning_summary, ...(value.planning_summary || {}) },
+    coordination_summary: {
+      ...base.coordination_summary,
+      ...(value.coordination_summary || {}),
+      counts: { ...base.coordination_summary.counts, ...((value.coordination_summary || {}).counts || {}) },
+      features: Array.isArray((value.coordination_summary || {}).features) ? value.coordination_summary.features : [],
+    },
     bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
     worker_task_links: Array.isArray(value.worker_task_links) ? value.worker_task_links : [],
     truth_mismatches: Array.isArray(value.truth_mismatches) ? value.truth_mismatches : [],
@@ -517,6 +539,7 @@ export function formatTime(value) {
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
+    timeZone: DISPLAY_TIME_ZONE,
   });
 }
 

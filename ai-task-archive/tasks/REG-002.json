@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "REG-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "REG-002",
+    "title": "Implement candidate, paper, and live promotion gate",
+    "phase": "Epic C",
+    "owner": "Codex",
+    "reviewer": "Copilot",
+    "status": "done",
+    "depends_on": [
+      "REG-001",
+      "EX-001"
+    ],
+    "artifacts": [
+      "services/registry/promotion/gate.py",
+      "services/registry/promotion/cli.py",
+      "services/registry/promotion/README.md",
+      "services/registry/promotion/smoke_test_gate.py"
+    ],
+    "acceptance": [
+      "candidate/paper/live states enforced",
+      "promotion checks documented",
+      "deployment path consumes promotion state"
+    ],
+    "next": "Review approved. All acceptance criteria met: (1) candidate/paper/live states strictly enforced, (2) promotion requirements documented, (3) deployment path consumes promotion state end-to-end. 29 integration tests passing. Ready for REG-003, FB-003, EV-001.",
+    "last_update": "2026-04-06T15:38:58Z",
+    "summary_zh": "實作 candidate -> paper -> live 的 promotion gate，避免 persona 或工具直接把未批准內容推進 live。",
+    "review_file": "services/registry/promotion/review_reg002_copilot.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "REG-002",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Logic, CLI, and smoke test complete. Ready for governance review.",
+      "status": "done",
+      "created_at": "2026-04-02T18:00:00Z",
+      "resolved_at": "2026-04-05T11:56:45Z"
+    },
+    {
+      "task_id": "REG-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "REG-002 ready for review. Service-local promotion gate, execution projection, and cron deploy integration verified end-to-end; updated services/registry/promotion/README.md to document candidate/paper/live requirements plus EX-001 projection contract, and refreshed services/registry/promotion/cli.py to match the canonical --entry-file interface with module/direct-script import support. Verified with python3 -m unittest discover -s services/registry/promotion -p 'test_*.py', python3 services/registry/promotion/smoke_test_gate.py, python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/cron/smoke_test.py, python3 -m unittest services.execution.test_artifact_loader, python3 services/execution/smoke_test_artifact_loader.py, and python3 -m py_compile services/registry/promotion/cli.py services/registry/promotion/gate.py.",
+      "status": "done",
+      "created_at": "2026-04-06T14:17:23Z",
+      "resolved_at": "2026-04-06T14:18:01Z"
+    },
+    {
+      "task_id": "REG-002",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Grok after repeated provider failure: {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"duration_ms\":508,\"duration_api_ms\":0,\"num_turns\":1,\"result\":\"You've hit your limit · resets 12am (Asia/Taipei)\",\"stop_reason\":\"stop_sequence\",\"session_id\":\"3c07b509-75d8-4e5c-b096-ec134f6bd33d\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\"},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"1276ae2f-afe8-4d5b-95f3-95661bdee6ba\"}",
+      "status": "done",
+      "created_at": "2026-04-06T14:18:01Z",
+      "resolved_at": "2026-04-06T14:35:24Z"
+    },
+    {
+      "task_id": "REG-002",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated provider failure: An unexpected critical error occurred:[object Object]",
+      "status": "done",
+      "created_at": "2026-04-06T14:35:24Z",
+      "resolved_at": "2026-04-06T14:36:07Z"
+    },
+    {
+      "task_id": "REG-002",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated provider failure: {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"duration_ms\":421,\"duration_api_ms\":0,\"num_turns\":1,\"result\":\"You've hit your limit · resets 12am (Asia/Taipei)\",\"stop_reason\":\"stop_sequence\",\"session_id\":\"2304fa24-39ef-462a-a582-b7c2964e5382\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\"},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"f39735d4-c54c-4d2f-9e88-cc9a99ccba27\"}",
+      "status": "done",
+      "created_at": "2026-04-06T14:36:07Z",
+      "resolved_at": "2026-04-06T14:39:54Z"
+    },
+    {
+      "task_id": "REG-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Review approved. All acceptance criteria met: (1) candidate/paper/live states strictly enforced, (2) promotion requirements documented, (3) deployment path consumes promotion state end-to-end. 29 integration tests passing. Ready for REG-003, FB-003, EV-001.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:38:58Z"
+    }
+  ],
+  "blockers": []
+}

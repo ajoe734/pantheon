@@ -1,0 +1,18 @@
+feature_id: F-042
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: promotion-review
+status: blocked
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-15T03:52:57Z"
+summary: >-
+  Front sync for F-042 is blocked because the sibling checkout for
+  front-ai-trading-system is a mirror-only directory without a .git repository,
+  frontend application files, routing surface, or the existing BFF client
+  required by the published contract-ready packet.
+next_step: >-
+  Provide a valid front-ai-trading-system checkout with the real UI runtime and
+  existing BFF client wiring, or dispatch F-042 into the repo that actually
+  owns the Promotion Review page implementation.

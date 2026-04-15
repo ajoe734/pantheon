@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "task_id": "ARC-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ARC-001",
+    "title": "Publish Pantheon target architecture aligned to the product and upstream integration model",
+    "phase": "Architecture",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "TARGET_ARCHITECTURE.md"
+    ],
+    "acceptance": [
+      "responsibility split documented",
+      "promotion gate defined",
+      "learning object split documented"
+    ],
+    "next": "Use the Pantheon target architecture as the north star for product and integration planning.",
+    "last_update": "2026-04-05T05:27:27Z",
+    "summary_zh": "把 Pantheon 產品、上游 OpenClaw、Evolution Plane、Research Plane 與 LEAN 的責任分工寫清楚，避免再把產品本體和外部框架混成同一層。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

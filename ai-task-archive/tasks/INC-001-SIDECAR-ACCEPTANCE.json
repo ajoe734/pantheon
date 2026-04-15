@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "task_id": "INC-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INC-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare INC-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 INC-001，先整理 acceptance checklist、dependency map 與 reviewer packet，不改 canonical truth。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "TEL-001"
+    ],
+    "artifacts": [
+      "support/sidecars/INC-001/INC-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet complete. 75/75 unit tests PASS, 59/59 smoke tests PASS. Sidecar reviewed by Codex, ready for parent owner (Claude) to close INC-001.",
+    "last_update": "2026-04-10T14:14:58Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INC-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization"
+  },
+  "handoffs": [
+    {
+      "task_id": "INC-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Acceptance packet complete: full checklist (35 checks all PASS), dependency map (3 upstream, 4 downstream), evidence propagation verification, and reviewer handoff to Claude.",
+      "status": "done",
+      "created_at": "2026-04-10T13:53:31Z",
+      "resolved_at": "2026-04-10T14:04:26Z"
+    },
+    {
+      "task_id": "INC-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"794f4c18-cbcb-4e2f-a970-218234702505\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1am (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"c8c6cbd0-9833-4ebd-bdf1-5bb6a94a1d0b\",\"uuid\":\"0f493b13-fe89-4005-81f0-84c955438875\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-10T14:04:26Z",
+      "resolved_at": "2026-04-10T14:12:14Z"
+    },
+    {
+      "task_id": "INC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review complete: sidecar packet aligned to the current reviewer reassignment, Postmortem optional-field counts corrected, and verification rerun (75/75 unit, 59/59 smoke direct + module). Ready for Qwen to mark done; Claude may absorb the packet when closing INC-001.",
+      "status": "done",
+      "created_at": "2026-04-10T14:12:14Z",
+      "resolved_at": "2026-04-10T14:14:58Z"
+    }
+  ],
+  "blockers": []
+}

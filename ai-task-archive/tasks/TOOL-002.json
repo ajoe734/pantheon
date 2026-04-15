@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "task_id": "TOOL-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TOOL-002",
+    "title": "Implement GitHub approval bus for mobile approvals",
+    "summary_zh": "建立 GitHub approval bus，讓 review 自動同步到 PR、blocked 自動同步到 issue，並把手機上的 approve/comment 透過 orchestrator polling 回寫到共享狀態。",
+    "phase": "Tooling",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/github_bus.py",
+      ".orchestrator/github_command_parser.py",
+      ".orchestrator/github_webhook_server.py",
+      ".orchestrator/github_cloud_relay.py",
+      "docs/github-approval-bus.md",
+      ".github/ISSUE_TEMPLATE/pantheon-ops-bus.md",
+      ".github/PULL_REQUEST_TEMPLATE/pantheon-review-bus.md"
+    ],
+    "acceptance": [],
+    "next": "GitHub approval bus is implemented locally: PR/issue sync, mobile comment commands, webhook intake, cloud relay interfaces, and templates are in place.",
+    "last_update": "2026-04-05T08:02:20Z"
+  },
+  "handoffs": [],
+  "blockers": []
+}

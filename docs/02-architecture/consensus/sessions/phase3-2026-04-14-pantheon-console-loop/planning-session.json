@@ -1,0 +1,993 @@
+{
+  "session_id": "phase3-2026-04-14-pantheon-console-loop",
+  "phase": "phase3",
+  "profile": "generic",
+  "status": "accepted",
+  "planning_mode": "discussion_planning",
+  "runtime_mode": "supervisor_managed_execution",
+  "summary": "Formalize the Pantheon <-> Lovable closed loop and expand Pantheon Console into an 8-workbench planning backlog.",
+  "objective": "Define the canonical closed-loop coordination protocol, GitHub dispatch model, screen-packet requirements, and execution backlog for all 8 Pantheon Console workbenches.",
+  "facilitator": "Claude",
+  "baton_owner": "Codex",
+  "starter_owner": "Codex",
+  "next_reviewer": "Qwen",
+  "baton_sequence": [
+    "Codex",
+    "Qwen",
+    "Gemini",
+    "Copilot",
+    "Claude"
+  ],
+  "review_sequence": [
+    "Qwen",
+    "Gemini",
+    "Copilot",
+    "Claude"
+  ],
+  "brief_files": [
+    "Pantheon_總索引版系統分析文件.md",
+    ".coordination/README.md",
+    "docs/delivery-coordination-bus.md",
+    "docs/orchestrator-state-plane-redesign.md",
+    "OPERATOR_ACCEPTANCE_MATRIX.md",
+    "support/sidecars/APP-002/APP-002-SIDECAR-BFF-HANDOFF.md",
+    "support/sidecars/APP-002/APP-002-FRONTEND-STATE-MATRIX.md",
+    "support/sidecars/APP-002-W2-READ-INCIDENT/APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF.md",
+    "support/sidecars/APP-002-W2-CONTROL-INCIDENT/APP-002-W2-CONTROL-INCIDENT-SIDECAR-BFF-HANDOFF.md",
+    "support/sidecars/APP-002-W3-POSTINCIDENT-EVOLUTION/APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF.md",
+    "support/sidecars/APP-002-W4-PERSONA-MGMT/APP-002-W4-PERSONA-MGMT-SIDECAR-BFF-HANDOFF.md",
+    "support/sidecars/APP-002-W4-REMAINING-CATALOG/APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF.md",
+    "support/sidecars/APP-002-W5-SSE-LIVE/APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF.md",
+    "ai-status.json"
+  ],
+  "expected_outputs": [
+    {
+      "id": "consensus_packet",
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "owner": "Claude",
+      "status": "draft"
+    },
+    {
+      "id": "coordination_loop_spec",
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/coordination-loop-spec.md",
+      "owner": "Codex",
+      "status": "active"
+    },
+    {
+      "id": "pantheon_console_workbench_backlog",
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+      "owner": "Codex",
+      "status": "active"
+    },
+    {
+      "id": "execution_materialization",
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md",
+      "owner": "Codex",
+      "status": "active"
+    }
+  ],
+  "lane_focus": {
+    "Claude": "Facilitate the Pantheon Console loop session, integrate cited disagreements, and finalize the consensus packet once loop mechanics and workbench backlog converge.",
+    "Codex": "Own the shared starter draft, verify .coordination, mirroring, supervisor, and task materialization mechanics, and draft the execution slice DAG.",
+    "Gemini": "Evaluate supervisor, runtime, GitHub dispatch, replay, and failure-mode feasibility for the closed-loop automation path.",
+    "Qwen": "Audit canonical object boundaries, BFF and contract truth, and screen-to-contract alignment for APP-002 slices and workbench backlog claims.",
+    "Copilot": "Pressure-test front-end packet shape, Lovable usability, screen inventory completeness, and information architecture coverage across all 8 workbenches."
+  },
+  "fallback_policy": {
+    "Gemini": {
+      "waive_after_seconds": 1800,
+      "waive_on_terminal_failure": true,
+      "issue_id": "DISC-GEMINI-CONSOLE-LOOP",
+      "summary": "Gemini planning lane may be waived on quota or capacity failure. Codex and Claude must absorb runtime and GitHub dispatch coverage if this occurs.",
+      "covering_agents": [
+        "Codex",
+        "Claude"
+      ]
+    },
+    "Copilot": {
+      "waive_after_seconds": 1800,
+      "waive_on_terminal_failure": true,
+      "issue_id": "DISC-COPILOT-CONSOLE-LOOP",
+      "summary": "Copilot planning lane may be waived on quota or capacity failure. Codex and Claude must absorb front-end IA and Lovable packet critique if this occurs.",
+      "covering_agents": [
+        "Codex",
+        "Claude"
+      ]
+    }
+  },
+  "current_round": 1,
+  "consensus_status": "accepted",
+  "human_gate_status": "approved",
+  "artifacts": {
+    "planning_readme": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/README.md",
+      "status": "active"
+    },
+    "planning_session": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "status": "accepted"
+    },
+    "readout_template": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/LLM_READOUT_TEMPLATE.md",
+      "status": "ready"
+    },
+    "starter_draft": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/starter-draft.md",
+      "status": "active"
+    },
+    "baton_log": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/baton-log.md",
+      "status": "active"
+    },
+    "supervisor_queue": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/supervisor-queue.md",
+      "status": "active"
+    },
+    "consensus_packet": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "status": "accepted"
+    },
+    "review_rounds": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/review-round-*.md",
+      "status": "in_progress"
+    }
+  },
+  "readouts": {
+    "Claude": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/claude-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-14T05:41:04Z"
+    },
+    "Codex": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/codex-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-14T05:32:08Z"
+    },
+    "Gemini": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/gemini-readout.md",
+      "status": "waived",
+      "updated_at": "2026-04-14T05:53:34Z"
+    },
+    "Qwen": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/qwen-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-14T05:34:48Z"
+    },
+    "Copilot": {
+      "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/copilot-readout.md",
+      "status": "waived",
+      "updated_at": "2026-04-14T05:53:34Z"
+    }
+  },
+  "cross_review_rounds": [
+    {
+      "round": 1,
+      "status": "open",
+      "reviewers": [
+        "Qwen",
+        "Gemini",
+        "Copilot",
+        "Claude"
+      ],
+      "updated_at": "2026-04-14T05:54:24Z",
+      "summary": "All lane readouts are submitted or waived; start cited cross-review on the coordination loop spec and 8-workbench backlog."
+    }
+  ],
+  "unresolved_items": [
+    {
+      "id": "DISC-FRONT-CHECKOUT",
+      "severity": "low",
+      "status": "tracking",
+      "summary": "Local sibling checkout ../front-ai-trading-system is missing. LOOP-003 owns repo bootstrap and mirror validation before any live Lovable cycle."
+    },
+    {
+      "id": "DISC-DISPATCH-BOOTSTRAP",
+      "severity": "low",
+      "status": "tracking",
+      "summary": "Pantheon currently has .coordination mirroring and GitHub issue bus scaffolding, but no repository_dispatch or workflow_dispatch closed-loop workflows yet. LOOP-002 owns workflow bootstrap."
+    },
+    {
+      "id": "DISC-GEMINI-CONSOLE-LOOP",
+      "severity": "medium",
+      "status": "tracking",
+      "summary": "Gemini planning lane waived after 2026-04-14T05:39:45Z capacity/rate-limit failure; Codex and Claude absorb runtime and GitHub dispatch feasibility coverage for this session."
+    },
+    {
+      "id": "DISC-COPILOT-CONSOLE-LOOP",
+      "severity": "medium",
+      "status": "tracking",
+      "summary": "Copilot planning lane waived after 2026-04-14T05:39:47Z quota failure (402 You have no quota); Codex and Claude absorb front-end IA and Lovable packet critique for this session."
+    }
+  ],
+  "proposed_execution_tasks": [
+    {
+      "id": "LOOP-001",
+      "title": "Expand the .coordination protocol for the Pantheon-Lovable closed loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Closed-Loop Infra",
+      "summary_zh": "擴充 .coordination protocol，正式定義 lovable-ui-task、frontend-feedback、backend-delivery 與回放語意。",
+      "depends_on": [],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/coordination-loop-spec.md"
+      ],
+      "acceptance": [
+        "lovable-ui-task keeps backward compatibility while adding workbench, screen_id, ui_spec_path, frontend_change_spec_path, required_feedback, and delivery_dependencies",
+        "frontend-feedback and backend-delivery payloads are defined as canonical .coordination types",
+        "mirror paths, feedback bundle paths, and failure or replay semantics are locked in the spec"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "LOOP-002",
+      "title": "Add GitHub dispatch workflows for Pantheon closed-loop coordination",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "Closed-Loop Infra",
+      "summary_zh": "為 Pantheon 與前端 repo 補 repository_dispatch 與 workflow_dispatch workflow，形成正式的 closed-loop automation。",
+      "depends_on": [
+        "LOOP-001"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/coordination-loop-spec.md",
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      ],
+      "acceptance": [
+        "Pantheon receiver and manual replay workflow specs are defined",
+        "front repo handoff receiver and feedback publisher workflow specs are defined",
+        "dispatch event names, client_payload contract, and replay path are testable without depending on the old GitHub issue bus"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "LOOP-003",
+      "title": "Bootstrap the front repo prerequisites for the Pantheon-Lovable loop",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "phase": "Closed-Loop Infra",
+      "summary_zh": "補 front repo sibling checkout、label bootstrap、mirror validation 與 workflow 先決條件。",
+      "depends_on": [
+        "LOOP-001"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/coordination-loop-spec.md"
+      ],
+      "acceptance": [
+        "../front-ai-trading-system prerequisite is recorded as a hard requirement",
+        "pantheon-bus and coordination-bus label bootstrap is specified",
+        "mirror validation checklist exists for handoff bundle, request templates, and feedback bundle paths"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "PKT-001",
+      "title": "Packetize Governance and Deployment Review screens from existing APP-002 slices",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "phase": "APP-002 Packetization",
+      "summary_zh": "把 Promotion Review 與 Deployment Review 相關 operator screens 整理成正式 Lovable packet set。",
+      "depends_on": [
+        "LOOP-001",
+        "LOOP-003"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "F-042 is reframed as one Governance Workbench screen instead of the whole admin surface",
+        "deployment review and governance queue follow-up screens receive canonical packet requirements",
+        "required example payloads and screen-spec gaps are explicitly listed"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "PKT-002",
+      "title": "Packetize Incident Response and Incident Control screens",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "APP-002 Packetization",
+      "summary_zh": "把 Incident Response 與 control rail 整理成可 handoff 的 Lovable packet set。",
+      "depends_on": [
+        "LOOP-001",
+        "LOOP-003"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "incident response read and control surfaces share one packet family with explicit degraded-state and fallback rules",
+        "command receipts, action gating, and secondary control path copy are mapped to packet fields",
+        "screen inventory distinguishes incident home, detail, and action drawer responsibilities"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "PKT-003",
+      "title": "Packetize Post-Incident and Evolution screens",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "phase": "APP-002 Packetization",
+      "summary_zh": "把 Post-Incident Review 與 Evolution 相關 screens 整理成正式 packet set。",
+      "depends_on": [
+        "LOOP-001",
+        "LOOP-003"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "post-incident review, evolution review, lineage evidence, and telemetry evidence are mapped to packet-ready screens",
+        "EVO-004 dependency remains explicit where execute boundaries are still unresolved",
+        "the packet set distinguishes read-only evidence panels from future actionable mutation review panels"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "PKT-004",
+      "title": "Packetize Persona Management and Remaining Catalog drilldowns",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "phase": "APP-002 Packetization",
+      "summary_zh": "把 Persona Management 與 remaining catalog drilldowns 整理成 Persona Workbench packet set。",
+      "depends_on": [
+        "LOOP-001",
+        "LOOP-003"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "persona management is promoted from a sidecar handoff into a canonical screen packet",
+        "remaining catalog endpoints are grouped into explicit drilldown modules instead of a vague catch-all",
+        "Lovable readiness and missing screen-spec work are listed per module"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "PKT-005",
+      "title": "Packetize the global degradation banner and SSE/live reconciliation slice",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "APP-002 Packetization",
+      "summary_zh": "把全域 degradation banner 與 SSE/live reconciliation slice 整理成正式 packet 與 integration plan。",
+      "depends_on": [
+        "LOOP-001",
+        "LOOP-003"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "global degradation banner rules are defined once and referenced by all operator-facing packets",
+        "SSE, reconnect, replay, and stale-state reconciliation are described as a frontend integration slice rather than pure visual work",
+        "screen packets call out where live state is required and where polling fallback is acceptable"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-001",
+      "title": "Define the Operator Console backlog and wave plan",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Operator Console 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "PKT-001",
+        "PKT-002",
+        "PKT-003",
+        "PKT-005"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "dashboard, alerts, health, runtime state, paper-live drift, deployment review, incident response, and post-incident coverage are all listed",
+        "each module records existing Pantheon support, missing canonical screen specs, Lovable readiness, and backend dependencies",
+        "the recommended execution wave is explicit for every operator module"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-002",
+      "title": "Define the Persona Workbench backlog and wave plan",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Persona Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "PKT-004"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "personas, persona detail, tool profile, consult policy, and capital pool binding are all mapped to explicit modules",
+        "existing persona-management and remaining catalog support is linked to the correct screens",
+        "missing BFF or contract dependencies are separated from missing screen-spec work"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-003",
+      "title": "Define the Research Workbench backlog and wave plan",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Research Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "LOOP-001"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "search, analyze, research ticket, experiment launch, and artifact compare are all listed as separate planning modules",
+        "current directionally-correct front-end work is acknowledged without treating it as packet-ready",
+        "backend gaps and packetization prerequisites are called out for each research module"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-004",
+      "title": "Define the Knowledge Workbench backlog and wave plan",
+      "owner": "Claude",
+      "reviewer": "Qwen",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Knowledge Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "LOOP-001"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "insight cards, strategy spec, evidence refs, research notes, and institutional memory are all captured as modules",
+        "the backlog separates knowledge-specific BFF needs from screen-spec needs",
+        "recommended waves avoid bundling Knowledge Workbench into unrelated operator packetization work"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-005",
+      "title": "Define the Trainer Workbench backlog and wave plan",
+      "owner": "Copilot",
+      "reviewer": "Claude",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Trainer Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "LOOP-001"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "teaching dialog, parameter controls, before-after compare, and replay modules are all listed",
+        "demo-grade current state is explicitly distinguished from packet-ready scope",
+        "backend and contract requirements are documented before Lovable is invited to change Trainer flows"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-006",
+      "title": "Define the Consultation Workbench backlog and wave plan",
+      "owner": "Claude",
+      "reviewer": "Qwen",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Consultation Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "LOOP-001"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "consult request, committee board, debate transcript, and red-team memo are all mapped to planning modules",
+        "missing backend orchestration dependencies are surfaced explicitly",
+        "the backlog states that Consultation Workbench is not yet packet-ready and needs canonical screen specs first"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-007",
+      "title": "Define the Governance Workbench backlog and wave plan",
+      "owner": "Codex",
+      "reviewer": "Qwen",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Governance Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "PKT-001"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "review queue, approval queue, promotion review, deployment diff, rollback review, and governance audit rail are all listed",
+        "F-042 is explicitly categorized as one screen inside Governance Workbench, not as the whole workbench",
+        "remaining governance screens receive wave recommendations and packetization prerequisites"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "WB-008",
+      "title": "Define the Evolution Workbench backlog and wave plan",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "phase": "Workbench Backlog",
+      "summary_zh": "整理 Evolution Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+      "depends_on": [
+        "PKT-003",
+        "PKT-005"
+      ],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+      ],
+      "acceptance": [
+        "post-incident review, evolution center, lineage, inspiration graph, and mutation review are all mapped to modules",
+        "existing Pantheon support from APP-002 sidecars is linked to the correct evolution modules",
+        "live-state and evidence dependencies are called out before Lovable packetization is attempted"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase3-2026-04-14-pantheon-console-loop",
+        "phase": "phase3",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+      }
+    }
+  ],
+  "recent_events": [
+    {
+      "ts": "2026-04-14T09:05:33Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:05:37Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:05:41Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:05:44Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:05:48Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:05:52Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:05:56Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:05:59Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:03Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:07Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:10Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:14Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:18Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:21Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:26Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:29Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:33Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:37Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:40Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:44Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:48Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:52Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:55Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:06:59Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:03Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:07Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:10Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:14Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:18Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:22Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:25Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:29Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:33Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:37Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:40Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:44Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:48Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:52Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:55Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-14T09:07:59Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 15 existing tasks in ai-status.json. Skipped 1 archived terminal tasks.",
+      "status": "approved"
+    }
+  ],
+  "updated_at": "2026-04-15T00:46:46Z",
+  "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+  "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+  "materialization_contract": {
+    "type": "discussion_planning",
+    "session_id": "phase3-2026-04-14-pantheon-console-loop",
+    "phase": "phase3",
+    "profile": "generic",
+    "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+    "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+    "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+    "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md",
+    "source_plane": "planning",
+    "planning_mode": "discussion_planning",
+    "runtime_mode": "supervisor_managed_execution",
+    "consensus_status": "accepted",
+    "human_gate_status": "approved",
+    "proposed_execution_tasks": 16
+  }
+}

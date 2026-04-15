@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W1-FRONT-HANDOFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W1-FRONT-HANDOFF",
+    "title": "Publish F-042 front-end and Lovable handoff packet",
+    "summary_zh": "針對 F-042 產出 contract-ready、example payload、front-sync 指引與 Lovable prompt packet，讓前端與 Lovable 能安全接線。",
+    "phase": "Phase 5: APP-002 Execution Wave 1",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W1-READ-DEPLOYMENT"
+    ],
+    "artifacts": [
+      ".coordination/responses/",
+      "docs/examples/F-042-review-page.json",
+      "docs/delivery-coordination-bus.md"
+    ],
+    "acceptance": [
+      "contract_ready_published",
+      "lovable_ui_task_published",
+      "front_repo_receives_handoff_bundle"
+    ],
+    "next": "Formally closed. All 3 acceptance criteria met: contract_ready_published, lovable_ui_task_published, front_repo_receives_handoff_bundle. Codex review approved.",
+    "last_update": "2026-04-11T18:21:46Z",
+    "auto_created_by": "phase1-2026-04-11-backend-completion",
+    "review_notes_zh": [
+      "審查通過：F-042 contract-ready/ Lovable UI task/ prompt 已發布且內容完整，front-ai-trading-system 已接收 mirror handoff bundle。非阻塞：Pantheon 端 lovable-ui-task 的 bff_spec_path/example_payload_paths 仍為空，但 front repo mirror 已補齊。"
+    ],
+    "review_file": "support/sidecars/APP-002-W1-FRONT-HANDOFF/review_app002_w1_front_handoff_codex.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Handoff for review: contract-ready, lovable-ui-task, and handoff bundle all published.",
+      "status": "done",
+      "created_at": "2026-04-11T18:13:10Z",
+      "resolved_at": "2026-04-11T18:17:28Z"
+    },
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved: handoff bundle published and mirrored to front repo.",
+      "status": "done",
+      "created_at": "2026-04-11T18:17:28Z",
+      "resolved_at": "2026-04-11T18:18:48Z"
+    },
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All artifacts verified. Submitting for review approval.",
+      "status": "done",
+      "created_at": "2026-04-11T18:21:34Z",
+      "resolved_at": "2026-04-11T18:21:41Z"
+    },
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "All 3 acceptance criteria satisfied. Re-confirming prior approval for owner finalize.",
+      "status": "done",
+      "created_at": "2026-04-11T18:21:41Z",
+      "resolved_at": "2026-04-11T18:21:46Z"
+    }
+  ],
+  "blockers": []
+}

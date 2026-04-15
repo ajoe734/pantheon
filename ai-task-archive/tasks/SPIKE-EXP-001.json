@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "task_id": "SPIKE-EXP-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SPIKE-EXP-001",
+    "title": "Select first experiment backend and registry mapping strategy",
+    "phase": "Spike",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "spikes/experiment_backend_selection.md",
+      "artifact_metadata_schema.json"
+    ],
+    "acceptance": [
+      "first backend selected",
+      "version pinned",
+      "deployment mode chosen",
+      "registry mapping defined",
+      "smoke test path documented"
+    ],
+    "next": "Selected MLflow as the first backend, pinned the first version, defined registry-mapping rules, and documented the first smoke-test path.",
+    "last_update": "2026-04-02T13:50:25Z",
+    "summary_zh": "先在 MLflow / W&B 之間做選型，決定第一個 experiment backend 與 registry/rollback metadata 的對應方式。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W2-CLI-FALLBACK",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W2-CLI-FALLBACK",
+    "title": "Turn pantheon-admin and internal API into usable fallback path",
+    "summary_zh": "把 pantheon-admin 與 internal API 從 scaffold 提升為可用 secondary control path，確保 UI 掛掉時仍可安全操作。",
+    "phase": "Phase 5: APP-002 Execution Wave 2",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W1-COMMAND-DEPLOYMENT",
+      "APP-002-W2-CONTROL-INCIDENT"
+    ],
+    "artifacts": [
+      "tools/pantheon_admin/cli.py",
+      "services/control_plane/internal_api.py",
+      "support/sidecars/APP-002/APP-002-SECONDARY-CONTROL-PATH.md"
+    ],
+    "acceptance": [
+      "cli_executes_real_actions",
+      "internal_api_not_placeholder",
+      "operator_fallback_documented"
+    ],
+    "next": "Finalized CLI fallback path: pantheon-admin now drives deployment approve/reject, runtime pause/resume/force-halt (kill-switch), rollback execute/list/abort, and kill-switch activate/status/deactivate with auth/MFA/output handling; internal_api extended for kill-switch status/deactivate and rollback list/abort. Review approved; tests pass.",
+    "last_update": "2026-04-11T17:02:20Z",
+    "auto_created_by": "phase1-2026-04-11-backend-completion",
+    "review_file": "support/sidecars/APP-002-W2-CLI-FALLBACK/review_app002_w2_cli_fallback_qwen.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-11T14:49:30Z",
+      "resolved_at": "2026-04-11T14:49:33Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "CLI now calls internal API (deployment approve/reject, runtime pause/resume/force-halt via kill-switch, rollback execute/list/abort, kill-switch activate/status/deactivate), with auth/MFA handling, output modes, and error mapping. internal_api extended for kill-switch status/deactivate and rollback list/abort. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-11T15:08:56Z",
+      "resolved_at": "2026-04-11T15:50:57Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Copilot to Qwen after repeated Copilot capacity/429: 402 You have no quota (Request ID: C142:19714B:2C3A1FE:3670193:69DA6DCC)",
+      "status": "done",
+      "created_at": "2026-04-11T15:50:57Z",
+      "resolved_at": "2026-04-11T17:00:19Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met, CLI argparse bug fixed, 11/11 tests pass, full command coverage verified.",
+      "status": "done",
+      "created_at": "2026-04-11T17:00:19Z",
+      "resolved_at": "2026-04-11T17:00:26Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Handoff for review (status sync; approval already recorded in activity log).",
+      "status": "done",
+      "created_at": "2026-04-11T17:02:13Z",
+      "resolved_at": "2026-04-11T17:02:16Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved (syncing prior approval recorded in activity log): all acceptance criteria met, CLI argparse bug fixed, 11/11 tests pass, full command coverage verified.",
+      "status": "done",
+      "created_at": "2026-04-11T17:02:16Z",
+      "resolved_at": "2026-04-11T17:02:20Z"
+    }
+  ],
+  "blockers": []
+}

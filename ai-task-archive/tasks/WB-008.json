@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "WB-008",
+  "archived_at": "2026-04-15T00:27:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-008",
+    "title": "Define the Evolution Workbench backlog and wave plan",
+    "summary_zh": "整理 Evolution Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+    "phase": "Workbench Backlog",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "PKT-003",
+      "PKT-005"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "post-incident review, evolution center, lineage, inspiration graph, and mutation review are all mapped to modules",
+      "existing Pantheon support from APP-002 sidecars is linked to the correct evolution modules",
+      "live-state and evidence dependencies are called out before Lovable packetization is attempted"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner final check complete: all 5 Evolution Workbench modules (EW-01 to EW-05) mapped with canonical inventory rows; PKT-003/PKT-005 linkage confirmed; live-state and evidence dependency gates present for all 5 modules; EW-04 BFF gap and EW-05 EVO-004 boundary prerequisite explicitly called out; Wave 2/3 internal ordering chain consistent with execution-materialization sequencing. Closing to done.",
+    "last_update": "2026-04-15T00:27:16Z",
+    "review_notes_zh": [
+      "已核對 5 個模組的 canonical module inventory rows，EW-01 到 EW-05 對應的現況支撐與缺口標示一致。",
+      "PKT-003 與 PKT-005 的支撐關係、EW-04 的 BFF gap、EW-05 的 EVO-004 boundary prerequisite，以及 Wave 2/3 ordering chain 均已明確且自洽。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T00:27:16Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "d6e85b3104ae6695785a78a5875f242de0cb6615",
+      "commit_subject": "WB-008: finalize Evolution Workbench backlog and wave plan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "WB-008",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 132,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-008",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-15T00:09:20Z",
+      "resolved_at": "2026-04-15T00:09:20Z"
+    },
+    {
+      "task_id": "WB-008",
+      "from": "Qwen",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Qwen is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-15T00:09:46Z",
+      "resolved_at": "2026-04-15T00:09:46Z"
+    },
+    {
+      "task_id": "WB-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-15T00:10:34Z",
+      "resolved_at": "2026-04-15T00:10:34Z"
+    },
+    {
+      "task_id": "WB-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Evolution Workbench section is fully expanded in docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md. Please verify: (1) all 5 modules (EW-01 Post-Incident Review, EW-02 Evolution Center, EW-03 Lineage View, EW-04 Inspiration Graph, EW-05 Mutation Review) are mapped with canonical module inventory rows; (2) PKT-003 sidecar BFF support is correctly linked to each module; (3) live-state and evidence dependency gate table is present for all 5 modules; (4) EW-04 BFF gap and EW-05 EVO-004 boundary prerequisite are explicitly called out before Lovable packetization; (5) Wave 2/3 internal ordering chain is consistent with the execution-materialization sequencing.",
+      "status": "done",
+      "created_at": "2026-04-15T00:15:49Z",
+      "resolved_at": "2026-04-15T00:25:51Z"
+    },
+    {
+      "task_id": "WB-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewed Evolution Workbench backlog expansion: all 5 modules, PKT-003/PKT-005 linkage, live-state dependency gates, and Wave 2/3 ordering are consistent. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-15T00:25:51Z",
+      "resolved_at": "2026-04-15T00:27:16Z"
+    }
+  ],
+  "blockers": []
+}

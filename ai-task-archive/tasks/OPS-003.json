@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "task_id": "OPS-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-003",
+    "title": "Build collaboration dashboard",
+    "phase": "Foundation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OPS-002"
+    ],
+    "artifacts": [
+      "docs-site/index.html",
+      "docs-site/script.js",
+      "docs-site/style.css"
+    ],
+    "acceptance": [
+      "dashboard renders workload",
+      "dashboard renders board, blockers, handoffs, recent activity"
+    ],
+    "next": "Collect visual feedback and adjust layout if needed",
+    "last_update": "2026-04-01T04:28:00Z",
+    "summary_zh": "建立協作 dashboard，把分工、進度、依賴與最近活動視覺化，方便你隨時掌握全局。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

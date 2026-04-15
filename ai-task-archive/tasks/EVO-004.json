@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "task_id": "EVO-004",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EVO-004",
+    "title": "Wire operational evolution boundaries",
+    "summary_zh": "把 freeze、rollback、retrain、redeploy 的 ownership、threshold 與 orchestration boundary 正式接起來。",
+    "phase": "Phase 4: Evolution Governance",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "EVO-003",
+      "EX-002",
+      "INC-001"
+    ],
+    "artifacts": [
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+      "ROLLBACK_AND_POSITION_SEMANTICS.md",
+      "services/control-plane/governance/evolution_controller.py",
+      "services/control-plane/governance/evolution_controller_contract.md",
+      "services/control-plane/governance/review_evo004_codex_zh.md",
+      "services/control-plane/governance/review_evo004_gemini_approved_zh.md"
+    ],
+    "acceptance": [
+      "each action path has owner, threshold, cooldown, and execution boundary",
+      "evolution_controller.py implements normal-path routing",
+      "ThresholdEvaluator maps signals to actions",
+      "freeze live no active runtime is high-risk governance-only",
+      "redeploy follow-through is deployment plane",
+      "unit and smoke tests pass"
+    ],
+    "next": "EVO-004 finalized: operational evolution boundaries are locked. Gemini approved the controller, threshold mapping, live-freeze boundary split, and redeploy follow-through semantics; verification remained green at 10/10 + 14/14 + 17/17 + 16/16. Ready for EVO-005 and APP-002 downstream work.",
+    "last_update": "2026-04-11T04:30:26Z",
+    "review_notes_zh": [
+      "審查通過：evolution_controller.py 完整實現了 L1 規範的 routing 語意，特別是 freeze 與 rollback 的權責分離。",
+      "高風險 Live Freeze 已按有無 active runtime 正式拆分；redeploy follow-through 視窗與 gate 邏輯正確。",
+      "ThresholdEvaluator 映射關係符合 §7 預設值；單元測試與煙霧測試覆蓋完整。"
+    ],
+    "review_file": "services/control-plane/governance/review_evo004_gemini_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "EVO-004",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Review-ready. Added services/control-plane/governance/evolution_controller.py plus unit/smoke coverage, aligned EVOLUTION_REVIEW_AND_THRESHOLDS.md and evolution_controller_contract.md so freeze-live without active runtime stays high-risk governance-only, and documented review notes in services/control-plane/governance/review_evo004_codex_zh.md. Verification: 10/10 evolution_controller unit tests, 14/14 evolution_controller smoke checks, 17/17 evolution_decision unit tests, 16/16 evolution_decision smoke checks passed.",
+      "status": "done",
+      "created_at": "2026-04-11T04:17:46Z",
+      "resolved_at": "2026-04-11T04:30:26Z"
+    },
+    {
+      "task_id": "EVO-004",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Review approved. Core semantics and plane boundaries verified. Handoff to Codex to finalize as done.",
+      "status": "done",
+      "created_at": "2026-04-11T10:30:00Z",
+      "resolved_at": "2026-04-11T04:30:26Z"
+    }
+  ],
+  "blockers": []
+}

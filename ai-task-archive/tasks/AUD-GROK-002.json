@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task_id": "AUD-GROK-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUD-GROK-002",
+    "title": "Implement OpenAlex and GitHub adapter spike for RS-001",
+    "phase": "Audit",
+    "owner": "Copilot",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Verified all tests passing, code compiled successfully, ready for Gemini review",
+    "last_update": "2026-04-05T14:54:18Z",
+    "summary_zh": "為 RS-001 先做 OpenAlex 與 GitHub adapter spike，確認研究來源能走受治理的 structured API 路線。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

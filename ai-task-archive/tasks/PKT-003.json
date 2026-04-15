@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "task_id": "PKT-003",
+  "archived_at": "2026-04-14T23:35:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-003",
+    "title": "Packetize Post-Incident and Evolution screens",
+    "summary_zh": "把 Post-Incident Review 與 Evolution 相關 screens 整理成正式 packet set。",
+    "phase": "APP-002 Packetization",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "post-incident review, evolution review, lineage evidence, and telemetry evidence are mapped to packet-ready screens",
+      "EVO-004 dependency remains explicit where execute boundaries are still unresolved",
+      "the packet set distinguishes read-only evidence panels from future actionable mutation review panels"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner close-out: all three acceptance criteria confirmed. Post-Incident Review, Evolution Center, and Lineage View are packet-ready; Inspiration Graph and Mutation Review remain explicitly blocked behind EVO-004 and BFF gaps; read-only evidence panels are distinguished from future mutation review panels. Lineage View edge-detail drawer uses graph-edge click (lineage_graph.edges[].id) — consistent across spec, BFF, payload, and handoff bundle. PKT-003 packet family formally closed.",
+    "last_update": "2026-04-14T23:35:46Z",
+    "review_notes_zh": [
+      "Lineage View 已改為 graph-edge click 觸發 edge detail drawer，screen spec、frontend handoff 與 .coordination YAML 已一致；PKT-003 的 ready/block 分界保持正確，可進入 owner formal close-out。"
+    ],
+    "review_file": "docs/reviews/PKT-003-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T23:35:46Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "9deef47c162f8bfa8d5c5658aef774982114df6b",
+      "commit_subject": "PKT-003: finalize Post-Incident and Evolution packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Commit all PKT-003 packet artifacts": "screen specs, BFF contracts,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "PKT-003",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 147,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-14T10:06:50Z",
+      "resolved_at": "2026-04-14T10:07:02Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PKT-003 packet family complete. Three screens are packet-ready (Post-Incident Review Console, Evolution Center, Lineage View) with screen specs, BFF contracts, example payloads, and coordination response/request templates. Two screens (Inspiration Graph, Mutation Review) are blocked with explicit BFF gap requirements. Please review the packet family doc and all artifacts for correctness and acceptance criteria coverage.",
+      "status": "done",
+      "created_at": "2026-04-14T13:20:42Z",
+      "resolved_at": "2026-04-14T13:33:50Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: align Post-Incident telemetry fields with the example/W3 handoff ( vs flat metrics); fix Evolution Center Freeze Orders source ( conflicts with the stated active+historical scope and lifted example); align Lineage View graph empty-state field naming to  instead of ; expand Mutation Review's EVO-004 blocker note to name the four unresolved action paths (freeze, rollback, retrain, redeploy).",
+      "status": "done",
+      "created_at": "2026-04-14T13:33:50Z",
+      "resolved_at": "2026-04-14T13:33:50Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Addressed all four review changes: (1) telemetry_performance field shape in screen spec + BFF contract now references nested summary object matching the example payload; (2) Evolution Center Freeze Orders source changed to GET /api/v1/freeze-orders (no filter, active+historical per the example showing lifted status); (3) Lineage View graph empty-state condition updated to check edges field matching the lineage_graph response shape; (4) Mutation Review EVO-004 blocker note expanded to name all four unresolved action paths: freeze, rollback, retrain, redeploy.",
+      "status": "done",
+      "created_at": "2026-04-14T13:44:25Z",
+      "resolved_at": "2026-04-14T14:01:23Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested. See docs/reviews/PKT-003-review-codex.md. Remaining blockers: (1) all three PKT-003 Lovable YAMLs reference missing docs/pantheon-handoffs/PKT-003-* bundles / FRONTEND_CHANGE_SPEC.md files while contract-ready still claims the handoff bundle is published; (2) Lineage View .coordination handoff still says empty state should key off lineage_edges instead of lineage_graph.edges / edges[].",
+      "status": "done",
+      "created_at": "2026-04-14T14:01:23Z",
+      "resolved_at": "2026-04-14T14:01:23Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both blocking items from docs/reviews/PKT-003-review-codex.md are resolved: (1) created the three missing handoff bundle FRONTEND_CHANGE_SPEC.md files — docs/pantheon-handoffs/PKT-003-post-incident-review/, PKT-003-evolution-center/, and PKT-003-lineage-view/; (2) Lineage View coordination files already reference lineage_graph.edges correctly. Please re-review the packet family and handoff bundles.",
+      "status": "done",
+      "created_at": "2026-04-14T15:31:34Z",
+      "resolved_at": "2026-04-14T15:34:41Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested. See docs/reviews/PKT-003-review-codex.md: Lineage View still claims the edge-detail drawer opens from an LN-01 list row, but LN-01 exposes no edge_id or other stable edge selector. Align the screen spec, BFF contract, example payload, and handoff bundle on a trigger path the frontend can actually implement.",
+      "status": "done",
+      "created_at": "2026-04-14T15:34:41Z",
+      "resolved_at": "2026-04-14T15:34:41Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "The Lineage View interaction contract is now consistent across all artifacts. Edge Detail drawer is triggered by graph-edge click (edge_id from lineage_graph.edges[].id / LN-03), not list-row selection. Updated: docs/screens/PKT-003-lineage-view.md, docs/pantheon-handoffs/PKT-003-lineage-view/FRONTEND_CHANGE_SPEC.md, .coordination/responses/PKT-003-lineage-view-lovable-ui-task.yaml, .coordination/responses/PKT-003-lineage-view-contract-ready.yaml. BFF contract and example payload are unchanged (already correct). Please re-review.",
+      "status": "done",
+      "created_at": "2026-04-14T15:38:26Z",
+      "resolved_at": "2026-04-14T15:48:57Z"
+    },
+    {
+      "task_id": "PKT-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed: Lineage View now consistently opens edge detail from graph-edge selection, and the PKT-003 packet family still preserves explicit ready-vs-blocked boundaries. Ready for owner close-out.",
+      "status": "done",
+      "created_at": "2026-04-14T15:48:57Z",
+      "resolved_at": "2026-04-14T23:35:46Z"
+    }
+  ],
+  "blockers": []
+}

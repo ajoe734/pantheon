@@ -17,6 +17,8 @@ GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 QWEN_SETTINGS_PATH = Path.home() / ".qwen" / "settings.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
+COPILOT_CONFIG_DIR = Path.home() / ".copilot"
+COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
 
 
 def _find_extension(prefix: str) -> tuple[Path | None, str | None]:
@@ -163,10 +165,22 @@ def _gh_auth_ready(binary: str | None) -> bool:
     return bool(_gh_auth_token(binary))
 
 
+def _copilot_config_auth_ready() -> bool:
+    if not COPILOT_CONFIG_PATH.exists():
+        return False
+    for candidate in ("oauth.json", "auth.json", "credentials.json", "hosts.json"):
+        if (COPILOT_CONFIG_DIR / candidate).exists():
+            return True
+    payload = load_json(COPILOT_CONFIG_PATH, default={}) or {}
+    return any(key != "firstLaunchAt" and value not in (None, "", {}, []) for key, value in payload.items())
+
+
 def _copilot_auth_ready(gh_binary: str | None) -> bool:
     if _gh_auth_token(gh_binary):
         return True
-    return any(os.environ.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"))
+    if any(os.environ.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
+        return True
+    return _copilot_config_auth_ready()
 
 
 def _configured_value(settings: dict[str, Any], key: str, env_name: str | None = None) -> str | None:
@@ -186,6 +200,11 @@ def _qwen_saved_auth_ready(binary: str | None) -> bool:
     result = run_command([binary, "auth", "status"])
     output = ((result.stdout or "") + (result.stderr or "")).lower()
     return bool(output) and "no authentication method configured" not in output
+
+
+def _configured_provider_binary(config: dict[str, Any], provider: str, section: str, default: str) -> str | None:
+    provider_settings = (config.get("providers", {}).get(provider, {}) or {}).get(section, {})
+    return command_exists(provider_settings.get("cli") or default)
 
 
 def _custom_agents_info() -> dict[str, Any]:
@@ -360,7 +379,7 @@ def desired_claude_local_settings(config: dict[str, Any], current: dict[str, Any
     hooks = existing.get("hooks", {})
     merged_hooks = {**hooks}
     legacy_hook_snippets = (
-        "python3 .orchestrator/permission_broker.py hook",
+        "permission_broker.py hook",
         "permission_broker.py log-hook",
     )
     for event, hook_entries in _verified_claude_hooks().items():
@@ -420,11 +439,11 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_claude = desired_claude_local_settings(config, current=claude_local)
     desired_gemini = desired_gemini_settings(config)
     codex_binary = command_exists("codex")
-    gemini_binary = command_exists("gemini")
-    qwen_binary = command_exists("qwen")
-    claude_binary = command_exists("claude")
-    copilot_binary = command_exists("copilot")
-    gh_binary = command_exists("gh")
+    gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
+    qwen_binary = _configured_provider_binary(config, "qwen", "qwen", "qwen")
+    claude_binary = _configured_provider_binary(config, "claude", "runtime", "claude")
+    copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
+    gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
     gh_version = _gh_version(gh_binary)
     gh_auth_ready = _gh_auth_ready(gh_binary)
     claude_auth_ready = _claude_auth_ready(claude_binary)

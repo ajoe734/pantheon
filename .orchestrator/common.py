@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from task_archive import TaskResolver
+
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
@@ -21,7 +23,7 @@ EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
-PLANNING_SHARED_FILES = [
+DEFAULT_PLANNING_SHARED_FILES = [
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "README.md",
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "planning-session.json",
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "pantheon-backend-completion-checklist.md",
@@ -255,17 +257,40 @@ def load_status(config: dict[str, Any]) -> dict[str, Any]:
     return load_json(config_path(config, "status_file"), default={}) or {}
 
 
+def planning_shared_files(planning_state: dict[str, Any] | None = None) -> list[Path]:
+    state = planning_state if planning_state is not None else (load_json(PLANNING_STATE_PATH, default={}) or {})
+    if str(state.get("status") or "") not in {"active", "human_required"}:
+        return []
+
+    files: list[Path] = []
+    readme_path = resolve_path(((state.get("artifacts", {}) or {}).get("planning_readme", {}) or {}).get("path"))
+    session_path = resolve_path(state.get("session_file"))
+    for candidate in (readme_path, session_path):
+        if candidate and candidate.exists():
+            files.append(candidate)
+
+    if not files:
+        for path in DEFAULT_PLANNING_SHARED_FILES:
+            if path.exists():
+                files.append(path)
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in files:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
+
+
 def selected_shared_files(config: dict[str, Any]) -> list[Path]:
     files: list[Path] = []
     for key in ("status_file", "current_work", "activity_log", "dashboard"):
         path = config.get("paths", {}).get(key)
         if path:
             files.append(config_path(config, key))
-    planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
-    if str(planning_state.get("status") or "") in {"active", "human_required"}:
-        for path in PLANNING_SHARED_FILES:
-            if path.exists():
-                files.append(path)
+    files.extend(planning_shared_files())
     return files
 
 
@@ -362,8 +387,8 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     task = next((item for item in tasks if str(item.get("id") or "").strip() == task_id), None)
     if task is None:
         return None
-    task_map = {str(item.get("id") or "").strip(): item for item in tasks}
-    deps = [task_map.get(dep_id) for dep_id in (task.get("depends_on") or [])]
+    resolver = TaskResolver(tasks)
+    deps = [resolver.get(dep_id) for dep_id in (task.get("depends_on") or [])]
     deps = [item for item in deps if item]
     planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
     planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
@@ -395,7 +420,7 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     ]
     if deps:
         body.extend(
-            f"- {dep.get('id')}: {dep.get('status')} · {compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
+            f"- {dep.get('id')}: {resolver.dependency_status(dep.get('id'))} · {compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
             for dep in deps
         )
     else:
@@ -417,7 +442,9 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         if session_file:
             body.append(f"- {session_file}")
         else:
-            body.append(f"- {PLANNING_SHARED_FILES[1].relative_to(ROOT)}")
+            fallback_planning_files = planning_shared_files(planning_state)
+            if fallback_planning_files:
+                body.append(f"- {relpath(fallback_planning_files[0])}")
     if source_plane or source_ref:
         body.extend(["", "## Planning Origin"])
         body.append(f"- Source plane: {source_plane or '-'}")

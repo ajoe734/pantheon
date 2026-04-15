@@ -33,6 +33,8 @@ delivery_dependencies:
 links:
   lovable_project_url: https://lovable.dev/projects/140c41d5-9cd8-4d6b-ba02-66d5941d0dbe
   bff_spec_path: docs/bff/F-042-promotion-review.md
+  ui_spec_path: docs/screens/F-042-promotion-review.md
+  frontend_change_spec_path: docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md
   example_payload_paths:
   - docs/examples/F-042-review-page.json
   handoff_bundle_dir: docs/pantheon-handoffs/F-042

@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "WB-006",
+  "archived_at": "2026-04-14T15:28:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-006",
+    "title": "Define the Consultation Workbench backlog and wave plan",
+    "summary_zh": "整理 Consultation Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "consult request, committee board, debate transcript, and red-team memo are all mapped to planning modules",
+      "missing backend orchestration dependencies are surfaced explicitly",
+      "the backlog states that Consultation Workbench is not yet packet-ready and needs canonical screen specs first"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized Consultation Workbench backlog delivery after reviewer approval. Checkpoint: four modules are mapped, per-module backend gaps and packetization prerequisites are explicit, and Wave 4 remains clearly not packet-ready until canonical screen packets plus command/transcript contracts exist.",
+    "last_update": "2026-04-14T15:28:28Z",
+    "review_notes_zh": [
+      "審查通過：三項驗收條件全數符合。(1) 四個模組（Consult request、Committee board、Debate transcript、Red-team memo）均已列出並附完整 canonical module inventory 表。(2) 每個模組各有獨立的 backend gap 與 packetization prerequisite 段落，明確標示缺少的 BFF 路由與前置合約。(3) Workbench 清楚標記 not-packet-ready，Wave 4 定位有充分理由支撐。",
+      "追蹤：Wave 4 定位合理，無需調整；sidecar AC-2 所提之 per-module BFF 分解已在主文件中完成。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T15:28:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "4671fe397480567200e9b1d2126ad2366c6ed553",
+      "commit_subject": "WB-006: finalize Consultation Workbench backlog and wave plan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WB-006",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 166,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-14T09:04:53Z",
+      "resolved_at": "2026-04-14T09:10:43Z"
+    },
+    {
+      "task_id": "WB-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Consultation Workbench backlog now reflects existing consultation contracts, per-module backend gaps, canonical module inventory, and Wave 4 internal ordering. Please review the updated backlog section in pantheon-console-workbench-backlog.md.",
+      "status": "done",
+      "created_at": "2026-04-14T14:48:00Z",
+      "resolved_at": "2026-04-14T14:48:14Z"
+    },
+    {
+      "task_id": "WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T14:48:14Z",
+      "resolved_at": "2026-04-14T14:52:38Z"
+    },
+    {
+      "task_id": "WB-006",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T14:52:38Z",
+      "resolved_at": "2026-04-14T15:04:33Z"
+    },
+    {
+      "task_id": "WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three acceptance criteria satisfied: four Consultation modules mapped with full module inventory, per-module backend gaps explicitly listed, and not-packet-ready status unambiguous. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T15:04:33Z",
+      "resolved_at": "2026-04-14T15:27:40Z"
+    },
+    {
+      "task_id": "WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restored the approved state after owner final-check note; Claude review approval remains the active gate and the task is ready for owner close.",
+      "status": "done",
+      "created_at": "2026-04-14T15:28:28Z",
+      "resolved_at": "2026-04-14T15:28:29Z"
+    }
+  ],
+  "blockers": []
+}

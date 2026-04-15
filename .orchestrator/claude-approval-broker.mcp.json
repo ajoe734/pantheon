@@ -3,9 +3,9 @@
     "orchestrator_approval_broker": {
       "command": "python3",
       "args": [
-        "/home/ajoe734/code/pantheon/.orchestrator/claude_permission_prompt_mcp.py",
+        ".orchestrator/claude_permission_prompt_mcp.py",
         "--config",
-        "/home/ajoe734/code/pantheon/.orchestrator/config.json"
+        ".orchestrator/config.json"
       ],
       "env": {
         "PYTHONUNBUFFERED": "1"

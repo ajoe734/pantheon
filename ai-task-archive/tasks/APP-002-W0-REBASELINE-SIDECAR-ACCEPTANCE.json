@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W0-REBASELINE-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W0-REBASELINE-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-002-W0-REBASELINE acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-002-W0-REBASELINE，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 0",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-002-W0-REBASELINE/APP-002-W0-REBASELINE-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet completed and review-approved. All acceptance criteria verified: BFF implementation truth confirmed (3 routes), consensus packet aligned, scaffold vs production semantics corrected, Wave 0–5 dependency map documented. Ready for parent task (APP-002-W0-REBASELINE) to proceed to execution materialization.",
+    "last_update": "2026-04-11T12:00:14Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W0-REBASELINE",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/APP-002-W0-REBASELINE/review_app002_w0_rebaseline_sidecar_codex.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W0-REBASELINE-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet built and verified. All 3 parent criteria met. Dependency map + risk assessment included. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-11T11:55:57Z",
+      "resolved_at": "2026-04-11T11:58:46Z"
+    },
+    {
+      "task_id": "APP-002-W0-REBASELINE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved. Packet aligns with consensus artifacts; Wave 0 status label updated to review for accuracy. Support-only scope preserved.",
+      "status": "done",
+      "created_at": "2026-04-11T11:58:46Z",
+      "resolved_at": "2026-04-11T12:00:14Z"
+    }
+  ],
+  "blockers": []
+}

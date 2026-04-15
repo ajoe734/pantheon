@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "task_id": "RUN-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RUN-001",
+    "title": "Define RuntimeBinding and runtime-manager authority",
+    "summary_zh": "定義 RuntimeBinding 與 runtime-manager 的 write authority，讓實際載入狀態有單一真相。",
+    "phase": "Phase 2: Capital, Runtime, and Execution Control",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "CAP-001",
+      "DEP-001"
+    ],
+    "artifacts": [
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+      "services/execution/artifact-loader/contract.md"
+    ],
+    "acceptance": [
+      "runtime binding references deployment plan, binding, and stage",
+      "write owner is execution plane"
+    ],
+    "next": "RuntimeBinding authority locked. All artifacts verified: platform object, JSON schema, contract, authority matrix, rollback action matrix, and BINDING_AND_DEPLOYMENT_SEMANTICS.md §19. 10/10 smoke tests passing. Provenance chain PersonaCapitalBinding → DeploymentPlan → RuntimeBinding enforced. Finalizing as done.",
+    "last_update": "2026-04-10T07:21:31Z",
+    "review_notes_zh": [
+      "審查通過：RuntimeBinding 物件、schema、單 runtime 守門與 write authority 已和 L1 semantics 對齊。",
+      "reviewer cleanup：DeploymentPlan.rollback.action_type 已從 RuntimeAction 拆成 canonical rollback vocab（replace / pause_then_replace / liquidate_then_replace），避免 EX-002 / telemetry / lineage 再吃到漂移。",
+      "非阻塞備註：EX-001 loader 仍處於 paper/live 相容期；canary/frozen 目前依 artifact_state + deployment_stage projection 對齊。"
+    ],
+    "review_file": "services/execution/runtime-manager/review_run001_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "RUN-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "RUN-001 implementation complete. Artifacts: runtime_binding.py (RuntimeBinding + RuntimeBindingStore with single-runtime enforcement and status machine), runtime_binding.schema.json (updated with persona_capital_binding_id), contract.md (runtime-manager write authority), BINDING_AND_DEPLOYMENT_SEMANTICS.md §19 (formal write authority decisions). All three cross-object references enforced: plan_id, persona_capital_binding_id, deployment_mode. 10/10 smoke checks pass, py_compile clean. Review focus: (1) persona_capital_binding_id field is required and enforced; (2) single-runtime rule in RuntimeBindingStore._check_single_active_binding; (3) status machine in _ALLOWED_STATUS_TRANSITIONS; (4) §19 decisions in BINDING_AND_DEPLOYMENT_SEMANTICS.md.",
+      "status": "done",
+      "created_at": "2026-04-10T02:06:06Z",
+      "resolved_at": "2026-04-10T02:06:31Z"
+    },
+    {
+      "task_id": "RUN-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
+      "status": "done",
+      "created_at": "2026-04-10T02:06:31Z",
+      "resolved_at": "2026-04-10T02:48:07Z"
+    },
+    {
+      "task_id": "RUN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RUN-001 reviewer approval recorded. RuntimeBinding authority is locked, rollback vocabulary drift is cleaned up, and owner can finalize to done after reviewing the Codex packet.",
+      "status": "done",
+      "created_at": "2026-04-10T02:48:07Z",
+      "resolved_at": "2026-04-10T07:17:54Z"
+    },
+    {
+      "task_id": "RUN-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude capacity/429 failure: You've hit your limit · resets 1pm (Asia/Taipei)",
+      "status": "done",
+      "created_at": "2026-04-10T07:17:54Z",
+      "resolved_at": "2026-04-10T07:21:31Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "BG-000",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-000",
+    "title": "Canonicalize market scope, instrument policy, and source-class matrix",
+    "summary_zh": "把市場範圍、標的政策與 source-class matrix 提升成可執行的 canonical 規格。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [],
+    "acceptance": [],
+    "status": "done",
+    "next": "Finalized the approved market scope policy package. Committed the three canonical GAP-00 documents and closed the reviewer-noted companion-doc checklist hygiene; BG-001 remains the follow-on for DatasetVersion formalization.",
+    "last_update": "2026-04-14T00:26:32Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過：三份 BG-000 政策文件已確認存在且內容一致。市場範圍（US/TW/CRYPTO）、標的政策、source-class matrix 與 symbol/contract 身份模型均完整且互相引用正確。9/10 上游問題已明確回答；DatasetVersion 已適當延後至 BG-001。MARKET_SCOPE_AND_INSTRUMENT_POLICY.md 驗收條件第 8/9 項的核取方塊尚未勾選，但 companion docs 已存在，這是 owner-close 的表面修補項，不構成內容缺失。",
+      "後續：owner (Gemini) 執行 done 收尾；建議補齊 ai-status.json artifacts 陣列及 MARKET_SCOPE_AND_INSTRUMENT_POLICY.md 第 8/9 項核取方塊。"
+    ],
+    "review_file": "support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T00:26:32Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "0a6aeb6f7d367e51f6bd7ee908bf44d040d73827",
+      "commit_subject": "BG-000 finalize policy package checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BG-000",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 81,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-000",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T03:11:27Z",
+      "resolved_at": "2026-04-13T03:11:51Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All three canonical artifacts produced and verified: (1) MARKET_SCOPE_AND_INSTRUMENT_POLICY.md — v1 markets (US, TW, CRYPTO), instrument scopes, data-class matrix, StrategySpec constraints, stage-eligibility. (2) DATA_SOURCE_SCOPE_MATRIX.md — source-class matrix (A–F) for all three markets, 10 market-data questions answered, truth ownership explicit, paper/canary/live eligibility defined. (3) SYMBOL_MASTER_AND_CONTRACT_MASTER_POLICY.md — SecurityMaster and ContractMaster schemas, per-market symbol mapping rules, delisting/rename policy, StrategySpec integration path. All acceptance criteria met. Moving to review for Codex.",
+      "status": "done",
+      "created_at": "2026-04-13T05:51:23Z",
+      "resolved_at": "2026-04-13T05:53:04Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review approved. The three GAP-00 canonical policies are coherent with the source plan, mutually cross-referenced, and satisfy the review gate. Owner may finalize BG-000 as done.",
+      "status": "done",
+      "created_at": "2026-04-13T05:53:04Z",
+      "resolved_at": "2026-04-13T05:56:27Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "BG-000 artifacts are complete and aligned; continue with reviewer pass on a healthy lane.",
+      "status": "done",
+      "created_at": "2026-04-13T12:34:29Z",
+      "resolved_at": "2026-04-13T14:09:06Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Review approved. Three canonical policy docs are coherent, complete, and satisfy the materialization contract. DatasetVersion gap correctly deferred to BG-001. Returning to owner (Gemini) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T14:09:06Z",
+      "resolved_at": "2026-04-14T00:23:54Z"
+    },
+    {
+      "task_id": "BG-000",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-14T00:23:54Z",
+      "resolved_at": "2026-04-14T00:26:32Z"
+    }
+  ],
+  "blockers": []
+}

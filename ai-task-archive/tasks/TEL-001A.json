@@ -1,0 +1,320 @@
+{
+  "version": 1,
+  "task_id": "TEL-001A",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-001A",
+    "title": "Prepare TEL-001 field map and migration packet",
+    "summary_zh": "平行支援 TEL-001，先根據 RUN-001A 與 RUN-001 reviewer packet 整理 telemetry 欄位映射、binding/stage evidence contract 與 migration checklist，讓 RUN-001 一 finalize 就能直接進 schema 對齊。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "RUN-001A"
+    ],
+    "artifacts": [
+      "services/telemetry/TEL_001A_FIELD_PACKET.md"
+    ],
+    "acceptance": [
+      "telemetry field map written",
+      "binding/stage evidence contract written",
+      "migration checklist written"
+    ],
+    "next": "TEL-001A finalized. Field packet document at services/telemetry/TEL_001A_FIELD_PACKET.md provides complete telemetry field map (13 RuntimeBinding fields), binding/stage evidence contract (6 evidence requirements), and migration checklist (30+ items). TEL-001 owner can begin implementation immediately using this spec.",
+    "last_update": "2026-04-10T03:38:14Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:52:53Z",
+      "resolved_at": "2026-04-10T02:52:59Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:53:15Z",
+      "resolved_at": "2026-04-10T02:53:21Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:53:36Z",
+      "resolved_at": "2026-04-10T02:53:43Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:53:57Z",
+      "resolved_at": "2026-04-10T02:54:02Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T02:54:20Z",
+      "resolved_at": "2026-04-10T02:54:27Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:21:43Z",
+      "resolved_at": "2026-04-10T03:21:50Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:22:08Z",
+      "resolved_at": "2026-04-10T03:22:14Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:22:29Z",
+      "resolved_at": "2026-04-10T03:22:38Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:23:18Z",
+      "resolved_at": "2026-04-10T03:23:41Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:23:41Z",
+      "resolved_at": "2026-04-10T03:23:48Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:24:02Z",
+      "resolved_at": "2026-04-10T03:24:09Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:24:27Z",
+      "resolved_at": "2026-04-10T03:24:47Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:24:47Z",
+      "resolved_at": "2026-04-10T03:24:55Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:25:35Z",
+      "resolved_at": "2026-04-10T03:26:22Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:26:22Z",
+      "resolved_at": "2026-04-10T03:26:29Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:26:48Z",
+      "resolved_at": "2026-04-10T03:27:10Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:27:11Z",
+      "resolved_at": "2026-04-10T03:27:17Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:27:35Z",
+      "resolved_at": "2026-04-10T03:27:43Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:27:58Z",
+      "resolved_at": "2026-04-10T03:28:04Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:28:23Z",
+      "resolved_at": "2026-04-10T03:28:30Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:28:45Z",
+      "resolved_at": "2026-04-10T03:29:35Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:29:35Z",
+      "resolved_at": "2026-04-10T03:29:41Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:30:02Z",
+      "resolved_at": "2026-04-10T03:30:08Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:30:26Z",
+      "resolved_at": "2026-04-10T03:30:35Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:30:51Z",
+      "resolved_at": "2026-04-10T03:30:58Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:31:15Z",
+      "resolved_at": "2026-04-10T03:31:21Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:31:42Z",
+      "resolved_at": "2026-04-10T03:31:48Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:04Z",
+      "resolved_at": "2026-04-10T03:32:12Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:30Z",
+      "resolved_at": "2026-04-10T03:32:36Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:54Z",
+      "resolved_at": "2026-04-10T03:33:01Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "TEL-001A field packet complete: telemetry field map (13 RuntimeBinding fields mapped), binding/stage evidence contract (6 evidence requirements), and migration checklist (30+ items across 7 categories) written to services/telemetry/TEL_001A_FIELD_PACKET.md. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T03:37:59Z",
+      "resolved_at": "2026-04-10T03:38:09Z"
+    },
+    {
+      "task_id": "TEL-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "TEL-001A review approved: Telemetry field map comprehensively maps all 13 RuntimeBinding fields into event envelope with 6 validation rules. Binding/stage evidence contract defines 6 evidence requirements (E-1 through E-6) with ingest-time validation. Migration checklist covers 30+ items across schema, ingest, storage, producer, documentation, verification, and safety categories. Cross-check against all 6 source artifacts confirmed.",
+      "status": "done",
+      "created_at": "2026-04-10T03:38:09Z",
+      "resolved_at": "2026-04-10T03:38:14Z"
+    }
+  ],
+  "blockers": []
+}

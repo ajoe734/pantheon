@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "task_id": "DOC-004",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DOC-004",
+    "title": "Replace old epic roadmap with phased workstream plan",
+    "summary_zh": "將 ROADMAP.md 從舊版 epic/backlog 格式改寫為 Phase 0-6 分階段計畫，包含 critical path 與 workstream 啟動順序。",
+    "phase": "Phase 0: Canonical Cutover",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "DOC-003"
+    ],
+    "artifacts": [
+      "ROADMAP.md"
+    ],
+    "acceptance": [
+      "roadmap uses phases and workstreams instead of old epic list",
+      "critical path is documented",
+      "ROADMAP.md points to DEVELOPMENT_WORKBREAKDOWN.md for detailed tasks"
+    ],
+    "last_update": "2026-04-09T16:00:00Z"
+  },
+  "handoffs": [],
+  "blockers": []
+}

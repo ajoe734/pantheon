@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "updated_at": "2026-04-15T04:18:09Z",
+  "counts": {
+    "total": 188,
+    "completed": 183,
+    "superseded": 5
+  },
+  "recent_terminal_ids": [
+    "F-042-UI-INTEGRATION",
+    "F-042-UI-INTEGRATION-SIDECAR-REVIEW",
+    "WB-008-SIDECAR-REVIEW",
+    "WB-007-SIDECAR-ACCEPTANCE",
+    "PKT-005-SIDECAR-REVIEW",
+    "LOOP-003-SIDECAR-ACCEPTANCE",
+    "WB-008",
+    "PKT-004-SIDECAR-REVIEW",
+    "WB-001",
+    "LOOP-002-SIDECAR-ACCEPTANCE",
+    "PKT-005",
+    "PKT-003",
+    "WB-007-SIDECAR-REVIEW",
+    "WB-006-SIDECAR-REVIEW",
+    "WB-007",
+    "WB-006",
+    "PKT-005-SIDECAR-ACCEPTANCE",
+    "WB-005",
+    "WB-004",
+    "PKT-003-SIDECAR-REVIEW"
+  ]
+}

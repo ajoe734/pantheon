@@ -199,7 +199,18 @@
       "summary_zh": "把 discussion planning runtime 改成可重複使用的 session-driven 模式。",
       "depends_on": [],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-000",
@@ -212,7 +223,18 @@
         "PLAN-002"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-001",
@@ -225,7 +247,18 @@
         "PLAN-002"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-002",
@@ -238,7 +271,18 @@
         "PLAN-002"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-003",
@@ -251,7 +295,18 @@
         "PLAN-002"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-004",
@@ -264,7 +319,18 @@
         "PLAN-002"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-005",
@@ -279,7 +345,18 @@
         "BG-003"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-006",
@@ -292,7 +369,18 @@
         "PLAN-002"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     },
     {
       "id": "BG-007",
@@ -305,7 +393,18 @@
         "PLAN-002"
       ],
       "artifacts": [],
-      "acceptance": []
+      "acceptance": [],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+        "phase": "phase2",
+        "profile": "blueprint-gap-convergence",
+        "planning_dir": "docs/02-architecture/consensus/phase2",
+        "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+      }
     }
   ],
   "recent_events": [
@@ -361,10 +460,33 @@
       "type": "execution_tasks_materialized",
       "message": "Materialized 9 new tasks and refreshed 0 existing tasks in ai-status.json.",
       "status": "approved"
+    },
+    {
+      "ts": "2026-04-13T07:05:23Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 9 existing tasks in ai-status.json.",
+      "status": "approved"
     }
   ],
-  "updated_at": "2026-04-13T02:00:58Z",
+  "updated_at": "2026-04-14T05:22:28Z",
   "human_gate_ts": "2026-04-12T14:50:00Z",
   "planning_dir": "docs/02-architecture/consensus/phase2",
-  "session_file": "docs/02-architecture/consensus/phase2/planning-session.json"
+  "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+  "materialization_contract": {
+    "type": "discussion_planning",
+    "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+    "phase": "phase2",
+    "profile": "blueprint-gap-convergence",
+    "planning_dir": "docs/02-architecture/consensus/phase2",
+    "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+    "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+    "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md",
+    "source_plane": "planning",
+    "planning_mode": "discussion_planning",
+    "runtime_mode": "supervisor_managed_execution",
+    "consensus_status": "accepted",
+    "human_gate_status": "approved",
+    "proposed_execution_tasks": 9
+  }
 }

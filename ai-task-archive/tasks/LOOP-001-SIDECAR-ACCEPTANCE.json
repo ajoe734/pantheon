@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "LOOP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T06:42:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare LOOP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 LOOP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Closed-Loop Infra",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/LOOP-001/LOOP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: all 23 AC verification items confirmed and marked ✅ in acceptance packet. Checklist, dependency map (15 downstream tasks, 5 gates), and handoff packet are accurate and ready for reference during LOOP-001 implementation and review. Sidecar closed.",
+    "last_update": "2026-04-14T06:42:41Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/LOOP-001/LOOP-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T06:42:41Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6d4b0e80f402bfc043d5a742e2a538ea1ca3c528",
+      "commit_subject": "LOOP-001-SIDECAR-ACCEPTANCE: finalize acceptance packet — all 23 items ✅",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 121,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet ready for review. Checklist maps all 3 LOOP-001 acceptance criteria to 23 concrete verification points in the coordination loop spec. Dependency map shows 15 downstream tasks and 5 acceptance gates.",
+      "status": "done",
+      "created_at": "2026-04-14T06:32:59Z",
+      "resolved_at": "2026-04-14T06:34:15Z"
+    },
+    {
+      "task_id": "LOOP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex to Claude after repeated Codex capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T06:34:15Z",
+      "resolved_at": "2026-04-14T06:37:37Z"
+    },
+    {
+      "task_id": "LOOP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "All 23 acceptance verification items confirmed against coordination-loop-spec.md. Schemas, semantics, mirror contract, failure/replay paths, and dependency map are accurate. Packet approved for use during LOOP-001 implementation and review.",
+      "status": "done",
+      "created_at": "2026-04-14T06:37:37Z",
+      "resolved_at": "2026-04-14T06:41:20Z"
+    },
+    {
+      "task_id": "LOOP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-14T06:41:20Z",
+      "resolved_at": "2026-04-14T06:42:41Z"
+    }
+  ],
+  "blockers": []
+}

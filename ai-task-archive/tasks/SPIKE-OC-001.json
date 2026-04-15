@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "task_id": "SPIKE-OC-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SPIKE-OC-001",
+    "title": "Select upstream OpenClaw integration mode and pinning strategy",
+    "phase": "Spike",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "spikes/openclaw_upstream_selection.md"
+    ],
+    "acceptance": [
+      "upstream source selected",
+      "version or pinning strategy defined",
+      "integration mode chosen",
+      "smoke test path documented"
+    ],
+    "next": "Selected upstream OpenClaw source, integration mode, pinning strategy, adapter points, and first smoke-test path.",
+    "last_update": "2026-04-02T13:50:24Z",
+    "summary_zh": "釘死 upstream OpenClaw 的來源、整合模式與 pin 策略，避免再把 OpenClaw 當概念名詞而不是實際依賴。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

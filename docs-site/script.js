@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260413-1745";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260415-1145";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260413-1745";
+} from "./js/dashboard-core.js?v=20260415-1145";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -27,6 +27,7 @@ import {
   renderExecutionSectionSummary,
   renderExecutionSummary,
   renderFocusSummary,
+  renderLovableCoordination,
   renderOverviewMetrics,
   renderPlanningArtifacts,
   renderPlanningGate,
@@ -43,7 +44,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260413-1745";
+} from "./js/dashboard-renderers.js?v=20260415-1145";
 
 let renderInFlight = false;
 
@@ -112,6 +113,7 @@ async function render({ syncFirst = false } = {}) {
     renderWorkload(status);
     renderDeliveryLayers(status, planningState);
     renderAgentLanes(status, agentStates);
+    renderLovableCoordination(orchState, status);
     renderExecutionSummary(status, orchState, dashboardBundle);
     renderBoardSummary(status, orchState, dashboardBundle);
     renderTaskBoard(status, orchState, dashboardBundle);

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "BG-000-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-000-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BG-000 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BG-000，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "support/sidecars/BG-000/BG-000-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the BG-000 sidecar acceptance packet after the owner-close refresh. The packet remains support-only evidence: it verifies the three published BG-000 policy docs, preserves the explicit DatasetVersion gap note, and leaves the four parent reconciliation items for the parent owner. Commit 7124fe7.",
+    "last_update": "2026-04-13T07:15:14Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BG-000",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：依附件清單確認三份 BG-000 政策文件已存在且結構一致；9/10 上游問題已有明確依據；DatasetVersion 問題已正確標記為 BG-001 後續；四項 owner-close 待辦亦已清楚列出",
+      "後續：Codex 以 owner 身分執行 done 收尾；parent owner 再決定是否吸收 cleanup notes"
+    ],
+    "review_file": "support/sidecars/BG-000/BG-000-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-13T07:15:14Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "7124fe712377d645cc2c3668bfc7332df4608fa5",
+      "commit_subject": "BG-000-SIDECAR-ACCEPTANCE finalize refresh",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "ajoe734@local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BG-000-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 100,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-000-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet created at support/sidecars/BG-000/BG-000-SIDECAR-ACCEPTANCE.md. Verified the three BG-000 policy docs exist and are coherent enough for downstream use. Flagged owner-close issues: stale parent summary, empty parent artifacts array, missing explicit DatasetVersion answer, and review-state drift between activity history and durable status. Please review the sidecar packet.",
+      "status": "done",
+      "created_at": "2026-04-13T07:10:48Z",
+      "resolved_at": "2026-04-13T07:11:58Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet is accurate, complete, and within scope. Three BG-000 docs verified present and coherent. DatasetVersion gap and 4 parent reconciliation items correctly surfaced. Packet approved — returning to Codex for owner-close.",
+      "status": "done",
+      "created_at": "2026-04-13T07:11:58Z",
+      "resolved_at": "2026-04-13T07:12:08Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restoring review_approved after finalize-dispatch drift: Claude reviewer approval is already recorded in the task brief and review notes; proceeding to owner-close.",
+      "status": "done",
+      "created_at": "2026-04-13T07:15:09Z",
+      "resolved_at": "2026-04-13T07:15:14Z"
+    }
+  ],
+  "blockers": []
+}

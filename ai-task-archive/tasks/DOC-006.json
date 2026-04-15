@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "DOC-006",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DOC-006",
+    "title": "Align ai-status, canonical layers, and onboarding files",
+    "summary_zh": "確保 ai-status.json canonical_document_layers、AI_COLLABORATION_GUIDE.md L1 列表、FOR_* 讀取順序與 current-work generated snapshot 四者一致，全部包含所有 17 個 L1 文件。",
+    "phase": "Phase 0: Canonical Cutover",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "DOC-002",
+      "DOC-004"
+    ],
+    "artifacts": [
+      "ai-status.json",
+      "AI_COLLABORATION_GUIDE.md",
+      "FOR_GROK.md"
+    ],
+    "acceptance": [
+      "ai-status.json canonical_document_layers lists all 16 L1 files",
+      "AI_COLLABORATION_GUIDE.md L1 section lists all 16 L1 files",
+      "FOR_GROK.md read order includes CANONICAL_DOCUMENT_MAP.md and DEVELOPMENT_WORKBREAKDOWN.md"
+    ],
+    "last_update": "2026-04-09T16:00:00Z"
+  },
+  "handoffs": [],
+  "blockers": []
+}

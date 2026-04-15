@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "task_id": "BG-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "BG-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BG-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BG-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Blueprint Gap P1",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "support/sidecars/BG-002/BG-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only acceptance packet is already reviewer-approved and is being absorbed into the parent closure path so Qwen capacity can return to primary work.",
+    "last_update": "2026-04-13T12:36:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BG-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "BG-002"
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Acceptance packet created: 11 criteria verified, 5 risks documented, 5 downstream consumers identified. Artifact at support/sidecars/BG-002/BG-002-SIDECAR-ACCEPTANCE.md. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-04-13T02:37:57Z",
+      "resolved_at": "2026-04-13T03:39:58Z"
+    },
+    {
+      "task_id": "BG-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewer check complete. The packet stays within support-only scope, the BG-002 artifact/dependency story is coherent, and it is acceptable as reviewer support evidence for the parent task. Approving so it no longer blocks Claude dispatch.",
+      "status": "done",
+      "created_at": "2026-04-13T03:39:58Z",
+      "resolved_at": "2026-04-13T12:36:16Z"
+    }
+  ],
+  "blockers": []
+}

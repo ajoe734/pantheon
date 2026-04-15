@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-002-W5-SSE-LIVE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-002-W5-SSE-LIVE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 5",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W4-REMAINING-CATALOG"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W5-SSE-LIVE/APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar handoff packet; review approved and ready for parent owner consumption.",
+    "last_update": "2026-04-11T23:39:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W5-SSE-LIVE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Handoff packet ready: SSE endpoints, event shape, replay semantics, frontend reconcilers/adapter, and non-blocking notes (runtime_id path not filtered, in-memory buffer). Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-11T23:33:27Z",
+      "resolved_at": "2026-04-11T23:36:06Z"
+    },
+    {
+      "task_id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved: all claims verified against implementation. Packet ready for parent owner consumption.",
+      "status": "done",
+      "created_at": "2026-04-11T23:36:06Z",
+      "resolved_at": "2026-04-11T23:37:19Z"
+    },
+    {
+      "task_id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: all claims verified against implementation. BFF endpoints (3 SSE streams), event buffers with replay, full-event JSON wire format, SseReconciler idempotency, SSEReconnectManager backoff, adapter URL helpers all confirmed. Three minor notes: (1) buffers store (id,dict) tuples, (2) no server-side runtime_id filtering (already documented), (3) internal publish requires only read role (testing-only). Packet ready for parent owner consumption.",
+      "status": "done",
+      "created_at": "2026-04-11T23:37:19Z",
+      "resolved_at": "2026-04-11T23:37:37Z"
+    },
+    {
+      "task_id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Handoff packet updated; review already completed and ready to sync approval.",
+      "status": "done",
+      "created_at": "2026-04-11T23:39:38Z",
+      "resolved_at": "2026-04-11T23:39:43Z"
+    },
+    {
+      "task_id": "APP-002-W5-SSE-LIVE-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: all claims verified against implementation. Packet ready for parent owner consumption.",
+      "status": "done",
+      "created_at": "2026-04-11T23:39:43Z",
+      "resolved_at": "2026-04-11T23:39:47Z"
+    }
+  ],
+  "blockers": []
+}

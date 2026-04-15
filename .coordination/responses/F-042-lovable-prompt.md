@@ -1,6 +1,8 @@
 Build the `F-042` UI flow in `front-ai-trading-system` using only Pantheon APIs.
 If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `.coordination/requests/F-042-bff-gap.yaml` using `.coordination/requests/F-042-bff-gap.example.yaml` as the template. Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop.
 Screen: `promotion-review`.
+Workbench: `governance-review`.
+Screen ID: `screen-governance-promotion-review`.
 Allowed endpoints:
 - GET /api/v1/operator/deployment-review/{plan_id}
 - POST /api/v1/operator/commands
@@ -19,3 +21,8 @@ Completion handoff:
 - When the UI implementation is ready, write `.coordination/requests/F-042-ui-done.yaml` using `.coordination/requests/F-042-ui-done.example.yaml` as the template. Sync that file back to GitHub and stop so Pantheon supervisor can pick up review/integration work automatically.
 References:
 - https://lovable.dev/projects/140c41d5-9cd8-4d6b-ba02-66d5941d0dbe
+- docs/screens/F-042-promotion-review.md
+- docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md
+- docs/bff/F-042-promotion-review.md
+- docs/pantheon-handoffs/F-042
+- docs/examples/F-042-review-page.json

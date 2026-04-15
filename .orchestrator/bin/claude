@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cli="$(ls -d "$HOME"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | sort -V | tail -n1)"
+if [[ -z "${cli}" ]]; then
+  echo "Claude CLI binary not found under ~/.vscode-server/extensions." >&2
+  exit 1
+fi
+
+exec "${cli}" "$@"

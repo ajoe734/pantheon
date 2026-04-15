@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-002-W3-POSTINCIDENT-EVOLUTION BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-002-W3-POSTINCIDENT-EVOLUTION，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W2-CONTROL-INCIDENT"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W3-POSTINCIDENT-EVOLUTION/APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar BFF handoff packet after Claude review approval; support artifact only, no canonical changes.",
+    "last_update": "2026-04-11T16:00:07Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Sidecar handoff packet ready: support/sidecars/APP-002-W3-POSTINCIDENT-EVOLUTION/APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF.md. Summarizes EV/LN/TL surfaces, post-incident composed view, frontend handoff notes, and non-blocking gaps.",
+      "status": "done",
+      "created_at": "2026-04-11T14:07:22Z",
+      "resolved_at": "2026-04-11T14:50:12Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: {\"type\":\"result\",\"subtype\":\"success\",\"uuid\":\"4d8d6e72-44a1-4bb0-b958-099e795e6099\",\"session_id\":\"ea8abf4d-0e7a-4216-b29f-02757c825a0d\",\"is_error\":false,\"duration_ms\":4369,\"duration_api_ms\":4253,\"num_turns\":1,\"result\":\"Qwen OAuth quota exceeded: Your free daily quota has been reached.\\n\\nTo continue using Qwen Code without waiting, upgrade to the Alibaba Cloud Coding Plan:\\n  China:       https://help.aliyun.com/zh/model-studio/coding-plan\\n  Global/Intl: https://www.alibabacloud.com/help/en/model-studio/coding-plan\\n\\nAfter subscribing, run /auth to configure your Coding Plan API key.\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_read_input_tokens\":0},\"permission_denials\":[]}",
+      "status": "done",
+      "created_at": "2026-04-11T14:50:12Z",
+      "resolved_at": "2026-04-11T14:50:59Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"eef91802-8d28-452b-9a36-b48df5fe5ebc\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 11pm (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"12efbe9e-2b95-449c-9df7-bf8be3cc5b9d\",\"uuid\":\"e3c9b050-ded3-4aef-bc8e-5e32be61dc30\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-11T14:50:59Z",
+      "resolved_at": "2026-04-11T15:50:57Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: {\"type\":\"result\",\"subtype\":\"success\",\"uuid\":\"c23c6dcc-a4a2-4f50-94b9-a73f5cb8a937\",\"session_id\":\"baa21ed9-5b74-4321-968e-0e694b3c9950\",\"is_error\":false,\"duration_ms\":4212,\"duration_api_ms\":4109,\"num_turns\":1,\"result\":\"Qwen OAuth quota exceeded: Your free daily quota has been reached.\\n\\nTo continue using Qwen Code without waiting, upgrade to the Alibaba Cloud Coding Plan:\\n  China:       https://help.aliyun.com/zh/model-studio/coding-plan\\n  Global/Intl: https://www.alibabacloud.com/help/en/model-studio/coding-plan\\n\\nAfter subscribing, run /auth to configure your Coding Plan API key.\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_read_input_tokens\":0},\"permission_denials\":[]}",
+      "status": "done",
+      "created_at": "2026-04-11T15:50:57Z",
+      "resolved_at": "2026-04-11T15:53:23Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review passed: all 10 Wave 3 endpoints (EV-01–04, LN-01–03, TL-01–03) confirmed in main.py, composed post-incident view confirmed, seed data IDs match read_store.py, sidecar is support-artifact-only and does not touch canonical truth. Handoff packet is accurate and ready for frontend use.",
+      "status": "done",
+      "created_at": "2026-04-11T15:53:23Z",
+      "resolved_at": "2026-04-11T15:53:41Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review already completed; re-issuing handoff to record approval before finalize.",
+      "status": "done",
+      "created_at": "2026-04-11T15:55:44Z",
+      "resolved_at": "2026-04-11T15:55:49Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review passed: all 10 Wave 3 endpoints (EV-01–04, LN-01–03, TL-01–03) confirmed in main.py, composed post-incident view confirmed, seed data IDs match read_store.py, sidecar is support-artifact-only and does not touch canonical truth. Handoff packet is accurate and ready for frontend use.",
+      "status": "done",
+      "created_at": "2026-04-11T15:55:49Z",
+      "resolved_at": "2026-04-11T15:56:05Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Syncing status to reflect review already approved; no new changes required.",
+      "status": "done",
+      "created_at": "2026-04-11T15:58:07Z",
+      "resolved_at": "2026-04-11T15:58:10Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved (syncing prior approval recorded in activity log).",
+      "status": "done",
+      "created_at": "2026-04-11T15:58:10Z",
+      "resolved_at": "2026-04-11T15:58:28Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Handoff for review (status sync; approval already recorded in activity log).",
+      "status": "done",
+      "created_at": "2026-04-11T15:59:59Z",
+      "resolved_at": "2026-04-11T16:00:04Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved (syncing prior approval recorded in activity log).",
+      "status": "done",
+      "created_at": "2026-04-11T16:00:04Z",
+      "resolved_at": "2026-04-11T16:00:07Z"
+    }
+  ],
+  "blockers": []
+}

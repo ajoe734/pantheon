@@ -26,6 +26,10 @@
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": false
   },
+  "provider_guardrails": {
+    "pause_on_capacity_failure": true,
+    "capacity_pause_seconds": 900
+  },
   "worker_retry": {
     "enabled": true,
     "max_attempts": 5,
@@ -65,7 +69,8 @@
     "eligible_statuses": [
       "todo",
       "in_progress",
-      "review"
+      "review",
+      "review_approved"
     ],
     "owner_fallbacks": {
       "Claude": [

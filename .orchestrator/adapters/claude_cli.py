@@ -29,11 +29,21 @@ def _claude_auth_ready(cli: str | None) -> bool:
     return bool(payload.get("loggedIn"))
 
 
+def _configured_claude_cli(config: dict | None = None) -> str | None:
+    runtime = ((config or {}).get("providers", {}).get("claude", {}) or {}).get("runtime", {})
+    return command_exists(runtime.get("cli") or "claude")
+
+
+def _allow_inbox_fallback(config: dict | None = None) -> bool:
+    provider = ((config or {}).get("providers", {}).get("claude", {}) or {})
+    return bool(provider.get("allow_inbox_fallback", True))
+
+
 class ClaudeCLIAdapter(ClaudeCodeAdapter):
     name = "claude_cli"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        cli = command_exists("claude")
+        cli = _configured_claude_cli(self.config)
         if cli and _claude_auth_ready(cli):
             return DeliveryCapability(
                 adapter=self.name,
@@ -46,8 +56,20 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
                 host="Claude Code CLI",
                 notes="Uses non-interactive Claude CLI sessions with the local approval broker hooks.",
             )
-        fallback = super().capability(agent_id)
         missing_reason = "Claude CLI is not installed" if not cli else "Claude CLI is installed but not authenticated"
+        if not _allow_inbox_fallback(self.config):
+            return DeliveryCapability(
+                adapter=self.name,
+                supported=bool(cli),
+                requires_manual_confirmation=False,
+                can_auto_deliver=False,
+                can_auto_approve_edits=False,
+                delivery_mode="claude_cli",
+                verified="partial" if cli else "unavailable",
+                host="Claude Code CLI",
+                notes=f"{missing_reason}; inbox fallback is disabled for this provider.",
+            )
+        fallback = super().capability(agent_id)
         return DeliveryCapability(
             adapter=self.name,
             supported=fallback.supported,
@@ -61,9 +83,25 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
-        cli = command_exists("claude")
+        cli = _configured_claude_cli(self.config)
         auth_ready = _claude_auth_ready(cli)
         if not cli or not auth_ready:
+            if not _allow_inbox_fallback(self.config):
+                reason = (
+                    "Claude CLI is unavailable; inbox fallback is disabled for this provider."
+                    if not cli
+                    else "Claude CLI is not authenticated; inbox fallback is disabled for this provider."
+                )
+                return DeliveryResult(
+                    ok=False,
+                    adapter=self.name,
+                    mode="claude_cli",
+                    target=request.agent_id,
+                    auto_delivered=False,
+                    manual_confirmation_required=False,
+                    error=reason,
+                    notes=reason,
+                )
             result = super().deliver(request)
             result.adapter = self.name
             result.mode = "file_inbox"

@@ -20,6 +20,17 @@ GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 
 
+def _configured_gemini_cli(config: dict | None = None) -> str | None:
+    provider = ((config or {}).get("providers", {}).get("gemini", {}) or {})
+    runtime = provider.get("gemini", {})
+    return command_exists(runtime.get("cli") or "gemini")
+
+
+def _allow_inbox_fallback(config: dict | None = None) -> bool:
+    provider = ((config or {}).get("providers", {}).get("gemini", {}) or {})
+    return bool(provider.get("allow_inbox_fallback", True))
+
+
 def _truthy_env(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -63,30 +74,44 @@ class GeminiAdapter(BaseAdapter):
     name = "gemini"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        cli = command_exists("gemini")
+        cli = _configured_gemini_cli(self.config)
         auth_ready = _gemini_auth_ready()
         supported = bool(cli and auth_ready)
         if cli and auth_ready:
             notes = "Uses the verified Gemini CLI `--prompt`, local auth config, and approval mode settings."
         elif cli:
-            notes = "Gemini CLI is installed but not authenticated for non-interactive use, so delivery falls back to inbox."
+            notes = "Gemini CLI is installed but not authenticated for non-interactive use."
         else:
             notes = "Gemini CLI is not installed."
+        if not supported and not _allow_inbox_fallback(self.config):
+            notes = f"{notes} Inbox fallback is disabled for this provider."
         return DeliveryCapability(
             adapter=self.name,
             supported=bool(cli),
-            requires_manual_confirmation=not supported,
+            requires_manual_confirmation=bool(not supported and _allow_inbox_fallback(self.config)),
             can_auto_deliver=supported,
             can_auto_approve_edits=supported,
-            delivery_mode="gemini" if supported else "file_inbox",
+            delivery_mode="gemini" if (supported or not _allow_inbox_fallback(self.config)) else "file_inbox",
             verified="verified" if supported else ("partial" if cli else "unavailable"),
-            host="Gemini CLI" if cli else "Gemini CLI + inbox fallback",
+            host="Gemini CLI" if (cli or not _allow_inbox_fallback(self.config)) else "Gemini CLI + inbox fallback",
             notes=notes,
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         capability = self.capability(request.agent_id)
         if not capability.supported or not capability.can_auto_deliver:
+            if not _allow_inbox_fallback(self.config):
+                reason = capability.notes or "Gemini auto-delivery is unavailable and inbox fallback is disabled."
+                return DeliveryResult(
+                    ok=False,
+                    adapter=self.name,
+                    mode="gemini",
+                    target=agent_config_for(self.config, request.agent_id).get("display_name", request.agent_id),
+                    auto_delivered=False,
+                    manual_confirmation_required=False,
+                    error=reason,
+                    notes=reason,
+                )
             fallback = FileInboxAdapter(config=self.config, provider_capabilities=self.provider_capabilities)
             result = fallback.deliver(request)
             result.adapter = self.name
@@ -114,7 +139,7 @@ class GeminiAdapter(BaseAdapter):
         provider = self.config.get("providers", {}).get("gemini", {})
         gemini_settings = provider.get("gemini", {})
         approval = provider.get("approval", {})
-        cli = gemini_settings.get("cli") or "gemini"
+        cli = _configured_gemini_cli(self.config) or gemini_settings.get("cli") or "gemini"
         command = [cli, "--prompt", request.message]
         approval_mode = approval.get("default_approval_mode")
         if approval_mode:

@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "EX-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EX-001",
+    "title": "Define artifact loader contract for paper and live execution",
+    "phase": "Epic A",
+    "owner": "Copilot",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P2-001",
+      "P3-001"
+    ],
+    "artifacts": [
+      "services/execution/artifact-loader/contract.md",
+      "services/execution/artifact-loader/artifact_metadata_schema.json"
+    ],
+    "acceptance": [
+      "paper and live loader behavior documented",
+      "artifact metadata contract defined",
+      "promotion state checks specified",
+      "[CODEX NOTE] artifact loader must use LEAN Object Store (ObjectStore.Save/Read) as the transport between registry and LEAN runtime — direct file injection or GCS reads bypassing LEAN data provider are not acceptable"
+    ],
+    "next": "Finalized. Artifact loader contract locked: paper/live execution modes defined, metadata schema canonical via single $ref chain, transport via injected Object Store (no direct file I/O), promotion state validation in place. Service implementation complete with 9/9 unit tests passing and smoke tests verified. Ready for downstream consumers: REG-002 execution_projection path and LEAN-native adapter integration.",
+    "last_update": "2026-04-06T16:00:49Z",
+    "summary_zh": "定義 artifact loader 契約，確保 LEAN 只會透過受治理的 artifact 與 Object Store 載入 paper/live 可執行內容。",
+    "review_notes_zh": [
+      "審查通過：(1) paper/live 拒絕規則明確，嚴格等值比對涵蓋 draft/candidate/retired；(2) schema 路徑為單一規範來源，兩層 $ref 鏈由 _resolve_local_refs 正確解析；(3) transport 完全委派給注入的 object_store，無直接 file I/O 或 GCS bypass；(4) metadata shape 足夠支撐真實 LEAN ObjectStore adapter；(5) REG-002 的 legacy rollback_target fallback 在 projection 前已標準化，loader 端永遠收到 canonical 格式，可接受。9/9 unit tests + smoke test 全通。"
+    ]
+  },
+  "handoffs": [
+    {
+      "task_id": "EX-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Artifact loader contract (EX-001) is ready for review. Aligned with P2-001 signal schema and LEAN Object Store requirements.",
+      "status": "done",
+      "created_at": "2026-04-01T18:00:00Z",
+      "resolved_at": "2026-04-02T12:00:00Z"
+    },
+    {
+      "task_id": "EX-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Service-local EX-001 implementation is ready for review: added services/execution/artifact_loader.py plus test_artifact_loader.py and smoke_test_artifact_loader.py; REG-002 now emits canonical execution_projection metadata/keys aligned with REG-003 rollback semantics. Verified with python3 -m unittest services.execution.test_artifact_loader, python3 -m unittest discover -s services/registry/promotion -p 'test_*.py', python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/execution/smoke_test_artifact_loader.py, python3 services/registry/promotion/smoke_test_gate.py, and python3 services/control-plane/cron/smoke_test.py. Review focus: metadata shape sufficiency for real LEAN ObjectStore adapter and whether keeping legacy rollback_target fallback inside REG-002 is acceptable until registry entries fully converge.",
+      "status": "done",
+      "created_at": "2026-04-06T12:10:41Z",
+      "resolved_at": "2026-04-06T12:21:31Z"
+    },
+    {
+      "task_id": "EX-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Artifact loader contract complete: service-local implementation tested, smoke test passing. All acceptance criteria met - paper/live loader behavior documented, metadata contract defined with schema validation, promotion state checks implemented, LEAN Object Store transport verified. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-06T12:24:58Z",
+      "resolved_at": "2026-04-06T12:25:37Z"
+    },
+    {
+      "task_id": "EX-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "EX-001 is back to review: added a normalized LEAN Object Store adapter and materialization helper in services/execution/artifact_loader.py, expanded tests for lowercase Lean Python APIs/runtime wrappers, and updated the smoke path to project REG-002 metadata through the same helper. Verified with python3 -m unittest services.execution.test_artifact_loader, python3 -m unittest discover -s services/registry/promotion -p 'test_*.py', python3 services/execution/smoke_test_artifact_loader.py, python3 services/registry/promotion/smoke_test_gate.py, and python3 -m py_compile services/execution/artifact_loader.py services/execution/test_artifact_loader.py services/execution/smoke_test_artifact_loader.py. Review focus: whether the adapter/materialization surface is sufficient for the later real LEAN algorithm bridge, and whether keeping runtime-body deserialization deferred beyond raw bytes remains acceptable for EX-001 scope.",
+      "status": "done",
+      "created_at": "2026-04-06T12:25:37Z",
+      "resolved_at": "2026-04-06T13:46:39Z"
+    },
+    {
+      "task_id": "EX-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Review approved by Claude. All 9 unit tests + smoke test pass. paper/live rejection rules explicit; schema path canonical (single source via $ref chain); transport fully injected, no direct file I/O or GCS bypass; metadata shape sufficient for LEAN ObjectStore adapter; REG-002 legacy rollback_target fallback normalizes to canonical form before projection write — acceptable transitional shim. EX-001 is ready for downstream consumers (REG-002 execution_projection path and future LEAN-native adapter).",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:00:49Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "EX-001",
+      "owner": "Claude",
+      "waiting_for": "Gemini",
+      "message": "Relocated files to services/ folder.",
+      "status": "resolved",
+      "created_at": "2026-04-02T00:52:27Z",
+      "resolved_at": "2026-04-02T11:15:00Z"
+    },
+    {
+      "task_id": "EX-001",
+      "owner": "Claude",
+      "waiting_for": "Gemini",
+      "message": "Contract approved by Claude.",
+      "status": "resolved",
+      "created_at": "2026-04-02T05:37:35Z",
+      "resolved_at": "2026-04-02T12:00:00Z"
+    }
+  ]
+}

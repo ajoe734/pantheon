@@ -41,6 +41,7 @@ TYPE_TO_LABELS = {
     "contract-ready": ["contract-ready", "needs-ui"],
     "lovable-ui-task": ["needs-ui"],
     "ui-done": ["qa-ready"],
+    "frontend-feedback": ["feedback-ready"],
     "needs-runtime": ["needs-runtime", "blocked"],
     "needs-engine": ["needs-engine", "blocked"],
     "dispatch-request": [],
@@ -261,6 +262,7 @@ def _record_feature(
     source_repo_id = matching_repo_id(config, str(payload.get("source_repo") or "").strip()) or repo_id
     target_repo_id = matching_repo_id(config, str(payload.get("target_repo") or "").strip())
     latest_path = relpath(path)
+    entry_updated_at = payload.get("updated_at") or payload.get("created_at") or utc_now()
 
     record.update(
         {
@@ -276,7 +278,7 @@ def _record_feature(
             "latest_path": latest_path,
             "latest_payload_digest": payload_digest,
             "latest_payload": payload,
-            "last_updated_at": payload.get("updated_at") or payload.get("created_at") or utc_now(),
+            "last_updated_at": entry_updated_at,
             "state_labels": TYPE_TO_LABELS.get(current_type, []),
             "worker_kind": worker_kind or record.get("worker_kind"),
             "target_agent": target_agent or record.get("target_agent"),
@@ -285,10 +287,25 @@ def _record_feature(
         }
     )
 
+    snapshot = {
+        "type": current_type,
+        "path": latest_path,
+        "payload": payload,
+        "updated_at": entry_updated_at,
+        "source_repo_id": source_repo_id,
+        "target_repo_id": target_repo_id,
+    }
+
     if "/requests/" in latest_path.replace("\\", "/"):
         record["latest_request"] = payload
+        record["latest_request_path"] = latest_path
+        requests_by_type = record.setdefault("requests_by_type", {})
+        requests_by_type[current_type] = snapshot
     if "/responses/" in latest_path.replace("\\", "/"):
         record["latest_response"] = payload
+        record["latest_response_path"] = latest_path
+        responses_by_type = record.setdefault("responses_by_type", {})
+        responses_by_type[current_type] = snapshot
     return record
 
 
@@ -346,6 +363,15 @@ def sync_coordination_files(config: dict[str, Any], state: dict[str, Any]) -> bo
                         record["lovable_task"] = published.get("payload")
                         record["lovable_task_path"] = published.get("packet_path")
                         record["lovable_prompt_path"] = published.get("prompt_path")
+                        responses_by_type = record.setdefault("responses_by_type", {})
+                        responses_by_type["lovable-ui-task"] = {
+                            "type": "lovable-ui-task",
+                            "path": relpath(Path(str(published.get("packet_path") or ""))) if published.get("packet_path") else None,
+                            "payload": published.get("payload"),
+                            "updated_at": utc_now(),
+                            "source_repo_id": record.get("source_repo_id"),
+                            "target_repo_id": record.get("target_repo_id"),
+                        }
                         write_activity_log(
                             config,
                             {

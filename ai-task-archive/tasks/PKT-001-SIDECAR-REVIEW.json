@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "PKT-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T11:56:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-001-SIDECAR-REVIEW",
+    "title": "Prepare PKT-001 review packet and evidence summary",
+    "summary_zh": "平行支援 PKT-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "APP-002 Packetization",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/PKT-001/PKT-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only review packet after Claude review approval; sidecar evidence is complete and ready for archival.",
+    "last_update": "2026-04-14T11:56:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PKT-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar review packet 完整、正確，三項 re-review delta 均已在 canonical artifact 中驗證"
+    ],
+    "review_file": "support/sidecars/PKT-001/PKT-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T11:56:04Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "19f2762a45a90e59557a396e0002fa30daa84ae5",
+      "commit_subject": "PKT-001-SIDECAR-REVIEW: finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PKT-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 147,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet is ready at support/sidecars/PKT-001/PKT-001-SIDECAR-REVIEW.md. It summarizes the parent PKT-001 re-review pass, cites the three closed deltas, and records that PKT-001 is already review_approved and waiting only for Claude's final done closeout.",
+      "status": "done",
+      "created_at": "2026-04-14T11:53:25Z",
+      "resolved_at": "2026-04-14T11:54:16Z"
+    },
+    {
+      "task_id": "PKT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet is accurate and complete. All three re-review deltas verified against canonical artifacts. Approving and returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T11:54:16Z",
+      "resolved_at": "2026-04-14T11:56:04Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,19 @@
+feature_id: PKT-001-deployment-review
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: deployment-review-console
+status: blocked
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-15T04:05:23Z"
+summary: >-
+  Front sync for PKT-001 is blocked because the sibling checkout for
+  front-ai-trading-system is a mirror-only directory without a .git repository,
+  frontend application files, routing surface, or the existing BFF client
+  required by the published Deployment Review Console contract-ready packet.
+next_step: >-
+  Provide a valid front-ai-trading-system checkout with the real UI runtime and
+  existing BFF client wiring, or dispatch PKT-001 into the repo that actually
+  owns the Deployment Review Console implementation before replaying the
+  contract-ready step.

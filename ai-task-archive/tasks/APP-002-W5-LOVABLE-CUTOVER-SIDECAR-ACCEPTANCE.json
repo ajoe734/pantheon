@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-002-W5-LOVABLE-CUTOVER acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-002-W5-LOVABLE-CUTOVER，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 5",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W5-SSE-LIVE"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W5-LOVABLE-CUTOVER/APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized acceptance packet; review approved; ready for parent owner cutover validation.",
+    "last_update": "2026-04-12T00:09:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W5-LOVABLE-CUTOVER",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Acceptance packet ready. Pantheon-side artifacts verified present; front repo cutover and Lovable execution still pending. Please review/approve.",
+      "status": "done",
+      "created_at": "2026-04-11T23:53:06Z",
+      "resolved_at": "2026-04-12T00:06:11Z"
+    },
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Copilot to Qwen after repeated Copilot capacity/429: 402 You have no quota (Request ID: C160:5AC36:3B45240:4967127:69DAE1E6)",
+      "status": "done",
+      "created_at": "2026-04-12T00:06:11Z",
+      "resolved_at": "2026-04-12T00:07:33Z"
+    },
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: Acceptance packet complete. Pantheon-side artifacts verified, dependency map accurate, checklist actionable with clear AC-1/AC-2/AC-3 criteria. External front repo and Lovable execution correctly flagged as pending parent owner validation.",
+      "status": "done",
+      "created_at": "2026-04-12T00:07:33Z",
+      "resolved_at": "2026-04-12T00:07:43Z"
+    },
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved. Acceptance packet verified complete. Please finalize (review_approved -> done).",
+      "status": "done",
+      "created_at": "2026-04-12T00:09:15Z",
+      "resolved_at": "2026-04-12T00:09:32Z"
+    },
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet ready; Pantheon-side artifacts verified; external front repo + Lovable execution pending.",
+      "status": "done",
+      "created_at": "2026-04-12T00:09:32Z",
+      "resolved_at": "2026-04-12T00:09:36Z"
+    },
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: Acceptance packet complete. Pantheon-side artifacts verified; dependency map accurate; external front repo + Lovable execution pending parent owner validation.",
+      "status": "done",
+      "created_at": "2026-04-12T00:09:36Z",
+      "resolved_at": "2026-04-12T00:09:39Z"
+    }
+  ],
+  "blockers": []
+}

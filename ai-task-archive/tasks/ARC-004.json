@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "ARC-004",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ARC-004",
+    "title": "Align roadmap ownership, schema contract follow-up, and registry sequencing",
+    "phase": "Architecture",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "ARC-003"
+    ],
+    "artifacts": [
+      "ROADMAP.md",
+      "ai-status.json",
+      "current-work.md"
+    ],
+    "acceptance": [
+      "owner map matches the intended 40-40-20 split",
+      "schema doc sync is explicitly tracked",
+      "registry work is no longer blocked on OC-003 before a skeleton can exist"
+    ],
+    "next": "Planning layers are aligned again; execution can move on a single contract path",
+    "last_update": "2026-04-01T14:21:28Z",
+    "summary_zh": "把 roadmap、owner、schema 後續工作與 registry 排程重新對齊，避免規劃和實際任務板漂移。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

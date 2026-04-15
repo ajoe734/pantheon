@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW",
+    "title": "Prepare APP-002-W5-LOVABLE-CUTOVER review packet and evidence summary",
+    "summary_zh": "平行支援 APP-002-W5-LOVABLE-CUTOVER，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 5",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W5-SSE-LIVE"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W5-LOVABLE-CUTOVER/APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar review packet created with evidence summary - all parent acceptance criteria verified against Pantheon-side artifacts",
+    "last_update": "2026-04-12T01:23:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W5-LOVABLE-CUTOVER",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet complete. All cutover artifacts verified — BFF contract aligned (14/14 fields), Lovable prompt includes ApproveDeployment payload, bff-gap and ui-done handoff templates present, example payload matches contract. Ready for final approval.",
+      "status": "done",
+      "created_at": "2026-04-12T01:23:00Z",
+      "resolved_at": "2026-04-12T01:23:05Z"
+    },
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Handoff to Codex: Review packet created with evidence summary - all parent acceptance criteria verified",
+      "status": "done",
+      "created_at": "2026-04-12T01:23:05Z",
+      "resolved_at": "2026-04-12T01:23:10Z"
+    },
+    {
+      "task_id": "APP-002-W5-LOVABLE-CUTOVER-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved: sidecar review packet complete and evidence verified",
+      "status": "done",
+      "created_at": "2026-04-12T01:23:10Z",
+      "resolved_at": "2026-04-12T01:23:15Z"
+    }
+  ],
+  "blockers": []
+}

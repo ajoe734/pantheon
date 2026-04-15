@@ -298,7 +298,18 @@ def blueprint_gap_brief_files() -> list[str]:
 def planning_output_path(session: dict[str, Any], artifact_id: str) -> str:
     artifacts = session.get("artifacts") if isinstance(session.get("artifacts"), dict) else {}
     artifact = artifacts.get(artifact_id) if isinstance(artifacts.get(artifact_id), dict) else {}
-    return str(artifact.get("path") or "").strip()
+    path = str(artifact.get("path") or "").strip()
+    if path:
+        return path
+    for output in session.get("expected_outputs", []):
+        if not isinstance(output, dict):
+            continue
+        if str(output.get("id") or "").strip() != artifact_id:
+            continue
+        output_path = str(output.get("path") or "").strip()
+        if output_path:
+            return output_path
+    return ""
 
 
 def planning_task_source_ref(session: dict[str, Any]) -> dict[str, Any]:
@@ -1754,6 +1765,7 @@ def upsert_materialized_task(
 ) -> str:
     task_id = str(payload.get("id") or "").strip()
     existing = ai_status.get_task(state, task_id)
+    archived = ai_status.archived_task_snapshot(task_id)
     timestamp = iso_now()
     task_payload = {
         "id": task_id,
@@ -1775,6 +1787,8 @@ def upsert_materialized_task(
             if value is not None and str(value).strip()
         }
     if existing is None:
+        if archived is not None:
+            return "archived"
         state.setdefault("tasks", []).append(
             {
                 **task_payload,
@@ -1805,6 +1819,7 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
     state = ai_status.load_state()
     created = 0
     updated = 0
+    archived = 0
     materialization_ref = {
         "materialized_at": iso_now(),
         "session_id": str(derived.get("session_id") or "").strip(),
@@ -1816,13 +1831,18 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
         result = upsert_materialized_task(state, payload, materialization_ref=materialization_ref)
         if result == "created":
             created += 1
-        else:
+        elif result == "updated":
             updated += 1
+        elif result == "archived":
+            archived += 1
     ai_status.sync_all(state)
+    message = f"Materialized {created} new tasks and refreshed {updated} existing tasks in ai-status.json."
+    if archived:
+        message += f" Skipped {archived} archived terminal tasks."
     append_event(
         session,
         "execution_tasks_materialized",
-        f"Materialized {created} new tasks and refreshed {updated} existing tasks in ai-status.json.",
+        message,
         status="approved",
     )
 

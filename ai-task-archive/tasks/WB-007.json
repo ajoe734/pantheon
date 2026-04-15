@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "task_id": "WB-007",
+  "archived_at": "2026-04-14T16:27:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-007",
+    "title": "Define the Governance Workbench backlog and wave plan",
+    "summary_zh": "整理 Governance Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "PKT-001"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "review queue, approval queue, promotion review, deployment diff, rollback review, and governance audit rail are all listed",
+      "F-042 is explicitly categorized as one screen inside Governance Workbench, not as the whole workbench",
+      "remaining governance screens receive wave recommendations and packetization prerequisites"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Governance Workbench backlog finalized: GV-01 through GV-06 are documented, F-042 is explicitly scoped as the GV-03 screen rather than the whole workbench, and GV-02/GV-04/GV-05/GV-06 retain Wave 2 recommendations with packetization prerequisites and backend gaps recorded.",
+    "last_update": "2026-04-14T16:27:25Z",
+    "review_notes_zh": [
+      "所有六個 Governance Workbench 畫面均已列出（GV-01 至 GV-06）。",
+      "F-042 被明確歸類為 Governance Workbench 內的單一畫面，不是整個 workbench。",
+      "GV-02、GV-04、GV-05、GV-06 均有詳細的 BFF 缺口分析、封包化前提條件與 Wave 2 波次排序建議。所有 acceptance criteria 通過。"
+    ],
+    "review_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T16:27:25Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "b7c7c83cd7754af9b57573f7779985c7030ba1bd",
+      "commit_subject": "WB-007: finalize Governance Workbench backlog and wave plan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WB-007",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 172,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-14T13:12:41Z",
+      "resolved_at": "2026-04-14T13:12:53Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-14T13:12:53Z",
+      "resolved_at": "2026-04-14T13:13:03Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:32:27Z",
+      "resolved_at": "2026-04-14T15:32:28Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Governance Workbench backlog section expanded: GV-01 through GV-06 screen inventory, per-module backend dependency and packetization prerequisite analysis, Wave 2 internal ordering table, and separation rules written. F-042 is explicitly positioned as GV-03 (one screen, not the whole workbench). Acceptance criteria all satisfied — please review.",
+      "status": "done",
+      "created_at": "2026-04-14T15:35:26Z",
+      "resolved_at": "2026-04-14T15:41:45Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T15:41:45Z",
+      "resolved_at": "2026-04-14T15:53:58Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review found a blocking accuracy issue: GV-01 Review queue is already a ready PKT-001 packet, but the Governance backlog still marks it as missing canonical spec. See docs/reviews/WB-007-review-codex.md and update the Governance summary/module inventory before resubmitting for review.",
+      "status": "done",
+      "created_at": "2026-04-14T15:53:58Z",
+      "resolved_at": "2026-04-14T15:53:58Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:53:59Z",
+      "resolved_at": "2026-04-14T15:53:59Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:57:35Z",
+      "resolved_at": "2026-04-14T15:57:35Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Qwen is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T16:09:06Z",
+      "resolved_at": "2026-04-14T16:09:06Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Governance backlog corrected to match repo truth. GV-01 Review queue and GV-03 Promotion Review are now classified as ready baseline screens, not missing-spec work. Updated the workbench summary row, Existing Pantheon support, Missing canonical screen specs, per-module dependency notes, module inventory, and Wave 2 ordering so remaining gaps are limited to GV-02, GV-04, GV-05, and GV-06. Please review the Governance section in pantheon-console-workbench-backlog.md.",
+      "status": "done",
+      "created_at": "2026-04-14T16:23:17Z",
+      "resolved_at": "2026-04-14T16:24:03Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T16:24:03Z",
+      "resolved_at": "2026-04-14T16:25:03Z"
+    },
+    {
+      "task_id": "WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three acceptance criteria verified: six screens listed, F-042 correctly scoped as one screen, remaining screens have wave recommendations and packetization prerequisites. Returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T16:25:03Z",
+      "resolved_at": "2026-04-14T16:27:25Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "PKT-003-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T11:21:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-003-SIDECAR-ACCEPTANCE",
+    "title": "Prepare PKT-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 PKT-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "APP-002 Packetization",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/PKT-003/PKT-003-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner verified the accepted support packet. Artifact support/sidecars/PKT-003/PKT-003-SIDECAR-ACCEPTANCE.md is complete: three-AC checklist, two-tier screen inventory (read-only panels ready vs. Mutation Review + Inspiration Graph blocked), EVO-004 execute-boundary dependency explicit, dependency map with LOOP-001/LOOP-003 both done, and six reviewer gates. No canonical truth was modified. Sidecar slice formally closed.",
+    "last_update": "2026-04-14T11:21:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PKT-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "support packet 內容與 source evidence 一致；已補正 reviewer/handoff metadata 與目前 task board 對齊，可交回 owner 正式收尾。"
+    ],
+    "review_file": "support/sidecars/PKT-003/PKT-003-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T11:21:26Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "37373ac5dd95da210c4f074b3a394c4c0b5962f6",
+      "commit_subject": "PKT-003-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Support artifact complete": "three-AC checklist, two-tier screen inventory",
+        "LLM-Agent": "Claude",
+        "Task-ID": "PKT-003-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 146,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-003-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "PKT-003 acceptance packet complete. Artifact: support/sidecars/PKT-003/PKT-003-SIDECAR-ACCEPTANCE.md. Contains: (1) acceptance checklist for all three AC items, (2) two-tier screen inventory (read-only panels ready vs. Mutation Review + Inspiration Graph blocked), (3) EVO-004 execute-boundary dependency explicit throughout, (4) dependency map and reviewer gates. Ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-14T11:08:10Z",
+      "resolved_at": "2026-04-14T11:18:04Z"
+    },
+    {
+      "task_id": "PKT-003-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T11:18:04Z",
+      "resolved_at": "2026-04-14T11:20:35Z"
+    },
+    {
+      "task_id": "PKT-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after aligning the sidecar reviewer handoff metadata to Codex. Support packet accurately captures the acceptance checklist, dependency map, and explicit blocked-screen boundaries; owner should finalize.",
+      "status": "done",
+      "created_at": "2026-04-14T11:20:35Z",
+      "resolved_at": "2026-04-14T11:21:26Z"
+    }
+  ],
+  "blockers": []
+}

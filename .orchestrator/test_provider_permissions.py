@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import permission_broker
 from provider_permissions import ROOT, _verified_claude_hooks
@@ -110,6 +111,64 @@ class ProviderPermissionsTest(unittest.TestCase):
         command = f"cd {ROOT} && bash scripts/ai-status.sh sync"
 
         self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_force_push_is_denied(self) -> None:
+        command = "git push --force origin HEAD"
+
+        self.assertEqual(permission_broker.classify_command(command), "deny")
+
+    def test_finalize_commit_sequence_is_auto_allowed(self) -> None:
+        command = (
+            "git add ai-status.json ai-activity-log.jsonl current-work.md && "
+            "git commit -m \"BG-006 finalize\""
+        )
+        config = {"agents": {"claude": {"display_name": "Claude"}}}
+        runtime_state = {
+            "workers": {
+                "run-123": {
+                    "task_id": "BG-006",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            }
+        }
+        status_state = {
+            "tasks": [
+                {
+                    "id": "BG-006",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "review_approved",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.dict(
+                permission_broker.os.environ,
+                {"ORCH_RUN_ID": "run-123", "ORCH_TASK_ID": "BG-006", "ORCH_AGENT_ID": "claude"},
+                clear=False,
+            ),
+            mock.patch.object(permission_broker, "load_runtime_state", return_value=runtime_state),
+            mock.patch.object(permission_broker, "load_status", return_value=status_state),
+        ):
+            evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "repo_finalize_git")
+        self.assertIn("BG-006", evaluation["reason"])
+
+    def test_non_finalize_commit_still_requires_review(self) -> None:
+        command = "git add ai-status.json && git commit -m \"BG-006 finalize\""
+
+        with mock.patch.dict(
+            permission_broker.os.environ,
+            {"ORCH_RUN_ID": "run-123", "ORCH_TASK_ID": "BG-006", "ORCH_AGENT_ID": "claude"},
+            clear=False,
+        ):
+            evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, {})
+
+        self.assertEqual(evaluation["decision"], "defer")
+        self.assertEqual(evaluation["risk_class"], "needs_review")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "OSS-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-001",
+    "title": "Pin upstream OpenClaw source and governed adapter boundary",
+    "summary_zh": "選定並 pin upstream OpenClaw 來源，正式記錄 governed adapter boundary 與 smoke-test 路徑。",
+    "phase": "Phase 6: OSS Integration Hardening",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DOC-003"
+    ],
+    "artifacts": [
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "spikes/openclaw_upstream_selection.md",
+      "integrations/openclaw/integration.md",
+      "integrations/openclaw/governance.md",
+      "integrations/openclaw/smoke_test.md"
+    ],
+    "acceptance": [
+      "source selected",
+      "version pinned",
+      "adapter boundary and smoke-test plan recorded"
+    ],
+    "next": "Owner finalize complete. OSS-001 closed as done. All acceptance criteria satisfied: upstream OpenClaw source pinned (openclaw/openclaw v2026.4.7 SHA 5050017), governed adapter boundary documented, smoke-test plan aligned with canonical StrategySpec/WorkflowHandoff split per OC-003.",
+    "last_update": "2026-04-09T16:41:38Z",
+    "review_notes_zh": [
+      "前一輪 blocker 已收斂：smoke_test 現在輸出 canonical StrategySpec + WorkflowHandoff。",
+      "governance.md 欄位 ownership 已回到 OC-003 正式分界，`initial_lifecycle_state` 命名正確。",
+      "Non-blocking：smoke_test 路徑示例仍有 /tmp/openclaw-smoke 與 /tmp/openclaw-smoke-test 兩種寫法，可後續收斂。"
+    ],
+    "review_file": "integrations/openclaw/review_oss001_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-001",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:07:19Z",
+      "resolved_at": "2026-04-09T16:12:19Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "OSS-001 complete. Deliverables: integrations/openclaw/integration.md (pin v2026.4.7 + SHA 5050017, adapter boundary, error model, event envelope), governance.md (OC-001/002/003 alignment, deny-first mapping, normalization pipeline), smoke_test.md (5-step executable test plan). All 3 acceptance criteria met. Spike open questions resolved.",
+      "status": "done",
+      "created_at": "2026-04-09T16:12:38Z",
+      "resolved_at": "2026-04-09T16:21:08Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review rejected: see integrations/openclaw/review_oss001_codex_zh.md. smoke_test.md emits a hybrid StrategySpec/WorkflowHandoff payload that cannot validate against services/control-plane/specs/strategy_spec.schema.json, and governance.md assigns workflow_handoff-only fields to StrategySpec.",
+      "status": "done",
+      "created_at": "2026-04-09T16:21:08Z",
+      "resolved_at": "2026-04-09T16:21:08Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Codex review findings addressed: (1) smoke_test.md now emits canonical StrategySpec + WorkflowHandoff per OC-003 split — all 11 required StrategySpec fields present, WorkflowHandoff wraps with registry_hints/governance_context. (2) governance.md §5.2 corrected — governance_context and registry_hints assigned to WorkflowHandoff (not StrategySpec), field name fixed to initial_lifecycle_state. Both artifacts validated programmatically against canonical schemas. integration.md and review artifact now tracked in git. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:33:59Z",
+      "resolved_at": "2026-04-09T16:39:54Z"
+    },
+    {
+      "task_id": "OSS-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewed and approved. The canonical StrategySpec/WorkflowHandoff split is now correct, governance field ownership matches OC-003, and the pinned upstream/adaptor smoke-test plan is ready for owner finalize.",
+      "status": "done",
+      "created_at": "2026-04-09T16:39:54Z",
+      "resolved_at": "2026-04-09T16:41:17Z"
+    }
+  ],
+  "blockers": []
+}

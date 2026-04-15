@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "BUS-VAL-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BUS-VAL-001",
+    "title": "Validate GitHub issue approval bus round-trip",
+    "summary_zh": "建立一個只用來驗證 GitHub approval bus 的 blocked 測試任務，確認手機上的 issue comment 指令能被 orchestrator 拉回並回寫到 ai-status。",
+    "phase": "Tooling",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Validated issue approval bus round-trip: GitHub issue #1 accepted /approve, ai-status reopened locally, and the pantheon ops issue was closed by the bus.",
+    "last_update": "2026-04-05T13:37:54Z"
+  },
+  "handoffs": [],
+  "blockers": [
+    {
+      "task_id": "BUS-VAL-001",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Awaiting GitHub Mobile /approve validation from issue comment.",
+      "status": "resolved",
+      "created_at": "2026-04-05T08:22:21Z",
+      "resolved_at": "2026-04-05T11:42:40Z"
+    }
+  ]
+}

@@ -102,6 +102,44 @@ Layer rules:
 - L3 may explain or motivate decisions but does not override L1/L2.
 - `CANONICAL_DOCUMENT_MAP.md` is the lookup table when two docs seem close in scope.
 
+### State Placement Rules
+
+Do not treat `ai-status.json` as a dump for every mode's internal state.
+
+Use this decision rule:
+
+- if another agent must still see the fact after process restart, worker replacement, or mode switch, it may belong in `ai-status.json`
+- if the value is mainly for one active mode's execution loop, debug, retry, approval, or rendering logic, it belongs in that mode's own state file instead
+
+What belongs in `ai-status.json`:
+
+- durable task identity and scope: `id`, `title`, `phase`, `depends_on`, `artifacts`, acceptance summary
+- canonical ownership and lifecycle: `owner`, `reviewer`, `status`, `waiting_for`, `terminal_outcome`
+- durable coordination facts shared across modes: blocker state, handoff state, review approval, final delivery summary
+- concise mode results that other modes must inherit: accepted planning outcome materialized as tasks, finalized delivery commit hash, approved owner/reviewer reassignment
+
+What must not be stored in `ai-status.json`:
+
+- worker/runtime internals such as `pid`, `session_id`, `queue_event_id`, `attempt_count`, `next_retry_at`, `last_heartbeat_at`, `dispatch_pause`, `provider quota`, or raw provider errors
+- approval workflow internals such as tool payloads, resume overrides, approval signatures, or broker evidence blobs
+- planning baton internals such as round ownership, current draft editor, intermediate objections, or per-round review packet metadata
+- dashboard-only derived values such as occupancy summaries, truth mismatches, humanized badges, or stale/runtime reconciliation helpers
+
+State file ownership:
+
+- `ai-status.json`: cross-mode durable execution truth
+- `.orchestrator/planning-state.json`: planning mode machine-readable session state
+- `.orchestrator/state.json`: supervisor / queue / worker / runtime state
+- `.orchestrator/approval-queue.json`: approval queue and approval lifecycle state
+- `ai-activity-log.jsonl`: append-only historical events and audit trail
+- `current-work.md` and dashboard bundle: derived human-readable summaries only
+
+Size rule:
+
+- prefer storing a short stable summary in `ai-status.json` and keep the heavy payload in the mode-specific file or evidence file
+- if a field would grow on every poll / retry / heartbeat, it does not belong in `ai-status.json`
+- if removing the field would not change task ownership, blocker truth, review truth, or delivery truth, it does not belong in `ai-status.json`
+
 Compatibility-only files:
 
 - `COLLAB.md`

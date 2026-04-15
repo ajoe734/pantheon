@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "task_id": "P1-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-001",
+    "title": "Define SignalStoreClient contract",
+    "phase": "Phase 1",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/signal-store/client.py",
+      "services/signal-store/README.md"
+    ],
+    "acceptance": [
+      "interface documented",
+      "example payload added",
+      "consumer assumptions listed"
+    ],
+    "next": "Interface locked and accepted by Gemini",
+    "last_update": "2026-04-01T16:10:00Z",
+    "summary_zh": "定義 SignalStoreClient 的最小穩定介面，讓 research、control plane 與 execution 都能用同一個 signal 存取邊界。"
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "SignalStoreClient contract draft is ready for schema alignment review; base write/get/list/run_id semantics are locked and A1-A4 are confirmed",
+      "status": "done",
+      "created_at": "2026-04-01T05:08:37Z",
+      "resolved_at": "2026-04-01T16:10:00Z"
+    },
+    {
+      "task_id": "P1-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "SignalStoreClient now accepts Gemini schema aliases (version/timestamp/quantity and flat symbol) while preserving richer draft payloads; remaining schema decision is whether to add run_id back for rebalance batching",
+      "status": "done",
+      "last_update": "2026-04-01T16:10:00Z",
+      "created_at": "2026-04-01T05:15:08Z",
+      "resolved_at": "2026-04-01T16:10:00Z"
+    }
+  ],
+  "blockers": []
+}

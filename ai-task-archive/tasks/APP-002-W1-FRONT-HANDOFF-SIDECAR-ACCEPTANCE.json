@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-002-W1-FRONT-HANDOFF acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-002-W1-FRONT-HANDOFF，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 1",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W1-READ-DEPLOYMENT"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W1-FRONT-HANDOFF/APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized: Qwen review approved; acceptance packet complete and ready for parent owner execution.",
+    "last_update": "2026-04-11T12:42:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W1-FRONT-HANDOFF",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/APP-002-W1-FRONT-HANDOFF/review_app002_w1_front_handoff_sidecar_acceptance_qwen.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-11T12:31:05Z",
+      "resolved_at": "2026-04-11T12:31:33Z"
+    },
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-11T12:35:35Z",
+      "resolved_at": "2026-04-11T12:36:03Z"
+    },
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet refreshed; ready for review. See support/sidecars/APP-002-W1-FRONT-HANDOFF/APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-04-11T12:37:59Z",
+      "resolved_at": "2026-04-11T12:41:53Z"
+    },
+    {
+      "task_id": "APP-002-W1-FRONT-HANDOFF-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: acceptance packet is thorough, all 12 checklist items verified, templates complete, risk assessment accurate. Parent owner (Copilot) can now execute the 5 steps.",
+      "status": "done",
+      "created_at": "2026-04-11T12:41:53Z",
+      "resolved_at": "2026-04-11T12:42:34Z"
+    }
+  ],
+  "blockers": []
+}

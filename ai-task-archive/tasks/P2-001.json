@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "task_id": "P2-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-001",
+    "title": "Define signal JSON schema",
+    "phase": "Phase 2",
+    "owner": "Gemini",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P1-001"
+    ],
+    "artifacts": [
+      "services/research/schema.json",
+      "services/research/signal_example.json",
+      "services/research/signal_schema_v1.md"
+    ],
+    "acceptance": [
+      "payload keys documented",
+      "worker contract references same schema"
+    ],
+    "next": "Canonical machine schema approved. Final contract alignment is tracked in P2-002 so schema.json, examples, and human-facing docs describe the same execution semantics.",
+    "last_update": "2026-04-01T14:12:24Z",
+    "summary_zh": "定義 signal 的機器可讀 schema，鎖定欄位、型別與交易語義，避免研究端和執行端各說各話。"
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Review complete — 2 critical issues (C-1: quantity needs quantity_type discriminator, C-2: SELL direction ambiguity unresolved) and 6 advisory items. Full review at services/research/review_p2001_claude.md. Schema can be LOCKED once C-1 and C-2 are fixed. P3-001 implementation blocked until then.",
+      "status": "done",
+      "created_at": "2026-04-01T10:14:37Z",
+      "resolved_at": "2026-04-01T11:00:00Z"
+    }
+  ],
+  "blockers": []
+}

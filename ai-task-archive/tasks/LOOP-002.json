@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "LOOP-002",
+  "archived_at": "2026-04-14T09:48:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-002",
+    "title": "Add GitHub dispatch workflows for Pantheon closed-loop coordination",
+    "summary_zh": "為 Pantheon 與前端 repo 補 repository_dispatch 與 workflow_dispatch workflow，形成正式的 closed-loop automation。",
+    "phase": "Closed-Loop Infra",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/coordination-loop-spec.md",
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    ],
+    "acceptance": [
+      "Pantheon receiver and manual replay workflow specs are defined",
+      "front repo handoff receiver and feedback publisher workflow specs are defined",
+      "dispatch event names, client_payload contract, and replay path are testable without depending on the old GitHub issue bus"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: coordination-dispatch-receiver.yml and coordination-manual-replay.yml committed (1148eeb) — source_repo ownership check, full-SHA source_commit validation, and hard-fail on missing mirror/feedback bundle artifacts implemented per review notes. Closed.",
+    "last_update": "2026-04-14T09:48:21Z",
+    "review_notes_zh": [
+      "補上 source_repo ownership 與 full-SHA source_commit 驗證，避免跨 repo/event 錯配 dispatch。",
+      "Pantheon 與 front-repo workflow 現在會 hard-fail 缺失的 mirror / feedback bundle，不再只留 warning。",
+      "manual replay 會先驗 payload/support paths 與 target mirror artifacts，再發 replay dispatch。"
+    ],
+    "review_file": ".github/workflows/coordination-dispatch-receiver.yml",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T09:48:21Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1148eeb5b0ca47c7b35d4e67cd6d76e2c0567988",
+      "commit_subject": "LOOP-002: add GitHub dispatch workflows for closed-loop coordination",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "coordination-dispatch-receiver.yml": "receives repository_dispatch events",
+        "coordination-manual-replay.yml": "workflow_dispatch replay gate that validates",
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-002",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 130,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All four dispatch workflows are ready for review. Pantheon side: .github/workflows/coordination-dispatch-receiver.yml (receives pantheon.frontend_feedback, pantheon.bff_gap, pantheon.ui_done) and .github/workflows/coordination-manual-replay.yml (workflow_dispatch replay). Front-repo templates: .coordination/workflow-templates/pantheon-handoff-receiver.yml and pantheon-feedback-publisher.yml. Protocol fixtures updated: source_commit added, source_repo org-prefixed in bff-gap and ui-done examples. Please verify: validation rules, envelope field coverage, replay guard, front-repo template completeness.",
+      "status": "done",
+      "created_at": "2026-04-14T08:49:46Z",
+      "resolved_at": "2026-04-14T08:59:12Z"
+    },
+    {
+      "task_id": "LOOP-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review passed after tightening dispatch ownership checks, replay validation, and front-repo template completeness. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-14T08:59:12Z",
+      "resolved_at": "2026-04-14T09:48:21Z"
+    }
+  ],
+  "blockers": []
+}

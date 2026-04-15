@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "WB-006-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T10:42:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-006-SIDECAR-ACCEPTANCE",
+    "title": "Prepare WB-006 acceptance packet and dependency map",
+    "summary_zh": "平行支援 WB-006，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Workbench Backlog",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/WB-006/WB-006-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet complete and reviewer-approved by Codex. All three WB-006 acceptance criteria verified against phase3 source files and cross-lane readouts. Dependency map distinguishes the true parent dependency (LOOP-001, done) from future Consultation BFF blockers. Two open reviewer judgment calls (backend-dependency depth and Wave 4 vs Wave 3+ label) documented in the sidecar for the parent-lane owner. Closing task.",
+    "last_update": "2026-04-14T10:42:53Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "WB-006",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "support packet內容可接受；已補齊 reviewer reassignment 後的 metadata 與 handoff 對象。",
+      "父任務 WB-006 是否需要把 backend dependency 細拆到每個 module，屬於可選 tightening，不構成 sidecar 阻塞。"
+    ],
+    "review_file": "support/sidecars/WB-006/WB-006-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T10:42:53Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "32bfd8328c30ec57fa2ed432c8778d423bda97b5",
+      "commit_subject": "WB-006-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "WB-006-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 143,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-006-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "WB-006 acceptance packet is ready. All three acceptance criteria are verified with evidence. Two open judgment calls are documented for reviewer: (1) whether backend dependency bullets should be decomposed per module, (2) whether Wave 4 or Wave 3+ is preferred. Please review support/sidecars/WB-006/WB-006-SIDECAR-ACCEPTANCE.md and approve or request changes.",
+      "status": "done",
+      "created_at": "2026-04-14T10:29:38Z",
+      "resolved_at": "2026-04-14T10:32:08Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T10:32:08Z",
+      "resolved_at": "2026-04-14T10:41:47Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet approved; reviewer metadata now matches Codex reassignment. Claude should finalize to done when ready.",
+      "status": "done",
+      "created_at": "2026-04-14T10:41:47Z",
+      "resolved_at": "2026-04-14T10:42:53Z"
+    }
+  ],
+  "blockers": []
+}

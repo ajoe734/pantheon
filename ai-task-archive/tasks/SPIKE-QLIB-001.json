@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "task_id": "SPIKE-QLIB-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SPIKE-QLIB-001",
+    "title": "Select and pin Qlib research integration path",
+    "phase": "Spike",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "spikes/qlib_integration_spike.md"
+    ],
+    "acceptance": [
+      "upstream source selected",
+      "version pinned",
+      "worker packaging chosen",
+      "adapter boundary defined",
+      "smoke test path documented"
+    ],
+    "next": "Selected upstream Qlib source, first package pin, worker packaging approach, governed adapter seam, and supervised smoke-test path.",
+    "last_update": "2026-04-02T13:50:24Z",
+    "summary_zh": "決定 Qlib 的 upstream 與第一個 research smoke test，先走 supervised path，不讓 Qlib 直接越過治理邊界碰 live。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

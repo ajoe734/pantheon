@@ -46,6 +46,7 @@ class PlanningStateTests(unittest.TestCase):
             ORCHESTRATOR_STATE_FILE=root / ".orchestrator" / "state.json",
             APPROVAL_QUEUE_FILE=root / ".orchestrator" / "approval-queue.json",
             DASHBOARD_BUNDLE_FILE=root / "dashboard-bundle.json",
+            archived_task_snapshot=lambda _task_id: None,
         )
 
     def test_sync_creates_templates_and_derived_state(self) -> None:
@@ -239,6 +240,30 @@ class PlanningStateTests(unittest.TestCase):
         self.assertNotIn("Pantheon_Blueprint_Gap_Review_v1.md", saved["brief_files"])
         self.assertEqual(saved["proposed_execution_tasks"], [])
 
+    def test_generic_session_materialization_contract_uses_expected_output_path(self) -> None:
+        session = planning_state.default_session("phase3-2026-04-14-custom", "phase3")
+        session["expected_outputs"] = [
+            {
+                "id": "consensus_packet",
+                "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-custom/consensus-packet.md",
+                "owner": "Claude",
+                "status": "not_started",
+            },
+            {
+                "id": "execution_materialization",
+                "path": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-custom/execution-materialization.md",
+                "owner": "Codex",
+                "status": "not_started",
+            },
+        ]
+
+        derived = planning_state.build_derived_state(session)
+
+        self.assertEqual(
+            derived["materialization_contract"]["execution_materialization"],
+            "docs/02-architecture/consensus/sessions/phase3-2026-04-14-custom/execution-materialization.md",
+        )
+
     def test_materialize_writes_phase2_tasks_after_human_gate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-materialize-") as temp_dir:
             root = Path(temp_dir)
@@ -308,6 +333,41 @@ class PlanningStateTests(unittest.TestCase):
         self.assertEqual(task_map["BG-000"]["last_update"], "2026-04-13T07:00:00Z")
         self.assertEqual(task_map["BG-000"]["source_plane"], "planning")
         self.assertEqual(task_map["BG-000"]["source_ref"]["session_id"], planning_state.PHASE2_SESSION_ID)
+
+    def test_materialize_skips_archived_terminal_tasks_without_reviving_them(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-archived-skip-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root), self.patch_ai_status_paths(root):
+                session = planning_state.default_session("phase3-2026-04-14-archived-skip", "phase3")
+                session["status"] = "accepted"
+                session["consensus_status"] = "accepted"
+                session["human_gate_status"] = "approved"
+                session["proposed_execution_tasks"] = [
+                    {
+                        "id": "PLAN-ARCH",
+                        "title": "Archived task should stay terminal",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "phase": "Planning Materialized",
+                        "summary_zh": "不要把 archive 裡的 task 再復活。",
+                        "depends_on": [],
+                        "artifacts": [],
+                        "acceptance": [],
+                    }
+                ]
+                state = planning_state.ai_status.default_state()
+                (root / "ai-status.json").write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+                with mock.patch.object(planning_state.ai_status, "archived_task_snapshot", return_value={"task_id": "PLAN-ARCH"}):
+                    planning_state.command_materialize(session, [])
+
+                status = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+
+        task_ids = {task["id"] for task in status["tasks"]}
+        self.assertNotIn("PLAN-ARCH", task_ids)
 
 
 if __name__ == "__main__":

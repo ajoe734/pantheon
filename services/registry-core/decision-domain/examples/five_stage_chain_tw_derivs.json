@@ -1,0 +1,797 @@
+{
+  "description": "Example payload set demonstrating a complete five-stage decision chain for TW TAIFEX derivatives (TXO options): RegimeState -> UniverseSelection -> SignalInference -> AllocationDecision -> RiskAdjudication.",
+  "strategy_family": "tw_derivs_txo_iv",
+  "chain": [
+    {
+      "stage": 1,
+      "object": "RegimeState",
+      "schema_ref": "../regime_state.schema.json",
+      "example": {
+        "regime_id": "regime-tw-20260413-001",
+        "strategy_id": "strat-tw-derivs-txo-iv-001",
+        "artifact_id": "regime-model-iv-surface-v1.0.0",
+        "version": "1.0.0",
+        "regime_class": "elevated_vol_skew",
+        "confidence": 0.81,
+        "regime_scores": {
+          "risk_on": 0.21,
+          "risk_off": 0.44,
+          "trending_up": 0.12,
+          "trending_down": 0.38,
+          "mean_reverting": 0.19,
+          "high_volatility": 0.71,
+          "low_volatility": 0.09,
+          "regime_transition": 0.33,
+          "mixed": 0.18
+        },
+        "evaluated_at": "2026-04-13T05:45:00Z",
+        "window_start": "2026-03-14T05:45:00Z",
+        "window_end": "2026-04-13T05:45:00Z",
+        "input_refs": [
+          {
+            "ref_type": "dataset_version",
+            "ref_id": "dv-20260413-tw-derivs-txo-v1",
+            "storage_ref": {
+              "backend": "object_store",
+              "path": "datasets/tw-derivs/txo/2026-04-13/"
+            }
+          },
+          {
+            "ref_type": "feature_dataset",
+            "ref_id": "feat-txo-iv-surface-v1",
+            "storage_ref": {
+              "backend": "object_store",
+              "path": "features/iv-surface/txo/2026-04-13.parquet"
+            }
+          },
+          {
+            "ref_type": "security_master",
+            "ref_id": "sm-tw-20260413"
+          },
+          {
+            "ref_type": "contract_master",
+            "ref_id": "cm-tw-txo-20260413"
+          },
+          {
+            "ref_type": "market_calendar_session",
+            "ref_id": "cal-taifex-2026-04-13-regular"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "universe_selection",
+            "ref_id": "universe-tw-20260413-001"
+          }
+        ],
+        "model_ref": {
+          "model_family": "iv_surface_regime",
+          "model_version": "1.0.0",
+          "training_dataset_ref": "dataset-txo-regime-train-2022-2025"
+        },
+        "decision_reasoning": "IV surface regime classifier detects elevated skew and above-average realized-to-implied vol ratio, indicating a risk-off derivatives environment. Front-month put skew has steepened and OI flow leans protective. Regime classified as elevated_vol_skew with 81% confidence.",
+        "feature_snapshot": {
+          "iv_skew_25d": 0.042,
+          "realized_vol_30d": 0.22,
+          "implied_vol_atm_front": 0.27,
+          "oi_put_call_ratio": 1.38,
+          "regime_transition_probability": 0.33
+        },
+        "market_scope": {
+          "asset_classes": [
+            "equity_option"
+          ],
+          "markets": [
+            "TW"
+          ],
+          "security_master_refs": [
+            "sm-tw-20260413"
+          ],
+          "contract_master_refs": [
+            "cm-tw-txo-20260413"
+          ]
+        },
+        "state": "validated",
+        "persona_id": "persona-tw-derivs-001",
+        "capital_pool_id": "pool-tw-derivs",
+        "metadata": {
+          "data_as_of": "2026-04-13T05:45:00Z",
+          "evaluation_duration_ms": 2180
+        }
+      }
+    },
+    {
+      "stage": 2,
+      "object": "UniverseSelection",
+      "schema_ref": "../universe_selection.schema.json",
+      "example": {
+        "universe_id": "universe-tw-20260413-001",
+        "strategy_id": "strat-tw-derivs-txo-iv-001",
+        "artifact_id": "universe-selector-txo-atm-v1.0.0",
+        "version": "1.0.0",
+        "regime_ref": {
+          "regime_id": "regime-tw-20260413-001",
+          "regime_class": "elevated_vol_skew",
+          "regime_version": "1.0.0"
+        },
+        "selected_universe": [
+          {
+            "symbol": "TXO20260418P20000",
+            "asset_class": "equity_option",
+            "option_type": "put",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-04-18",
+            "expiry_type": "front_month",
+            "moneyness": "near_atm",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "dataset_version_ref": "dv-20260413-tw-derivs-txo-v1",
+            "inclusion_reason": "Near-ATM front-month put; highest liquidity and most sensitive to IV skew signal.",
+            "weight_hint": 0.12,
+            "eligibility_flags": [
+              "sufficient_liquidity",
+              "sufficient_history",
+              "regime_eligible",
+              "risk_budget_compatible",
+              "data_quality_verified",
+              "trading_hours_aligned",
+              "contract_master_verified"
+            ]
+          },
+          {
+            "symbol": "TXO20260418C20000",
+            "asset_class": "equity_option",
+            "option_type": "call",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-04-18",
+            "expiry_type": "front_month",
+            "moneyness": "near_atm",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "dataset_version_ref": "dv-20260413-tw-derivs-txo-v1",
+            "inclusion_reason": "Near-ATM front-month call; used for delta hedge pairing and skew spread leg.",
+            "weight_hint": 0.08,
+            "eligibility_flags": [
+              "sufficient_liquidity",
+              "sufficient_history",
+              "regime_eligible",
+              "risk_budget_compatible",
+              "data_quality_verified",
+              "trading_hours_aligned",
+              "contract_master_verified"
+            ]
+          },
+          {
+            "symbol": "TXO20260516P20000",
+            "asset_class": "equity_option",
+            "option_type": "put",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-05-16",
+            "expiry_type": "next_month",
+            "moneyness": "near_atm",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "dataset_version_ref": "dv-20260413-tw-derivs-txo-v1",
+            "inclusion_reason": "Back-month put for term structure positioning; used in calendar spread component.",
+            "weight_hint": 0.06,
+            "eligibility_flags": [
+              "sufficient_liquidity",
+              "sufficient_history",
+              "regime_eligible",
+              "risk_budget_compatible",
+              "data_quality_verified",
+              "trading_hours_aligned",
+              "contract_master_verified"
+            ]
+          }
+        ],
+        "exclusion_reasons": [
+          {
+            "symbol": "TXO20260418P19500",
+            "security_master_ref": "sm-tw-20260413",
+            "reason": "liquidity_filter",
+            "detail": "OTM put has insufficient open interest for the target position size at paper stage."
+          },
+          {
+            "symbol": "TXO20260418C20500",
+            "security_master_ref": "sm-tw-20260413",
+            "reason": "regime_ineligible",
+            "detail": "OTM call excluded in elevated_vol_skew regime; directional call buying is contra-regime."
+          }
+        ],
+        "evaluated_at": "2026-04-13T05:45:02Z",
+        "input_refs": [
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-tw-20260413-001"
+          },
+          {
+            "ref_type": "security_master",
+            "ref_id": "sm-tw-20260413"
+          },
+          {
+            "ref_type": "contract_master",
+            "ref_id": "cm-tw-txo-20260413"
+          },
+          {
+            "ref_type": "dataset_version",
+            "ref_id": "dv-20260413-tw-derivs-txo-v1"
+          },
+          {
+            "ref_type": "risk_budget_policy",
+            "ref_id": "risk-policy-tw-derivs-v1"
+          },
+          {
+            "ref_type": "market_calendar_session",
+            "ref_id": "cal-taifex-2026-04-13-regular"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "signal_inference",
+            "ref_id": "signal-tw-20260413-001"
+          }
+        ],
+        "model_ref": {
+          "model_family": "options_universe_filter",
+          "model_version": "1.0.0"
+        },
+        "decision_reasoning": "Given the elevated_vol_skew regime, the selector focuses on near-ATM front/next-month TXO options with sufficient OI. Deep OTM puts and directional calls are excluded. A three-contract universe supports the IV skew strategy with manageable delta exposure.",
+        "universe_stats": {
+          "total_candidates": 124,
+          "total_selected": 3,
+          "total_excluded": 121,
+          "asset_class_breakdown": {
+            "equity_option": 3
+          },
+          "avg_liquidity_score": 0.74,
+          "avg_oi_contracts": 12400
+        },
+        "state": "validated",
+        "persona_id": "persona-tw-derivs-001",
+        "capital_pool_id": "pool-tw-derivs",
+        "metadata": {
+          "selection_duration_ms": 840,
+          "selection_run_id": "universe-run-tw-20260413-054502"
+        }
+      }
+    },
+    {
+      "stage": 3,
+      "object": "SignalInference",
+      "schema_ref": "../signal_inference.schema.json",
+      "example": {
+        "signal_id": "signal-tw-20260413-001",
+        "strategy_id": "strat-tw-derivs-txo-iv-001",
+        "artifact_id": "txo-iv-surface-strategy-v1.0.0",
+        "version": "1.0.0",
+        "regime_ref": {
+          "regime_id": "regime-tw-20260413-001",
+          "regime_class": "elevated_vol_skew",
+          "regime_version": "1.0.0"
+        },
+        "universe_ref": {
+          "universe_id": "universe-tw-20260413-001",
+          "universe_version": "1.0.0"
+        },
+        "signals": [
+          {
+            "symbol": "TXO20260418P20000",
+            "instrument_type": "equity_option",
+            "option_type": "put",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-04-18",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "direction": "long",
+            "magnitude": 0.78,
+            "confidence": 0.73,
+            "time_horizon": "intraday",
+            "signal_type": "iv_skew",
+            "raw_score": 1.94,
+            "feature_snapshot": {
+              "iv_skew_zscore": 1.94,
+              "oi_flow_signal": 0.61,
+              "delta": -0.48,
+              "gamma": 0.031,
+              "vega": 42.1
+            }
+          },
+          {
+            "symbol": "TXO20260418C20000",
+            "instrument_type": "equity_option",
+            "option_type": "call",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-04-18",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "direction": "short",
+            "magnitude": 0.52,
+            "confidence": 0.65,
+            "time_horizon": "intraday",
+            "signal_type": "delta_hedge",
+            "raw_score": -1.31,
+            "feature_snapshot": {
+              "iv_skew_zscore": -0.84,
+              "oi_flow_signal": 0.29,
+              "delta": 0.51,
+              "gamma": 0.030,
+              "vega": 41.8
+            }
+          },
+          {
+            "symbol": "TXO20260516P20000",
+            "instrument_type": "equity_option",
+            "option_type": "put",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-05-16",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "direction": "short",
+            "magnitude": 0.41,
+            "confidence": 0.62,
+            "time_horizon": "swing",
+            "signal_type": "term_structure",
+            "raw_score": -1.02,
+            "feature_snapshot": {
+              "iv_skew_zscore": 1.22,
+              "term_structure_zscore": -1.02,
+              "delta": -0.43,
+              "gamma": 0.021,
+              "vega": 58.4
+            }
+          }
+        ],
+        "evaluated_at": "2026-04-13T05:45:05Z",
+        "input_refs": [
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-tw-20260413-001"
+          },
+          {
+            "ref_type": "universe_selection",
+            "ref_id": "universe-tw-20260413-001"
+          },
+          {
+            "ref_type": "dataset_version",
+            "ref_id": "dv-20260413-tw-derivs-txo-v1"
+          },
+          {
+            "ref_type": "feature_dataset",
+            "ref_id": "feat-txo-iv-surface-v1"
+          },
+          {
+            "ref_type": "feature_dataset",
+            "ref_id": "feat-txo-oi-change-v1"
+          },
+          {
+            "ref_type": "normalized_dataset",
+            "ref_id": "norm-txo-chain-eod-v1"
+          },
+          {
+            "ref_type": "contract_master",
+            "ref_id": "cm-tw-txo-20260413"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "allocation_decision",
+            "ref_id": "alloc-tw-20260413-001"
+          }
+        ],
+        "model_ref": {
+          "model_family": "iv_surface_skew_model",
+          "model_version": "1.0.0",
+          "training_dataset_ref": "dataset-txo-signal-train-2022-2025",
+          "hyperparameters": {
+            "lookback_sessions": 30,
+            "rebalance": "intraday"
+          }
+        },
+        "decision_reasoning": "IV skew signal is elevated in the elevated_vol_skew regime. Front-month ATM put receives a long signal driven by OI accumulation and skew expansion. The ATM call receives a short signal as a delta hedge leg. The calendar spread positions against a term-structure mean reversion in the back month.",
+        "inference_stats": {
+          "total_universe_size": 3,
+          "signals_emitted": 3,
+          "long_count": 1,
+          "short_count": 2,
+          "neutral_count": 0,
+          "avg_confidence": 0.667,
+          "max_magnitude": 0.78,
+          "min_magnitude": 0.41
+        },
+        "market_scope": {
+          "asset_classes": [
+            "equity_option"
+          ],
+          "markets": [
+            "TW"
+          ],
+          "security_master_refs": [
+            "sm-tw-20260413"
+          ],
+          "contract_master_refs": [
+            "cm-tw-txo-20260413"
+          ],
+          "dataset_version_refs": [
+            "dv-20260413-tw-derivs-txo-v1"
+          ]
+        },
+        "state": "validated",
+        "persona_id": "persona-tw-derivs-001",
+        "capital_pool_id": "pool-tw-derivs",
+        "metadata": {
+          "inference_duration_ms": 760,
+          "signal_run_id": "signal-run-tw-20260413-054505"
+        }
+      }
+    },
+    {
+      "stage": 4,
+      "object": "AllocationDecision",
+      "schema_ref": "../allocation_decision.schema.json",
+      "example": {
+        "allocation_id": "alloc-tw-20260413-001",
+        "strategy_id": "strat-tw-derivs-txo-iv-001",
+        "artifact_id": "allocator-delta-hedge-v1.0.0",
+        "version": "1.0.0",
+        "regime_ref": {
+          "regime_id": "regime-tw-20260413-001",
+          "regime_class": "elevated_vol_skew",
+          "regime_version": "1.0.0"
+        },
+        "signal_ref": {
+          "signal_id": "signal-tw-20260413-001",
+          "signal_version": "1.0.0"
+        },
+        "allocations": [
+          {
+            "symbol": "TXO20260418P20000",
+            "instrument_type": "equity_option",
+            "option_type": "put",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-04-18",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "direction": "long",
+            "target_contracts": 10,
+            "target_value": 420000,
+            "target_weight": 0.14,
+            "current_weight": 0.0,
+            "delta_weight": 0.14,
+            "net_delta": -4.8,
+            "signal_direction": "long",
+            "signal_magnitude": 0.78,
+            "allocation_method": "delta_hedged_skew",
+            "constraints_applied": [
+              "max_position_vega",
+              "max_net_delta",
+              "liquidity_cap"
+            ]
+          },
+          {
+            "symbol": "TXO20260418C20000",
+            "instrument_type": "equity_option",
+            "option_type": "call",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-04-18",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "direction": "short",
+            "target_contracts": 8,
+            "target_value": 336000,
+            "target_weight": 0.11,
+            "current_weight": 0.0,
+            "delta_weight": 0.11,
+            "net_delta": 4.08,
+            "signal_direction": "short",
+            "signal_magnitude": 0.52,
+            "allocation_method": "delta_hedge_leg",
+            "constraints_applied": [
+              "max_position_vega",
+              "delta_offset_constraint",
+              "liquidity_cap"
+            ]
+          },
+          {
+            "symbol": "TXO20260516P20000",
+            "instrument_type": "equity_option",
+            "option_type": "put",
+            "underlying": "TX",
+            "strike": 20000,
+            "expiry": "2026-05-16",
+            "security_master_ref": "sm-tw-20260413",
+            "contract_master_ref": "cm-tw-txo-20260413",
+            "direction": "short",
+            "target_contracts": 5,
+            "target_value": 210000,
+            "target_weight": 0.07,
+            "current_weight": 0.0,
+            "delta_weight": 0.07,
+            "net_delta": -2.15,
+            "signal_direction": "short",
+            "signal_magnitude": 0.41,
+            "allocation_method": "calendar_spread_leg",
+            "constraints_applied": [
+              "max_position_vega",
+              "max_net_delta"
+            ]
+          }
+        ],
+        "portfolio_summary": {
+          "total_target_exposure": 0.32,
+          "net_target_exposure": 0.32,
+          "total_target_value": 966000,
+          "leverage_ratio": 0.32,
+          "net_delta_portfolio": -2.87,
+          "total_vega": 3819.0,
+          "num_positions": 3,
+          "estimated_turnover": 0.32
+        },
+        "evaluated_at": "2026-04-13T05:45:10Z",
+        "input_refs": [
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-tw-20260413-001"
+          },
+          {
+            "ref_type": "universe_selection",
+            "ref_id": "universe-tw-20260413-001"
+          },
+          {
+            "ref_type": "signal_inference",
+            "ref_id": "signal-tw-20260413-001"
+          },
+          {
+            "ref_type": "contract_master",
+            "ref_id": "cm-tw-txo-20260413"
+          },
+          {
+            "ref_type": "risk_budget_policy",
+            "ref_id": "risk-policy-tw-derivs-v1"
+          },
+          {
+            "ref_type": "capital_pool_state",
+            "ref_id": "capital-pool-tw-derivs-20260413"
+          },
+          {
+            "ref_type": "current_portfolio_snapshot",
+            "ref_id": "portfolio-tw-derivs-20260413-open"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "risk_adjudication",
+            "ref_id": "risk-tw-20260413-001"
+          }
+        ],
+        "market_scope": {
+          "asset_classes": [
+            "equity_option"
+          ],
+          "markets": [
+            "TW"
+          ],
+          "security_master_refs": [
+            "sm-tw-20260413"
+          ],
+          "contract_master_refs": [
+            "cm-tw-txo-20260413"
+          ],
+          "dataset_version_refs": [
+            "dv-20260413-tw-derivs-txo-v1"
+          ]
+        },
+        "model_ref": {
+          "model_family": "delta_hedged_skew_allocator",
+          "model_version": "1.0.0",
+          "hyperparameters": {
+            "max_net_delta": 5.0,
+            "max_vega_per_position": 2000,
+            "max_gross_exposure": 1.0
+          }
+        },
+        "decision_reasoning": "The allocator constructs a delta-approximately-neutral structure: long front ATM put (skew signal), short front ATM call (delta hedge), short back-month put (calendar spread). Net delta is -2.87 contracts, within the policy cap of ±5. Total vega is 3819, within the per-pool limit.",
+        "state": "validated",
+        "persona_id": "persona-tw-derivs-001",
+        "capital_pool_id": "pool-tw-derivs",
+        "metadata": {
+          "allocation_duration_ms": 520,
+          "allocation_run_id": "alloc-run-tw-20260413-054510"
+        }
+      }
+    },
+    {
+      "stage": 5,
+      "object": "RiskAdjudication",
+      "schema_ref": "../risk_adjudication.schema.json",
+      "example": {
+        "adjudication_id": "risk-tw-20260413-001",
+        "strategy_id": "strat-tw-derivs-txo-iv-001",
+        "artifact_id": "risk-engine-tw-derivs-v1.0.0",
+        "version": "1.0.0",
+        "allocation_ref": {
+          "allocation_id": "alloc-tw-20260413-001",
+          "allocation_version": "1.0.0"
+        },
+        "risk_assessment": {
+          "overall_risk_level": "within_budget",
+          "checks": [
+            {
+              "check_type": "max_leverage",
+              "status": "pass",
+              "observed_value": 0.32,
+              "threshold_value": 1.0,
+              "policy_ref": "risk-policy-tw-derivs-v1",
+              "detail": "Gross exposure well below the options capital pool leverage ceiling."
+            },
+            {
+              "check_type": "var_limit",
+              "status": "pass",
+              "observed_value": 0.031,
+              "threshold_value": 0.05,
+              "policy_ref": "risk-policy-tw-derivs-v1",
+              "detail": "Daily 95% historical VaR on the options book stays inside the approved limit."
+            },
+            {
+              "check_type": "max_net_delta",
+              "status": "pass",
+              "observed_value": -2.87,
+              "threshold_value": 5.0,
+              "policy_ref": "risk-policy-tw-derivs-v1",
+              "detail": "Portfolio net delta is -2.87 contracts; within the directional exposure policy cap."
+            },
+            {
+              "check_type": "max_vega",
+              "status": "pass",
+              "observed_value": 3819.0,
+              "threshold_value": 5000.0,
+              "policy_ref": "risk-policy-tw-derivs-v1",
+              "detail": "Total portfolio vega is within the per-pool vega budget."
+            },
+            {
+              "check_type": "liquidity_coverage",
+              "status": "pass",
+              "observed_value": 2.8,
+              "threshold_value": 2.0,
+              "policy_ref": "risk-policy-tw-derivs-v1",
+              "detail": "OI coverage ratio for all positions meets the minimum liquidity requirement."
+            },
+            {
+              "check_type": "concentration_single_expiry",
+              "status": "warn",
+              "observed_value": 0.78,
+              "threshold_value": 0.80,
+              "policy_ref": "risk-policy-tw-derivs-v1",
+              "detail": "Front-month concentration is near the warning threshold; calendar spread leg mitigates but does not fully resolve."
+            }
+          ],
+          "stress_test_results": [
+            {
+              "scenario_name": "regime_shift",
+              "impact": {
+                "estimated_pnl": -148000,
+                "max_drawdown": 0.062,
+                "var_breach": false
+              },
+              "status": "pass"
+            },
+            {
+              "scenario_name": "vol_crush",
+              "impact": {
+                "estimated_pnl": -91000,
+                "max_drawdown": 0.038,
+                "var_breach": false
+              },
+              "status": "pass"
+            },
+            {
+              "scenario_name": "gap_down_5pct",
+              "impact": {
+                "estimated_pnl": 112000,
+                "max_drawdown": 0.0,
+                "var_breach": false
+              },
+              "status": "pass",
+              "detail": "Net long put position profits in a gap-down scenario."
+            }
+          ]
+        },
+        "verdict": "approved",
+        "evaluated_at": "2026-04-13T05:45:15Z",
+        "input_refs": [
+          {
+            "ref_type": "regime_state",
+            "ref_id": "regime-tw-20260413-001"
+          },
+          {
+            "ref_type": "universe_selection",
+            "ref_id": "universe-tw-20260413-001"
+          },
+          {
+            "ref_type": "signal_inference",
+            "ref_id": "signal-tw-20260413-001"
+          },
+          {
+            "ref_type": "allocation_decision",
+            "ref_id": "alloc-tw-20260413-001"
+          },
+          {
+            "ref_type": "dataset_version",
+            "ref_id": "dv-20260413-tw-derivs-txo-v1"
+          },
+          {
+            "ref_type": "contract_master",
+            "ref_id": "cm-tw-txo-20260413"
+          },
+          {
+            "ref_type": "security_master",
+            "ref_id": "sm-tw-20260413"
+          },
+          {
+            "ref_type": "risk_budget_policy",
+            "ref_id": "risk-policy-tw-derivs-v1"
+          },
+          {
+            "ref_type": "capital_pool_state",
+            "ref_id": "capital-pool-tw-derivs-20260413"
+          },
+          {
+            "ref_type": "current_portfolio_snapshot",
+            "ref_id": "portfolio-tw-derivs-20260413-open"
+          }
+        ],
+        "output_refs": [
+          {
+            "ref_type": "approval_decision",
+            "ref_id": "approval-tw-20260413-001"
+          },
+          {
+            "ref_type": "deployment_plan",
+            "ref_id": "deploy-tw-20260413-001"
+          }
+        ],
+        "market_scope": {
+          "asset_classes": [
+            "equity_option"
+          ],
+          "markets": [
+            "TW"
+          ],
+          "security_master_refs": [
+            "sm-tw-20260413"
+          ],
+          "contract_master_refs": [
+            "cm-tw-txo-20260413"
+          ],
+          "dataset_version_refs": [
+            "dv-20260413-tw-derivs-txo-v1"
+          ]
+        },
+        "model_ref": {
+          "model_family": "historical_var",
+          "model_version": "1.0.0",
+          "risk_model_parameters": {
+            "confidence_level": 0.95,
+            "lookback_sessions": 252,
+            "stress_pack": "tw_derivs_core_v1"
+          }
+        },
+        "decision_reasoning": "All hard risk limits pass. The single-expiry concentration warning is noted but the calendar spread leg partially distributes expiry risk; the net delta is within policy bounds; vega is inside the pool budget; and all three stress scenarios produce acceptable outcomes. The allocation may proceed to governance approval.",
+        "state": "validated",
+        "persona_id": "persona-tw-derivs-001",
+        "capital_pool_id": "pool-tw-derivs",
+        "metadata": {
+          "adjudication_duration_ms": 710,
+          "risk_run_id": "risk-run-tw-20260413-054515"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "task_id": "INC-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INC-001-SIDECAR-REVIEW",
+    "title": "Prepare INC-001 review packet and evidence summary",
+    "summary_zh": "平行支援 INC-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "TEL-001",
+      "LIN-001"
+    ],
+    "artifacts": [
+      "support/sidecars/INC-001/INC-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "All acceptance criteria verified independently: 75/75 unit tests PASS, 59/59 smoke tests PASS (script + module modes). Review packet approved by Codex, no blockers remain. Sidecar finalized; Claude may absorb when closing parent INC-001.",
+    "last_update": "2026-04-10T15:07:53Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INC-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "reviewer reassignment cleanup complete: packet now reflects Codex as active reviewer after Claude capacity/429",
+      "independent verification rerun: 75/75 unit PASS, 59/59 smoke PASS in both script and module modes",
+      "support-only scope preserved: only support/sidecars/INC-001 artifacts updated; no canonical truth changed"
+    ],
+    "review_file": "support/sidecars/INC-001/review_inc001_sidecar_codex.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "INC-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Review packet complete: support/sidecars/INC-001/INC-001-SIDECAR-REVIEW.md created. All acceptance criteria verified — schemas (14+15 fields), 9-field evidence propagation enforced, 75/75 unit + 59/59 smoke tests PASS, 3/3 Codex review findings resolved. Ready for Claude review and done transition.",
+      "status": "done",
+      "created_at": "2026-04-10T15:02:59Z",
+      "resolved_at": "2026-04-10T15:03:34Z"
+    },
+    {
+      "task_id": "INC-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"2c5929f2-4a88-49b3-9133-545be0450092\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1am (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"72384962-c22e-43ca-9483-87ebe1aa4bde\",\"uuid\":\"5a4d7ec1-cefd-44fc-bbe8-5eba8dd539ca\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-10T15:03:34Z",
+      "resolved_at": "2026-04-10T15:06:31Z"
+    },
+    {
+      "task_id": "INC-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Sidecar review packet approved after reviewer reassignment cleanup. Independent rerun confirmed 75/75 unit tests and 59/59 smoke checks in both script and module modes. Ready for Qwen to finalize; Claude may absorb when closing INC-001.",
+      "status": "done",
+      "created_at": "2026-04-10T15:06:31Z",
+      "resolved_at": "2026-04-10T15:07:53Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "task_id": "PER-001A",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PER-001A",
+    "title": "Prepare persona runtime mapping and reviewer packet",
+    "summary_zh": "平行支援 PER-001，先把 persona registry/session/runtime 三層模型對 runtime binding 與 capital binding 的欄位映射、subject resolution 與 reviewer checklist 整理好，讓 RUN-001 完成後能直接落正式 contract。",
+    "phase": "Phase 4: Evolution Governance",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "CAP-001",
+      "RUN-001A"
+    ],
+    "artifacts": [
+      "services/control-plane/persona/PER_001A_RUNTIME_MAPPING.md"
+    ],
+    "acceptance": [
+      "persona runtime mapping written",
+      "subject resolution checklist written",
+      "reviewer packet written"
+    ],
+    "next": "PER-001A finalized: persona runtime mapping, subject resolution checklist, and reviewer packet complete. Review approved by Codex. Gaps documented for PER-001 contract lock follow-up.",
+    "last_update": "2026-04-10T03:38:53Z",
+    "review_notes_zh": [
+      "審查通過：persona registry→binding→plan→runtime→session mapping 現已對齊 CAP-001 / DEP-001 / RUN-001 / RUN-001A source artifacts；reviewer cleanup 已修正 research_only/consultable active-advisor semantics、RuntimeBinding.artifact_version、以及 SessionPersona context carry。",
+      "待 owner / PER-001 follow-up：formalize SessionPersona.runtime_binding_id 與 session audit fields，並收斂 DeploymentPlan.binding_id vs RuntimeBinding.persona_capital_binding_id naming drift。"
+    ],
+    "review_file": "services/control-plane/persona/review_per001a_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "PER-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Persona runtime mapping document complete at services/control-plane/persona/PER_001A_RUNTIME_MAPPING.md. Field mapping (registry→binding→plan→runtime→session) validated against CAP-001, RUN-001, RUN-001A source artifacts. 6/6 cross-checks passed. Includes: provenance chain, field mapping tables (4 sections), 6-step subject resolution checklist, lifecycle compatibility matrix, audit reference chain, rollback ownership impact table, gap analysis (4 open items for PER-001 contract lock), and reviewer packet with expected outcomes.",
+      "status": "done",
+      "created_at": "2026-04-10T03:25:03Z",
+      "resolved_at": "2026-04-10T03:37:26Z"
+    },
+    {
+      "task_id": "PER-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved after reviewer cleanup. Persona runtime mapping now aligns with CAP-001, DEP-001, RUN-001, and RUN-001A source artifacts; field-name drift and session-context assumptions are explicitly called out for PER-001 follow-up. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-10T03:37:26Z",
+      "resolved_at": "2026-04-10T03:38:53Z"
+    }
+  ],
+  "blockers": []
+}

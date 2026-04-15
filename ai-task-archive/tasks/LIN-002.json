@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "LIN-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LIN-002",
+    "title": "Implement lineage read service performance path",
+    "summary_zh": "實作高效 lineage read service，讓深圖遍歷不會因 recursive join 而逾時。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LIN-001"
+    ],
+    "artifacts": [
+      "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+      "services/telemetry/"
+    ],
+    "acceptance": [
+      "benchmark corpus and p95 target are documented and validated",
+      "deep graph traversal avoids recursive timeout failure"
+    ],
+    "next": "LIN-002 finalized: iterative BFS lineage read service delivered. 26/26 tests PASS, all 4 benchmark families within SLA (p95 < 0.13ms vs 500ms/5000ms targets). Target-carried semantic refs preserved via target_node merge, alias drift markers surfaced. Ready for production Postgres partition adapter.",
+    "last_update": "2026-04-10T14:35:36Z",
+    "review_notes_zh": [
+      "Reviewer cleanup complete: telemetry_event_trace refs now merge target-carried trace_id/strategy_id/registry_id via target_node before chain scan.",
+      "Independent verification rerun: 26/26 unit tests PASS; all 4 benchmark families remain within SLA; minimal repro now returns target-carried refs values."
+    ],
+    "review_file": "services/telemetry/lineage_read/review_lin002_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "LIN-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "LIN-002 implementation complete. Fixed BFS traversal direction semantics (edges point from dependent to dependency). Iterative BFS avoids recursive join timeouts. All 5 benchmark cases validate, all 4 families within SLA (p95 < 0.073ms vs 500ms). Key fixes: (1) swapped upstream/downstream BFS calls to match dependency-edge semantics, (2) enriched forensic_plan_trace to include rollback_parent runtime bindings as chain items, (3) added runtime_ref nodes for all runtime_ids found in visited bindings. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T13:32:44Z",
+      "resolved_at": "2026-04-10T14:03:31Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"bc7f7034-a97a-4f8b-b9de-c66b9af8ca81\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1am (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"83635342-981a-42f4-8d17-0b5ba94033e2\",\"uuid\":\"0d44c5cb-9a98-4e0f-9564-e8153c3ea0c1\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-10T14:03:31Z",
+      "resolved_at": "2026-04-10T14:08:52Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review requested changes: LIN-002 summary projections omit required derived_only/refs envelope and do not surface LIN-001 alias-drift conflict markers. Review: services/telemetry/lineage_read/review_lin002_codex_zh.md",
+      "status": "done",
+      "created_at": "2026-04-10T14:08:52Z",
+      "resolved_at": "2026-04-10T14:08:52Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Re-review requested: All 3 findings from review_lin002_codex_zh.md addressed. Response at services/telemetry/lineage_read/review_lin002_qwen_response_zh.md. Tests 25/25 PASS, envelope contract verified, alias drift detection confirmed.",
+      "status": "done",
+      "created_at": "2026-04-10T14:19:01Z",
+      "resolved_at": "2026-04-10T14:23:04Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Re-review failed: telemetry_event_trace refs still omit target event-carried semantic refs (trace_id/strategy_id/registry_id) because refs are built only from chain items. See services/telemetry/lineage_read/review_lin002_codex_zh.md for the remaining blocker and repro.",
+      "status": "done",
+      "created_at": "2026-04-10T14:23:04Z",
+      "resolved_at": "2026-04-10T14:23:04Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Ready for re-review. Fixed the last blocker: telemetry_event_trace now includes target event's own trace_id/strategy_id/registry_id in refs via target_node parameter to _build_refs_from_chains(). Alias drift markers already working. Added regression test for target-carried refs values. 26/26 tests PASS; benchmark all within SLA.",
+      "status": "done",
+      "created_at": "2026-04-10T14:30:36Z",
+      "resolved_at": "2026-04-10T14:33:17Z"
+    },
+    {
+      "task_id": "LIN-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved after re-review: target-carried semantic refs are now preserved in refs via target_node merge, alias drift markers remain surfaced, 26/26 tests PASS, and benchmark families stay within SLA. Owner can finalize.",
+      "status": "done",
+      "created_at": "2026-04-10T14:33:17Z",
+      "resolved_at": "2026-04-10T14:35:36Z"
+    }
+  ],
+  "blockers": []
+}

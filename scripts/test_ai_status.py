@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import tempfile
 import unittest
@@ -81,11 +82,15 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
         ):
             ai_status.command_done(self.state, ["REG-002", "Owner finalized approved task"])
 
-        self.assertEqual(self.state["tasks"][0]["status"], "done")
-        self.assertEqual(self.state["tasks"][0]["terminal_outcome"], "completed")
+        self.assertIsNone(ai_status.get_task(self.state, "REG-002"))
+        self.assertEqual(self.state["handoffs"], [])
+        archive_task = archive_task_snapshot.call_args.args[0]
+        self.assertEqual(archive_task["status"], "done")
+        self.assertEqual(archive_task["terminal_outcome"], "completed")
 
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
@@ -138,15 +143,156 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             }
         ]
 
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
+        ):
             ai_status.command_supersede(self.state, ["REG-002", "Superseded by REG-010 after accepted consensus.", "REG-010"])
 
-        task = ai_status.get_task(self.state, "REG-002")
-        self.assertEqual(task["status"], "done")
-        self.assertEqual(task["terminal_outcome"], "superseded")
-        self.assertEqual(task["superseded_by"], "REG-010")
-        self.assertNotIn("waiting_for", task)
-        self.assertEqual(self.state["blockers"][0]["status"], "resolved")
+        self.assertIsNone(ai_status.get_task(self.state, "REG-002"))
+        self.assertEqual(self.state["blockers"], [])
+        archive_task = archive_task_snapshot.call_args.args[0]
+        self.assertEqual(archive_task["status"], "done")
+        self.assertEqual(archive_task["terminal_outcome"], "superseded")
+        self.assertEqual(archive_task["superseded_by"], "REG-010")
+        self.assertNotIn("waiting_for", archive_task)
+
+
+class DeliveryMetadataValidationTests(unittest.TestCase):
+    def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
+        responses = iter(
+            [
+                "feat/bg-006",
+                "abc123",
+                "BG-006 finalize operator acceptance matrix",
+                "Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>",
+                "Claude",
+                "noreply@anthropic.com",
+            ]
+        )
+        task = {
+            "id": "BG-006",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "review_approved",
+        }
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)):
+            with self.assertRaises(SystemExit) as exc_info:
+                ai_status.collect_done_delivery_metadata(task, "Claude")
+
+        message = str(exc_info.exception)
+        self.assertIn("`LLM-Agent: ...`", message)
+        self.assertIn("`Task-ID: ...`", message)
+        self.assertIn("`Reviewer: ...`", message)
+
+
+class ArchiveWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.state = {
+            "agents": [
+                {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [
+                {
+                    "id": "REG-100",
+                    "title": "Archived completion candidate",
+                    "phase": "Epic X",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "Completed",
+                    "last_update": "2026-04-14T02:00:00Z",
+                },
+                {
+                    "id": "REG-101",
+                    "title": "Still active",
+                    "phase": "Epic X",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "todo",
+                    "depends_on": ["REG-100"],
+                    "artifacts": [],
+                    "acceptance": [],
+                    "next": "Waiting on archived dependency",
+                    "last_update": "2026-04-14T02:00:00Z",
+                },
+            ],
+            "handoffs": [
+                {
+                    "task_id": "REG-100",
+                    "from": "Claude",
+                    "to": "Codex",
+                    "message": "Finalize complete",
+                    "status": "done",
+                    "created_at": "2026-04-14T01:50:00Z",
+                }
+            ],
+            "blockers": [
+                {
+                    "task_id": "REG-100",
+                    "owner": "Codex",
+                    "waiting_for": "Claude",
+                    "message": "Resolved blocker snapshot",
+                    "status": "resolved",
+                    "created_at": "2026-04-14T01:45:00Z",
+                }
+            ],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+    def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
+        with (
+            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-100"}) as archive_task_snapshot,
+            mock.patch.object(ai_status, "rebuild_archive_index") as rebuild_archive_index,
+        ):
+            ai_status.command_archive_migrate(self.state, [])
+
+        self.assertEqual([task["id"] for task in self.state["tasks"]], ["REG-101"])
+        self.assertEqual(self.state["handoffs"], [])
+        self.assertEqual(self.state["blockers"], [])
+        archive_task = archive_task_snapshot.call_args.args[0]
+        self.assertEqual(archive_task["id"], "REG-100")
+        rebuild_archive_index.assert_called_once()
+
+    def test_reopen_rejects_archived_task(self) -> None:
+        self.state["tasks"] = []
+        with mock.patch.object(ai_status, "archived_task_snapshot", return_value={"task_id": "REG-100"}):
+            with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+                with self.assertRaises(SystemExit) as exc_info:
+                    ai_status.command_reopen(self.state, ["REG-100", "Resume work"])
+
+        self.assertIn("archived", str(exc_info.exception))
+        self.assertIn("follow-up", str(exc_info.exception))
+
+    def test_show_reads_archive_snapshot(self) -> None:
+        self.state["tasks"] = []
+        snapshot = {
+            "task_id": "REG-100",
+            "archived_at": "2026-04-14T02:00:00Z",
+            "terminal_outcome": "completed",
+            "task": {
+                "id": "REG-100",
+                "status": "done",
+                "title": "Archived completion candidate",
+            },
+        }
+        with (
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=snapshot),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            ai_status.command_show(self.state, ["REG-100"])
+
+        rendered = stdout.getvalue()
+        self.assertIn('"source": "archive"', rendered)
+        self.assertIn('"task_id": "REG-100"', rendered)
+        self.assertIn("ai-task-archive/tasks", rendered)
 
 
 class SidecarTaskTests(unittest.TestCase):
@@ -329,6 +475,80 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertNotIn("Canonical map", content)
         self.assertIn("- Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Runtime & Dashboard`", content)
 
+    def test_write_current_work_formats_absolute_times_in_taiwan_time(self) -> None:
+        state = {
+            "updated_at": "2026-04-10T00:00:00Z",
+            "objective": "Track the queue and resume work before 2026-04-10T01:30:00Z.",
+            "sprint": "2026-04-10-bootstrap",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+                "L0.5 Derived Narrative": [
+                    "current-work.md",
+                ],
+            },
+            "agents": [
+                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "Resume at 2026-04-10T01:45:00Z.", "last_update": None},
+            ],
+            "tasks": [
+                {
+                    "id": "DEMO-002",
+                    "title": "Timezone rendering",
+                    "summary_zh": "確認人類可讀時間會轉成台灣時間。",
+                    "phase": "Foundation",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "review",
+                    "depends_on": [],
+                    "next": "Waiting until 2026-04-10T02:15:00Z.",
+                    "last_update": "2026-04-10T02:00:00Z",
+                    "review_notes_zh": ["Reviewer checked the handoff at 2026-04-10T02:30:00Z."],
+                    "review_file": "reviews/demo-002.md",
+                },
+            ],
+            "handoffs": [
+                {
+                    "task_id": "DEMO-002",
+                    "from": "Codex",
+                    "to": "Claude",
+                    "message": "Please review before 2026-04-10T02:20:00Z.",
+                    "status": "pending",
+                    "created_at": "2026-04-10T02:05:00Z",
+                }
+            ],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        logs = [
+            {
+                "ts": "2026-04-10T02:10:00Z",
+                "agent": "Codex",
+                "task_id": "DEMO-002",
+                "message": "Paused until 2026-04-10T02:40:00Z.",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-taipei-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path):
+                ai_status.write_current_work(state, logs)
+
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("Absolute times below use 台灣時間 (UTC+8).", content)
+        self.assertIn("Last updated: 2026-04-10 08:00:00", content)
+        self.assertIn("Track the queue and resume work before 2026-04-10 09:30:00.", content)
+        self.assertIn("Resume at 2026-04-10 09:45:00.", content)
+        self.assertIn("| `DEMO-002` | Foundation | Timezone rendering |", content)
+        self.assertIn("| review | - | 2026-04-10 10:00:00 | Waiting until 2026-04-10 10:15:00. |", content)
+        self.assertIn("| `DEMO-002` | Codex | Claude | Please review before 2026-04-10 10:20:00. | pending | 2026-04-10 10:05:00 |", content)
+        self.assertIn("Reviewer checked the handoff at 2026-04-10 10:30:00.", content)
+        self.assertIn("- 2026-04-10 10:10:00 Codex: `DEMO-002` Paused until 2026-04-10 10:40:00.", content)
+
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
             "canonical_document_layers": {
@@ -407,6 +627,79 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("## Discussion Planning", content)
         self.assertIn("phase1-2026-04-11", content)
         self.assertIn("`active`", content)
+
+    def test_write_current_work_includes_lovable_coordination_snapshot(self) -> None:
+        state = {
+            "updated_at": "2026-04-11T00:00:00Z",
+            "objective": "Track cross-repo Lovable delivery.",
+            "sprint": "2026-04-11-lovable-loop",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+                "L0.5 Derived Narrative": [
+                    "current-work.md",
+                ],
+            },
+            "agents": [
+                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+        orchestrator_state = {
+            "coordination": {
+                "last_scan_at": "2026-04-11T02:30:00Z",
+                "features": {
+                    "F-042": {
+                        "feature_id": "F-042",
+                        "screen": "promotion-review",
+                        "current_payload_type": "frontend-feedback",
+                        "source_repo": "ajoe734/front-ai-trading-system",
+                        "source_repo_id": "front_ai_trading_system",
+                        "target_repo_id": "pantheon",
+                        "lovable_task_path": ".coordination/responses/F-042-lovable-ui-task.yaml",
+                        "lovable_prompt_path": ".coordination/responses/F-042-lovable-prompt.md",
+                        "mirrored_to_target_repo": {"target_repo_id": "front_ai_trading_system"},
+                        "requests_by_type": {
+                            "frontend-feedback": {
+                                "type": "frontend-feedback",
+                                "path": "../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml",
+                                "payload": {"type": "frontend-feedback", "summary": "Feedback bundle ready"},
+                                "updated_at": "2026-04-11T02:30:00Z",
+                            }
+                        },
+                        "responses_by_type": {
+                            "lovable-ui-task": {
+                                "type": "lovable-ui-task",
+                                "path": ".coordination/responses/F-042-lovable-ui-task.yaml",
+                                "payload": {"type": "lovable-ui-task", "status": "ready"},
+                                "updated_at": "2026-04-11T02:00:00Z",
+                            }
+                        },
+                    }
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-lovable-current-work-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path):
+                with mock.patch.object(ai_status, "load_json_file", return_value=orchestrator_state):
+                    ai_status.write_current_work(state, [])
+
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("## Lovable Coordination", content)
+        self.assertIn("Lovable-ready packets: `1`", content)
+        self.assertIn("Frontend feedback returned: `1`", content)
+        self.assertIn("| `F-042` | promotion-review | `frontend_feedback_received` | yes | yes | no | yes |", content)
 
     def test_build_dashboard_bundle_summarizes_truth_layers(self) -> None:
         state = {
@@ -492,7 +785,28 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
         approval_state = {"pending": [], "history": []}
 
-        bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+        resolver = mock.Mock()
+        resolver.active_task_map.return_value = {
+            "APP-002-W1-FRONT-HANDOFF": state["tasks"][0],
+            "APP-002-W2-READ-INCIDENT": state["tasks"][1],
+        }
+        resolver.dependency_status.side_effect = lambda task_id: "missing"
+        resolver.dependency_satisfied.side_effect = lambda task_id: False
+        resolver.get.side_effect = lambda task_id: {
+            "APP-002-W1-FRONT-HANDOFF": state["tasks"][0],
+            "APP-002-W2-READ-INCIDENT": state["tasks"][1],
+        }.get(task_id)
+        resolver.source.side_effect = lambda task_id: "active" if task_id in resolver.active_task_map.return_value else None
+
+        with (
+            mock.patch.object(ai_status, "task_resolver", return_value=resolver),
+            mock.patch.object(
+                ai_status,
+                "load_archive_index",
+                return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
+            ),
+        ):
+            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["focus_mode"], "execution")
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
@@ -554,6 +868,296 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["focus_mode"], "execution")
         self.assertIn("worker_task_links", bundle)
         self.assertIn("truth_mismatches", bundle)
+
+    def test_build_dashboard_bundle_reads_terminal_counts_from_archive_summary(self) -> None:
+        state = {
+            "updated_at": "2026-04-14T02:00:00Z",
+            "agents": [],
+            "tasks": [
+                {
+                    "id": "REG-101",
+                    "title": "Still active",
+                    "summary_zh": "等待已封存依賴。",
+                    "phase": "Epic X",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "todo",
+                    "depends_on": ["REG-100"],
+                    "next": "Ready to start",
+                    "last_update": "2026-04-14T02:00:00Z",
+                },
+            ],
+        }
+        planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-14T02:05:00Z"},
+            "queue": {"events": {}},
+            "workers": {},
+            "recent_terminal_tasks": [
+                {
+                    "task_id": "REG-100",
+                    "terminal_outcome": "completed",
+                    "archived_at": "2026-04-14T01:59:00Z",
+                }
+            ],
+        }
+        approval_state = {"pending": [], "history": []}
+
+        resolver = mock.Mock()
+        resolver.active_task_map.return_value = {"REG-101": state["tasks"][0]}
+        resolver.dependency_status.side_effect = lambda task_id: "done" if task_id == "REG-100" else "todo"
+        resolver.dependency_satisfied.side_effect = lambda task_id: task_id == "REG-100"
+        resolver.get.side_effect = lambda task_id: state["tasks"][0] if task_id == "REG-101" else {"id": "REG-100", "status": "done"}
+        resolver.source.side_effect = lambda task_id: "active" if task_id == "REG-101" else "archive"
+
+        with (
+            mock.patch.object(ai_status, "task_resolver", return_value=resolver),
+            mock.patch.object(
+                ai_status,
+                "load_archive_index",
+                return_value={
+                    "updated_at": "2026-04-14T02:00:00Z",
+                    "counts": {"total": 3, "completed": 2, "superseded": 1},
+                    "recent_terminal_ids": ["REG-100"],
+                },
+            ),
+        ):
+            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
+        self.assertEqual(bundle["execution_summary"]["done"], 2)
+        self.assertEqual(bundle["execution_summary"]["superseded"], 1)
+        self.assertEqual(bundle["archive_summary"]["recent_terminal_ids"], ["REG-100"])
+        self.assertEqual(bundle["archive_summary"]["recent_terminal_tasks"][0]["task_id"], "REG-100")
+
+    def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
+        state = {
+            "updated_at": "2026-04-14T02:00:00Z",
+            "agents": [],
+            "tasks": [],
+        }
+        planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-14T02:05:00Z"},
+            "queue": {"events": {}},
+            "workers": {},
+            "coordination": {
+                "last_scan_at": "2026-04-14T02:04:00Z",
+                "features": {
+                    "F-042": {
+                        "feature_id": "F-042",
+                        "screen": "promotion-review",
+                        "summary": "Feedback bundle ready",
+                        "current_payload_type": "frontend-feedback",
+                        "source_repo": "ajoe734/front-ai-trading-system",
+                        "source_repo_id": "front_ai_trading_system",
+                        "target_repo_id": "pantheon",
+                        "target_agent": "Codex",
+                        "worker_kind": "front-sync-worker",
+                        "last_updated_at": "2026-04-14T02:04:00Z",
+                        "last_dispatched_at": "2026-04-14T02:03:00Z",
+                        "lovable_task_path": ".coordination/responses/F-042-lovable-ui-task.yaml",
+                        "lovable_prompt_path": ".coordination/responses/F-042-lovable-prompt.md",
+                        "mirrored_to_target_repo": {"target_repo_id": "front_ai_trading_system"},
+                        "requests_by_type": {
+                            "ui-done": {
+                                "type": "ui-done",
+                                "path": "../front-ai-trading-system/.coordination/requests/F-042-ui-done.yaml",
+                                "payload": {"type": "ui-done", "summary": "UI done"},
+                                "updated_at": "2026-04-14T02:02:00Z",
+                            },
+                            "frontend-feedback": {
+                                "type": "frontend-feedback",
+                                "path": "../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml",
+                                "payload": {"type": "frontend-feedback", "summary": "Feedback ready"},
+                                "updated_at": "2026-04-14T02:04:00Z",
+                            },
+                        },
+                        "responses_by_type": {
+                            "contract-ready": {
+                                "type": "contract-ready",
+                                "path": ".coordination/responses/F-042-contract-ready.yaml",
+                                "payload": {"type": "contract-ready"},
+                                "updated_at": "2026-04-14T02:00:00Z",
+                            },
+                            "lovable-ui-task": {
+                                "type": "lovable-ui-task",
+                                "path": ".coordination/responses/F-042-lovable-ui-task.yaml",
+                                "payload": {"type": "lovable-ui-task", "status": "ready"},
+                                "updated_at": "2026-04-14T02:01:00Z",
+                            },
+                        },
+                    }
+                },
+            },
+        }
+        approval_state = {"pending": [], "history": []}
+
+        with mock.patch.object(
+            ai_status,
+            "load_archive_index",
+            return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
+        ):
+            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        summary = bundle["coordination_summary"]
+        self.assertEqual(summary["last_scan_at"], "2026-04-14T02:04:00Z")
+        self.assertEqual(summary["counts"]["tracked_features"], 1)
+        self.assertEqual(summary["counts"]["lovable_ready"], 1)
+        self.assertEqual(summary["counts"]["ui_done_received"], 1)
+        self.assertEqual(summary["counts"]["frontend_feedback_received"], 1)
+        self.assertEqual(summary["counts"]["waiting_for_lovable"], 0)
+        self.assertEqual(summary["features"][0]["stage"], "frontend_feedback_received")
+        self.assertTrue(summary["features"][0]["mirrored_to_target_repo"])
+        self.assertEqual(summary["features"][0]["paths"]["frontend_feedback"], "../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml")
+
+    def test_build_dashboard_bundle_treats_dead_suspended_approval_as_approval_wait_not_live_worker(self) -> None:
+        state = {
+            "updated_at": "2026-04-14T01:42:00Z",
+            "agents": [],
+            "tasks": [
+                {
+                    "id": "BG-005",
+                    "title": "Define golden replay scenario and acceptance runbook",
+                    "summary_zh": "定義 golden replay scenario 與 acceptance runbook。",
+                    "phase": "Blueprint Gap P0",
+                    "owner": "Claude",
+                    "reviewer": "Qwen",
+                    "status": "review_approved",
+                    "depends_on": ["BG-000"],
+                    "next": "Supervisor resumed BG-005 for finalize after successful dispatch.",
+                    "last_update": "2026-04-14T00:42:04Z",
+                },
+            ],
+        }
+        planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {
+                "pid": 490443,
+                "last_heartbeat_at": "2026-04-14T01:42:22Z",
+                "mode_status": "active",
+                "mode_occupancy": {
+                    "planning": {"running": 0, "pending": 0, "queued": 0},
+                    "execution": {"running": 0, "pending": 1, "queued": 0},
+                    "coordination": {"running": 0, "pending": 0, "queued": 0},
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-1": {
+                        "status": "manual_pending",
+                        "run_id": "claude-run-1",
+                        "processed_at": "2026-04-14T00:42:04Z",
+                    }
+                }
+            },
+            "workers": {
+                "claude-run-1": {
+                    "task_id": "BG-005",
+                    "queue_event_id": "evt-1",
+                    "agent_id": "claude",
+                    "provider": "claude",
+                    "status": "suspended_approval",
+                    "pid": 477808,
+                    "last_event_at": "2026-04-14T00:42:46Z",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+        approval_state = {
+            "pending": [
+                {
+                    "approval_id": "apr-1",
+                    "task_id": "BG-005",
+                    "worker_run_id": "claude-run-1",
+                    "provider": "claude",
+                    "created_at": "2026-04-14T00:42:46Z",
+                }
+            ],
+            "history": [],
+        }
+
+        with mock.patch.object(ai_status, "pid_is_alive", return_value=False):
+            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        self.assertEqual(bundle["runtime_summary"]["running_workers"], 0)
+        self.assertEqual(bundle["runtime_summary"]["pending_workers"], 0)
+        self.assertEqual(bundle["worker_task_links"], [])
+        self.assertFalse(any(item["type"] == "queue_started_without_worker" for item in bundle["truth_mismatches"]))
+
+    def test_build_dashboard_bundle_skips_planning_approval_without_task_board_row(self) -> None:
+        state = {
+            "updated_at": "2026-04-14T05:35:00Z",
+            "agents": [],
+            "tasks": [],
+        }
+        planning_state = {"status": "active", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-14T05:35:00Z"},
+            "queue": {"events": {}},
+            "workers": {
+                "claude-run-1": {
+                    "task_id": "phase3-2026-04-14-pantheon-console-loop",
+                    "queue_event_id": "evt-1",
+                    "agent_id": "claude",
+                    "provider": "claude",
+                    "status": "suspended_approval",
+                    "last_event_at": "2026-04-14T05:35:00Z",
+                    "request_snapshot": {
+                        "reason": "discussion_planning_readout",
+                        "metadata": {"planning": {"mode": "discussion_planning"}},
+                    },
+                }
+            },
+        }
+        approval_state = {
+            "pending": [
+                {
+                    "approval_id": "apr-1",
+                    "task_id": "phase3-2026-04-14-pantheon-console-loop",
+                    "worker_run_id": "claude-run-1",
+                    "provider": "claude",
+                    "created_at": "2026-04-14T05:35:00Z",
+                }
+            ],
+            "history": [],
+        }
+
+        bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        self.assertFalse(any(item["type"] == "approval_missing_task" for item in bundle["truth_mismatches"]))
+
+    def test_build_dashboard_bundle_skips_planning_worker_without_task_board_row(self) -> None:
+        state = {
+            "updated_at": "2026-04-14T05:37:00Z",
+            "agents": [],
+            "tasks": [],
+        }
+        planning_state = {"status": "active", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-14T05:37:00Z"},
+            "queue": {"events": {}},
+            "workers": {
+                "claude-run-1": {
+                    "task_id": "phase3-2026-04-14-pantheon-console-loop",
+                    "queue_event_id": "evt-1",
+                    "agent_id": "claude",
+                    "provider": "claude",
+                    "status": "running",
+                    "pid": None,
+                    "last_event_at": "2026-04-14T05:37:00Z",
+                    "request_snapshot": {
+                        "reason": "discussion_planning_round",
+                        "metadata": {"planning": {"mode": "discussion_planning"}},
+                    },
+                }
+            },
+        }
+        approval_state = {"pending": [], "history": []}
+
+        bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        self.assertFalse(any(item["type"] == "worker_task_missing" for item in bundle["truth_mismatches"]))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PLAN-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare PLAN-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 PLAN-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Planning Bootstrap",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the sidecar acceptance packet after the owner-close refresh. Parent PLAN-002 is already done; this packet remains support-only historical evidence, and no canonical truth or runtime implementation was changed. Commit c0aa176.",
+    "last_update": "2026-04-13T07:05:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PLAN-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "reviewer endorsement complete：packet 已對齊目前 shared truth 的 Qwen-owned parent state",
+      "acceptance packet 仍維持 support-only scope，未修改 canonical truth",
+      "可交回 Claude 做 final done closure，供 parent PLAN-002 reviewer flow 引用"
+    ],
+    "review_file": "support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-13T07:05:18Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c0aa176fd16a45b0a54419a17c4eda606ed968cf",
+      "commit_subject": "PLAN-002-SIDECAR-ACCEPTANCE finalize refresh",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "ajoe734@local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PLAN-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 99,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet created at support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md. Contains dependency map, 10-item acceptance checklist, execution wave readiness, and artifact inventory. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-13T00:19:43Z",
+      "resolved_at": "2026-04-13T00:25:41Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewer cleanup complete: packet now cites shared truth only, corrects downstream task count to 8 BG tasks, and is ready to support parent PLAN-002 closure.",
+      "status": "done",
+      "created_at": "2026-04-13T00:25:41Z",
+      "resolved_at": "2026-04-13T00:26:02Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet complete at support/sidecars/PLAN-002/PLAN-002-SIDECAR-ACCEPTANCE.md. All 10 acceptance criteria verified. Ready for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-04-13T00:27:16Z",
+      "resolved_at": "2026-04-13T00:28:30Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewer cleanup complete: packet now cites shared truth only, corrects downstream task count to 8 BG tasks, and is ready to support parent PLAN-002 closure.",
+      "status": "done",
+      "created_at": "2026-04-13T00:28:30Z",
+      "resolved_at": "2026-04-13T00:28:54Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet verified against shared truth (ai-status.json, current-work.md, ai-activity-log.jsonl). All 10 acceptance criteria confirmed. 8 BG tasks materialized and dependency-gated on PLAN-002. Claude sign-off added in Section 7. Use as support evidence when Codex hands off PLAN-002 to Claude for formal review closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:03:50Z",
+      "resolved_at": "2026-04-13T02:03:55Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet verified against shared truth (ai-status.json, current-work.md, ai-activity-log.jsonl). All 10 acceptance criteria confirmed. 8 BG tasks materialized and dependency-gated on PLAN-002. Claude sign-off added in Section 7. Use as support evidence when Codex hands off PLAN-002 to Claude for formal review closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:03:55Z",
+      "resolved_at": "2026-04-13T02:06:02Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet re-aligned to current shared truth before approval: parent PLAN-002 is currently in_progress, sidecar owner is Claude, and the only remaining action is for Codex to hand PLAN-002 back to Claude for formal review closure. All 10 acceptance criteria remain verified from ai-status.json, current-work.md, ai-activity-log.jsonl, and docs-site/index.html. Support-only scope preserved; no canonical truth changed.",
+      "status": "done",
+      "created_at": "2026-04-13T02:06:02Z",
+      "resolved_at": "2026-04-13T02:06:15Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 10 acceptance criteria verified against shared truth. Finalize section added (Section 8). No canonical truth modified. Requesting formal approval to mark done and unblock parent PLAN-002 closure + BG execution wave.",
+      "status": "done",
+      "created_at": "2026-04-13T02:10:10Z",
+      "resolved_at": "2026-04-13T02:13:51Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Shared-truth reviewer pass complete. Packet aligned to current parent ownership and ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T02:13:51Z",
+      "resolved_at": "2026-04-13T02:14:13Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete: all 10 criteria verified against shared truth, PLAN-002 is done, Codex endorsement on record in review_notes_zh. Submitting for final approve step.",
+      "status": "done",
+      "created_at": "2026-04-13T02:34:29Z",
+      "resolved_at": "2026-04-13T02:34:37Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex endorsement confirmed: packet is consistent with shared truth, support-only scope preserved throughout. All 10 acceptance criteria verified. Approving for final Claude done closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:34:37Z",
+      "resolved_at": "2026-04-13T03:40:00Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-13T03:40:00Z",
+      "resolved_at": "2026-04-13T07:01:10Z"
+    },
+    {
+      "task_id": "PLAN-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restoring review_approved after finalize-dispatch drift: reviewer endorsement was already recorded, and the packet is now refreshed for the current Codex-owned owner-close context.",
+      "status": "done",
+      "created_at": "2026-04-13T07:05:08Z",
+      "resolved_at": "2026-04-13T07:05:18Z"
+    }
+  ],
+  "blockers": []
+}

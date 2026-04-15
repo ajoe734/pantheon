@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "task_id": "PKT-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T11:00:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare PKT-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 PKT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "APP-002 Packetization",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/PKT-001/PKT-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the reviewer-approved support-only acceptance packet; re-verified the artifact against current ai-status ownership, kept the slice non-canonical, and closed the sidecar for parent-owner absorption without a task-specific commit because the shared worktree is already carrying unrelated multi-agent changes.",
+    "last_update": "2026-04-14T11:00:43Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PKT-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "所有宣告的 ready artifact 均已確認存在於磁碟上",
+      "blocked screen artifact 確實不存在，與 packet-family 宣告一致",
+      "三項 acceptance criteria 均已驗證"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T11:00:43Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 146,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet is ready at support/sidecars/PKT-001/PKT-001-SIDECAR-ACCEPTANCE.md. It verifies the canonical PKT-001 packet family against the three acceptance criteria, confirms the ready artifact files exist for F-042, Deployment Review Console, and Governance Review Queue, and keeps the remaining Governance Workbench screens explicit as blocked BFF gaps rather than false-ready completion.",
+      "status": "done",
+      "created_at": "2026-04-14T10:45:49Z",
+      "resolved_at": "2026-04-14T10:57:54Z"
+    },
+    {
+      "task_id": "PKT-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all declared ready artifacts verified on disk, blocked screens correctly absent, three acceptance criteria satisfied. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T10:57:54Z",
+      "resolved_at": "2026-04-14T11:00:43Z"
+    }
+  ],
+  "blockers": []
+}

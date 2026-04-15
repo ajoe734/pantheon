@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "task_id": "DOC-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DOC-002",
+    "title": "Publish canonical document map and conflict-resolution rules",
+    "summary_zh": "發佈 CANONICAL_DOCUMENT_MAP.md，定義四層 tier、衝突解決規則、問題導向路由表，以及 Working Rules。",
+    "phase": "Phase 0: Canonical Cutover",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DOC-001"
+    ],
+    "artifacts": [
+      "CANONICAL_DOCUMENT_MAP.md"
+    ],
+    "acceptance": [
+      "question routing table covers all 16 L1 policy files",
+      "tier precedence rules are documented",
+      "onboarding files (AI_COLLABORATION_GUIDE.md, FOR_GROK.md) point to the map"
+    ],
+    "last_update": "2026-04-09T16:00:00Z"
+  },
+  "handoffs": [],
+  "blockers": []
+}

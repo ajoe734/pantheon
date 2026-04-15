@@ -1,8 +1,9 @@
 feature_id: F-042
-source_repo: front-ai-trading-system
-source_branch: main
-screen: promotion-review
 type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: promotion-review
 blocking: true
 
 summary: Promotion Review UI is blocked on missing or incorrect Pantheon BFF fields.

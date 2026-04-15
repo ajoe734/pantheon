@@ -4,41 +4,29 @@ project: ajoe734/front-ai-trading-system
 status: ready
 pantheon_pr: null
 base_url: null
-workbench: operator-console
 screen: incident-home
-screen_id: screen-operator-incident-home
-ui_spec_path: docs/screens/PKT-002-incident-home.md
-frontend_change_spec_path: docs/pantheon-handoffs/PKT-002-incident-home/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
-  - GET /api/v1/incidents
-  - GET /api/v1/kill-switch/status
+- GET /api/v1/incidents
+- GET /api/v1/kill-switch/status
 constraints:
-  - use existing bff client only
-  - do not add raw fetch in components
-  - do not import demo providers
-  - if any required field is missing, emit a bff-gap handoff instead of mocking
-  - kill switch badge state must come from BFF response; do not derive state locally
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
 acceptance:
-  - build the Incident Home list panel showing open and in-progress incidents
-  - build the kill switch control rail badge from GET /api/v1/kill-switch/status
-  - use only the existing BFF client
-  - do not add raw fetch calls in component files
-  - do not invent endpoint fields beyond this handoff packet
-  - render the non-dismissable warning banner with last known state when kill switch surface is degraded
-  - render "Kill switch status unavailable" banner when kill switch surface is unavailable
-  - render loading, empty, degraded, and error states as explicitly distinct
-required_feedback:
-  - docs/pantheon-feedback/PKT-002-incident-home/LOVABLE_CHANGE_FEEDBACK.md
-  - docs/pantheon-feedback/PKT-002-incident-home/API_GAP_REQUESTS.json
-  - docs/pantheon-feedback/PKT-002-incident-home/UI_DECISIONS.md
-  - docs/pantheon-feedback/PKT-002-incident-home/QA_STATUS.md
-delivery_dependencies:
-  - .coordination/responses/PKT-002-incident-home-contract-ready.yaml
+- build the Incident Home list panel and kill switch control rail badge
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- do not invent fields beyond this handoff packet
+- render kill switch badge from GET /api/v1/kill-switch/status only; do not derive
+  state locally
+- render the non-dismissable warning banner when meta.surfaces.kill_switch is degraded
+  or unavailable
+- display the degradation banner when any meta.surfaces entry is degraded or unavailable
 links:
-  bff_spec_path: docs/bff/PKT-002-incident-home.md
-  example_payload_paths:
-    - docs/examples/PKT-002-incident-home.json
-  handoff_bundle_dir: docs/pantheon-handoffs/PKT-002-incident-home
+  lovable_project_url: null
+  bff_spec_path: null
+  example_payload_paths: []
 gap_handoff_path: .coordination/requests/PKT-002-incident-home-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-002-incident-home-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-002-incident-home-ui-done.yaml

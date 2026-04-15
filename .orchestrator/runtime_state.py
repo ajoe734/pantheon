@@ -23,6 +23,7 @@ def default_state() -> dict[str, Any]:
         "initialized_at": None,
         "last_scan_at": None,
         "tasks": {},
+        "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
         "queue": {
@@ -76,6 +77,8 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
         return state
     state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination"}})
     state.setdefault("tasks", {})
+    recent_terminal_tasks = state.get("recent_terminal_tasks")
+    state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
     state.setdefault("queue", {})

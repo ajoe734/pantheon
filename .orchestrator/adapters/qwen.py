@@ -25,6 +25,11 @@ def _qwen_settings() -> dict:
     return load_json(QWEN_SETTINGS_PATH, default={}) or {}
 
 
+def _allow_inbox_fallback(config: dict | None = None) -> bool:
+    provider = ((config or {}).get("providers", {}).get("qwen", {}) or {})
+    return bool(provider.get("allow_inbox_fallback", True))
+
+
 def _configured_value(settings: dict, key: str, env_name: str | None = None) -> str | None:
     direct = str(settings.get(key) or "").strip()
     if direct:
@@ -93,24 +98,38 @@ class QwenAdapter(BaseAdapter):
         if cli and auth_ready:
             notes = "Uses the official Qwen Code CLI in non-interactive mode with standalone Qwen authentication."
         elif cli:
-            notes = "Qwen Code CLI is installed but not authenticated/configured for non-interactive use, so delivery falls back to inbox."
+            notes = "Qwen Code CLI is installed but not authenticated/configured for non-interactive use."
         else:
             notes = "Qwen Code CLI is not installed."
+        if not supported and not _allow_inbox_fallback(self.config):
+            notes = f"{notes} Inbox fallback is disabled for this provider."
         return DeliveryCapability(
             adapter=self.name,
             supported=bool(cli),
-            requires_manual_confirmation=not supported,
+            requires_manual_confirmation=bool(not supported and _allow_inbox_fallback(self.config)),
             can_auto_deliver=supported,
             can_auto_approve_edits=supported,
-            delivery_mode="qwen" if supported else "file_inbox",
+            delivery_mode="qwen" if (supported or not _allow_inbox_fallback(self.config)) else "file_inbox",
             verified="verified" if supported else ("partial" if cli else "unavailable"),
-            host="Official Qwen Code CLI" if cli else "Qwen Code CLI + inbox fallback",
+            host="Official Qwen Code CLI" if (cli or not _allow_inbox_fallback(self.config)) else "Qwen Code CLI + inbox fallback",
             notes=notes,
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         capability = self.capability(request.agent_id)
         if not capability.supported or not capability.can_auto_deliver:
+            if not _allow_inbox_fallback(self.config):
+                reason = capability.notes or "Qwen auto-delivery is unavailable and inbox fallback is disabled."
+                return DeliveryResult(
+                    ok=False,
+                    adapter=self.name,
+                    mode="qwen",
+                    target=agent_config_for(self.config, request.agent_id).get("display_name", request.agent_id),
+                    auto_delivered=False,
+                    manual_confirmation_required=False,
+                    error=reason,
+                    notes=reason,
+                )
             fallback = FileInboxAdapter(config=self.config, provider_capabilities=self.provider_capabilities)
             result = fallback.deliver(request)
             result.adapter = self.name

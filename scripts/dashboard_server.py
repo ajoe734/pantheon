@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 class NoCacheRequestHandler(SimpleHTTPRequestHandler):
     live_file_map: dict[str, Path] = {}
+    tail_line_map: dict[str, int] = {}  # paths that should be served as last-N lines
     repo_root: Path | None = None
 
     def end_headers(self) -> None:
@@ -30,6 +31,18 @@ class NoCacheRequestHandler(SimpleHTTPRequestHandler):
         if live_path is not None:
             if not live_path.exists():
                 self.send_error(404, f"Live file not found: {parsed.path}")
+                return
+            tail_lines = self.tail_line_map.get(parsed.path)
+            if tail_lines is not None:
+                # Serve only the last N lines to keep payload small
+                with live_path.open("rb") as f:
+                    all_lines = f.readlines()
+                body = b"".join(all_lines[-tail_lines:])
+                self.send_response(200)
+                self.send_header("Content-type", self.guess_type(str(live_path)))
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             self.send_response(200)
             self.send_header("Content-type", self.guess_type(str(live_path)))
@@ -115,6 +128,10 @@ def main() -> None:
         "/orchestrator-state.json": repo_root / ".orchestrator" / "state.json",
         "/approval-queue.json": repo_root / ".orchestrator" / "approval-queue.json",
         "/planning-state.json": repo_root / ".orchestrator" / "planning-state.json",
+    }
+    # Serve only the last 500 lines of the activity log to keep payload small
+    NoCacheRequestHandler.tail_line_map = {
+        "/ai-activity-log.jsonl": 500,
     }
     NoCacheRequestHandler.repo_root = repo_root
     handler = functools.partial(NoCacheRequestHandler, directory=directory)

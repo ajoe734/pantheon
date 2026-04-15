@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+    "title": "Prepare APP-002-W2-CLI-FALLBACK review packet and evidence summary",
+    "summary_zh": "平行支援 APP-002-W2-CLI-FALLBACK，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 2",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W1-COMMAND-DEPLOYMENT",
+      "APP-002-W2-CONTROL-INCIDENT"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W2-CLI-FALLBACK/APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Review packet finalized. All acceptance criteria met: support/sidecars/APP-002-W2-CLI-FALLBACK/APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW.md created with complete evidence inventory, verification notes (11/11 tests pass), non-blocking items documented, and handoff to Codex. Parent task APP-002-W2-CLI-FALLBACK already done. No canonical truth modified.",
+    "last_update": "2026-04-11T18:18:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W2-CLI-FALLBACK",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "CLI/internal API evidence aligned; 11/11 tests; non-blocking items documented."
+    ],
+    "review_file": "support/sidecars/APP-002-W2-CLI-FALLBACK/APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet complete. Evidence summary written at support/sidecars/APP-002-W2-CLI-FALLBACK/review_app002_w2_cli_fallback_qwen.md. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-11T17:02:22Z",
+      "resolved_at": "2026-04-11T17:05:20Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved: Qwen's review packet is thorough and accurate. CLI and internal API implementation verified — 11/11 tests pass, syntax valid, dry-run confirmed. Argparse bug found and fixed during review. Secondary control path is production-ready for v1. Non-blocking items documented appropriately.",
+      "status": "done",
+      "created_at": "2026-04-11T17:05:20Z",
+      "resolved_at": "2026-04-11T18:08:24Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet complete. Evidence summary compiled, CLI and internal API verification done. 11/11 tests passing. Recommendation: approve parent task. Ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-11T18:09:35Z",
+      "resolved_at": "2026-04-11T18:10:58Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet ready for APP-002-W2-CLI-FALLBACK. Evidence summary, acceptance criteria verification, and spot-checks compiled. Ready for Codex review approval.",
+      "status": "done",
+      "created_at": "2026-04-11T18:10:58Z",
+      "resolved_at": "2026-04-11T18:13:32Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved: packet complete and consistent with current CLI/internal API behavior.",
+      "status": "done",
+      "created_at": "2026-04-11T18:13:32Z",
+      "resolved_at": "2026-04-11T18:15:56Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet complete. Handing off to Codex for approval.",
+      "status": "done",
+      "created_at": "2026-04-11T18:18:22Z",
+      "resolved_at": "2026-04-11T18:18:28Z"
+    },
+    {
+      "task_id": "APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review packet approved. Evidence inventory complete, 11/11 tests pass, non-blocking items documented. Support-only scope confirmed.",
+      "status": "done",
+      "created_at": "2026-04-11T18:18:28Z",
+      "resolved_at": "2026-04-11T18:18:35Z"
+    }
+  ],
+  "blockers": []
+}

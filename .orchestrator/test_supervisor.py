@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import contextlib
 import tempfile
 import unittest
 import os
 import json
+import subprocess
 from pathlib import Path
 from unittest import mock
 
@@ -47,6 +49,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         worker = self._worker_for_log(
             "\n".join(
                 [
+                    "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
                     "retryDelayMs: 1807388.816191,",
                     "reason: 'QUOTA_EXHAUSTED'",
                     "An unexpected critical error occurred:[object Object]",
@@ -57,7 +60,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            "An unexpected critical error occurred:[object Object]",
+            "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
         )
 
     def test_ignores_transcribed_limit_error_inside_review_notes(self) -> None:
@@ -66,6 +69,20 @@ class DetectWorkerFailureTests(unittest.TestCase):
                 [
                     "Reviewer note:",
                     'Auto-reassigned ownership from Claude to Copilot after repeated provider failure: {"type":"result","result":"You\'ve hit your limit · resets 12am (Asia/Taipei)","worker_run_id":"claude-123"}',
+                    "No local failure happened in this session.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_ignores_search_result_json_field_that_mentions_quota(self) -> None:
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "exec",
+                    '718:      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota",',
                     "No local failure happened in this session.",
                 ]
             )
@@ -106,6 +123,11 @@ class DetectWorkerFailureTests(unittest.TestCase):
             supervisor.format_runtime_timestamp_local("2026-04-06T14:35:42Z"),
             "2026-04-06 22:35:42",
         )
+
+    @mock.patch("supervisor.os.kill")
+    @mock.patch("supervisor.os.waitpid", return_value=(43210, 0))
+    def test_pid_is_alive_treats_reaped_child_as_dead(self, _waitpid: mock.Mock, _kill: mock.Mock) -> None:
+        self.assertFalse(supervisor.pid_is_alive(43210))
 
 
 class ProcessQueueDispatchGuardTests(unittest.TestCase):
@@ -348,6 +370,53 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         start_worker.assert_called_once()
         sync_dispatched_task_status.assert_called_once_with(self.config, queue_payload)
 
+    def test_failed_auto_lane_dispatch_does_not_create_manual_pending_worker(self) -> None:
+        current_task = {
+            "id": "BUS-VAL-005",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-04-13T14:20:00Z",
+        }
+        queue_payload = {
+            "event_id": "evt-failed-auto",
+            "task_id": "BUS-VAL-005",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": "owned_in_progress_dispatch",
+            "message": "wake",
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="BUS-VAL-005",
+            reason="owned_in_progress_dispatch",
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "start_worker_for_request", return_value=(False, "CLI auth unavailable", None)),
+            mock.patch.object(supervisor, "classify_worker_failure", return_value={"kind": "auth", "label": "authentication"}),
+            mock.patch.object(supervisor, "summarize_failure_reason", return_value={"summary": "CLI auth unavailable", "kind": "auth"}),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value=None),
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-failed-auto"]
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["error"], "CLI auth unavailable")
+        self.assertEqual(state["workers"], {})
+
     def test_dispatcher_can_requeue_same_task_after_previous_failure(self) -> None:
         current_task = {
             "id": "REG-002",
@@ -459,6 +528,106 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertTrue(changed)
         queued_task_ids = [call.args[1]["task_id"] for call in queue_delivery_event.call_args_list]
         self.assertNotIn("FB-003", queued_task_ids)
+
+    def test_dispatcher_accepts_archived_done_dependency(self) -> None:
+        current_task = {
+            "id": "FB-004",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": ["REG-100"],
+            "last_update": "2026-04-06T15:00:00Z",
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        status = {"tasks": [current_task]}
+
+        class FakeResolver:
+            def __init__(self, task_lookup):
+                self.task_lookup = task_lookup
+
+            def dependency_status(self, task_id):
+                if task_id == "REG-100":
+                    return "done"
+                task = self.task_lookup.get(task_id) or {}
+                return str(task.get("status") or "missing")
+
+            def dependency_satisfied(self, task_id):
+                return task_id == "REG-100"
+
+        with (
+            mock.patch.object(supervisor, "TaskResolver", FakeResolver),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        queued_task_ids = [call.args[1]["task_id"] for call in queue_delivery_event.call_args_list]
+        self.assertIn("FB-004", queued_task_ids)
+
+    def test_dispatcher_rejects_archived_superseded_dependency(self) -> None:
+        current_task = {
+            "id": "FB-005",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": ["REG-200"],
+            "last_update": "2026-04-06T15:00:00Z",
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        status = {"tasks": [current_task]}
+
+        class FakeResolver:
+            def __init__(self, task_lookup):
+                self.task_lookup = task_lookup
+
+            def dependency_status(self, task_id):
+                if task_id == "REG-200":
+                    return "superseded"
+                task = self.task_lookup.get(task_id) or {}
+                return str(task.get("status") or "missing")
+
+            def dependency_satisfied(self, task_id):
+                return False
+
+        with (
+            mock.patch.object(supervisor, "TaskResolver", FakeResolver),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        queued_task_ids = [call.args[1]["task_id"] for call in queue_delivery_event.call_args_list]
+        self.assertNotIn("FB-005", queued_task_ids)
+
+    def test_discussion_planning_materialization_treats_archived_task_as_already_materialized(self) -> None:
+        planning_state = {
+            "status": "accepted",
+            "human_gate_status": "approved",
+            "session_id": "phase3-2026-04-14-pantheon-console-loop",
+            "proposed_execution_tasks": [{"id": "LOOP-001"}],
+        }
+
+        class FakeResolver:
+            def __init__(self, _task_lookup):
+                pass
+
+            def snapshot(self, task_id):
+                if task_id == "LOOP-001":
+                    return {"task_id": "LOOP-001"}
+                return None
+
+        with (
+            mock.patch.object(supervisor, "load_json", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/tmp/ai-status.json")),
+            mock.patch.object(supervisor, "TaskResolver", FakeResolver),
+        ):
+            needs_materialization = supervisor.discussion_planning_needs_materialization(self.config, planning_state)
+
+        self.assertFalse(needs_materialization)
 
     def test_dispatcher_helper_claims_ready_todo_when_owner_is_busy_with_finalize(self) -> None:
         config = {
@@ -574,6 +743,123 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-003")
         self.assertEqual(queued_event["target_agent"], "Copilot")
+
+    def test_dispatcher_helper_claims_in_progress_when_owner_lane_is_paused(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Qwen": ["Copilot", "Codex", "Claude"],
+                }
+            },
+            "agents": {
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "qwen": {
+                        "provider": "qwen",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "Capacity / rate limit failure",
+                    }
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {"id": "WB-006", "status": "in_progress", "owner": "Qwen", "reviewer": "Claude", "depends_on": []},
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "WB-006")
+        self.assertEqual(kwargs["new_owner"], "Copilot")
+        self.assertEqual(kwargs["new_reviewer"], "Qwen")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "WB-006")
+        self.assertEqual(queued_event["target_agent"], "Copilot")
+        self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
+
+    def test_dispatcher_does_not_helper_claim_in_progress_when_owner_lane_is_healthy(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Qwen": ["Copilot", "Codex", "Claude"],
+                }
+            },
+            "agents": {
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        status = {
+            "tasks": [
+                {"id": "WB-006", "status": "in_progress", "owner": "Qwen", "reviewer": "Claude", "depends_on": []},
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        persist.assert_not_called()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "WB-006")
+        self.assertEqual(queued_event["target_agent"], "Qwen")
+        self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
     def test_skips_duplicate_start_when_active_worker_already_exists(self) -> None:
         current_task = {
@@ -702,6 +988,75 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
+    def test_discussion_planning_needs_materialization_for_accepted_approved_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_file = root / "ai-status.json"
+            status_file.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+            config = {
+                "paths": {"status_file": str(status_file)},
+                "schema": {"tasks_path": "tasks", "task_id_field": "id"},
+            }
+            planning_state = {
+                "status": "accepted",
+                "human_gate_status": "approved",
+                "session_id": "phase3-session",
+                "proposed_execution_tasks": [
+                    {
+                        "id": "LOOP-001",
+                        "source_plane": "planning",
+                        "source_ref": {"session_id": "phase3-session"},
+                    }
+                ],
+            }
+
+            class FakeResolver:
+                def __init__(self, _task_lookup):
+                    pass
+
+                def snapshot(self, _task_id):
+                    return None
+
+            with mock.patch.object(supervisor, "TaskResolver", FakeResolver):
+                self.assertTrue(supervisor.discussion_planning_needs_materialization(config, planning_state))
+
+    def test_discussion_planning_skips_materialization_when_current_session_tasks_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_file = root / "ai-status.json"
+            status_file.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "LOOP-001",
+                                "source_plane": "planning",
+                                "source_ref": {"session_id": "phase3-session"},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"status_file": str(status_file)},
+                "schema": {"tasks_path": "tasks", "task_id_field": "id"},
+            }
+            planning_state = {
+                "status": "accepted",
+                "human_gate_status": "approved",
+                "session_id": "phase3-session",
+                "proposed_execution_tasks": [
+                    {
+                        "id": "LOOP-001",
+                        "source_plane": "planning",
+                        "source_ref": {"session_id": "phase3-session"},
+                    }
+                ],
+            }
+
+            self.assertFalse(supervisor.discussion_planning_needs_materialization(config, planning_state))
+
     def test_heartbeat_lag_seconds_reports_gap(self) -> None:
         lag = supervisor.heartbeat_lag_seconds(
             "2026-04-06T12:00:00Z",
@@ -749,6 +1104,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
             mock.patch.object(supervisor, "prune_event_queue", return_value=False),
+            mock.patch.object(supervisor, "load_discussion_planning_state", return_value=None),
             mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=False),
             mock.patch.object(supervisor, "process_queue", return_value=False),
             mock.patch.object(supervisor, "sync_github_bus", return_value=False),
@@ -812,6 +1168,114 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         dispatch_discussion_planning.assert_called_once()
         dispatch_ready_tasks.assert_not_called()
         dispatch_underutilization_sidecars.assert_not_called()
+
+    def test_run_once_auto_materializes_accepted_session_before_execution_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_file = root / "ai-status.json"
+            status_file.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+            script_dir = root / "scripts"
+            script_dir.mkdir(parents=True, exist_ok=True)
+            (script_dir / "planning_state.py").write_text("# test stub\n", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(status_file),
+                    "activity_log": str(root / "activity-log.jsonl"),
+                },
+                "schema": {
+                    "tasks_path": "tasks",
+                    "task_id_field": "id",
+                    "assignee_field": "owner",
+                    "reviewer_field": "reviewer",
+                },
+                "supervisor": {},
+                "watcher": {},
+                "ready_dispatcher": {},
+                "providers": {},
+                "agents": {},
+            }
+            initial_state = {
+                "queue": {"events": {}},
+                "workers": {},
+                "approvals": {},
+                "supervisor": {
+                    "pid": 61209,
+                    "started_at": "2026-04-05T12:44:57Z",
+                    "last_heartbeat_at": "2026-04-06T04:17:26Z",
+                },
+            }
+            planning_state = {
+                "status": "accepted",
+                "planning_mode": "discussion_planning",
+                "human_gate_status": "approved",
+                "session_id": "phase3-session",
+                "proposed_execution_tasks": [
+                    {
+                        "id": "LOOP-001",
+                        "source_plane": "planning",
+                        "source_ref": {"session_id": "phase3-session"},
+                    }
+                ],
+            }
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(supervisor, "write_supervisor_pid"))
+                stack.enter_context(mock.patch.object(supervisor, "load_runtime_state", return_value=dict(initial_state)))
+                stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "load_provider_report", return_value={}))
+                stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "poll_workers", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "load_discussion_planning_state", return_value=planning_state))
+                dispatch_discussion_planning = stack.enter_context(
+                    mock.patch.object(supervisor, "dispatch_discussion_planning", return_value=False)
+                )
+                dispatch_ready_tasks = stack.enter_context(
+                    mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=True)
+                )
+                stack.enter_context(mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
+                stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
+                stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
+                stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
+                stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
+                stack.enter_context(
+                    mock.patch.object(
+                        supervisor,
+                        "TaskResolver",
+                        type(
+                            "FakeResolver",
+                            (),
+                            {
+                                "__init__": lambda self, _task_lookup: None,
+                                "snapshot": lambda self, _task_id: None,
+                            },
+                        ),
+                    )
+                )
+                run_mock = stack.enter_context(
+                    mock.patch.object(
+                        supervisor.subprocess,
+                        "run",
+                        return_value=subprocess.CompletedProcess(
+                            args=["python3", str(script_dir / "planning_state.py"), "materialize"],
+                            returncode=0,
+                            stdout="materialized",
+                            stderr="",
+                        ),
+                    )
+                )
+                changed = supervisor.run_once(config, watch=False, replay=False)
+
+            self.assertTrue(changed)
+            dispatch_discussion_planning.assert_not_called()
+            dispatch_ready_tasks.assert_called_once()
+            run_mock.assert_called_once()
+            self.assertEqual(run_mock.call_args.args[0][-1], "materialize")
 
 
 class DiscussionPlanningDispatchTests(unittest.TestCase):
@@ -896,6 +1360,62 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
         self.assertIn("starter-draft.md", "\n".join(codex_event["target_files"]))
         claude_event = next(row for row in rows if row["target_display_name"] == "Claude")
         self.assertIn("consensus-packet.md", "\n".join(claude_event["target_files"]))
+
+    def test_dispatch_discussion_planning_uses_active_session_paths_and_owned_outputs(self) -> None:
+        planning_dir = "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop"
+        planning_state = {
+            "session_id": "phase3-2026-04-14-pantheon-console-loop",
+            "planning_dir": planning_dir,
+            "session_file": f"{planning_dir}/planning-session.json",
+            "status": "active",
+            "planning_mode": "discussion_planning",
+            "summary": "Formalize the Pantheon Console closed loop.",
+            "objective": "Define the canonical closed-loop coordination protocol and execution backlog for all 8 workbenches.",
+            "baton_owner": "Codex",
+            "next_reviewer": "Qwen",
+            "current_round": 0,
+            "consensus_status": "draft",
+            "brief_files": [
+                "Pantheon_總索引版系統分析文件.md",
+                ".coordination/README.md",
+            ],
+            "artifacts": {
+                "planning_readme": {"path": f"{planning_dir}/README.md"},
+                "starter_draft": {"path": f"{planning_dir}/starter-draft.md"},
+                "consensus_packet": {"path": f"{planning_dir}/consensus-packet.md"},
+            },
+            "expected_outputs": [
+                {
+                    "id": "coordination_loop_spec",
+                    "path": f"{planning_dir}/coordination-loop-spec.md",
+                    "owner": "Codex",
+                }
+            ],
+            "readouts": {
+                "Claude": {"status": "pending", "path": f"{planning_dir}/claude-readout.md"},
+                "Codex": {"status": "pending", "path": f"{planning_dir}/codex-readout.md"},
+                "Gemini": {"status": "pending", "path": f"{planning_dir}/gemini-readout.md"},
+                "Qwen": {"status": "pending", "path": f"{planning_dir}/qwen-readout.md"},
+                "Copilot": {"status": "pending", "path": f"{planning_dir}/copilot-readout.md"},
+            },
+        }
+        state = {"queue": {"events": {}}, "workers": {}, "seen_event_keys": {}}
+
+        with mock.patch.object(supervisor, "selected_shared_files", return_value=[self.root / "shared.md"]):
+            changed = supervisor.dispatch_discussion_planning(self.config, state, planning_state)
+
+        self.assertTrue(changed)
+        rows = [
+            json.loads(line)
+            for line in (self.root / "event-queue.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        codex_event = next(row for row in rows if row["target_display_name"] == "Codex")
+        self.assertIn(f"{planning_dir}/README.md", codex_event["target_files"])
+        self.assertIn(f"{planning_dir}/planning-session.json", codex_event["target_files"])
+        self.assertIn(f"{planning_dir}/codex-readout.md", codex_event["target_files"])
+        self.assertIn(f"{planning_dir}/coordination-loop-spec.md", codex_event["target_files"])
+        self.assertIn("本輪目標：Define the canonical closed-loop coordination protocol", codex_event["message"])
 
     def test_planning_worker_matches_assignment_without_taskboard_entry(self) -> None:
         worker = {

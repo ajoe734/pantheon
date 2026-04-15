@@ -10,34 +10,35 @@ screen_id: screen-operator-deployment-review
 ui_spec_path: docs/screens/PKT-001-deployment-review-console.md
 frontend_change_spec_path: docs/pantheon-handoffs/PKT-001-deployment-review/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
-  - GET /api/v1/operator/deployment-plans
-  - GET /api/v1/operator/deployment-review/{plan_id}
-  - POST /api/v1/operator/commands
+- GET /api/v1/operator/deployment-plans
+- GET /api/v1/operator/deployment-review/{plan_id}
+- POST /api/v1/operator/commands
 constraints:
-  - use existing bff client only
-  - do not add raw fetch in components
-  - do not import demo providers
-  - if any required field is missing, emit a bff-gap handoff instead of mocking
-  - all allowedActions fields must come from the BFF response; do not derive locally
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
 acceptance:
-  - build the Deployment Review Console list panel and detail panel
-  - use only the existing BFF client
-  - do not add raw fetch calls in component files
-  - do not invent endpoint fields beyond this handoff packet
-  - render all CTAs from backend-shaped allowedActions only
-  - display the degradation banner when any meta.surfaces entry is degraded or unavailable
-  - render loading, empty, degraded, and error states as explicitly distinct
+- build the Deployment Review Console list and detail panels
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- do not invent fields beyond this handoff packet
+- render all CTAs from backend-shaped allowedActions only
+- display the degradation banner when any meta.surfaces entry is degraded or unavailable
 required_feedback:
-  - docs/pantheon-feedback/PKT-001-deployment-review/LOVABLE_CHANGE_FEEDBACK.md
-  - docs/pantheon-feedback/PKT-001-deployment-review/API_GAP_REQUESTS.json
-  - docs/pantheon-feedback/PKT-001-deployment-review/UI_DECISIONS.md
-  - docs/pantheon-feedback/PKT-001-deployment-review/QA_STATUS.md
+- docs/pantheon-feedback/PKT-001-deployment-review/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-001-deployment-review/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-001-deployment-review/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-001-deployment-review/QA_STATUS.md
 delivery_dependencies:
-  - .coordination/responses/PKT-001-deployment-review-contract-ready.yaml
+- .coordination/responses/PKT-001-deployment-review-contract-ready.yaml
 links:
+  lovable_project_url: null
   bff_spec_path: docs/bff/PKT-001-deployment-review-console.md
+  ui_spec_path: docs/screens/PKT-001-deployment-review-console.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-001-deployment-review/FRONTEND_CHANGE_SPEC.md
   example_payload_paths:
-    - docs/examples/PKT-001-deployment-review-console.json
+  - docs/examples/PKT-001-deployment-review-console.json
   handoff_bundle_dir: docs/pantheon-handoffs/PKT-001-deployment-review
 gap_handoff_path: .coordination/requests/PKT-001-deployment-review-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-001-deployment-review-bff-gap.example.yaml

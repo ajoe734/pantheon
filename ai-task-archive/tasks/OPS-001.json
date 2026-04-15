@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "task_id": "OPS-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-001",
+    "title": "Canonicalize collaboration rules",
+    "phase": "Foundation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "AI_COLLABORATION_GUIDE.md",
+      "current-work.md"
+    ],
+    "acceptance": [
+      "canonical rules defined",
+      "current-work reduced to sprint snapshot"
+    ],
+    "next": "Keep guide stable while downstream work starts",
+    "last_update": "2026-04-01T04:20:00Z",
+    "summary_zh": "把協作規則收斂成單一真相，讓所有 LLM 都只看同一套規範，不再各自維護不同流程。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

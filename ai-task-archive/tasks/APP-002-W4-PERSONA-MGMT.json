@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W4-PERSONA-MGMT",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W4-PERSONA-MGMT",
+    "title": "Implement persona management composed view",
+    "summary_zh": "實作 persona management composed view，讓 persona lifecycle 管理不必靠前端自行 join。",
+    "phase": "Phase 5: APP-002 Execution Wave 4",
+    "owner": "Qwen",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W3-POSTINCIDENT-EVOLUTION"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/BFF_API_CONTRACT.md",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_persona_management.py"
+    ],
+    "acceptance": [
+      "persona_management_view_live",
+      "no_demo_provider_dependency",
+      "backend_shaped_persona_actions"
+    ],
+    "next": "Task finalized successfully. All acceptance criteria verified and tests passing.",
+    "last_update": "2026-04-11T22:53:31Z",
+    "auto_created_by": "phase1-2026-04-11-backend-completion"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W4-PERSONA-MGMT",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Persona management composed view implemented with all 3 acceptance criteria met: persona_management_view_live (endpoint at GET /api/v1/operator/persona-management/{persona_id}), no_demo_provider_dependency (uses real ReadSurfaceStore with seed data), backend_shaped_persona_actions (added allowed_actions block with lifecycle/state-derived actions). Tests pass.",
+      "status": "done",
+      "created_at": "2026-04-11T18:27:51Z",
+      "resolved_at": "2026-04-11T22:49:00Z"
+    },
+    {
+      "task_id": "APP-002-W4-PERSONA-MGMT",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "All 3 acceptance criteria verified: persona_management_view_live (GET /api/v1/operator/persona-management/{persona_id} at line 873), no_demo_provider_dependency (seed data in read_store._default_read_data()), backend_shaped_persona_actions (data.allowedActions in response). 12/12 tests pass.",
+      "status": "done",
+      "created_at": "2026-04-11T22:49:00Z",
+      "resolved_at": "2026-04-11T22:49:12Z"
+    }
+  ],
+  "blockers": []
+}

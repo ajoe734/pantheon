@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "task_id": "BG-006",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-006",
+    "title": "Operational reassign: move BG-006 onto healthy Copilot lane while Claude is paused and Codex is backoff-paused.",
+    "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
+    "phase": "Blueprint Gap P1",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [],
+    "acceptance": [],
+    "status": "done",
+    "next": "Owner finalized: OPERATOR_ACCEPTANCE_MATRIX.md is canonical and complete. All 5 surfaces (S-BFF, S-IAPI, S-CLI, S-EMRG, S-SUPP) defined with role-access alignment, BFF-outage fallback routing, and CLI/emergency fast-path semantics verified. Non-blocking follow-ups scoped to §9. No blocking GAP-06 issues remain.",
+    "last_update": "2026-04-14T03:32:32Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T03:32:32Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "9fc043cf5520bb74a9d1a8bf072865733d4cfcbb",
+      "commit_subject": "BG-006: finalize operator acceptance matrix — close GAP-06",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "BG-006",
+        "Reviewer": "Codex",
+        "LLM-Agent": "Claude",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 89,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-006",
+      "from": "Qwen",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T02:15:39Z",
+      "resolved_at": "2026-04-13T02:18:20Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "OPERATOR_ACCEPTANCE_MATRIX.md produced. Covers all 5 surfaces (S-BFF, S-IAPI, S-CLI, S-EMRG, S-SUPP), canonical objects per operation, role matrix, degraded-mode routing rules, and acceptance evidence table. Please review against GAP-06 criteria in Pantheon_Blueprint_Gap_Review_v1.md §4 / §5.",
+      "status": "done",
+      "created_at": "2026-04-13T05:59:21Z",
+      "resolved_at": "2026-04-13T12:34:27Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Operator acceptance matrix is ready for reviewer pass on a healthy lane; continue GAP-06 review against the existing criteria.",
+      "status": "done",
+      "created_at": "2026-04-13T12:34:27Z",
+      "resolved_at": "2026-04-13T14:33:12Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini terminal: Unexpected critical provider failure",
+      "status": "done",
+      "created_at": "2026-04-13T14:33:12Z",
+      "resolved_at": "2026-04-13T14:37:12Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: root OPERATOR_ACCEPTANCE_MATRIX.md regresses CLI/internal fallback truth and misroutes pause/rollback to S-EMRG. See docs/reviews/BG-006-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-13T14:37:12Z",
+      "resolved_at": "2026-04-13T14:37:12Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three blocking findings addressed in root OPERATOR_ACCEPTANCE_MATRIX.md: (1) S-CLI rows corrected from 'not implemented' to 'spec defined' for deployment, runtime pause, and kill-switch. (2) BFF-unavailable degraded behavior for pause and rollback now routes to S-IAPI/S-CLI, not S-EMRG. S-CLI pause row description updated to clarify it is the admin CLI direct path, not the kill-switch fast path. (3) runtime-manager outage row now lists RT-01–RT-04 as degraded/unavailable, removing the overstated 'BFF read unaffected' claim. (4) Routing rule 2 updated to separate general fallback (S-IAPI/S-CLI) from kill-switch emergency path (S-EMRG). (5) Section 9 open item updated from 'S-CLI spec future work' to 'S-CLI production hardening'. Evidence table entry for CLI fallback drill updated to remove stale '(CLI not implemented)' qualifier. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-14T00:30:57Z",
+      "resolved_at": "2026-04-14T00:34:07Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review requested: previous CLI/routing/runtime-manager fixes are in place, but Section 5 role matrix still contradicts the per-surface authorization rows. See docs/reviews/BG-006-review-codex.md and align fallback surface access with the operation tables before resubmitting.",
+      "status": "done",
+      "created_at": "2026-04-14T00:34:07Z",
+      "resolved_at": "2026-04-14T00:34:07Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Section 5 role matrix repaired: (1) governance.approver: S-IAPI removed — direct S-IAPI write requires governance.admin + mTLS (§4.4). (2) deployment.operator: S-CLI fallback removed — CLI deployment requires deployment.admin (§4.1). (3) runtime.operator: S-EMRG fallback removed — S-EMRG requires emergency.operator (§4.2/§4.3). (4) runtime.admin: S-EMRG removed — S-EMRG requires emergency.operator; retains S-IAPI and S-CLI per §4.2. All four rows now match the per-surface authorization tables. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-14T00:37:19Z",
+      "resolved_at": "2026-04-14T01:32:26Z"
+    },
+    {
+      "task_id": "BG-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: OPERATOR_ACCEPTANCE_MATRIX.md now aligns Section 5 role access with the per-surface authorization rows, keeps the prior CLI/internal fallback and BFF-outage routing fixes intact, and leaves no blocking GAP-06 acceptance issues. Return to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T01:32:26Z",
+      "resolved_at": "2026-04-14T03:32:32Z"
+    }
+  ],
+  "blockers": []
+}

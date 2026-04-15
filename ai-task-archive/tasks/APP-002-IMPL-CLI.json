@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "task_id": "APP-002-IMPL-CLI",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-IMPL-CLI",
+    "title": "Implement Admin CLI and protected internal API for secondary control path",
+    "summary_zh": null,
+    "phase": "Phase 5: Implementation",
+    "owner": "Copilot",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-002/APP-002-SECONDARY-CONTROL-PATH.md"
+    ],
+    "acceptance": [],
+    "next": "Rebaseline: scaffold-only completion; production-grade secondary control path now tracked in APP-002-W2-CLI-FALLBACK.",
+    "last_update": "2026-04-11T11:54:59Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-IMPL-CLI",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-11T04:36:54Z",
+      "resolved_at": "2026-04-11T04:39:35Z"
+    },
+    {
+      "task_id": "APP-002-IMPL-CLI",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Ready for review: implementation complete; CLI scaffold + internal API + smoke tests",
+      "status": "done",
+      "created_at": "2026-04-11T04:46:27Z",
+      "resolved_at": "2026-04-11T04:46:28Z"
+    },
+    {
+      "task_id": "APP-002-IMPL-CLI",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Reviewed: approve and finalize",
+      "status": "done",
+      "created_at": "2026-04-11T04:46:28Z",
+      "resolved_at": "2026-04-11T04:46:28Z"
+    }
+  ],
+  "blockers": []
+}

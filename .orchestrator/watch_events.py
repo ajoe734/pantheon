@@ -29,6 +29,7 @@ from common import (
     write_activity_log,
 )
 from runtime_state import enqueue_event, load_runtime_state, save_runtime_state
+from task_archive import DEFAULT_RECENT_LIMIT, recent_terminal_summaries
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,8 +70,10 @@ def build_snapshot(config: dict[str, Any], status: dict[str, Any]) -> dict[str, 
         for handoff in status.get(handoffs_path, [])
         if str(handoff.get("status") or "").lower() in {s.lower() for s in config.get("events", {}).get("pending_handoff_statuses", ["pending"])}
     ]
+    recent_limit = int(config.get("watcher", {}).get("recent_terminal_limit", DEFAULT_RECENT_LIMIT))
     return {
         "tasks": tasks,
+        "recent_terminal_tasks": recent_terminal_summaries(limit=recent_limit),
         "pending_handoff_keys": [handoff_key(item) for item in pending_handoffs],
         "pending_handoffs": pending_handoffs,
         "status_updated_at": status.get("updated_at"),
@@ -322,6 +325,7 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
         state["initialized_at"] = utc_now()
         state["last_scan_at"] = utc_now()
         state["tasks"] = snapshot["tasks"]
+        state["recent_terminal_tasks"] = snapshot.get("recent_terminal_tasks", [])
         state["pending_handoff_keys"] = snapshot["pending_handoff_keys"]
         save_runtime_state(config, state)
         return False
@@ -351,6 +355,7 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
     state["initialized_at"] = state.get("initialized_at") or utc_now()
     state["last_scan_at"] = utc_now()
     state["tasks"] = snapshot["tasks"]
+    state["recent_terminal_tasks"] = snapshot.get("recent_terminal_tasks", [])
     state["pending_handoff_keys"] = snapshot["pending_handoff_keys"]
     trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
     save_runtime_state(config, state)

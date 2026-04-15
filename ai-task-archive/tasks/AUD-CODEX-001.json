@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task_id": "AUD-CODEX-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUD-CODEX-001",
+    "title": "Audit contract and learning-integration work against the OSS integration model",
+    "phase": "Audit",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Completed Codex-side audit note. REG-001 and FB-001 remain valid local governance contracts; LP-001 and LP-002 still need explicit upstream package selection, version pinning, adapter work, and smoke-test plans.",
+    "last_update": "2026-04-02T08:14:20Z",
+    "summary_zh": "審查合約、schema 與學習框架整合工作是否符合 upstream OSS 整合模型。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

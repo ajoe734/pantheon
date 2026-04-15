@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "task_id": "PKT-002",
+  "archived_at": "2026-04-14T14:15:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-002",
+    "title": "Packetize Incident Response and Incident Control screens",
+    "summary_zh": "把 Incident Response 與 control rail 整理成可 handoff 的 Lovable packet set。",
+    "phase": "APP-002 Packetization",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "incident response read and control surfaces share one packet family with explicit degraded-state and fallback rules",
+      "command receipts, action gating, and secondary control path copy are mapped to packet fields",
+      "screen inventory distinguishes incident home, detail, and action drawer responsibilities"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: all three screens packetized with screen specs, BFF contracts, example payloads, degraded/unavailable kill-switch semantics correctly split, and FRONTEND_CHANGE_SPEC published. Codex re-review passed. Commit: d3f43db.",
+    "last_update": "2026-04-14T14:15:23Z",
+    "review_notes_zh": [
+      "Incident Home Page Sections now distinguishes kill-switch degraded vs unavailable behavior correctly.",
+      "Packet family, BFF contract, frontend handoff, and Lovable task are internally consistent.",
+      "No blocking findings remain."
+    ],
+    "review_file": "docs/reviews/PKT-002-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T14:15:23Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "d3f43db7c2b664d9b37afa8c9118d4b4787f6663",
+      "commit_subject": "PKT-002: finalize Incident Response and Incident Control packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "PKT-002",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 169,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PKT-002 packet family complete. All three surfaces — Incident Home, Incident Detail, and Incident Action Drawer — are packetized with screen specs, BFF contracts, example payloads (including degraded states), and coordination handoff files. Command receipts, action gating via allowedActions, and the secondary control path are all mapped to packet fields. Please review the packet family doc and supporting artifacts for correctness and acceptance criteria coverage.",
+      "status": "done",
+      "created_at": "2026-04-14T13:38:50Z",
+      "resolved_at": "2026-04-14T13:43:10Z"
+    },
+    {
+      "task_id": "PKT-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested. See docs/reviews/PKT-002-review-codex.md: fix kill-switch unavailable semantics, split degraded affected_bindings from empty state, and publish or remove broken PKT-002 handoff bundle refs.",
+      "status": "done",
+      "created_at": "2026-04-14T13:43:10Z",
+      "resolved_at": "2026-04-14T13:43:10Z"
+    },
+    {
+      "task_id": "PKT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three blocking issues from PKT-002-review-codex.md addressed. Ready for re-review: (1) family doc fallback rule split for degraded vs unavailable kill-switch; (2) Incident Detail affected_bindings degraded state separated from true empty in screen spec + lovable task; (3) secondary control path constraint removed from Incident Home lovable task; (4) FRONTEND_CHANGE_SPEC.md published for all three screens under docs/pantheon-handoffs/PKT-002-*/.",
+      "status": "done",
+      "created_at": "2026-04-14T13:48:51Z",
+      "resolved_at": "2026-04-14T13:56:45Z"
+    },
+    {
+      "task_id": "PKT-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review found one remaining blocker: docs/screens/PKT-002-incident-home.md Page Sections still says kill_switch unavailable shows last-known state. Align it with the family/BFF/handoff rule that unavailable renders an explicit unknown-state banner with no inferred state. See docs/reviews/PKT-002-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-14T13:56:45Z",
+      "resolved_at": "2026-04-14T13:56:45Z"
+    },
+    {
+      "task_id": "PKT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fixed the remaining blocker in docs/screens/PKT-002-incident-home.md: the Page Sections description now explicitly splits degraded (shows last known state + last_confirmed_at) from unavailable (shows explicit 'Kill switch status unavailable' banner, no inferred state). All other artifacts (family doc, BFF contract, FRONTEND_CHANGE_SPEC, Lovable task) were already consistent. Screen spec is now internally consistent — ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-14T13:58:29Z",
+      "resolved_at": "2026-04-14T14:03:29Z"
+    },
+    {
+      "task_id": "PKT-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed. Incident Home now matches the degraded/unavailable fallback rule across the packet family; owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-14T14:03:29Z",
+      "resolved_at": "2026-04-14T14:15:23Z"
+    }
+  ],
+  "blockers": []
+}

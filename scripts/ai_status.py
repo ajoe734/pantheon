@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -10,8 +11,27 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from task_archive import (
+    DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
+    TaskResolver,
+    archive_task_path,
+    archive_task_snapshot,
+    is_terminal_task,
+    load_archive_index,
+    load_archived_snapshot,
+    rebuild_archive_index,
+    recent_terminal_summaries,
+    task_satisfies_dependency,
+    terminal_outcome_for,
+)
+
 STATUS_FILE = ROOT / "ai-status.json"
 LOG_FILE = ROOT / "ai-activity-log.jsonl"
 CURRENT_WORK_FILE = ROOT / "current-work.md"
@@ -75,6 +95,7 @@ STATUS_LABELS = {
 }
 
 DEPENDENCY_DONE_STATUSES = {"done"}
+ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 TASK_TERMINAL_SUPERSEDED = "superseded"
 DEFAULT_DELIVERY_GATES = {
@@ -98,6 +119,9 @@ OPTIONAL_CURRENT_WORK_REFERENCES = (
     ("CANONICAL_DOCUMENT_MAP.md", "Canonical map"),
     ("DEVELOPMENT_WORKBREAKDOWN.md", "Full backlog"),
 )
+DISPLAY_TIMEZONE = ZoneInfo("Asia/Taipei")
+DISPLAY_TIMEZONE_LABEL = "台灣時間 (UTC+8)"
+ISO_TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b")
 
 
 def default_canonical_document_layers() -> dict[str, list[str]]:
@@ -278,6 +302,36 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def parse_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text or text == "-":
+        return None
+    normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def format_display_timestamp(value: Any) -> str:
+    parsed = parse_timestamp(value)
+    if parsed is None:
+        return "-" if value is None or value == "" else str(value)
+    return parsed.astimezone(DISPLAY_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def localize_embedded_timestamps(text: Any) -> str:
+    if text is None:
+        return "-"
+    rendered = str(text)
+    if not rendered:
+        return "-"
+    return ISO_TIMESTAMP_RE.sub(lambda match: format_display_timestamp(match.group(0)), rendered)
+
+
 def canonical_agent_name(name: str | None) -> str:
     if name is None:
         return ""
@@ -324,55 +378,6 @@ def default_state() -> dict[str, Any]:
             for name, meta in KNOWN_AGENTS.items()
         ],
         "tasks": [
-            {
-                "id": "OPS-001",
-                "title": "Canonicalize collaboration rules",
-                "phase": "Foundation",
-                "owner": "Codex",
-                "reviewer": "Claude",
-                "status": "done",
-                "depends_on": [],
-                "artifacts": ["AI_COLLABORATION_GUIDE.md", "current-work.md"],
-                "acceptance": [
-                    "canonical rules defined",
-                    "current-work reduced to sprint snapshot",
-                ],
-                "next": "Keep guide stable while downstream work starts",
-                "last_update": timestamp,
-            },
-            {
-                "id": "OPS-002",
-                "title": "Build JSON status pipeline",
-                "phase": "Foundation",
-                "owner": "Codex",
-                "reviewer": "Gemini",
-                "status": "done",
-                "depends_on": ["OPS-001"],
-                "artifacts": ["ai-status.json", "ai-activity-log.jsonl", "scripts/ai-status.sh"],
-                "acceptance": [
-                    "state updates through script",
-                    "history append-only",
-                    "current-work regenerated from JSON state",
-                ],
-                "next": "Use script-driven updates only",
-                "last_update": timestamp,
-            },
-            {
-                "id": "OPS-003",
-                "title": "Build collaboration dashboard",
-                "phase": "Foundation",
-                "owner": "Codex",
-                "reviewer": "Claude",
-                "status": "done",
-                "depends_on": ["OPS-002"],
-                "artifacts": ["docs-site/index.html", "docs-site/script.js", "docs-site/style.css"],
-                "acceptance": [
-                    "dashboard renders workload",
-                    "dashboard renders board, blockers, handoffs, recent activity",
-                ],
-                "next": "Collect visual feedback and adjust layout if needed",
-                "last_update": timestamp,
-            },
             {
                 "id": "P1-001",
                 "title": "Define SignalStoreClient contract",
@@ -501,6 +506,49 @@ def load_config() -> dict[str, Any]:
 
 def save_state(state: dict[str, Any]) -> None:
     STATUS_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def task_resolver(state: dict[str, Any]) -> TaskResolver:
+    return TaskResolver(state.get("tasks", []))
+
+
+def archived_task_snapshot(task_id: str) -> dict[str, Any] | None:
+    return load_archived_snapshot(task_id)
+
+
+def task_archive_recent_limit() -> int:
+    return DEFAULT_ARCHIVE_RECENT_LIMIT
+
+
+def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        raise SystemExit("Cannot archive a task without an id")
+    related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
+    related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
+    snapshot = archive_task_snapshot(
+        deepcopy(task),
+        handoffs=related_handoffs,
+        blockers=related_blockers,
+        archived_at=archived_at,
+        recent_limit=task_archive_recent_limit(),
+    )
+    state["tasks"] = [item for item in state.get("tasks", []) if item.get("id") != task_id]
+    state["handoffs"] = [handoff for handoff in state.get("handoffs", []) if handoff.get("task_id") != task_id]
+    state["blockers"] = [blocker for blocker in state.get("blockers", []) if blocker.get("task_id") != task_id]
+    return snapshot
+
+
+def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str | None = None) -> list[str]:
+    archived_ids: list[str] = []
+    for task in list(state.get("tasks", [])):
+        if not is_terminal_task(task):
+            continue
+        snapshot = archive_terminal_task_from_state(state, task, archived_at=archived_at)
+        archived_ids.append(str(snapshot.get("task_id") or task.get("id") or ""))
+    if archived_ids:
+        rebuild_archive_index(recent_limit=task_archive_recent_limit())
+    return [task_id for task_id in archived_ids if task_id]
 
 
 def append_log(entry: dict[str, Any]) -> None:
@@ -720,17 +768,28 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             "Reviewer": canonical_agent_name(task.get("reviewer")),
         }
         required_fields = commit_rules.get("required_body_fields", [])
+        missing_fields: list[str] = []
+        mismatched_fields: list[tuple[str, str]] = []
         for field_name in required_fields:
             actual_value = metadata_fields.get(field_name)
             if not actual_value:
-                raise SystemExit(
-                    f"Cannot finalize task: latest commit body must include `{field_name}: ...`."
-                )
+                missing_fields.append(field_name)
+                continue
             expected_value = expected_fields.get(field_name)
             if expected_value and actual_value != expected_value:
-                raise SystemExit(
-                    f"Cannot finalize task: latest commit body field `{field_name}` must be `{expected_value}`."
+                mismatched_fields.append((field_name, expected_value))
+        if missing_fields or mismatched_fields:
+            issues: list[str] = []
+            if missing_fields:
+                missing_list = ", ".join(f"`{field_name}: ...`" for field_name in missing_fields)
+                issues.append(f"latest commit body must include {missing_list}")
+            if mismatched_fields:
+                mismatch_list = ", ".join(
+                    f"`{field_name}` must be `{expected_value}`"
+                    for field_name, expected_value in mismatched_fields
                 )
+                issues.append(f"latest commit body fields must match task metadata: {mismatch_list}")
+            raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
         delivery["commit_metadata"] = metadata_fields
 
     porcelain = run_git_command(
@@ -804,11 +863,12 @@ def task_metadata_from_env() -> dict[str, Any]:
     return metadata
 
 
-def dependency_is_satisfied(task_map: dict[str, dict[str, Any]], dep_id: str) -> bool:
-    dependency = task_map.get(dep_id)
-    if dependency is None:
-        return True
-    return dependency.get("status") in DEPENDENCY_DONE_STATUSES
+def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
+    return resolver.dependency_satisfied(dep_id)
+
+
+def dependency_status_label(resolver: TaskResolver, dep_id: str) -> str:
+    return resolver.dependency_status(dep_id)
 
 
 def ensure_review_finalize_handoff(
@@ -900,7 +960,7 @@ def recompute_agents(state: dict[str, Any]) -> None:
     state["agents"] = deduped_agents
 
     by_owner: dict[str, list[dict[str, Any]]] = {name: [] for name in KNOWN_AGENTS}
-    task_map = {task["id"]: task for task in state["tasks"]}
+    resolver = task_resolver(state)
     for task in state["tasks"]:
         by_owner.setdefault(task["owner"], []).append(task)
 
@@ -913,7 +973,7 @@ def recompute_agents(state: dict[str, Any]) -> None:
         ready = [
             task
             for task in queued
-            if all(dependency_is_satisfied(task_map, dep_id) for dep_id in task.get("depends_on", []))
+            if all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", []))
         ]
         waiting = [task for task in queued if task not in ready]
 
@@ -1049,6 +1109,8 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     canonical_files = canonical_file_set(state)
     tier_labels = canonical_tier_labels(state)
     planning_state = load_planning_state()
+    orchestrator_state = load_json_file(ORCHESTRATOR_STATE_FILE, {})
+    coordination_summary = build_coordination_summary(orchestrator_state)
     active_tasks = [task for task in state["tasks"] if task.get("status") != "done"]
     primary_tasks = [task for task in active_tasks if task_delivery_layer(task) == "primary"]
     external_tasks = [task for task in active_tasks if task_delivery_layer(task) == "external"]
@@ -1070,12 +1132,13 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         "",
         "This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.",
         "Do not treat this file as the machine-readable source of truth.",
+        f"Absolute times below use {DISPLAY_TIMEZONE_LABEL}.",
         "",
-        f"Last updated: {state['updated_at']}",
+        f"Last updated: {format_display_timestamp(state['updated_at'])}",
         "",
         "## Objective",
         "",
-        state["objective"],
+        localize_embedded_timestamps(state["objective"]),
         "",
         "## Current Sprint",
         "",
@@ -1109,7 +1172,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     )
 
     for agent in state["agents"]:
-        next_text = agent.get("next") or "No active assignment"
+        next_text = localize_embedded_timestamps(agent.get("next") or "No active assignment")
         lines.append(f"- `{agent['name']}`: {', '.join(agent['capability_lane'])}; next: {next_text}")
 
     lines.extend(
@@ -1145,8 +1208,8 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
                 reviewer=cell(task["reviewer"]),
                 status=cell(task["status"]),
                 depends=cell(depends),
-                last_update=cell(task.get("last_update") or "-"),
-                next=cell(task.get("next") or "-"),
+                last_update=cell(format_display_timestamp(task.get("last_update"))),
+                next=cell(localize_embedded_timestamps(task.get("next") or "-")),
             )
         )
 
@@ -1155,7 +1218,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     if pending_handoffs:
         for handoff in pending_handoffs:
             lines.append(
-                f"| `{handoff['task_id']}` | {handoff['from']} | {handoff['to']} | {handoff['message']} | {handoff['status']} | {handoff['created_at']} |"
+                f"| `{handoff['task_id']}` | {handoff['from']} | {handoff['to']} | {cell(localize_embedded_timestamps(handoff['message']))} | {handoff['status']} | {cell(format_display_timestamp(handoff['created_at']))} |"
             )
     else:
         lines.append("| _(none)_ | - | - | - | - | - |")
@@ -1174,18 +1237,56 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     review_tasks = [task for task in state["tasks"] if task.get("review_notes_zh")]
     if review_tasks:
         for task in review_tasks:
-            note_html = "<br>".join(task.get("review_notes_zh", []))
+            note_html = "<br>".join(localize_embedded_timestamps(note) for note in task.get("review_notes_zh", []))
             lines.append(
                 f"| `{task['id']}` | {cell(task['reviewer'])} | {cell(note_html)} | {cell(task.get('review_file') or '-')} |"
             )
     else:
         lines.append("| _(none)_ | - | - | - |")
 
+    coordination_counts = coordination_summary.get("counts", {}) if isinstance(coordination_summary.get("counts"), dict) else {}
+    lines.extend(
+        [
+            "",
+            "## Lovable Coordination",
+            "",
+            f"- Last coordination scan: {format_display_timestamp(coordination_summary.get('last_scan_at'))}",
+            f"- Tracked features: `{coordination_counts.get('tracked_features', 0)}`",
+            f"- Lovable-ready packets: `{coordination_counts.get('lovable_ready', 0)}`",
+            f"- Waiting for Lovable/front-end: `{coordination_counts.get('waiting_for_lovable', 0)}`",
+            f"- UI-done returned: `{coordination_counts.get('ui_done_received', 0)}`",
+            f"- Frontend feedback returned: `{coordination_counts.get('frontend_feedback_received', 0)}`",
+            f"- Open BFF gaps: `{coordination_counts.get('open_bff_gaps', 0)}`",
+            "",
+            "| Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    coordination_features = coordination_summary.get("features") if isinstance(coordination_summary.get("features"), list) else []
+    if coordination_features:
+        for feature in coordination_features:
+            lines.append(
+                "| `{feature_id}` | {screen} | `{stage}` | {lovable_ready} | {mirrored} | {ui_done} | {feedback} | {next_action} |".format(
+                    feature_id=cell(feature.get("feature_id") or "-"),
+                    screen=cell(feature.get("screen") or "-"),
+                    stage=cell(feature.get("stage") or "-"),
+                    lovable_ready="yes" if feature.get("lovable_ready") else "no",
+                    mirrored="yes" if feature.get("mirrored_to_target_repo") else "no",
+                    ui_done="yes" if feature.get("has_ui_done") else "no",
+                    feedback="yes" if feature.get("has_frontend_feedback") else "no",
+                    next_action=cell(localize_embedded_timestamps(feature.get("next_action") or "-")),
+                )
+            )
+    else:
+        lines.append("| _(none)_ | - | - | - | - | - | - | - |")
+
     lines.extend(["", "## Latest Checkpoints", ""])
     if current_logs:
         for entry in current_logs:
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
-            lines.append(f"- {entry['ts']} {entry['agent']}:{task_id} {entry['message']}")
+            lines.append(
+                f"- {format_display_timestamp(entry['ts'])} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
+            )
     else:
         lines.append("- No checkpoints yet.")
 
@@ -1229,18 +1330,51 @@ def expected_task_actor(task: dict[str, Any]) -> str:
     return canonical_agent_name(task.get("owner"))
 
 
+def pid_is_alive(pid: Any) -> bool:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    return os.path.exists(f"/proc/{value}")
+
+
+def worker_has_live_runtime(worker: dict[str, Any], *, pid_alive: bool | None = None) -> bool:
+    status = str(worker.get("status") or "").strip().lower()
+    pid = worker.get("pid")
+    has_pid = pid not in {None, "", 0, "0"}
+    if pid_alive is None and has_pid:
+        pid_alive = pid_is_alive(pid)
+
+    if status in {"running", "started", "waiting_approval"}:
+        if has_pid:
+            return bool(pid_alive)
+        return True
+    if status in {"suspended_approval", "manual_pending", "retry_backoff", "fallback", "stalled"}:
+        if has_pid:
+            return bool(pid_alive)
+        return False
+    return False
+
+
 def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[str, Any]) -> list[dict[str, Any]]:
-    task_map = {task["id"]: task for task in state.get("tasks", [])}
+    resolver = task_resolver(state)
     rows: list[dict[str, Any]] = []
     for run_id, worker in (orchestrator_state.get("workers", {}) or {}).items():
-        task = task_map.get(worker.get("task_id"))
+        task_id = str(worker.get("task_id") or "").strip()
+        task = resolver.get(task_id) if task_id else None
         task_status = str(task.get("status") or "") if task else None
+        task_source = resolver.source(task_id) if task_id else None
         worker_status = str(worker.get("status") or "")
+        pid = worker.get("pid")
+        pid_alive = pid_is_alive(pid) if pid not in {None, "", 0, "0"} else None
+        live_runtime = worker_has_live_runtime(worker, pid_alive=pid_alive)
         if worker_status in {"superseded", "reassigned"}:
             bucket = "transition"
         elif task_status == "done" or worker_status in {"completed", "failed"}:
             bucket = "completed"
-        elif worker_status in {"running", "started"}:
+        elif live_runtime and worker_status in {"running", "started"}:
             bucket = "running"
         else:
             bucket = "pending"
@@ -1254,12 +1388,16 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "status": worker_status,
                 "bucket": bucket,
                 "task_status": task_status,
+                "task_source": task_source,
                 "reason": worker.get("reason") or (worker.get("request_snapshot") or {}).get("reason"),
                 "delivery_mode": worker.get("mode"),
                 "dispatch_mode": runtime_dispatch_mode(worker),
                 "last_event_at": worker.get("last_event_at"),
                 "started_at": worker.get("started_at"),
                 "last_error": worker.get("last_error"),
+                "pid": pid,
+                "pid_alive": pid_alive,
+                "is_live_runtime": live_runtime,
             }
         )
     rows.sort(key=lambda item: str(item.get("last_event_at") or ""), reverse=True)
@@ -1319,12 +1457,32 @@ def detect_truth_mismatches(
     workers: list[dict[str, Any]],
     queue_events: list[dict[str, Any]],
     approval_state: dict[str, Any],
+    resolver: TaskResolver,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     task_map = {task["id"]: task for task in state.get("tasks", [])}
-    live_workers = [worker for worker in workers if worker.get("bucket") in {"running", "pending"}]
+    live_workers = [
+        worker
+        for worker in workers
+        if worker.get("bucket") in {"running", "pending"} and worker.get("is_live_runtime")
+    ]
     live_workers_by_task: dict[str, list[dict[str, Any]]] = {}
     mismatches: list[dict[str, Any]] = []
     seen: set[str] = set()
+    pending_approval_run_ids = {
+        str(approval.get("worker_run_id") or "").strip()
+        for approval in (approval_state.get("pending") or [])
+        if str(approval.get("worker_run_id") or "").strip()
+    }
+    pending_approval_task_ids = {
+        str(approval.get("task_id") or "").strip()
+        for approval in (approval_state.get("pending") or [])
+        if str(approval.get("task_id") or "").strip()
+    }
+    approval_worker_modes = {
+        str(worker.get("run_id") or "").strip(): str(worker.get("dispatch_mode") or "").strip()
+        for worker in workers
+        if str(worker.get("run_id") or "").strip()
+    }
 
     def push(payload: dict[str, Any]) -> None:
         key = str(payload.get("id") or f"{payload.get('type')}:{payload.get('task_id')}:{payload.get('worker_run_id')}:{payload.get('queue_event_id')}")
@@ -1354,6 +1512,10 @@ def detect_truth_mismatches(
 
         task = task_map.get(task_id)
         if task is None:
+            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination"}:
+                continue
+            if resolver.source(task_id) == "archive":
+                continue
             push(
                 {
                     "id": f"worker-task-missing:{worker.get('run_id')}",
@@ -1439,6 +1601,11 @@ def detect_truth_mismatches(
         event_status = str(event.get("status") or "").lower()
         if event_status not in {"started", "manual_pending"}:
             continue
+        if (
+            str(event.get("run_id") or "").strip() in pending_approval_run_ids
+            or str(event.get("task_id") or "").strip() in pending_approval_task_ids
+        ):
+            continue
         if str(event.get("id") or "") in live_queue_ids:
             continue
         push(
@@ -1456,7 +1623,10 @@ def detect_truth_mismatches(
 
     for approval in (approval_state.get("pending") or []):
         task_id = str(approval.get("task_id") or "").strip()
-        if not task_id or task_id in task_map:
+        worker_run_id = str(approval.get("worker_run_id") or "").strip()
+        if approval_worker_modes.get(worker_run_id) in {"discussion_planning", "coordination"}:
+            continue
+        if not task_id or task_id in task_map or resolver.source(task_id) == "archive":
             continue
         push(
             {
@@ -1498,7 +1668,8 @@ def normalized_source_ref(task: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def build_bridge_summary(state: dict[str, Any], planning: dict[str, Any]) -> dict[str, Any]:
-    task_map = {task["id"]: task for task in state.get("tasks", [])}
+    resolver = task_resolver(state)
+    task_map = resolver.active_task_map()
     proposed = planning.get("proposed_execution_tasks") or []
     contract = planning.get("materialization_contract") if isinstance(planning.get("materialization_contract"), dict) else {}
     artifacts = planning.get("artifacts") if isinstance(planning.get("artifacts"), dict) else {}
@@ -1533,7 +1704,7 @@ def build_bridge_summary(state: dict[str, Any], planning: dict[str, Any]) -> dic
         task_id = str(proposal.get("id") or "").strip()
         if not task_id:
             continue
-        current = task_map.get(task_id)
+        current = resolver.get(task_id)
         if current is None:
             pending_proposals.append(
                 {
@@ -1597,6 +1768,151 @@ def build_bridge_summary(state: dict[str, Any], planning: dict[str, Any]) -> dic
     }
 
 
+def coordination_payload_resolved(entry: dict[str, Any] | None) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+    if payload.get("resolved_at"):
+        return True
+    status = str(payload.get("status") or "").strip().lower()
+    return status in {"resolved", "completed", "done"}
+
+
+def coordination_payload_entry(feature: dict[str, Any], bucket: str, payload_type: str) -> dict[str, Any] | None:
+    typed_key = f"{bucket}_by_type"
+    typed_entries = feature.get(typed_key)
+    if isinstance(typed_entries, dict):
+        candidate = typed_entries.get(payload_type)
+        if isinstance(candidate, dict):
+            return candidate
+
+    latest_key = "latest_request" if bucket == "requests" else "latest_response"
+    latest_path_key = f"{latest_key}_path"
+    latest_payload = feature.get(latest_key)
+    if isinstance(latest_payload, dict) and str(latest_payload.get("type") or "").strip() == payload_type:
+        return {
+            "type": payload_type,
+            "path": feature.get(latest_path_key) or feature.get("latest_path"),
+            "payload": latest_payload,
+            "updated_at": latest_payload.get("updated_at") or latest_payload.get("created_at") or feature.get("last_updated_at"),
+            "source_repo_id": feature.get("source_repo_id"),
+            "target_repo_id": feature.get("target_repo_id"),
+        }
+
+    if bucket == "responses" and payload_type == "lovable-ui-task" and isinstance(feature.get("lovable_task"), dict):
+        lovable_payload = feature["lovable_task"]
+        return {
+            "type": payload_type,
+            "path": feature.get("lovable_task_path"),
+            "payload": lovable_payload,
+            "updated_at": lovable_payload.get("updated_at") or lovable_payload.get("created_at") or feature.get("last_updated_at"),
+            "source_repo_id": feature.get("source_repo_id"),
+            "target_repo_id": feature.get("target_repo_id"),
+        }
+
+    return None
+
+
+def coordination_stage(feature: dict[str, Any]) -> tuple[str, str]:
+    frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+    ui_done = coordination_payload_entry(feature, "requests", "ui-done")
+    bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
+    contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
+    lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
+
+    if frontend_feedback:
+        return "frontend_feedback_received", "Pantheon should review the frontend feedback bundle and decide follow-up work."
+    if ui_done:
+        return "ui_done_received", "Pantheon should pick up review and integration from the returned ui-done handoff."
+    if bff_gap and not coordination_payload_resolved(bff_gap):
+        return "bff_gap_open", "Pantheon must resolve the open BFF gap before the front-end lane can continue."
+    if lovable_task or feature.get("lovable_task_path"):
+        return "waiting_for_lovable", "Lovable or the front-end lane can implement the screen and emit ui-done when finished."
+    if contract_ready:
+        return "contract_ready", "Supervisor should publish or mirror the Lovable task packet from the contract-ready bundle."
+    current_type = str(feature.get("current_payload_type") or feature.get("status") or "unknown").strip().lower().replace("-", "_")
+    return current_type or "unknown", str(feature.get("next_step") or feature.get("summary") or "Awaiting next coordination payload.")
+
+
+def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dict[str, Any]:
+    orchestrator = orchestrator_state or {}
+    coordination = orchestrator.get("coordination") if isinstance(orchestrator.get("coordination"), dict) else {}
+    raw_features = coordination.get("features") if isinstance(coordination.get("features"), dict) else {}
+
+    features: list[dict[str, Any]] = []
+    counts = {
+        "tracked_features": 0,
+        "lovable_ready": 0,
+        "mirrored_to_target_repo": 0,
+        "waiting_for_lovable": 0,
+        "ui_done_received": 0,
+        "frontend_feedback_received": 0,
+        "open_bff_gaps": 0,
+    }
+
+    for feature_id in sorted(raw_features):
+        feature = raw_features.get(feature_id)
+        if not isinstance(feature, dict):
+            continue
+
+        contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
+        lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
+        ui_done = coordination_payload_entry(feature, "requests", "ui-done")
+        frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+        bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
+        stage, next_action = coordination_stage(feature)
+        mirrored = bool(feature.get("mirrored_to_target_repo"))
+        lovable_ready = bool(lovable_task or feature.get("lovable_task_path"))
+        open_bff_gap = bool(bff_gap and not coordination_payload_resolved(bff_gap))
+
+        feature_summary = {
+            "feature_id": feature_id,
+            "screen": feature.get("screen"),
+            "summary": feature.get("summary"),
+            "source_repo": feature.get("source_repo"),
+            "source_repo_id": feature.get("source_repo_id"),
+            "target_repo_id": feature.get("target_repo_id"),
+            "target_agent": feature.get("target_agent"),
+            "worker_kind": feature.get("worker_kind"),
+            "current_payload_type": feature.get("current_payload_type"),
+            "stage": stage,
+            "next_action": next_action,
+            "last_updated_at": feature.get("last_updated_at"),
+            "last_dispatched_at": feature.get("last_dispatched_at"),
+            "lovable_ready": lovable_ready,
+            "mirrored_to_target_repo": mirrored,
+            "has_contract_ready": bool(contract_ready),
+            "has_lovable_task": bool(lovable_task or feature.get("lovable_task_path")),
+            "has_ui_done": bool(ui_done),
+            "has_frontend_feedback": bool(frontend_feedback),
+            "has_bff_gap": bool(bff_gap),
+            "bff_gap_open": open_bff_gap,
+            "paths": {
+                "contract_ready": contract_ready.get("path") if isinstance(contract_ready, dict) else None,
+                "lovable_task": lovable_task.get("path") if isinstance(lovable_task, dict) else feature.get("lovable_task_path"),
+                "lovable_prompt": feature.get("lovable_prompt_path"),
+                "ui_done": ui_done.get("path") if isinstance(ui_done, dict) else None,
+                "frontend_feedback": frontend_feedback.get("path") if isinstance(frontend_feedback, dict) else None,
+                "bff_gap": bff_gap.get("path") if isinstance(bff_gap, dict) else None,
+            },
+        }
+        features.append(feature_summary)
+
+        counts["tracked_features"] += 1
+        counts["lovable_ready"] += int(lovable_ready)
+        counts["mirrored_to_target_repo"] += int(mirrored)
+        counts["waiting_for_lovable"] += int(stage == "waiting_for_lovable")
+        counts["ui_done_received"] += int(bool(ui_done))
+        counts["frontend_feedback_received"] += int(bool(frontend_feedback))
+        counts["open_bff_gaps"] += int(open_bff_gap)
+
+    return {
+        "last_scan_at": coordination.get("last_scan_at"),
+        "counts": counts,
+        "features": features,
+    }
+
+
 def build_dashboard_bundle(
     state: dict[str, Any],
     planning_state: dict[str, Any] | None,
@@ -1606,16 +1922,23 @@ def build_dashboard_bundle(
     planning = planning_state or {}
     orchestrator = orchestrator_state or {}
     approvals = approval_state or {}
-    task_map = {task["id"]: task for task in state.get("tasks", [])}
+    resolver = task_resolver(state)
+    task_map = resolver.active_task_map()
+    archive_index = load_archive_index()
+    archive_counts = archive_index.get("counts", {}) if isinstance(archive_index.get("counts"), dict) else {}
+    recent_terminal_tasks = orchestrator.get("recent_terminal_tasks")
+    if not isinstance(recent_terminal_tasks, list):
+        recent_terminal_tasks = recent_terminal_summaries(limit=task_archive_recent_limit())
     workers = normalize_runtime_workers(state, orchestrator)
     queue_events = [
         event
         for event in normalize_runtime_queue(orchestrator)
         if str(event.get("status") or "").lower() not in {"completed", "failed"}
-        and str(task_map.get(str(event.get("task_id") or ""), {}).get("status") or "").lower() != "done"
+        and resolver.dependency_status(str(event.get("task_id") or "")) not in {"done", TASK_TERMINAL_SUPERSEDED}
     ]
-    live_workers, mismatches = detect_truth_mismatches(state, workers, queue_events, approvals)
+    live_workers, mismatches = detect_truth_mismatches(state, workers, queue_events, approvals, resolver)
     bridge_summary = build_bridge_summary(state, planning)
+    coordination_summary = build_coordination_summary(orchestrator)
     supervisor_state = orchestrator.get("supervisor") if isinstance(orchestrator.get("supervisor"), dict) else {}
 
     live_workers_by_task: dict[str, list[dict[str, Any]]] = {}
@@ -1629,13 +1952,11 @@ def build_dashboard_bundle(
     in_review = 0
     blocked = 0
     review_approved = 0
-    done = 0
+    done = int(archive_counts.get("completed") or 0)
+    superseded = int(archive_counts.get(TASK_TERMINAL_SUPERSEDED) or 0)
     for task in state.get("tasks", []):
         status = str(task.get("status") or "").lower()
-        if status == "todo" and all(
-            str(task_map.get(dep_id, {}).get("status") or "done").lower() in DEPENDENCY_DONE_STATUSES
-            for dep_id in task.get("depends_on", [])
-        ):
+        if status == "todo" and all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", [])):
             ready_now += 1
         elif status == "in_progress":
             in_progress += 1
@@ -1645,8 +1966,6 @@ def build_dashboard_bundle(
             blocked += 1
         elif status == "review_approved":
             review_approved += 1
-        elif status == "done":
-            done += 1
 
     worker_task_links: list[dict[str, Any]] = []
     mismatch_index: dict[tuple[str, str], list[str]] = {}
@@ -1680,6 +1999,7 @@ def build_dashboard_bundle(
                 "queue_last_event_at": queue_event.get("last_event_at"),
                 "actor": worker.get("actor"),
                 "provider": worker.get("provider"),
+                "task_source": worker.get("task_source"),
                 "worker_status": worker.get("status"),
                 "runtime_bucket": worker.get("bucket"),
                 "dispatch_reason": worker.get("reason"),
@@ -1748,6 +2068,8 @@ def build_dashboard_bundle(
         actor = str(worker.get("actor") or "-")
         lane = lanes.setdefault(actor, {"running": 0, "pending": 0, "transition": 0, "completed": 0, "failed": 0})
         bucket = str(worker.get("bucket") or "pending")
+        if bucket in {"running", "pending"} and not worker.get("is_live_runtime"):
+            continue
         lane[bucket] = lane.get(bucket, 0) + 1
         if worker.get("status") == "failed":
             lane["failed"] += 1
@@ -1776,6 +2098,7 @@ def build_dashboard_bundle(
             "blocked": blocked,
             "review_approved": review_approved,
             "done": done,
+            "superseded": superseded,
             "live_attached": sum(1 for linked in live_workers_by_task.values() if any(worker.get("bucket") == "running" for worker in linked)),
             "mismatch_count": len(mismatches),
             "planning_backed_total": int(bridge_summary.get("planning_backed_total") or 0),
@@ -1797,6 +2120,17 @@ def build_dashboard_bundle(
             },
             "recent_sessions": planning.get("recent_sessions") or [],
         },
+        "archive_summary": {
+            "updated_at": archive_index.get("updated_at"),
+            "counts": {
+                "total": int(archive_counts.get("total") or 0),
+                "completed": done,
+                "superseded": superseded,
+            },
+            "recent_terminal_ids": archive_index.get("recent_terminal_ids") or [],
+            "recent_terminal_tasks": recent_terminal_tasks,
+        },
+        "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
@@ -1946,6 +2280,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     timestamp = iso_now()
     if task is None:
+        if archived_task_snapshot(task_id):
+            raise SystemExit(
+                f"Task {task_id} is archived. Create a new follow-up task instead of reusing the archived task id."
+            )
         task = {
             "id": task_id,
             "title": title,
@@ -2050,6 +2388,10 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     ensure_agent(actor)
     task = get_task(state, task_id)
     if task is None:
+        if archived_task_snapshot(task_id):
+            raise SystemExit(
+                f"Task {task_id} is archived and cannot be reopened in place. Create a new follow-up task that references {task_id}."
+            )
         raise SystemExit(f"Unknown task: {task_id}")
     owner = canonical_agent_name(task.get("owner"))
     reviewer = canonical_agent_name(task.get("reviewer"))
@@ -2206,6 +2548,7 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
+    archive_terminal_task_from_state(state, task, archived_at=timestamp)
     append_log(
         {
             "ts": timestamp,
@@ -2242,6 +2585,7 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
+    archive_terminal_task_from_state(state, task, archived_at=timestamp)
     append_log(
         {
             "ts": timestamp,
@@ -2298,8 +2642,56 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
     return None
 
 
+def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
+    archived_at = iso_now()
+    archived_ids = archive_terminal_tasks_in_state(state, archived_at=archived_at)
+    append_log(
+        {
+            "ts": archived_at,
+            "agent": current_actor(),
+            "type": "archive_migrate",
+            "message": f"Archived {len(archived_ids)} terminal tasks from ai-status.json.",
+            "task_ids": archived_ids,
+        }
+    )
+
+
 def command_prompt(state: dict[str, Any], _args: list[str]) -> None:
     print(build_onboarding_prompt(state))
+
+
+def command_show(state: dict[str, Any], args: list[str]) -> None:
+    if len(args) < 1:
+        raise SystemExit("Usage: show <task-id>")
+    task_id = args[0]
+    active_task = get_task(state, task_id)
+    if active_task is not None:
+        print(
+            json.dumps(
+                {
+                    "source": "active",
+                    "task": active_task,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    snapshot = archived_task_snapshot(task_id)
+    if snapshot is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    print(
+        json.dumps(
+            {
+                "source": "archive",
+                "snapshot_path": str(archive_task_path(task_id).relative_to(ROOT)),
+                "snapshot": snapshot,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -2309,6 +2701,7 @@ def main(argv: list[str]) -> int:
 
     read_only_commands = {
         "prompt": command_prompt,
+        "show": command_show,
     }
 
     commands = {
@@ -2323,6 +2716,7 @@ def main(argv: list[str]) -> int:
         "restore_approved": command_restore_approved,
         "supersede": command_supersede,
         "approve": command_approve,
+        "archive_migrate": command_archive_migrate,
         "sync": command_sync,
     }
 

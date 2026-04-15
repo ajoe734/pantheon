@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "task_id": "ARC-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ARC-002",
+    "title": "Publish epic roadmap aligned to target architecture",
+    "phase": "Architecture",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "ARC-001"
+    ],
+    "artifacts": [
+      "ROADMAP.md"
+    ],
+    "acceptance": [
+      "epics sequenced",
+      "ownership proposed",
+      "immediate next moves listed"
+    ],
+    "next": "Published epic roadmap that turns the target architecture into sequenced delivery slices and ownership lanes",
+    "last_update": "2026-04-01T06:26:52Z",
+    "summary_zh": "把目標架構拆成可落地的 Epic 與任務序列，讓後續可以照依賴順序逐步實作。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

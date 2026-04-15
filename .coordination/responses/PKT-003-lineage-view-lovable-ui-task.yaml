@@ -10,37 +10,38 @@ screen_id: screen-evolution-lineage
 ui_spec_path: docs/screens/PKT-003-lineage-view.md
 frontend_change_spec_path: docs/pantheon-handoffs/PKT-003-lineage-view/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
-  - GET /api/v1/lineage
-  - GET /api/v1/lineage/edges/{edge_id}
-  - GET /api/v1/lineage/graph
+- GET /api/v1/lineage
+- GET /api/v1/lineage/edges/{edge_id}
+- GET /api/v1/lineage/graph
 constraints:
-  - use existing bff client only
-  - do not add raw fetch in components
-  - do not import demo providers
-  - if any required field is missing, emit a bff-gap handoff instead of mocking
-  - do not expose root_type as a filter control (LN-03 root_type is a v1 no-op)
-  - depth parameter must be passed as-is; do not clamp client-side
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
 acceptance:
-  - build the Lineage list panel (list rows carry artifact_id, edge_count, last_edge_at only; row click loads the graph, not the edge drawer)
-  - build the Lineage Graph panel using root_id and depth; graph-edge click opens the edge detail drawer using edge_id from lineage_graph.edges[].id
-  - build the Lineage Edge Detail drawer triggered from graph-edge selection (edge_id sourced from LN-03 response, not from list rows)
-  - use only the existing BFF client
-  - do not add raw fetch calls in component files
-  - do not expose root_type filter in the UI
-  - render explicit empty state when lineage_graph.edges is empty (display "No lineage recorded for {artifact_id}" — not a blank canvas)
-  - display staleness banner when meta.staleness is present
-  - render loading, empty, and error states as explicitly distinct
+- build the Lineage list panel (row click loads the Lineage Graph; rows carry no edge_id)
+- build the Lineage Graph panel using root_id and depth parameters; graph-edge click
+  opens the edge detail drawer using edge_id from lineage_graph.edges[].id
+- build the Lineage Edge Detail drawer triggered from graph-edge selection, not list-row
+  selection
+- do not expose root_type as a filter control (v1 BFF no-op)
+- use only the existing BFF client
+- render explicit empty state when lineage_graph.edges is empty (display "No lineage
+  recorded" — not a blank canvas)
 required_feedback:
-  - docs/pantheon-feedback/PKT-003-lineage-view/LOVABLE_CHANGE_FEEDBACK.md
-  - docs/pantheon-feedback/PKT-003-lineage-view/API_GAP_REQUESTS.json
-  - docs/pantheon-feedback/PKT-003-lineage-view/UI_DECISIONS.md
-  - docs/pantheon-feedback/PKT-003-lineage-view/QA_STATUS.md
+- docs/pantheon-feedback/PKT-003-lineage-view/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-003-lineage-view/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-003-lineage-view/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-003-lineage-view/QA_STATUS.md
 delivery_dependencies:
-  - .coordination/responses/PKT-003-lineage-view-contract-ready.yaml
+- .coordination/responses/PKT-003-lineage-view-contract-ready.yaml
 links:
+  lovable_project_url: null
   bff_spec_path: docs/bff/PKT-003-lineage-view.md
+  ui_spec_path: docs/screens/PKT-003-lineage-view.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-003-lineage-view/FRONTEND_CHANGE_SPEC.md
   example_payload_paths:
-    - docs/examples/PKT-003-lineage-view.json
+  - docs/examples/PKT-003-lineage-view.json
   handoff_bundle_dir: docs/pantheon-handoffs/PKT-003-lineage-view
 gap_handoff_path: .coordination/requests/PKT-003-lineage-view-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-003-lineage-view-bff-gap.example.yaml

@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "PKT-004-SIDECAR-REVIEW",
+  "archived_at": "2026-04-15T00:11:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-004-SIDECAR-REVIEW",
+    "title": "Prepare PKT-004 review packet and evidence summary",
+    "summary_zh": "平行支援 PKT-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "APP-002 Packetization",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/PKT-004/PKT-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner final checks complete. Sidecar review packet confirmed accurate: six-module evidence table, three AC items source-ready, six inherited BFF caveats, six reviewer gates. Codex approval stands. Artifact committed (a0ae2c0). Closing PKT-004-SIDECAR-REVIEW as done.",
+    "last_update": "2026-04-15T00:11:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PKT-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已修正 sidecar packet 內過期的 reviewer / handoff 指向，現在與 task brief 及 ai-status live review assignment 一致。",
+      "已修正 parent metadata 的來源歸因：Qwen/Codex 與 PKT-004 scope 來自 planning-session / execution materialization，不能誤寫成 ai-status 內有獨立 parent execution row。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T00:11:39Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a0ae2c0d14dc4b0e682278bfbfcddc9474966f71",
+      "commit_subject": "PKT-004-SIDECAR-REVIEW: add review packet sidecar (6 modules, 3 ACs, 6 gates, 6 caveats)",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "PKT-004-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 130,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-004-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:26:40Z",
+      "resolved_at": "2026-04-14T15:26:40Z"
+    },
+    {
+      "task_id": "PKT-004-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:27:20Z",
+      "resolved_at": "2026-04-14T15:27:20Z"
+    },
+    {
+      "task_id": "PKT-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Review packet is ready. support/sidecars/PKT-004/PKT-004-SIDECAR-REVIEW.md contains: (1) parent task snapshot — LOOP-001/LOOP-003 done, no BFF surfaces blocked; (2) acceptance map for AC-1/AC-2/AC-3 verified against the companion acceptance sidecar; (3) six-module evidence table with source-ready surfaces, deferred/blocked items, and wave assignments; (4) six inherited BFF caveats that must carry forward into canonical artifacts; (5) six reviewer gates. Please inspect and approve if accurate.",
+      "status": "done",
+      "created_at": "2026-04-14T15:47:04Z",
+      "resolved_at": "2026-04-14T15:58:09Z"
+    },
+    {
+      "task_id": "PKT-004-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T15:58:09Z",
+      "resolved_at": "2026-04-14T16:18:15Z"
+    },
+    {
+      "task_id": "PKT-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet now matches the live reviewer assignment and correctly attributes parent PKT-004 metadata to planning artifacts. Sidecar support slice is approved; owner should finalize to done after closeout.",
+      "status": "done",
+      "created_at": "2026-04-14T16:18:15Z",
+      "resolved_at": "2026-04-15T00:11:39Z"
+    }
+  ],
+  "blockers": []
+}

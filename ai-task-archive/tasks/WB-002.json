@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "WB-002",
+  "archived_at": "2026-04-14T13:16:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-002",
+    "title": "Define the Persona Workbench backlog and wave plan",
+    "summary_zh": "整理 Persona Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "PKT-004"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "personas, persona detail, tool profile, consult policy, and capital pool binding are all mapped to explicit modules",
+      "existing persona-management and remaining catalog support is linked to the correct screens",
+      "missing BFF or contract dependencies are separated from missing screen-spec work"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Persona Workbench backlog and wave plan finalized after Claude approval; module mapping, support links, and Wave 1/Wave 2 dependency split are now canonical in the backlog.",
+    "last_update": "2026-04-14T13:16:10Z",
+    "review_notes_zh": [
+      "審查通過",
+      "三項驗收條件全部符合：各模組明確列出；現有 persona-management 與 catalog 支撐已正確連結；缺規格工作與缺 BFF 路由工作已分開呈現。波次邊界清晰，跨工作台共用引用正確。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T13:16:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "2efcaa2eec057d84df4a9d9ff9fb75528fc5911d",
+      "commit_subject": "WB-002: finalize Persona Workbench backlog wave plan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WB-002",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 129,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-002",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-14T13:09:19Z",
+      "resolved_at": "2026-04-14T13:09:28Z"
+    },
+    {
+      "task_id": "WB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Persona Workbench backlog updated: summary row corrected, explicit PM-01/PS/CP surface mapping added, and Wave 1 vs Wave 2 plus screen-spec vs backend dependencies are now separated. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-14T13:13:23Z",
+      "resolved_at": "2026-04-14T13:14:22Z"
+    },
+    {
+      "task_id": "WB-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three acceptance criteria met: modules explicit, existing support correctly linked, screen-spec gaps separated from BFF/contract dependencies. Wave boundary clean. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T13:14:22Z",
+      "resolved_at": "2026-04-14T13:16:10Z"
+    }
+  ],
+  "blockers": []
+}

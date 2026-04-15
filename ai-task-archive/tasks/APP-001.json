@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "task_id": "APP-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-001",
+    "title": "Define governed BFF and consultation surfaces",
+    "summary_zh": "定義 BFF/read aggregation 與 consultation surface，禁止再長出平行真相來源。",
+    "phase": "Phase 5: Persona and Application Surfaces",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PER-001",
+      "LIN-001"
+    ],
+    "artifacts": [
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+      "PERSONA_RUNTIME_MODEL.md",
+      "services/control-plane/bff/BFF_API_CONTRACT.md",
+      "services/control-plane/bff/CONSULTATION_SURFACE_CONTRACT.md",
+      "services/control-plane/bff/DEGRADED_OPERATOR_PATH.md",
+      "services/control-plane/bff/review_app001_codex_approved_zh.md"
+    ],
+    "acceptance": [
+      "BFF is read-oriented",
+      "consultation surfaces cite canonical objects",
+      "degraded operator path is documented"
+    ],
+    "next": "APP-001 officially closed. All deliverables verified and artifacts updated. BFF v1 contract, consultation surfaces, and degraded operator path are now canonical reference for APP-002.",
+    "last_update": "2026-04-10T13:23:30Z",
+    "review_notes_zh": [
+      "審查通過：governed BFF / consultation / degraded-path 三份正式 contract 已齊備，33 個 canonical surfaces 與 6 個 consultation surfaces 已收斂成可落地 v1 邊界。",
+      "reviewer cleanup：IN-05 已回到 FreezeOrder + RuntimeBinding 的 composed read shape；consultation contract 已明確改為 SessionPersona.metadata.consultation projection；read-only guarantee 不再保留 command-facade 歧義。"
+    ],
+    "review_file": "services/control-plane/bff/review_app001_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "APP-001 deliverables ready for Codex review. Three artifacts created in services/control-plane/bff/: (1) BFF_API_CONTRACT.md — formal v1 API contract with 33 read-only surfaces, RBAC matrix, error/staleness models, composed views, SSE real-time feeds, secondary control path; (2) CONSULTATION_SURFACE_CONTRACT.md — 6 consultation surfaces citing canonical SessionPersona/ConsultPolicy objects with no shadow model; (3) DEGRADED_OPERATOR_PATH.md — full degradation matrix, admin CLI requirements, operator journeys under failure. All acceptance criteria met. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T13:12:50Z",
+      "resolved_at": "2026-04-10T13:19:46Z"
+    },
+    {
+      "task_id": "APP-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "APP-001 approved. Formal BFF, consultation, and degraded-path contracts are aligned; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-10T13:19:46Z",
+      "resolved_at": "2026-04-10T13:22:31Z"
+    }
+  ],
+  "blockers": []
+}

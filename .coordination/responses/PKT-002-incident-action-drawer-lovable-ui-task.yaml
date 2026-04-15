@@ -4,43 +4,31 @@ project: ajoe734/front-ai-trading-system
 status: ready
 pantheon_pr: null
 base_url: null
-workbench: operator-console
 screen: incident-action-drawer
-screen_id: screen-operator-incident-action-drawer
-ui_spec_path: docs/screens/PKT-002-incident-action-drawer.md
-frontend_change_spec_path: docs/pantheon-handoffs/PKT-002-incident-action-drawer/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
-  - GET /api/v1/kill-switch/status
-  - POST /api/v1/operator/commands
+- GET /api/v1/kill-switch/status
+- POST /api/v1/operator/commands
 constraints:
-  - use existing bff client only
-  - do not add raw fetch in components
-  - do not import demo providers
-  - if any required field is missing, emit a bff-gap handoff instead of mocking
-  - all allowedActions fields must come from the BFF response; do not derive locally
-  - every emergency action requires a non-empty audit_context.reason before submit is enabled
-  - render command receipts inline; do not navigate away after a command
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
 acceptance:
-  - build the Incident Action Drawer with kill switch status header
-  - render emergency action buttons from allowedActions only; disabled buttons must be visually distinct
-  - enforce non-empty audit_context.reason before any submit button is enabled
-  - render command receipt inline after each successful POST with receipt_id, command, status, routing_path, and expected_completion_at
-  - render the secondary control path panel when meta.surfaces.kill_switch is degraded or unavailable
-  - secondary path shows last known state, fallback routing copy, and only Pause and RiskOff buttons
-  - render "Emergency control surface fully unavailable" banner when both primary and secondary paths are unavailable
-  - render loading and error states as explicitly distinct
-required_feedback:
-  - docs/pantheon-feedback/PKT-002-incident-action-drawer/LOVABLE_CHANGE_FEEDBACK.md
-  - docs/pantheon-feedback/PKT-002-incident-action-drawer/API_GAP_REQUESTS.json
-  - docs/pantheon-feedback/PKT-002-incident-action-drawer/UI_DECISIONS.md
-  - docs/pantheon-feedback/PKT-002-incident-action-drawer/QA_STATUS.md
-delivery_dependencies:
-  - .coordination/responses/PKT-002-incident-action-drawer-contract-ready.yaml
+- build the Incident Action Drawer with kill switch status header and emergency action
+  buttons
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- do not invent fields beyond this handoff packet
+- render all CTAs from backend-shaped allowedActions only; do not derive eligibility
+  locally
+- render command receipts inline after each POST /api/v1/operator/commands call
+- render the secondary control path panel when meta.surfaces.kill_switch is degraded
+  or unavailable
+- require a non-empty audit_context.reason before enabling any action submit button
 links:
-  bff_spec_path: docs/bff/PKT-002-incident-action-drawer.md
-  example_payload_paths:
-    - docs/examples/PKT-002-incident-action-drawer.json
-  handoff_bundle_dir: docs/pantheon-handoffs/PKT-002-incident-action-drawer
+  lovable_project_url: null
+  bff_spec_path: null
+  example_payload_paths: []
 gap_handoff_path: .coordination/requests/PKT-002-incident-action-drawer-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-002-incident-action-drawer-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-002-incident-action-drawer-ui-done.yaml

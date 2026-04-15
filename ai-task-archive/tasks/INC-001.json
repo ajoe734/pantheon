@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "task_id": "INC-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INC-001",
+    "title": "Define incident and postmortem backbone objects",
+    "summary_zh": "定義 incident 與 postmortem 主幹物件，讓它們能連到 runtime binding、telemetry 與 lineage 證據。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "TEL-001",
+      "LIN-001"
+    ],
+    "artifacts": [
+      "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
+    ],
+    "acceptance": [
+      "incident and postmortem objects attach to stage, binding, and lineage refs"
+    ],
+    "next": "INC-001 closed. All acceptance criteria met: IncidentCase (14 required fields), Postmortem (15 required fields), 3 normalized lineage edges enforced, IncidentStore referential integrity validated. 75/75 unit tests + 59/59 smoke tests PASS. Codex review approved and absorbed. Downstream EVO-004 unblocked.",
+    "last_update": "2026-04-10T22:53:18Z",
+    "review_notes_zh": [
+      "reviewer cleanup: Postmortem now propagates and enforces the same core evidence refs as IncidentCase",
+      "reviewer cleanup: smoke_test_incident.py now runs correctly both as a script and as a module"
+    ],
+    "review_file": "services/incident/review_inc001_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "INC-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "INC-001 complete: IncidentCase and Postmortem backbone objects fully implemented. 71/71 unit tests PASS, 55/55 smoke checks PASS. All 3 normalized lineage edges (incident_case.runtime_binding, postmortem.incident_case, evolution_decision.postmortem) are carried in both objects. IncidentCase carries deployment_stage, binding_id, deployment_plan_id, capital_pool_id, persona_capital_binding_id, artifact_id, artifact_version, runtime_id, trace_id. Postmortem propagates the same evidence refs. JSON schemas (incident_case.schema.json, postmortem.schema.json) validate both valid and invalid payloads. IncidentStore enforces referential integrity (Postmortem requires IncidentCase). Artifacts: services/incident/incident.py, services/incident/__init__.py, services/incident/incident_case.schema.json, services/incident/postmortem.schema.json, services/incident/contract.md.",
+      "status": "done",
+      "created_at": "2026-04-10T13:32:04Z",
+      "resolved_at": "2026-04-10T13:32:28Z"
+    },
+    {
+      "task_id": "INC-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot terminal: Error: Model \"claude\" from --model flag is not available.",
+      "status": "done",
+      "created_at": "2026-04-10T13:32:28Z",
+      "resolved_at": "2026-04-10T13:38:38Z"
+    },
+    {
+      "task_id": "INC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "INC-001 approved after reviewer cleanup: Postmortem now carries deployment_plan_id/persona_capital_binding_id/runtime_id and IncidentStore enforces propagated evidence equality with the parent IncidentCase. Unit tests 75/75 PASS; smoke checks 59/59 PASS.",
+      "status": "done",
+      "created_at": "2026-04-10T13:38:38Z",
+      "resolved_at": "2026-04-10T22:51:11Z"
+    },
+    {
+      "task_id": "INC-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-10T22:51:11Z",
+      "resolved_at": "2026-04-10T22:53:04Z"
+    }
+  ],
+  "blockers": []
+}

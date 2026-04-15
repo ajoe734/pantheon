@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-002-W4-REMAINING-CATALOG BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-002-W4-REMAINING-CATALOG，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W4-PERSONA-MGMT"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W4-REMAINING-CATALOG/APP-002-W4-REMAINING-CATALOG-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Stale Claude approval lane cleaned up. Codex created the missing sidecar handoff packet, reran the W4 catalog test successfully, and absorbed this auto-generated helper without needing a separate worker run.",
+    "last_update": "2026-04-12T02:20:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W4-REMAINING-CATALOG",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

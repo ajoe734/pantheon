@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "task_id": "REG-004",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "REG-004",
+    "title": "Split artifact_state and deployment_stage in registry contracts",
+    "summary_zh": "把 registry 與 promotion contract 裡的 artifact_state 和 deployment_stage 正式拆開，避免批准語意和部署語意混在一起。",
+    "phase": "Phase 1: Registry and Governance Split",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "DOC-003"
+    ],
+    "artifacts": [
+      "services/registry/contract.md",
+      "services/registry/promotion/README.md"
+    ],
+    "acceptance": [
+      "registry contracts use draft/candidate/approved/retired",
+      "deployment stage handled separately"
+    ],
+    "next": "REG-004 finalized after Qwen approval. Registry contract, entry schema, and promotion docs now treat artifact_state as canonical governance lifecycle and deployment_stage as separate derived deployment/runtime semantics. Compatibility window for legacy lifecycle_state/promotion_state consumers remains explicitly documented for downstream migration tasks.",
+    "last_update": "2026-04-09T16:03:21Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "REG-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Contract-first REG-004 cutover is ready for review. Updated services/registry/contract.md and services/registry/registry_entry_schema.json to use artifact_state=draft/candidate/approved/retired, moved deployment_stage ownership into deployment/runtime semantics, and added derived deployment_summary guidance. Updated services/registry/promotion/README.md to describe approved-state governance versus paper/canary/live deployment stages, with explicit legacy compatibility notes for gate.py/loader consumers. Added compatibility notes to services/registry/lineage/contract.md and services/execution/artifact-loader/contract.md. Verification: python3 -m json.tool services/registry/registry_entry_schema.json.",
+      "status": "done",
+      "created_at": "2026-04-09T15:55:47Z",
+      "resolved_at": "2026-04-09T15:57:25Z"
+    },
+    {
+      "task_id": "REG-004",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"a28d83e4-9050-4bb4-b74c-b75539900b90\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 1am (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"a5c9a73d-c80a-4900-ad88-c1c48ef5906c\",\"uuid\":\"d8e0c2e6-ecf7-47a9-bb02-22f864a8db0b\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-09T15:57:25Z",
+      "resolved_at": "2026-04-09T16:02:14Z"
+    },
+    {
+      "task_id": "REG-004",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Qwen review approved: artifact_state and deployment_stage cleanly separated across contract.md, registry_entry_schema.json, and promotion README. Compatibility window documented. Follow-on migration work correctly deferred.",
+      "status": "done",
+      "created_at": "2026-04-09T16:02:14Z",
+      "resolved_at": "2026-04-09T16:03:21Z"
+    }
+  ],
+  "blockers": []
+}

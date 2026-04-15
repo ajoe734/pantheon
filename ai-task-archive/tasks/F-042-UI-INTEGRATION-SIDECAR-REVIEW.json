@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "F-042-UI-INTEGRATION-SIDECAR-REVIEW",
+  "archived_at": "2026-04-15T04:15:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "F-042-UI-INTEGRATION-SIDECAR-REVIEW",
+    "title": "Prepare F-042-UI-INTEGRATION review packet and evidence summary",
+    "summary_zh": "平行支援 F-042-UI-INTEGRATION，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Lovable Integration",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/F-042-UI-INTEGRATION/F-042-UI-INTEGRATION-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar review packet approved by Codex. All 11 BFF required fields verified present, all 4 acceptance criteria met, no canonical truth files modified. Sidecar artifact complete. Closing F-042-UI-INTEGRATION-SIDECAR-REVIEW.",
+    "last_update": "2026-04-15T04:15:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "F-042-UI-INTEGRATION",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "review packet 已核對；evidence chain、BFF 11 欄位驗證、acceptance assessment 與 close-out instructions 一致，無需補件。"
+    ],
+    "review_file": "support/sidecars/F-042-UI-INTEGRATION/F-042-UI-INTEGRATION-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T04:15:45Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "70127533d2789b0880e35bd3387b763305b60ca9",
+      "commit_subject": "F-042-UI-INTEGRATION-SIDECAR-REVIEW: finalize sidecar review packet close-out",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "F-042-UI-INTEGRATION-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 143,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "F-042-UI-INTEGRATION-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete. Artifact: support/sidecars/F-042-UI-INTEGRATION/F-042-UI-INTEGRATION-SIDECAR-REVIEW.md. Contains: full BFF field-by-field verification (all 11 required fields confirmed present), acceptance criteria assessment (all 4 criteria met), evidence artifact chain, constraint compliance table, and step-by-step close-out instructions for the parent F-042-UI-INTEGRATION task. No canonical truth files modified.",
+      "status": "done",
+      "created_at": "2026-04-15T03:59:16Z",
+      "resolved_at": "2026-04-15T04:14:39Z"
+    },
+    {
+      "task_id": "F-042-UI-INTEGRATION-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet verified against the completed frontend-feedback artifact and approved. Returning to Claude for final sidecar close-out.",
+      "status": "done",
+      "created_at": "2026-04-15T04:14:39Z",
+      "resolved_at": "2026-04-15T04:15:45Z"
+    }
+  ],
+  "blockers": []
+}

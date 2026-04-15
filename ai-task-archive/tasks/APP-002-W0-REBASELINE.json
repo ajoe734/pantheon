@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W0-REBASELINE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W0-REBASELINE",
+    "title": "Rebaseline APP-002 backend implementation truth",
+    "summary_zh": "重新基線化 APP-002 backend 現況，修正把 scaffold 誤當 production 完成的狀態語義，並讓 planning packet、dashboard 與 execution board 對齊。",
+    "phase": "Phase 5: APP-002 Execution Wave 0",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md",
+      "docs/02-architecture/consensus/phase1/consensus-packet.md",
+      "docs/02-architecture/consensus/phase1/review-round-01.md"
+    ],
+    "acceptance": [
+      "planning_packet_matches_code_truth",
+      "dashboard_and_execution_board_aligned",
+      "legacy_app002_scopes_rebaselined"
+    ],
+    "next": "Finalized after review approval. Rebaseline locked: BFF exposes exactly 3 verified routes, .coordination/ validated, APP-002-IMPL-CLI/FE marked scaffold-only, Wave 0–5 execution tasks materialized.",
+    "last_update": "2026-04-11T11:59:48Z",
+    "auto_created_by": "phase1-2026-04-11-backend-completion"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W0-REBASELINE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rebaseline complete: task-board notes now flag APP-002-IMPL-CLI/FE as scaffold-only; validated front repo checkout + .coordination/ + pantheon-handoffs path. Planning packet/checklist/review round already align with code truth. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-04-11T11:55:10Z",
+      "resolved_at": "2026-04-11T11:57:10Z"
+    },
+    {
+      "task_id": "APP-002-W0-REBASELINE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Rebaseline artifacts are grounded in direct code verification: BFF exposes exactly 3 routes matching checklist truth, .coordination/ validated, APP-002-IMPL-CLI/FE correctly flagged scaffold-only, Wave 0–5 execution tasks materialized. Codex to finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-11T11:57:10Z",
+      "resolved_at": "2026-04-11T11:59:48Z"
+    }
+  ],
+  "blockers": []
+}

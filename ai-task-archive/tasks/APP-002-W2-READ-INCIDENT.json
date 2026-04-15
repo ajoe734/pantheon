@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W2-READ-INCIDENT",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W2-READ-INCIDENT",
+    "title": "Implement Incident Response read surfaces and composed view",
+    "summary_zh": "實作 Incident Response 的 read surfaces 與 composed view，讓事故處理頁面可直接讀 Pantheon canonical state。",
+    "phase": "Phase 5: APP-002 Execution Wave 2",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W1-COMMAND-DEPLOYMENT"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/BFF_API_CONTRACT.md"
+    ],
+    "acceptance": [
+      "incident_read_surfaces_live",
+      "incident_response_view_implemented",
+      "degraded_states_explicit"
+    ],
+    "next": "All acceptance criteria met: IN-01 through IN-05 implemented with RBAC, composed incident-response and post-incident-review views with degradation metadata, 14/14 unit tests passing. Codex review addressed — evolution_decisions extension documented inline. Ready for downstream consumption.",
+    "last_update": "2026-04-11T13:15:02Z",
+    "auto_created_by": "phase1-2026-04-11-backend-completion",
+    "review_notes_zh": [
+      "審查通過：Incident/Postmortem seed 已對齊 canonical schema（incident_id/binding_id/runtime_id/trace_id 等）；IN-05 kill-switch status 強制 admin-only；incident response 以 binding_id 解析 runtime binding，post-incident 以 incident_id 查 postmortem。time_range filter 仍為 passthrough。Smoke test 因缺 fastapi 未能執行。"
+    ],
+    "review_file": "services/control-plane/bff/review_app002_w2_read_incident_codex.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "All incident read surfaces (IN-01 through IN-05) and composed views (incident-response, post-incident-review) implemented. ReadSurfaceStore extended with incident/postmortem/kill-switch/evolution/telemetry data. 14/14 unit tests pass. Syntax validated via py_compile. Smoke test and unit test files created.",
+      "status": "done",
+      "created_at": "2026-04-11T13:00:50Z",
+      "resolved_at": "2026-04-11T13:01:37Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude to Codex after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"339b6e72-0258-4dd8-8eac-0df12b9e31c2\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 11pm (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"4fc84a85-48fe-415c-8a7a-8cb9c1d62f3c\",\"uuid\":\"bd8248b8-ce42-479d-8478-b846ab8b2f10\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-11T13:01:37Z",
+      "resolved_at": "2026-04-11T13:10:47Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved; see review file.",
+      "status": "done",
+      "created_at": "2026-04-11T13:10:47Z",
+      "resolved_at": "2026-04-11T13:11:10Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Implementation complete. All 14 unit tests passing. Incident surfaces IN-01 through IN-05, composed views, and degradation metadata all implemented. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-11T13:14:51Z",
+      "resolved_at": "2026-04-11T13:14:57Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved: All acceptance criteria verified. Incident/postmortem surfaces aligned with canonical schema. Admin-only kill-switch enforced. Composed views with degradation metadata complete.",
+      "status": "done",
+      "created_at": "2026-04-11T13:14:57Z",
+      "resolved_at": "2026-04-11T13:15:02Z"
+    }
+  ],
+  "blockers": []
+}

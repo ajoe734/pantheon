@@ -8,36 +8,40 @@ workbench: operator-console
 screen: global-degradation-banner
 screen_id: surface-operator-global-degradation-banner
 ui_spec_path: docs/screens/PKT-005-degradation-banner.md
-frontend_change_spec_path: null
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-005-degradation-banner/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints: []
 constraints:
-  - use existing bff client only; do not add a dedicated health-check fetch
-  - banner state must come exclusively from meta.staleness and meta.surfaces in the current screen's composed view response
-  - do not add raw fetch in components
-  - do not import demo providers
-  - if any meta.surfaces key is absent from the BFF response, emit a bff-gap handoff instead of assuming ok
-  - all five banner variants must be implemented (none, degraded, stale, partial, critical)
-  - banner is non-dismissable
+- use existing bff client only; do not add a dedicated health-check fetch
+- banner state must come exclusively from meta.staleness and meta.surfaces in the current screen's composed view response
+- do not add raw fetch in components
+- do not import demo providers
+- if any meta.surfaces key is absent from the BFF response, emit a bff-gap handoff instead of assuming ok
+- all five banner variants must be implemented (none, degraded, stale, partial, critical)
+- banner is non-dismissable
 acceptance:
-  - GlobalDegradationBanner component is implemented as a shared primitive
-  - banner renders correctly in all five variants based on meta.surfaces content
-  - banner is wired into PKT-001 Deployment Review Console, PKT-002 Incident Response Console, and PKT-003 Post-Incident Review Console
-  - no dedicated health-check fetch is added
-  - banner disappears when all surfaces return to ok
-  - STALE variant shows humanised age from meta.staleness.last_known_at
-  - PARTIAL variant lists each surface by humanised name and status
+- GlobalDegradationBanner component is implemented as a shared primitive
+- banner renders correctly in all five variants based on meta.surfaces content
+- banner is wired into Deployment Review (PKT-001), Incident Home and Incident Response (PKT-002), and Post-Incident Review (PKT-003)
+- no dedicated health-check fetch is added
+- banner disappears when all surfaces return to ok
+- STALE variant shows humanised age from meta.staleness.last_known_at
+- PARTIAL variant lists each surface by humanised name and status
 required_feedback:
-  - docs/pantheon-feedback/PKT-005-degradation-banner/LOVABLE_CHANGE_FEEDBACK.md
-  - docs/pantheon-feedback/PKT-005-degradation-banner/API_GAP_REQUESTS.json
-  - docs/pantheon-feedback/PKT-005-degradation-banner/UI_DECISIONS.md
-  - docs/pantheon-feedback/PKT-005-degradation-banner/QA_STATUS.md
+- docs/pantheon-feedback/PKT-005-degradation-banner/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-005-degradation-banner/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-005-degradation-banner/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-005-degradation-banner/QA_STATUS.md
 delivery_dependencies:
-  - .coordination/responses/PKT-005-degradation-banner-contract-ready.yaml
+- .coordination/responses/PKT-005-degradation-banner-contract-ready.yaml
 links:
+  lovable_project_url: null
   bff_spec_path: docs/bff/PKT-005-degradation-banner.md
+  ui_spec_path: docs/screens/PKT-005-degradation-banner.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-005-degradation-banner/FRONTEND_CHANGE_SPEC.md
   example_payload_paths:
-    - docs/examples/PKT-005-degradation-banner.json
-  gap_handoff_path: .coordination/requests/PKT-005-degradation-banner-bff-gap.yaml
-  gap_handoff_template: .coordination/requests/PKT-005-degradation-banner-bff-gap.example.yaml
-  completion_handoff_path: .coordination/requests/PKT-005-degradation-banner-ui-done.yaml
-  completion_handoff_template: .coordination/requests/PKT-005-degradation-banner-ui-done.example.yaml
+  - docs/examples/PKT-005-degradation-banner.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-005-degradation-banner
+gap_handoff_path: .coordination/requests/PKT-005-degradation-banner-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-005-degradation-banner-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-005-degradation-banner-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-005-degradation-banner-ui-done.example.yaml

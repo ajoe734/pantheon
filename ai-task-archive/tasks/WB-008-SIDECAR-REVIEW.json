@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "WB-008-SIDECAR-REVIEW",
+  "archived_at": "2026-04-15T00:43:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-008-SIDECAR-REVIEW",
+    "title": "Prepare WB-008 review packet and evidence summary",
+    "summary_zh": "平行支援 WB-008，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PKT-003",
+      "PKT-005"
+    ],
+    "artifacts": [
+      "support/sidecars/WB-008/WB-008-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the approved WB-008 support-only review packet, recorded Claude's seven-gate approval in the sidecar artifact, and archived this sidecar as done without modifying canonical truth.",
+    "last_update": "2026-04-15T00:43:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "WB-008",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過 (G1-G7 全通過)",
+      "後續追蹤: EW-04 BFF inspiration 路由、EW-05 EVO-004 settlement、EV-04/LN-03 caveat 需在後續執行切片中保留"
+    ],
+    "review_file": "support/sidecars/WB-008/WB-008-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T00:43:31Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "8acef9edc12c2f7d58621ae6bcc6b61636174538",
+      "commit_subject": "WB-008-SIDECAR-REVIEW: finalize review packet close-out",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "WB-008-SIDECAR-REVIEW",
+        "LLM-Agent": "Codex",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 129,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-008-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only review packet is ready at support/sidecars/WB-008/WB-008-SIDECAR-REVIEW.md. It cross-checks archived WB-008 close-out against the Evolution Workbench backlog, PKT-003/PKT-005 inheritance, EW-01–EW-05 module state, Wave 1/2/3 ordering, and the residual EW-04/EW-05 blockers. Please review it as a factual post-completion evidence record for the already-done parent task.",
+      "status": "done",
+      "created_at": "2026-04-15T00:40:21Z",
+      "resolved_at": "2026-04-15T00:41:05Z"
+    },
+    {
+      "task_id": "WB-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 7 reviewer gates passed. Packet accurately represents WB-008 post-completion state, PKT-003/PKT-005 inheritance, per-module readiness split, residual EW-04/EW-05 blockers, and Wave ordering. Approved and returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T00:41:05Z",
+      "resolved_at": "2026-04-15T00:43:31Z"
+    }
+  ],
+  "blockers": []
+}

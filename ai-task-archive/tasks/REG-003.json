@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "task_id": "REG-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "REG-003",
+    "title": "Add rollback and lineage requirements to promoted artifacts",
+    "phase": "Epic C",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "REG-001",
+      "REG-002"
+    ],
+    "artifacts": [
+      "services/registry/lineage/contract.md",
+      "services/registry/lineage/promoted_artifact_metadata.schema.json",
+      "artifact_metadata_schema.json"
+    ],
+    "acceptance": [
+      "rollback metadata required",
+      "lineage chain documented",
+      "promotion audit references rollback target"
+    ],
+    "next": "Rollback metadata is enforced for live promoted artifacts, lineage requirements are documented in the canonical promoted-artifact schema/contract, and promotion docs/tests reference rollback targets end-to-end. Verified with services/registry/promotion/test_gate.py (4 tests) and services/registry/promotion/smoke_test_gate.py.",
+    "last_update": "2026-04-06T15:40:24Z",
+    "summary_zh": "把 rollback 與 lineage 要求補進所有已升版 artifact，確保 live 出問題時能追來源並安全回退。"
+  },
+  "handoffs": [
+    {
+      "task_id": "REG-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Drafted REG-003 promoted artifact lineage contract, canonical schema, and compatibility alias at artifact_metadata_schema.json. Please review rollback strictness, loader-side sufficiency, and experiment-backend compatibility.",
+      "status": "done",
+      "created_at": "2026-04-02T13:50:25Z",
+      "resolved_at": "2026-04-05T11:56:45Z"
+    },
+    {
+      "task_id": "REG-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation phase must clarify: (1) how gate.py metadata expectations align with lineage contract, (2) rollback target definition for paper vs live. Build promoted_artifact_metadata.schema.json, loader-side validation, and artifact creation flow.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:40:24Z"
+    }
+  ],
+  "blockers": []
+}

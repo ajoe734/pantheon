@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "PKT-005",
+  "archived_at": "2026-04-15T00:03:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-005",
+    "title": "Packetize the global degradation banner and SSE/live reconciliation slice",
+    "summary_zh": "把全域 degradation banner 與 SSE/live reconciliation slice 整理成正式 packet 與 integration plan。",
+    "phase": "APP-002 Packetization",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "global degradation banner rules are defined once and referenced by all operator-facing packets",
+      "SSE, reconnect, replay, and stale-state reconciliation are described as a frontend integration slice rather than pure visual work",
+      "screen packets call out where live state is required and where polling fallback is acceptable"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Final checks complete: docs/screens/PKT-005-degradation-banner.md line 80 confirms backend-authority rule (banner state from BFF meta snapshots only, not SSE payloads). All artifacts committed (494efdc). Codex review approved. PKT-005 formally closed.",
+    "last_update": "2026-04-15T00:03:54Z",
+    "review_notes_zh": [
+      "殘留的 backend-authority 衝突已解除；degradation banner screen spec、SSE substrate、packet-family inheritance 與 handoff bundle 現在一致要求 banner state 只能依最新完整 BFF meta snapshot 更新，不能由 SSE payload 直接改寫。"
+    ],
+    "review_file": "docs/reviews/PKT-005-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T00:03:54Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "494efdc6a53025fb1317815b221d9998d46fa827",
+      "commit_subject": "PKT-005: finalize degradation banner and SSE substrate packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "PKT-005",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 132,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PKT-005 packet family complete. Both substrates — global degradation banner and SSE reconciliation substrate — are packetized with screen specs, BFF contracts, example payloads, and coordination handoff files. Please review the packet family doc and supporting artifacts.",
+      "status": "done",
+      "created_at": "2026-04-14T13:29:20Z",
+      "resolved_at": "2026-04-14T13:38:09Z"
+    },
+    {
+      "task_id": "PKT-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested. See docs/reviews/PKT-005-review-codex.md: clarify banner aggregation for split-read PKT-002 Incident Home; align meta.surfaces status semantics with inherited packets; resolve backend-vs-local banner authority after SSE.",
+      "status": "done",
+      "created_at": "2026-04-14T13:38:09Z",
+      "resolved_at": "2026-04-14T13:38:09Z"
+    },
+    {
+      "task_id": "PKT-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Please re-review PKT-005. All three blocking items from docs/reviews/PKT-005-review-codex.md have been addressed: (1) split-read aggregation rule added for PKT-002 Incident Home — BFF and screen contracts now define how merged surface maps from independent reads feed the banner; (2) per-surface status enum aligned with existing packets — only ok|degraded|unavailable; STALE variant now derived from meta.staleness.served_from, not a surface status value; (3) SSE banner authority conflict resolved — SSE substrate spec now explicitly states SSE events do not update banner state; packet family inheritance rule updated accordingly.",
+      "status": "done",
+      "created_at": "2026-04-14T13:54:21Z",
+      "resolved_at": "2026-04-14T14:07:00Z"
+    },
+    {
+      "task_id": "PKT-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Residual conflict remains: docs/screens/PKT-005-degradation-banner.md still says banner updates on an 'SSE snapshot event'. Align that sentence with the backend-authority rule in PKT-005 SSE/pkt-family docs. See docs/reviews/PKT-005-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-14T14:07:00Z",
+      "resolved_at": "2026-04-14T14:07:00Z"
+    },
+    {
+      "task_id": "PKT-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Single residual conflict fixed: docs/screens/PKT-005-degradation-banner.md line 80 now reads 'Banner state is updated when the screen receives a fresh BFF meta snapshot — from initial load, polling, or an explicit full refetch triggered after a significant SSE event. SSE event payloads do not carry meta snapshots and must not be used to update banner state directly.' This matches the backend-authority rule in the SSE substrate and packet-family inheritance rules. Please re-review.",
+      "status": "done",
+      "created_at": "2026-04-14T15:32:25Z",
+      "resolved_at": "2026-04-14T15:51:17Z"
+    },
+    {
+      "task_id": "PKT-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Residual backend-authority conflict resolved. PKT-005 is approved; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-14T15:51:17Z",
+      "resolved_at": "2026-04-15T00:03:54Z"
+    }
+  ],
+  "blockers": []
+}

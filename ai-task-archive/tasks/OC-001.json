@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "OC-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OC-001",
+    "title": "Define Pantheon tool permission model for upstream OpenClaw integration",
+    "phase": "Epic B",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P4-001"
+    ],
+    "artifacts": [
+      "services/control-plane/permissions/"
+    ],
+    "acceptance": [
+      "tool policy model defined",
+      "persona-scoped allowlist and denylist documented",
+      "approval hooks identified",
+      "[CODEX NOTE] any tool that calls LEAN directly must be restricted to paper/backtest context only in the permission model — live execution must always flow through REG → SIG → L, never through a direct O → L tool call"
+    ],
+    "next": "OC-001 APPROVED for v1 lock. Review written at services/control-plane/permissions/review_oc001_claude.md. Key: deny-first model + 6 mandatory deny rules + approval hooks all aligned with router v1. Two minor open items (allow_with_approval not in schema effect enum; promotion-state not checked at router layer) documented but do not block v1.",
+    "last_update": "2026-04-02T04:20:37Z",
+    "review_notes_zh": [
+      "審查通過：deny-first 模型、強制 deny 規則與 approval hook 都已和 Router v1 對齊。",
+      "後續只需追蹤兩個 minor open items：policy schema 是否要直接表達 allow_with_approval，以及 promotion-state 是否要在 router 層做二次確認。"
+    ],
+    "review_file": "services/control-plane/permissions/review_oc001_claude.md",
+    "summary_zh": "定義 Pantheon 的工具權限模型，並把 upstream OpenClaw 的工具能力映射到 deny-first allowlist/denylist 規則。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

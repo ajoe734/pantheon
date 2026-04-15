@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "task_id": "LP-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LP-002",
+    "title": "Integrate imitation workflows for trader behavior cloning",
+    "phase": "Epic F",
+    "owner": "Codex",
+    "reviewer": "Copilot",
+    "status": "done",
+    "depends_on": [
+      "FB-001",
+      "RS-002"
+    ],
+    "artifacts": [
+      "services/learning/imitation/"
+    ],
+    "acceptance": [
+      "trajectory schema maps to imitation inputs",
+      "behavior cloning workflow documented",
+      "registry linkage for learned policies defined"
+    ],
+    "next": "Finalized LP-002: imitation workflow under services/learning/imitation now maps governed trader trajectories into behavior-cloning datasets, documents the BC-first execution path, and packages draft registry-ready imitation_policy artifacts with lineage, checksums, and governance-filtered metadata. Verification: python3 -m py_compile services/learning/imitation/*.py; python3 -m unittest discover -s services/learning/imitation -p 'test_*.py' (3 tests OK); python3 services/learning/imitation/smoke_test.py (stub backend verified, 2 trajectories, 4 transitions, registry artifact + metrics emitted).",
+    "last_update": "2026-04-06T16:00:17Z",
+    "summary_zh": "導入 imitation 來學人類交易員的操作軌跡，讓系統能從行為示範而不是只靠文字偏好學習。",
+    "review_file": "review_lp002_copilot.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "LP-002",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Implemented services/learning/imitation with governed trajectory filtering, BC backend abstraction, registry-ready model_artifact packaging, sample dataset, worker/Dockerfile, and docker-compose worker path update. Verification: python3 -m unittest discover -s services/learning/imitation -p 'test_*.py', python3 services/learning/imitation/smoke_test.py, and python3 -m py_compile services/learning/imitation/*.py all passed. The optional upstream imitation backend is wired but not executed here because the imitation package is not installed in this workspace.",
+      "status": "done",
+      "created_at": "2026-04-06T14:38:10Z",
+      "resolved_at": "2026-04-06T14:41:49Z"
+    },
+    {
+      "task_id": "LP-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "✅ Review completed and approved. All acceptance criteria validated. Unit tests (3/3 pass), smoke tests verified, Python syntax OK. Registry linkage fully implemented with governance filtering. Codex implementation ready for deployment. Review documented in review_lp002_copilot.md (committed to git).",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:00:17Z"
+    }
+  ],
+  "blockers": []
+}

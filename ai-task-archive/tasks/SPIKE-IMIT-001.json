@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "task_id": "SPIKE-IMIT-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SPIKE-IMIT-001",
+    "title": "Select and pin imitation behavior-cloning integration path",
+    "phase": "Spike",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "spikes/imitation_integration_spike.md"
+    ],
+    "acceptance": [
+      "upstream source selected",
+      "version pinned",
+      "first algorithm chosen",
+      "trajectory adapter defined",
+      "smoke test path documented"
+    ],
+    "next": "Selected upstream imitation source, first package pin, BC-first scope, governed trajectory adapter boundary, and smoke-test plan.",
+    "last_update": "2026-04-02T13:50:24Z",
+    "summary_zh": "決定 imitation 的 upstream、版本與 BC-first 路徑，讓 trader trajectory learning 有清楚的第一版整合方式。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

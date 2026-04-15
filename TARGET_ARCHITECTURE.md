@@ -116,6 +116,14 @@ It owns:
 
 These objects form the minimum cross-plane backbone:
 
+**Decision-front objects (front-half provenance chain):**
+- `RegimeState`
+- `UniverseSelection`
+- `SignalInference`
+- `AllocationDecision`
+- `RiskAdjudication`
+
+**Governance and runtime objects (back-half):**
 - `StrategySpec`
 - `ArtifactRecord`
 - `ApprovalDecision`
@@ -127,6 +135,7 @@ These objects form the minimum cross-plane backbone:
 
 Ownership rules:
 
+- decision-front objects are owned by the decision plane (`services/registry-core/decision-domain/`) and feed the back-half governance gate
 - registry/governance own `ArtifactRecord` and `ApprovalDecision`
 - governance/promotion own `DeploymentPlan`
 - capital/runtime own `PersonaCapitalBinding` and `RuntimeBinding`

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "BG-000-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-000-SIDECAR-REVIEW",
+    "title": "Prepare BG-000 review packet and evidence summary",
+    "summary_zh": "平行支援 BG-000，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved review packet after refreshing the sidecar snapshot to match durable state; packet remains support-only evidence for Gemini's BG-000 closeout.",
+    "last_update": "2026-04-14T00:18:22Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BG-000",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：review packet 結構完整，證據交叉比對正確。三份 canonical 文件存在且語彙一致。9/10 上游問題已回答，DatasetVersion 適度延後至 BG-001。建議 parent owner (Gemini) 直接收尾。"
+    ],
+    "review_file": "support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T00:18:22Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "74a82bb7ea83eaf7b70f569953255ac454f60088",
+      "commit_subject": "BG-000-SIDECAR-REVIEW: finalize metadata checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BG-000-SIDECAR-REVIEW",
+        "Reviewer": "Qwen"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 84,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-000-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Review packet is ready at support/sidecars/BG-000/BG-000-SIDECAR-REVIEW.md. It confirms the three BG-000 policy docs satisfy the phase2 materialization contract, flags the missing explicit DatasetVersion closure note, and isolates parent-state hygiene items (empty artifacts array, provider brief only in consensus packet). Please review the sidecar packet and decide whether to absorb any notes into the parent BG-000 closeout.",
+      "status": "done",
+      "created_at": "2026-04-13T12:50:15Z",
+      "resolved_at": "2026-04-13T14:33:48Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Gemini to Qwen after repeated Gemini terminal: Unexpected critical provider failure",
+      "status": "done",
+      "created_at": "2026-04-13T14:33:48Z",
+      "resolved_at": "2026-04-13T23:29:21Z"
+    },
+    {
+      "task_id": "BG-000-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: sidecar review packet is coherent, evidence is well-cross-referenced, and the recommendation to treat remaining gaps as owner-close hygiene is sound. Parent BG-000 has already progressed to review_approved, strengthening the case for immediate finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T23:29:21Z",
+      "resolved_at": "2026-04-14T00:18:22Z"
+    }
+  ],
+  "blockers": []
+}

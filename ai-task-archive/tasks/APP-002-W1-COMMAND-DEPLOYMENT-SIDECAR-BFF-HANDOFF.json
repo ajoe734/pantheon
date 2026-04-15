@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W1-COMMAND-DEPLOYMENT-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W1-COMMAND-DEPLOYMENT-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-002-W1-COMMAND-DEPLOYMENT BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-002-W1-COMMAND-DEPLOYMENT，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 1",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W1-READ-DEPLOYMENT"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W1-COMMAND-DEPLOYMENT/APP-002-W1-COMMAND-DEPLOYMENT-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar BFF handoff packet created with gap analysis for command deployment hardening",
+    "last_update": "2026-04-11T12:30:42Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W1-COMMAND-DEPLOYMENT",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W1-COMMAND-DEPLOYMENT-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar BFF handoff packet ready for review in support/sidecars/APP-002-W1-COMMAND-DEPLOYMENT/APP-002-W1-COMMAND-DEPLOYMENT-SIDECAR-BFF-HANDOFF.md. Summarizes current command flow and concrete gaps to make Promotion Review actions authoritative.",
+      "status": "done",
+      "created_at": "2026-04-11T12:28:20Z",
+      "resolved_at": "2026-04-11T12:28:53Z"
+    },
+    {
+      "task_id": "APP-002-W1-COMMAND-DEPLOYMENT-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: {\"type\":\"assistant\",\"message\":{\"id\":\"be94c07c-bb75-4a7f-a903-5cadd2536689\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null},\"content\":[{\"type\":\"text\",\"text\":\"You've hit your limit · resets 11pm (Asia/Taipei)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"79e14b54-3308-4917-b601-4a4cef47c86a\",\"uuid\":\"82aa948b-cfa4-4780-844c-623f7adfb066\",\"error\":\"rate_limit\"}",
+      "status": "done",
+      "created_at": "2026-04-11T12:28:53Z",
+      "resolved_at": "2026-04-11T12:30:38Z"
+    },
+    {
+      "task_id": "APP-002-W1-COMMAND-DEPLOYMENT-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "BFF handoff packet approved - comprehensive gap analysis for command deployment",
+      "status": "done",
+      "created_at": "2026-04-11T12:30:38Z",
+      "resolved_at": "2026-04-11T12:30:42Z"
+    }
+  ],
+  "blockers": []
+}

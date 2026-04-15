@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "task_id": "TEL-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-002",
+    "title": "Implement telemetry ingest shock-absorption path",
+    "summary_zh": "建立 durable buffer 與 async batch writer，避免高量 telemetry 寫入直接壓死 canonical Postgres。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "TEL-001"
+    ],
+    "artifacts": [
+      "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+      "services/telemetry/"
+    ],
+    "acceptance": [
+      "high-volume ingest does not block canonical Postgres writes",
+      "backpressure and replay behavior are verified",
+      "buffer choice tradeoffs are documented"
+    ],
+    "next": "--message",
+    "last_update": "2026-04-10T12:52:13Z",
+    "review_notes_zh": [
+      "Reviewer cleanup: backpressure delayed-event requeue now routes overflowed events to DLQ instead of silent drop.",
+      "ADR corrected: in-memory backend no longer claims an unimplemented emergency-spill durability path."
+    ],
+    "review_file": "services/telemetry/review_tel002_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "TEL-002 ready for review. All artifacts implemented: durable buffer (InMemoryBuffer v1 + RedisStreamBuffer v2-ready), async batch writer with micro-batching/retry/partition-routing, backpressure controller with adaptive concurrency, dead-letter queue with JSONL spill/replay/diagnostic-tags, TelemetryIngestService. 38/38 unit tests pass. 4/4 smoke tests pass. BUFFER_CHOICE_ADR.md documents tradeoffs.",
+      "status": "done",
+      "created_at": "2026-04-10T12:41:25Z",
+      "resolved_at": "2026-04-10T12:48:24Z"
+    },
+    {
+      "task_id": "TEL-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Approved after reviewer cleanup: delay-path overflow now lands in DLQ, regression test added, and ADR durability wording is aligned with the actual v1 implementation.",
+      "status": "done",
+      "created_at": "2026-04-10T12:48:24Z",
+      "resolved_at": "2026-04-10T12:51:03Z"
+    }
+  ],
+  "blockers": []
+}

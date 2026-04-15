@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "task_id": "P4-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P4-001",
+    "title": "Draft control-plane routing contract",
+    "phase": "Phase 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P2-002"
+    ],
+    "artifacts": [
+      "services/control-plane/router/"
+    ],
+    "acceptance": [
+      "router contract documented",
+      "monitoring handoff documented"
+    ],
+    "next": "Review approved: router contract is locked for v1. Remaining items are follow-up infrastructure tasks, not blockers for the contract.",
+    "last_update": "2026-04-02T03:43:02Z",
+    "review_notes_zh": [
+      "審查通過：permission evaluation 已前移，deny-first evaluator 與最小 role resolution 已和 contract 對齊。",
+      "session TTL / rate-limit 現在是鎖定政策，runtime enforcement 明確 deferred 到 gateway 或 session backend，這對 v1 contract 是可接受的。",
+      "monitoring 與 SSE 已改成 deferred scope，不再混成 v1 已實作能力。"
+    ],
+    "review_file": "services/control-plane/router/review_p4001_codex_zh.md",
+    "summary_zh": "定義 control-plane router 的邊界，決定請求怎麼分類、怎麼檢查權限、怎麼把狀態與監控交給下游。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

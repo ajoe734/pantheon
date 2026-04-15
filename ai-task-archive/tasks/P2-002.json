@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "P2-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-002",
+    "title": "Sync schema docs and examples to schema.json v1",
+    "phase": "Phase 2",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "P2-001"
+    ],
+    "artifacts": [
+      "services/research/signal_schema_v1.md",
+      "services/research/example_payload.json",
+      "services/research/signal_example.json"
+    ],
+    "acceptance": [
+      "schema docs use the same field names and action vocabulary as schema.json",
+      "EXIT plus direction semantics are documented for execution consumers",
+      "examples match the locked execution schema"
+    ],
+    "next": "Human-facing schema docs, machine schema, and both example payload sets are aligned and validated against schema.json v1.",
+    "last_update": "2026-04-01T15:09:46Z",
+    "summary_zh": "把 schema 文件、範例 payload 與 machine schema 對齊成同一套契約，讓人看的文件和程式吃的格式一致。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

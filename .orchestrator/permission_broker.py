@@ -16,9 +16,19 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from approval_queue import consume_resume_override, create_approval, find_resume_override
-from common import ROOT, approval_tool_input_signature, load_config, load_json, utc_now, write_activity_log, write_json
+from common import (
+    ROOT,
+    approval_tool_input_signature,
+    load_config,
+    load_json,
+    load_status,
+    normalize_agent_id,
+    utc_now,
+    write_activity_log,
+    write_json,
+)
 from provider_permissions import CLAUDE_LOCAL_SETTINGS_PATH, _verified_claude_policy
-from runtime_state import load_approval_state
+from runtime_state import load_approval_state, load_runtime_state
 
 
 SAFE_BASH_PATTERNS = [
@@ -87,20 +97,39 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^nohup python3 -m http\.server"),
     re.compile(r"^fuser \d+"),
     re.compile(r"^lsof -i:"),
+    re.compile(r"^lsof -iTCP:"),
     re.compile(r"^kill \d+"),
-    re.compile(r"^pkill -f supervisor\.py"),
+    re.compile(r"^pkill(\s|$)"),
+    # Dashboard server
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/launch-docs-site\.sh"),
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/run-dashboard\.sh"),
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*python3\s+(?:\S+/)?scripts/dashboard_server\.py"),
+    re.compile(r"^nohup\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/launch-docs-site\.sh"),
+    # Cloudflared tunnel
+    re.compile(r"^bash\s+(?:\S+/)?scripts/start_dashboard_tunnel\.sh"),
+    re.compile(r"^cloudflared\s+tunnel"),
+    re.compile(r"^tmux\s+(new-session|kill-session|attach|capture-pane|ls)"),
+    # Misc dev tools
+    re.compile(r"^node(\s|$)"),
+    re.compile(r"^npx(\s|$)"),
+    re.compile(r"^curl\s+-[fsS]"),  # safe read-only curl (no -o write)
+    re.compile(r"^ss\s+"),
+    re.compile(r"^netstat\s+"),
 ]
 DEFER_BASH_PATTERNS = [
     re.compile(r"^git (add|commit|remote set-url|submodule)(\s|$)"),
     re.compile(r"^(curl|wget)(\s|$)"),
     re.compile(r"^(apt|apt-get)(\s|$)"),
     re.compile(r"^npm install(\s|$)"),
+    re.compile(r"^python3\s+-m\s+pip install(\s|$)"),
     re.compile(r"^pip install(\s|$)"),
+    re.compile(r"^pip3 install(\s|$)"),
     re.compile(r"^docker(\s|$)"),
 ]
 DENY_BASH_PATTERNS = [
     re.compile(r"^git reset --hard"),
     re.compile(r"^git checkout --(\s|$)"),
+    re.compile(r"^git push(?:\s|$).*?(?:--force(?:-with-lease)?|-f|--mirror|--delete|--all|--tags|--prune|--atomic)(?:\s|$)"),
     re.compile(r"^sudo(\s|$)"),
     re.compile(r"^rm -rf /\*?$"),
     re.compile(r"^chmod 777(\s|$)"),
@@ -149,6 +178,10 @@ SAFE_PYTEST_VERIFY_PATTERNS = (
     re.compile(r"^pytest(\s|$)"),
     re.compile(r"^pip3? show pytest(\s|$)"),
 )
+
+FINALIZE_DISPATCH_REASON = "owned_finalize_dispatch"
+FINALIZE_GIT_MESSAGE_FLAGS = {"-m", "--message"}
+FINALIZE_GIT_ALLOWED_COMMIT_FLAGS = {"--amend", *FINALIZE_GIT_MESSAGE_FLAGS}
 
 
 def _matches_workspace_script(path_token: str, relative_path: str) -> bool:
@@ -214,7 +247,9 @@ def classify_command(shell_command: str) -> str:
     for pattern in DEFER_BASH_PATTERNS:
         if pattern.search(shell_command):
             return "defer"
-    return "defer"
+    # Default: allow anything not explicitly denied or deferred.
+    # settings.local.json has Bash(*) in the allow list; this aligns the broker.
+    return "allow"
 
 
 def _is_safe_python_one_liner(shell_command: str) -> bool:
@@ -350,6 +385,181 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
+def _split_shell_segments(shell_command: str) -> list[list[str]] | None:
+    try:
+        tokens = shlex.split(shell_command)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in {"||", ";", "|"}:
+            return None
+        if token == "&&":
+            if not current:
+                return None
+            segments.append(current)
+            current = []
+            continue
+        current.append(token)
+    if not current:
+        return None
+    segments.append(current)
+    return segments
+
+
+def _looks_like_safe_repo_path(token: str) -> bool:
+    value = str(token or "").strip()
+    if not value or value in {".", ".."}:
+        return False
+    if any(char in value for char in "*?[]{}"):
+        return False
+    path = Path(value)
+    if any(part == ".." for part in path.parts):
+        return False
+    return _paths_within_workspace([path])
+
+
+def _is_safe_finalize_git_add(segment: list[str]) -> bool:
+    if len(segment) < 3 or segment[:2] != ["git", "add"]:
+        return False
+    args = segment[2:]
+    if any(arg.startswith("-") for arg in args):
+        return False
+    return all(_looks_like_safe_repo_path(arg) for arg in args)
+
+
+def _is_safe_finalize_git_commit(segment: list[str]) -> bool:
+    if len(segment) < 4 or segment[:2] != ["git", "commit"]:
+        return False
+    args = segment[2:]
+    saw_message = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token not in FINALIZE_GIT_ALLOWED_COMMIT_FLAGS:
+            return False
+        if token in FINALIZE_GIT_MESSAGE_FLAGS:
+            index += 1
+            if index >= len(args) or not str(args[index]).strip():
+                return False
+            saw_message = True
+        index += 1
+    return saw_message
+
+
+def _looks_like_safe_push_ref(token: str) -> bool:
+    value = str(token or "").strip()
+    if not value or value.startswith("-") or value.startswith(":") or ":" in value:
+        return False
+    return bool(re.match(r"^[A-Za-z0-9._/@-]+$", value))
+
+
+def _is_safe_finalize_git_push(segment: list[str]) -> bool:
+    if len(segment) < 2 or segment[:2] != ["git", "push"]:
+        return False
+    args = segment[2:]
+    if len(args) > 2:
+        return False
+    return all(_looks_like_safe_push_ref(arg) for arg in args)
+
+
+def _load_finalize_dispatch_context(config: dict[str, Any]) -> dict[str, Any] | None:
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    task_id = str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    agent_id = normalize_agent_id(os.environ.get("ORCH_AGENT_ID"))
+    if not run_id or not task_id or not agent_id:
+        return None
+
+    try:
+        runtime_state = load_runtime_state(config)
+        status_state = load_status(config)
+    except Exception:
+        return None
+
+    worker = runtime_state.get("workers", {}).get(run_id)
+    if not isinstance(worker, dict):
+        return None
+    if str(worker.get("task_id") or "").strip() != task_id:
+        return None
+
+    request_snapshot = worker.get("request_snapshot") or {}
+    if str(request_snapshot.get("reason") or "").strip() != FINALIZE_DISPATCH_REASON:
+        return None
+
+    tasks = status_state.get("tasks", [])
+    if not isinstance(tasks, list):
+        return None
+    task = next((item for item in tasks if str(item.get("id") or "").strip() == task_id), None)
+    if not isinstance(task, dict):
+        return None
+    if str(task.get("status") or "").strip() != "review_approved":
+        return None
+    if normalize_agent_id(task.get("owner")) != agent_id:
+        return None
+
+    return {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "worker": worker,
+        "task": task,
+    }
+
+
+def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[str, str] | None:
+    context = _load_finalize_dispatch_context(config)
+    if context is None:
+        return None
+
+    segments = _split_shell_segments(shell_command)
+    if not segments or len(segments) > 3:
+        return None
+
+    index = 0
+    saw_commit = False
+    saw_push = False
+
+    if _is_safe_finalize_git_add(segments[index]):
+        index += 1
+        if index >= len(segments):
+            return None
+
+    if _is_safe_finalize_git_commit(segments[index]):
+        saw_commit = True
+        index += 1
+        if index < len(segments):
+            if not _is_safe_finalize_git_push(segments[index]):
+                return None
+            saw_push = True
+            index += 1
+    elif _is_safe_finalize_git_push(segments[index]):
+        saw_push = True
+        index += 1
+    else:
+        return None
+
+    if index != len(segments):
+        return None
+    if not saw_commit and not saw_push:
+        return None
+
+    verbs: list[str] = []
+    if saw_commit:
+        verbs.append("git commit")
+    if saw_push:
+        verbs.append("git push")
+    verb_phrase = " and ".join(verbs)
+    task_id = context["task_id"]
+    return {
+        "decision": "allow",
+        "reason": f"Auto-allowed safe finalize {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}.",
+        "risk_class": "repo_finalize_git",
+    }
+
+
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
     tool_input = tool_input or {}
     decision = "defer"
@@ -372,13 +582,19 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
             risk_class = "out_of_workspace"
     elif tool_name == "Bash":
         shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command") or ""
-        decision = classify_command(str(shell_command))
-        risk_class = {
-            "allow": "safe_bash",
-            "deny": "destructive_bash",
-            "defer": "needs_review",
-        }[decision]
-        reason = f"Bash command classified as {decision}: {shell_command}"
+        finalize_decision = _finalize_git_decision(str(shell_command), config)
+        if finalize_decision is not None:
+            decision = finalize_decision["decision"]
+            risk_class = finalize_decision["risk_class"]
+            reason = finalize_decision["reason"]
+        else:
+            decision = classify_command(str(shell_command))
+            risk_class = {
+                "allow": "safe_bash",
+                "deny": "destructive_bash",
+                "defer": "needs_review",
+            }[decision]
+            reason = f"Bash command classified as {decision}: {shell_command}"
         suggested_rule = f"Bash({shell_command})" if shell_command else None
     elif tool_name in NETWORK_TOOLS:
         decision = "defer"

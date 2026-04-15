@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "task_id": "CAP-001A",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CAP-001A",
+    "title": "Prepare CAP-001 acceptance and binding compatibility audit",
+    "summary_zh": "平行支援 CAP-001，先做 capital_pool 與 PersonaCapitalBinding 的 acceptance checklist、binding compatibility audit 與 schema drift 盤點，讓主 owner 可以專注在 contract/code 落地。",
+    "phase": "Phase 2: Capital, Runtime, and Execution Control",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DEP-001"
+    ],
+    "artifacts": [],
+    "acceptance": [
+      "acceptance checklist covers pool ownership and single-pool runtime rule",
+      "compatibility audit maps current governance files and schema drift",
+      "review packet can be handed to CAP-001 owner without blocking implementation"
+    ],
+    "next": "CAP-001A finalized: acceptance packet, binding compatibility audit, and schema drift mapping complete; 64/64 smoke checks passed; ready for CAP-001 owner consumption.",
+    "last_update": "2026-04-10T00:54:31Z",
+    "review_notes_zh": [
+      "審查通過：acceptance checklist、binding compatibility audit 與 schema drift mapping 已足夠支援 CAP-001 owner 吸收 ownership / single-runtime / downstream handoff 要點。",
+      "非阻塞更正：Qwen packet §7 將 smoke test 視為待補項，但 services/control-plane/governance/smoke_test_capital_pool.py 已存在，且 reviewer 已驗證 64/64 checks passed。"
+    ],
+    "review_file": "services/control-plane/governance/review_cap001a_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "CAP-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet and binding compatibility audit complete. 6 schema drift items identified (1 HIGH, 2 MEDIUM, 3 LOW). Review packet at services/control-plane/governance/review_cap001a_qwen.md.",
+      "status": "done",
+      "created_at": "2026-04-10T00:49:58Z",
+      "resolved_at": "2026-04-10T00:53:08Z"
+    },
+    {
+      "task_id": "CAP-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "CAP-001A approved: acceptance packet is ready for CAP-001 handoff; reviewer verified smoke_test_capital_pool.py and py_compile, with one non-blocking correction about the already-existing smoke test.",
+      "status": "done",
+      "created_at": "2026-04-10T00:53:08Z",
+      "resolved_at": "2026-04-10T00:54:31Z"
+    }
+  ],
+  "blockers": []
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import importlib
 import json
 import os
 import random
@@ -50,6 +51,7 @@ from github_bus import sync_github_bus
 from provider_permissions import provider_capabilities as build_provider_capabilities, write_provider_capabilities
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, save_runtime_state
 from runtime_state import enqueue_event
+from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 
@@ -83,19 +85,16 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
     re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
 )
+SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
+    r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
+    re.IGNORECASE,
+)
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
 GENERIC_WORKER_EXIT_REASON = "Worker exited before the task reached a terminal status."
 PLANNING_STATE_FILE = THIS_DIR / "planning-state.json"
 PLANNING_PHASE_DIR = THIS_DIR.parent / "docs" / "02-architecture" / "consensus" / "phase1"
-PLANNING_CANONICAL_FILES = [
-    "docs/02-architecture/consensus/phase1/README.md",
-    "docs/02-architecture/consensus/phase1/planning-session.json",
-    "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md",
-    "docs/02-architecture/consensus/phase1/starter-draft.md",
-    "docs/02-architecture/consensus/phase1/consensus-packet.md",
-]
 _UNSET = object()
 
 
@@ -275,6 +274,29 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
         "active_workers": active_workers,
         "queue_items": queue_items,
     }
+
+
+def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except KeyError:
+        repo_root = THIS_DIR.parent
+    scripts_dir = repo_root / "scripts"
+    if not scripts_dir.exists():
+        return
+    scripts_path = str(scripts_dir)
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+    try:
+        ai_status = importlib.import_module("ai_status")
+        status_state = ai_status.load_state()
+        ai_status.write_dashboard_bundle(status_state)
+        ai_status.sync_docs_site()
+    except Exception as exc:
+        console_log(
+            f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
 
 
 def safe_load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
@@ -851,6 +873,20 @@ def pid_is_alive(pid: int | None) -> bool:
     if not pid:
         return False
     try:
+        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+        if waited_pid == pid:
+            return False
+    except ChildProcessError:
+        pass
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.exists():
+        try:
+            parts = proc_stat.read_text(encoding="utf-8", errors="ignore").split()
+        except OSError:
+            parts = []
+        if len(parts) >= 3 and parts[2] == "Z":
+            return False
+    try:
         os.kill(pid, 0)
     except OSError:
         return False
@@ -894,17 +930,136 @@ def discussion_planning_is_active(planning_state: dict[str, Any] | None) -> bool
     return str(planning_state.get("status") or "").strip() in {"active", "human_required"}
 
 
-def discussion_planning_readout_path(agent_name: str) -> str:
-    return f"docs/02-architecture/consensus/phase1/{agent_name.lower()}-readout.md"
+def discussion_planning_needs_materialization(config: dict[str, Any], planning_state: dict[str, Any] | None) -> bool:
+    if not planning_state:
+        return False
+    if str(planning_state.get("status") or "").strip() != "accepted":
+        return False
+    if str(planning_state.get("human_gate_status") or "").strip() != "approved":
+        return False
+
+    proposed = [payload for payload in list(planning_state.get("proposed_execution_tasks") or []) if isinstance(payload, dict)]
+    if not proposed:
+        return False
+
+    status = load_json(config_path(config, "status_file", "ai-status.json"), default={}) or {}
+    schema = config.get("schema", {})
+    tasks_path = str(schema.get("tasks_path", "tasks"))
+    task_id_field = str(schema.get("task_id_field", "id"))
+    task_map = {
+        str(task.get(task_id_field) or "").strip(): task
+        for task in list(status.get(tasks_path) or [])
+        if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
+    }
+    resolver = TaskResolver(task_map)
+    session_id = str(planning_state.get("session_id") or "").strip()
+
+    for payload in proposed:
+        task_id = str(payload.get("id") or "").strip()
+        if not task_id:
+            continue
+        current = task_map.get(task_id)
+        if not isinstance(current, dict):
+            if resolver.snapshot(task_id) is not None:
+                continue
+            return True
+        if str(current.get("source_plane") or "").strip().lower() != "planning":
+            return True
+        source_ref = current.get("source_ref") if isinstance(current.get("source_ref"), dict) else {}
+        if session_id and str(source_ref.get("session_id") or "").strip() != session_id:
+            return True
+
+    return False
+
+
+def auto_materialize_discussion_planning(config: dict[str, Any], planning_state: dict[str, Any] | None) -> bool:
+    if not discussion_planning_needs_materialization(config, planning_state):
+        return False
+
+    status_root = config_path(config, "status_file", "ai-status.json").parent
+    script = status_root / "scripts" / "planning_state.py"
+    session_id = str((planning_state or {}).get("session_id") or "").strip()
+    if not script.exists():
+        write_activity_log(
+            config,
+            {
+                "type": "planning_materialization_failed",
+                "session_id": session_id,
+                "message": f"Planning materialization script not found at {script}.",
+            },
+        )
+        return False
+
+    result = subprocess.run(
+        [sys.executable, str(script), "materialize"],
+        cwd=str(status_root),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        write_activity_log(
+            config,
+            {
+                "type": "planning_tasks_materialized_auto",
+                "session_id": session_id,
+                "message": result.stdout.strip() or "Accepted planning session auto-materialized into ai-status.json.",
+            },
+        )
+        return True
+
+    write_activity_log(
+        config,
+        {
+            "type": "planning_materialization_failed",
+            "session_id": session_id,
+            "message": result.stderr.strip() or result.stdout.strip() or "Planning materialization failed.",
+        },
+    )
+    return False
+
+
+def discussion_planning_dir(planning_state: dict[str, Any]) -> str:
+    planning_dir = str(planning_state.get("planning_dir") or "").strip()
+    if planning_dir:
+        return planning_dir
+    return "docs/02-architecture/consensus/phase1"
+
+
+def discussion_planning_artifact_path(planning_state: dict[str, Any], artifact_key: str, default_name: str) -> str:
+    artifacts = planning_state.get("artifacts") if isinstance(planning_state.get("artifacts"), dict) else {}
+    artifact = artifacts.get(artifact_key) if isinstance(artifacts.get(artifact_key), dict) else {}
+    path = str(artifact.get("path") or "").strip()
+    if path:
+        return path
+    return f"{discussion_planning_dir(planning_state)}/{default_name}"
+
+
+def discussion_planning_readout_path(planning_state: dict[str, Any], agent_name: str) -> str:
+    readouts = planning_state.get("readouts") if isinstance(planning_state.get("readouts"), dict) else {}
+    readout = readouts.get(agent_name) if isinstance(readouts.get(agent_name), dict) else {}
+    path = str(readout.get("path") or "").strip()
+    if path:
+        return path
+    return f"{discussion_planning_dir(planning_state)}/{agent_name.lower()}-readout.md"
 
 
 def discussion_planning_target_files(planning_state: dict[str, Any], agent_name: str) -> list[str]:
-    target_files = list(PLANNING_CANONICAL_FILES)
-    target_files.append(discussion_planning_readout_path(agent_name))
-    if str(planning_state.get("baton_owner") or "") == agent_name:
-        target_files.append("docs/02-architecture/consensus/phase1/starter-draft.md")
-    if agent_name == "Claude":
-        target_files.append("docs/02-architecture/consensus/phase1/consensus-packet.md")
+    target_files = [
+        discussion_planning_artifact_path(planning_state, "planning_readme", "README.md"),
+        str(planning_state.get("session_file") or "").strip() or f"{discussion_planning_dir(planning_state)}/planning-session.json",
+        *[str(path).strip() for path in list(planning_state.get("brief_files") or []) if str(path).strip()],
+        discussion_planning_artifact_path(planning_state, "starter_draft", "starter-draft.md"),
+        discussion_planning_artifact_path(planning_state, "consensus_packet", "consensus-packet.md"),
+        discussion_planning_readout_path(planning_state, agent_name),
+    ]
+    for output in list(planning_state.get("expected_outputs") or []):
+        if not isinstance(output, dict):
+            continue
+        if str(output.get("owner") or "").strip() != agent_name:
+            continue
+        output_path = str(output.get("path") or "").strip()
+        if output_path:
+            target_files.append(output_path)
     ordered: list[str] = []
     seen: set[str] = set()
     for path in target_files:
@@ -918,11 +1073,12 @@ def discussion_planning_target_files(planning_state: dict[str, Any], agent_name:
 def build_discussion_planning_message(planning_state: dict[str, Any], agent_name: str, target_files: list[str]) -> str:
     session_id = str(planning_state.get("session_id") or "phase1")
     summary = str(planning_state.get("summary") or "").strip()
+    objective = str(planning_state.get("objective") or "").strip()
     baton_owner = str(planning_state.get("baton_owner") or "Codex")
     next_reviewer = str(planning_state.get("next_reviewer") or "Qwen")
     current_round = int(planning_state.get("current_round") or 0)
     consensus_status = str(planning_state.get("consensus_status") or "not_started")
-    readout_path = discussion_planning_readout_path(agent_name)
+    readout_path = discussion_planning_readout_path(planning_state, agent_name)
     role_lines = [
         f"- 先寫你自己的 lane readout：`{readout_path}`",
         "- 只用 cited observations；不要直接改別人的 readout。",
@@ -944,7 +1100,7 @@ def build_discussion_planning_message(planning_state: dict[str, Any], agent_name
         "請先閱讀這些 planning canonical files，並以它們作為本輪討論唯一共同真相：\n"
         + "\n".join(f"- {path}" for path in target_files)
         + "\n\n"
-        "本輪目標是圍繞 Pantheon backend completion checklist 討論：哪些 BFF/API 真正已完成、哪些只是 contract、哪些是前端整合的 must-have，並把分歧顯式寫出來。\n\n"
+        + f"本輪目標：{objective or 'Align architecture, delivery order, and execution slicing before implementation.'}\n\n"
         + "\n".join(role_lines)
         + "\n"
     )
@@ -1090,17 +1246,29 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     except OSError:
         return None
 
+    fallback: str | None = None
     for line in reversed(lines):
         stripped = line.strip()
         if not stripped:
             continue
         if '"ts":' in stripped and '"type":' in stripped:
             continue
+        if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
+            continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
             continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
+            normalized = stripped.lower()
+            if (
+                "an unexpected critical error occurred" in normalized
+                or "[object object]" in normalized
+                or normalized.startswith("reason:")
+                or normalized.startswith("retrydelayms:")
+            ):
+                fallback = fallback or stripped
+                continue
             return stripped
-    return None
+    return fallback
 
 
 def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
@@ -1165,7 +1333,7 @@ def _parse_iso_utc(ts: str | None) -> datetime | None:
 def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("provider_guardrails", {}) or {})
     settings.setdefault("pause_on_capacity_failure", True)
-    settings.setdefault("capacity_pause_seconds", 3600)
+    settings.setdefault("capacity_pause_seconds", 900)
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
 
@@ -1235,7 +1403,7 @@ def mark_provider_dispatch_paused(
     if not provider_id:
         return False
     now = datetime.now(timezone.utc)
-    pause_seconds = max(60, int(settings.get("capacity_pause_seconds", 3600)))
+    pause_seconds = max(60, int(settings.get("capacity_pause_seconds", 900)))
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
     bucket = _dispatch_pause_bucket(state)
@@ -1737,6 +1905,65 @@ def request_for_worker(config: dict[str, Any], worker: dict[str, Any]) -> Delive
     return None
 
 
+def manual_pending_inbox_can_auto_redeliver(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any],
+    worker: dict[str, Any],
+) -> bool:
+    if worker.get("status") != "manual_pending":
+        return False
+    if worker.get("mode") != "file_inbox":
+        return False
+    if pid_is_alive(worker.get("pid")):
+        return False
+    request = request_for_worker(config, worker)
+    if request is None:
+        return False
+    if current_provider_dispatch_pause(state, request.provider):
+        return False
+    agent_capability = (provider_report or {}).get("agent_adapters", {}).get(str(request.agent_id) or "", {}) or {}
+    if not agent_capability.get("can_auto_deliver"):
+        return False
+    return str(agent_capability.get("delivery_mode") or "") != "file_inbox"
+
+
+def requeue_stale_manual_pending_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> bool:
+    run_id = str(worker.get("run_id") or "").strip()
+    if not run_id:
+        return False
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    state.setdefault("workers", {}).pop(run_id, None)
+    if queue_event_id:
+        record = queue_status(state, queue_event_id)
+        record["status"] = "queued"
+        record.pop("processed_at", None)
+        record.pop("error", None)
+        record.pop("run_id", None)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_requeued",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "worker_run_id": run_id,
+            "queue_event_id": queue_event_id or None,
+            "message": reason,
+        },
+    )
+    console_log(
+        f"requeued stale manual_pending worker: provider={worker.get('provider')} task={worker.get('task_id')} run={run_id}",
+        quiet=SUPERVISOR_LOG_QUIET,
+    )
+    return True
+
+
 def schedule_worker_retry(config: dict[str, Any], worker: dict[str, Any], reason: str) -> None:
     delay = retry_delay_seconds(config, worker)
     retry_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + delay, tz=timezone.utc)
@@ -1927,11 +2154,11 @@ def resume_claude_worker(
     session_id = worker.get("session_id") or worker.get("resume_token")
     if not session_id:
         return None
-    cli = command_exists("claude")
-    if not cli:
-        return None
     provider = config.get("providers", {}).get("claude", {})
     runtime = provider.get("runtime", {})
+    cli = command_exists(runtime.get("cli") or "claude")
+    if not cli:
+        return None
     command = [
         runtime.get("cli") or cli,
         "--resume",
@@ -2000,7 +2227,7 @@ def resume_claude_worker(
     }
 
 
-def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
+def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     approval_state = load_approval_state(config)
     task_map = task_index_from_status(config, load_status(config))
@@ -2020,7 +2247,8 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
 
     stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
     now = datetime.now(timezone.utc)
-    provider_report = load_provider_report(config)
+    if provider_report is None:
+        provider_report = load_provider_report(config)
     changed = retry_due_workers(config, state, provider_report, now) or changed
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
@@ -2052,6 +2280,20 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any]) -> bool:
             and worker.get("last_event_at")
             and worker.get("last_event_at") > previous_last_event_at
         )
+        if manual_pending_inbox_can_auto_redeliver(config, state, provider_report, worker):
+            changed = (
+                requeue_stale_manual_pending_worker(
+                    config,
+                    state,
+                    worker,
+                    reason=(
+                        "Cleared stale file_inbox/manual_pending worker after provider auto-delivery became available; "
+                        "queue event returned to queued for redispatch."
+                    ),
+                )
+                or changed
+            )
+            continue
         if (
             worker.get("queue_event_id")
             and not worker_matches_current_assignment(config, worker, task_map)
@@ -2628,6 +2870,7 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("helper_claim", {}) or {})
     settings.setdefault("enabled", True)
     settings.setdefault("task_statuses", ["todo"])
+    settings.setdefault("paused_owner_task_statuses", ["in_progress"])
     settings.setdefault("require_owner_higher_priority_load", True)
     return settings
 
@@ -2848,6 +3091,7 @@ def build_catalog_sidecar_candidates(
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    resolver = TaskResolver(task_map)
     templates = load_sidecar_catalog(config)
     candidates: list[dict[str, Any]] = []
     for template in templates:
@@ -2871,7 +3115,7 @@ def build_catalog_sidecar_candidates(
                 continue
             if str(parent.get("status") or "").lower() == "done":
                 continue
-            if any(str(task_map.get(dep, {}).get("status") or "").lower() not in dependency_done_statuses for dep in activation_dependencies):
+            if any(resolver.dependency_status(dep) not in dependency_done_statuses or not resolver.dependency_satisfied(dep) for dep in activation_dependencies):
                 continue
             signature = f"{parent_id}:{kind}"
             if signature in existing_signatures:
@@ -2921,6 +3165,7 @@ def build_dynamic_sidecar_candidates(
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    resolver = TaskResolver(task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
         if task_is_sidecar(parent):
@@ -2940,7 +3185,7 @@ def build_dynamic_sidecar_candidates(
         activation_dependencies = [
             dep_id
             for dep_id in (parent.get("depends_on") or [])
-            if str(task_map.get(dep_id, {}).get("status") or "").lower() in dependency_done_statuses
+            if resolver.dependency_status(dep_id) in dependency_done_statuses and resolver.dependency_satisfied(dep_id)
         ]
         if kind == "bff_handoff_packet" and parent.get("depends_on") and not activation_dependencies:
             continue
@@ -3041,18 +3286,26 @@ def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     return statuses
 
 
-def dependencies_satisfied(task: dict[str, Any], task_map: dict[str, dict[str, Any]], done_statuses: set[str]) -> bool:
+def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> TaskResolver:
+    if isinstance(task_lookup, TaskResolver):
+        return task_lookup
+    return TaskResolver(task_lookup)
+
+
+def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]], done_statuses: set[str]) -> bool:
+    resolver = _task_resolver(task_lookup)
     for dep_id in task.get("depends_on", []) or []:
-        dep_status = str(task_map.get(dep_id, {}).get("status") or "").lower()
-        if dep_status not in done_statuses:
+        dep_status = resolver.dependency_status(dep_id)
+        if dep_status not in done_statuses or not resolver.dependency_satisfied(dep_id):
             return False
     return True
 
 
-def task_dependency_signature(task: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str:
+def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
+    resolver = _task_resolver(task_lookup)
     parts: list[str] = []
     for dep_id in task.get("depends_on", []) or []:
-        dep_status = str(task_map.get(dep_id, {}).get("status") or "missing")
+        dep_status = resolver.dependency_status(dep_id)
         parts.append(f"{dep_id}:{dep_status}")
     return "|".join(parts)
 
@@ -3329,22 +3582,29 @@ def choose_helper_claim_agent(
     idle_agent_name: str,
     agent_loads: dict[str, list[int]],
     helper_settings: dict[str, Any],
+    owner_paused: bool = False,
 ) -> bool:
     if not helper_settings.get("enabled", True):
         return False
+    task_status = str(task.get("status") or "").lower()
     allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}
-    if str(task.get("status") or "").lower() not in allowed_statuses:
+    paused_owner_statuses = {
+        str(value).lower() for value in helper_settings.get("paused_owner_task_statuses", ["in_progress"])
+    }
+    if task_status not in allowed_statuses and not (owner_paused and task_status in paused_owner_statuses):
         return False
     if not owner_name or owner_name == idle_agent_name:
         return False
+    fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
+    if not fallbacks:
+        return False
+    if owner_paused and task_status in paused_owner_statuses:
+        return idle_agent_name in fallbacks
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):
         current_priority = dispatch_reason_priority("owned_ready_dispatch")
         if current_priority is None or not any(priority < current_priority for priority in owner_loads):
             return False
-    fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
-    if not fallbacks:
-        return False
     return idle_agent_name in fallbacks
 
 
@@ -3581,6 +3841,7 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
             task_status = str(task.get("status") or "").lower()
             task_owner = task.get(owner_field)
             task_reviewer = task.get(reviewer_field)
+            owner_paused = agent_dispatch_paused(config, state, normalize_agent_id(str(task_owner or "")))
 
             if (task_id, agent_id) in active_task_agents or (task_id, agent_id) in pending_task_agents:
                 continue
@@ -3601,8 +3862,7 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
                 priority = 3
 
             helper_claim_candidate = (
-                task_status == "todo"
-                and dependencies_satisfied(task, task_map, dependency_done_statuses)
+                dependencies_satisfied(task, task_map, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
                 and choose_helper_claim_agent(
@@ -3613,12 +3873,16 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     idle_agent_name=target_agent,
                     agent_loads=agent_loads,
                     helper_settings=helper_settings,
+                    owner_paused=owner_paused,
                 )
             )
 
             if helper_claim_candidate:
+                helper_dispatch_reason = "owned_in_progress_dispatch" if task_status == "in_progress" else "owned_ready_dispatch"
                 helper_message = (
-                    f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
+                    f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
+                    if owner_paused
+                    else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
                 )
                 if persist_task_reassignment(
                     config,
@@ -3633,7 +3897,7 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     task[reviewer_field] = str(task_owner or task_reviewer or "")
                     task["last_update"] = utc_now()
                     task["next"] = helper_message
-                    event = build_dispatch_event(task, target_agent, "owned_ready_dispatch", task_map)
+                    event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
                     if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
                         seen[event["key"]] = utc_now()
                         pending_event_keys.add(event["key"])
@@ -3919,9 +4183,11 @@ def run_once(
                 loop_started_at=loop_started_at,
             )
         changed = sync_coordination_files(config, state) or changed
-        changed = poll_workers(config, state) or changed
+        changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
+        planning_state = load_discussion_planning_state()
+        changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
         if discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state) or changed
@@ -3929,7 +4195,7 @@ def run_once(
             changed = dispatch_ready_tasks(config, state) or changed
             changed = dispatch_underutilization_sidecars(config, state) or changed
         changed = process_queue(config, state, provider_report) or changed
-        changed = poll_workers(config, state) or changed
+        changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = sync_github_bus(config, state) or changed
@@ -3947,6 +4213,7 @@ def run_once(
             loop_error=None,
         )
         save_runtime_state(config, state)
+        refresh_dashboard_runtime_artifacts(config)
         log_runtime_summary(
             state,
             safe_load_approval_state(config),
@@ -3970,6 +4237,7 @@ def run_once(
             loop_error=f"{type(exc).__name__}: {exc}",
         )
         save_runtime_state(config, state)
+        refresh_dashboard_runtime_artifacts(config)
         raise
 
 

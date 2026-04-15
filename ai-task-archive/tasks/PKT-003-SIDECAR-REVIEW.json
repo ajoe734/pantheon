@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "PKT-003-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T14:21:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-003-SIDECAR-REVIEW",
+    "title": "Prepare PKT-003 review packet and evidence summary",
+    "summary_zh": "平行支援 PKT-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "APP-002 Packetization",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/PKT-003/PKT-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the approved PKT-003 sidecar review packet after Codex takeover; support artifact now reflects current ownership, reviewer approval, and route-level caveats without changing canonical truth.",
+    "last_update": "2026-04-14T14:21:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PKT-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：三個 ready screen 的 artifact set 均已驗證存在（specs、BFF contracts、examples、coordination yaml）；blocked screen 的 gap 要求明確記錄；EVO-004 dependency 正確隔離在 Mutation Review；sidecar 未修改 canonical truth。",
+      "輕微標注問題：TL-01/02/03 caveat codes 在 BFF 合約檔案中並無對應標籤，但底層事實（EV-04 time_range 無效、LN-03 root_type no-op）已在合約文件中確認正確。建議 Gemini 在後續 sidecar 中以具體路由引用代替自訂 label codes。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T14:21:25Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "9e807163fca561ee8d4e77d792cce84d23e19cea",
+      "commit_subject": "PKT-003-SIDECAR-REVIEW: record finalize checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PKT-003-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 167,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "All three ready-screen artifact sets verified to exist. Blocked screens have explicit gap requirements. EVO-004 isolation is correct. Sidecar does not mutate canonical truth. Approved and returned to Gemini for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T13:40:57Z",
+      "resolved_at": "2026-04-14T14:16:56Z"
+    },
+    {
+      "task_id": "PKT-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T14:16:56Z",
+      "resolved_at": "2026-04-14T14:21:25Z"
+    }
+  ],
+  "blockers": []
+}
