@@ -1,6 +1,8 @@
 Build the `PKT-003-evolution-center` UI flow in `front-ai-trading-system` using only Pantheon APIs.
 If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `.coordination/requests/PKT-003-evolution-center-bff-gap.yaml` using `.coordination/requests/PKT-003-evolution-center-bff-gap.example.yaml` as the template. Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop.
 Screen: `evolution-center`.
+Workbench: `evolution-workbench`.
+Screen ID: `screen-evolution-center`.
 Allowed endpoints:
 - GET /api/v1/evolution-decisions
 - GET /api/v1/evolution-decisions/{decision_id}
@@ -20,3 +22,9 @@ Acceptance:
 - display the degradation banner when BFF read surface state is not fresh
 Completion handoff:
 - When the UI implementation is ready, write `.coordination/requests/PKT-003-evolution-center-ui-done.yaml` using `.coordination/requests/PKT-003-evolution-center-ui-done.example.yaml` as the template. Sync that file back to GitHub and stop so Pantheon supervisor can pick up review/integration work automatically.
+References:
+- docs/screens/PKT-003-evolution-center.md
+- docs/pantheon-handoffs/PKT-003-evolution-center/FRONTEND_CHANGE_SPEC.md
+- docs/bff/PKT-003-evolution-center.md
+- docs/pantheon-handoffs/PKT-003-evolution-center
+- docs/examples/PKT-003-evolution-center.json
