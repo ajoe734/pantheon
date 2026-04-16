@@ -1,7 +1,7 @@
 feature_id: PKT-003-lineage-view
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: loop-complete
 pantheon_pr: null
 base_url: null
 workbench: evolution-workbench
