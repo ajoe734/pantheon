@@ -1,0 +1,39 @@
+feature_id: PKT-002-incident-home
+type: ui-done
+source_repo: ajoe734/pantheon
+source_branch: master
+source_commit: null
+screen: incident-home
+blocking: false
+
+summary: >-
+  Pantheon has completed its full pre-implementation loop for PKT-002-incident-home.
+  BFF gaps were documented, backend was aligned, contract-ready and Lovable UI task
+  were dispatched. The Lovable implementation prompt is ready for pickup. Pantheon
+  records the screen as dispatch-complete; actual UI implementation is pending Lovable
+  execution. QA entry criteria documented in docs/pantheon-feedback/PKT-002-incident-home/.
+
+loop_state: dispatch-complete
+implementation_state: pending-lovable-pickup
+
+changed_files:
+  - .coordination/responses/PKT-002-incident-home-contract-ready.yaml
+  - .coordination/responses/PKT-002-incident-home-backend-delivery.yaml
+  - .coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml
+  - .coordination/responses/PKT-002-incident-home-lovable-prompt.md
+  - docs/pantheon-feedback/PKT-002-incident-home/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-002-incident-home/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-002-incident-home/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-002-incident-home/QA_STATUS.md
+
+follow_up_requested:
+  - Lovable should pick up .coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml
+    and implement the screen per the frontend change spec
+  - When implementation is complete, Lovable publishes a ui-done with actual commit details
+  - Pantheon supervisor runs QA acceptance when ui-done arrives
+  - BP5-SVC-015 (Remove BFF snapshot and default fallback) should be tracked separately
+
+acceptance:
+  - Pantheon coordination loop is complete (gap → delivery → dispatch)
+  - Pantheon records screen as dispatch-complete with explicit follow-up documented
+  - QA entry criteria and feedback artifacts are published

@@ -1,0 +1,45 @@
+{
+  "feature_id": "PKT-002-incident-home",
+  "assessed_at": "2026-04-16T00:00:00Z",
+  "assessed_by": "Claude",
+  "status": "no-new-gaps",
+  "note": "All BFF envelope gaps documented in PKT-002-incident-home-bff-gap.yaml were resolved in the backend delivery (commit 2782e5021243cca958974059dbf2ceeaac16fdfb). No new API gaps identified at dispatch time.",
+  "resolved_gaps": [
+    {
+      "endpoint": "GET /api/v1/incidents",
+      "field": "items",
+      "resolution": "BFF now returns items array per contract"
+    },
+    {
+      "endpoint": "GET /api/v1/incidents",
+      "field": "page_info.next_page_token",
+      "resolution": "Pagination implemented with next_page_token"
+    },
+    {
+      "endpoint": "GET /api/v1/incidents",
+      "field": "meta.snapshot_at",
+      "resolution": "BFF now returns meta.snapshot_at (ISO8601)"
+    },
+    {
+      "endpoint": "GET /api/v1/incidents",
+      "field": "meta.surfaces.incident_list",
+      "resolution": "Per-surface degradation status added"
+    },
+    {
+      "endpoint": "GET /api/v1/kill-switch/status",
+      "field": "kill_switch",
+      "resolution": "BFF now returns kill_switch wrapper with status/last_triggered_at/last_confirmed_at/active_commands"
+    },
+    {
+      "endpoint": "GET /api/v1/kill-switch/status",
+      "field": "meta.surfaces.kill_switch",
+      "resolution": "Per-surface kill switch degradation status added"
+    },
+    {
+      "endpoint": "GET /api/v1/kill-switch/status",
+      "field": "meta.snapshot_at",
+      "resolution": "BFF now returns meta.snapshot_at (canonical key)"
+    }
+  ],
+  "open_gaps": []
+}
