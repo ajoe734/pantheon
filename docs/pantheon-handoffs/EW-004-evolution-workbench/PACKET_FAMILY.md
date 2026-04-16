@@ -7,7 +7,7 @@
 - Phase origin: `BP5-WB-004`
 - Lovable readiness: **partial** — `EW-01`, `EW-02`, and `EW-03` are already handoff-ready via `PKT-003`; `EW-04` has blocked draft packet artifacts but no live BFF route or frontend handoff; `EW-05` remains not ready because the operator mutation-review projection and authority signals do not exist
 - Recommended wave: Wave 2 read-only baseline, then Wave 3 mutation authority
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Claude
 
 ---
@@ -31,9 +31,11 @@ No Evolution Workbench screen may invent graph structure, mutation authority, or
 | Approval authority contract | `services/control-plane/governance/contract.md` | Canonical `ApprovalDecision` lifecycle and the rule that evolution approvals must flow through `ApprovalDecision`, not shadow approval semantics |
 | Incident backbone | `services/incident/contract.md`, `services/incident/incident_case.schema.json`, `services/incident/postmortem.schema.json` | Canonical `IncidentCase` and `Postmortem` objects, lineage links into evolution, and the incident/postmortem evidence chain used by post-incident and mutation review surfaces |
 | Rollback semantics | `ROLLBACK_AND_POSITION_SEMANTICS.md` | Canonical rollback action types (`replace`, `pause_then_replace`, `liquidate_then_replace`), rollback ownership, and the rule that rollback remains an operational mitigation path owned by rollback/runtime planes |
+| Evolution service realization | `BP5-SVC-012`; `services/evolution/`, `services/governance/contract.md` | The formerly draft `EvolutionDecision` read path is now materially realized as a service-backed contract anchor instead of phase-3 design intent only |
+| Operational orchestration settlement | `BP5-SVC-013`; `services/runtime-manager/`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md` | Freeze, rollback follow-through, and kill-switch fast-path ownership are now explicitly settled in the runtime-manager path, so `EW-05` no longer depends on reopening the old execution-boundary debate |
 | Shared degraded-state substrate | `docs/pantheon-handoffs/PKT-005-degradation-banner/`, `docs/pantheon-handoffs/PKT-005-sse-substrate/` | Canonical degradation banner inheritance and optional SSE guidance for read-only Evolution surfaces |
 
-Historical note: older phase-3 packet text describes `EW-05 Mutation Review` as blocked on "EVO-004 execution boundary settlement." In current repo reality, the execution boundary is now materially anchored by `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, and `services/control-plane/governance/evolution_decision.contract.md`. What remains missing is the operator-facing mutation-review read model, the explicit operator command vocabulary for approve/reject review actions, and the backend-shaped `allowedActions` gating for that screen.
+Historical note: older phase-3 packet text describes `EW-05 Mutation Review` as blocked on "EVO-004 execution boundary settlement." In current repo reality, that boundary is materially anchored by `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `services/control-plane/governance/evolution_decision.contract.md`, and the service realization work in `BP5-SVC-012` / `BP5-SVC-013`. What remains missing is the operator-facing mutation-review read model, the explicit operator command vocabulary for approve/reject review actions, and the backend-shaped `allowedActions` gating for that screen.
 
 ---
 
@@ -185,6 +187,8 @@ The execution-boundary semantics themselves are no longer the main blocker. They
 
 What is still missing is a truthful operator mutation-review projection that composes those semantics into one read model without collapsing them into a shadow runtime or deployment command surface.
 
+The remaining command-path work is specifically the review-facing command vocabulary and authority gating. It is no longer a question of whether rollback, freeze, or kill-switch semantics belong to runtime-manager versus governance; that ownership split is already settled and this packet family must inherit it.
+
 ### Lovable readiness gate
 
 `false` — until the composed route, command vocabulary, `allowedActions`, and degraded-state contract exist, `EW-05` must remain a blocked packet family member rather than a frontend task.
@@ -281,3 +285,4 @@ When authoring follow-on packet language for this family:
 - Evolution object anchors: `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `services/control-plane/governance/evolution_decision.contract.md`, `services/control-plane/governance/evolution_decision.schema.json`
 - Incident object anchors: `services/incident/contract.md`, `services/incident/incident_case.schema.json`, `services/incident/postmortem.schema.json`
 - Approval and rollback anchors: `services/control-plane/governance/contract.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`
+- Dependent service realizations: `BP5-SVC-012` and `BP5-SVC-013`
