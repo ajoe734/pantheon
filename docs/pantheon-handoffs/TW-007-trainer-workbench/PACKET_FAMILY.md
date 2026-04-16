@@ -7,8 +7,8 @@
 - Phase origin: `BP5-WB-007`
 - Lovable readiness: **not ready** — all four modules require net-new BFF routes and canonical session-mutation or compare contracts; Lovable handoff must not open until the BFF prerequisites listed below are satisfied
 - Recommended wave: Wave 3 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
-- Owner: Codex
-- Reviewer: Claude
+- Owner: Claude
+- Reviewer: Codex2
 
 ---
 
