@@ -1,0 +1,45 @@
+feature_id: PKT-005-sse-substrate
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: c08acb3ea59f4c56ced578820aa6a5129a309de1
+screen: sse-reconciliation-substrate
+blocking: false
+
+summary: >-
+  SSE Reconciliation Substrate is implemented as a shared client layer in
+  src/lib/sseClient.ts, src/lib/sseReconnectManager.ts, and src/lib/sseReconciler.ts
+  and wired into all four relevant Operator Console screens (Deployment Review,
+  Incident Detail, Incident Action Drawer, Post-Incident Review). All three BFF SSE
+  streams are consumed through the shared client only. All acceptance criteria are met.
+  No BFF contract gaps were found.
+
+changed_files:
+  - src/lib/sseClient.ts
+  - src/lib/sseReconnectManager.ts
+  - src/lib/sseReconciler.ts
+  - src/pages/operator/DeploymentReviewConsole.tsx
+  - src/pages/operator/IncidentDetail.tsx
+  - src/components/operator/IncidentActionDrawer.tsx
+  - src/pages/operator/IncidentActionDrawerPage.tsx
+  - src/pages/operator/PostIncidentReviewConsole.tsx
+  - src/pages/operator/DeploymentPlanDetail.tsx
+  - src/pages/operator/types.ts
+
+feedback_bundle:
+  - docs/pantheon-feedback/PKT-005-sse-substrate/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-005-sse-substrate/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-005-sse-substrate/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-005-sse-substrate/QA_STATUS.md
+
+follow_up_requested:
+  - review the SSE client implementation against the PKT-005 BFF contract
+  - confirm reconnect, replay, and idempotency behaviour using the example event fixtures
+  - confirm kill_switch_activated CTA gating on Incident Detail and IncidentActionDrawer
+  - confirm degradation banner is not derived from SSE payloads
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
