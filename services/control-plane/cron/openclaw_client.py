@@ -24,7 +24,11 @@ class OpenClawCronClient:
             commit_sha=os.environ.get("OPENCLAW_COMMIT_SHA", ""),
             image_ref=os.environ.get("OPENCLAW_IMAGE_REF", ""),
         )
-        self.base_url = base_url or os.environ.get("OPENCLAW_BASE_URL", "http://localhost:3000")
+        self.base_url = (
+            base_url
+            or os.environ.get("OPENCLAW_BASE_URL")
+            or os.environ.get("OPENCLAW_GATEWAY_URL", "ws://127.0.0.1:18789")
+        )
         self.transport = transport
 
     def prepare_dispatch(self, workflow: WorkflowDefinition, payload: dict[str, Any]) -> dict[str, Any]:

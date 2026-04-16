@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 
 from models import OpenClawRuntimePin
 from openclaw_client import OpenClawCronClient
 from service import CronOrchestrator, PromotionError
 from workflows import WORKFLOW_CATALOG
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from integrations.openclaw.adapter import OpenClawCronGatewayTransport, build_system_event_text
 
 
 class StagePlannerSpy:
@@ -137,6 +145,88 @@ class TestOpenClawCronClient(unittest.TestCase):
         workflow = WORKFLOW_CATALOG["pantheon.ingest"]
         with self.assertRaises(ValueError):
             self.client.prepare_dispatch(workflow, {"strategy_id": "missing-fields"})
+
+
+class GatewayRuntimeSpy:
+    def __init__(self):
+        self.config = type(
+            "Config",
+            (),
+            {
+                "container_name": "pantheon-openclaw-gateway",
+                "http_base_url": "http://127.0.0.1:18789",
+                "ws_url": "ws://127.0.0.1:18789",
+            },
+        )()
+        self.calls: list[tuple[str, dict | None]] = []
+
+    def probe(self) -> dict:
+        return {"http_health": {"ok": True}, "gateway_status": {"rpc": {"ok": True}}}
+
+    def gateway_call(self, method: str, params: dict | None = None) -> dict:
+        self.calls.append((method, params))
+        if method == "cron.add":
+            return {"id": "job-001"}
+        if method == "cron.run":
+            return {"ok": True, "enqueued": True, "runId": "run-001"}
+        if method == "cron.runs":
+            return {
+                "entries": [
+                    {
+                        "runId": "run-001",
+                        "status": "ok",
+                        "summary": params["id"],
+                    }
+                ]
+            }
+        raise AssertionError(f"Unexpected method: {method}")
+
+
+class TestOpenClawGatewayTransport(unittest.TestCase):
+    def test_build_system_event_text_is_deterministic(self):
+        request = {
+            "prepared_at": "2026-04-16T19:00:00Z",
+            "request_id": "pantheon.ingest-1234",
+            "workflow": {
+                "workflow_id": "pantheon.ingest",
+                "upstream_entrypoint": "research.ingest",
+            },
+            "governance": {"policy_id": "oc002.cron.ingest"},
+        }
+
+        self.assertEqual(
+            build_system_event_text(request),
+            (
+                '{"kind":"pantheon.workflow.dispatch","policy_id":"oc002.cron.ingest",'
+                '"prepared_at":"2026-04-16T19:00:00Z","request_id":"pantheon.ingest-1234",'
+                '"upstream_entrypoint":"research.ingest","workflow_id":"pantheon.ingest"}'
+            ),
+        )
+
+    def test_transport_maps_dispatch_into_cron_rpc_calls(self):
+        runtime = GatewayRuntimeSpy()
+        transport = OpenClawCronGatewayTransport(runtime, poll_timeout_seconds=0.1, poll_interval_seconds=0.01)
+        response = transport(
+            {
+                "prepared_at": "2026-04-16T19:00:00Z",
+                "request_id": "pantheon.ingest-1234",
+                "runtime": {"release_tag": "v2026.4.7"},
+                "workflow": {
+                    "workflow_id": "pantheon.ingest",
+                    "upstream_entrypoint": "research.ingest",
+                },
+                "governance": {"policy_id": "oc002.cron.ingest"},
+            }
+        )
+
+        self.assertEqual(response["status"], "accepted")
+        self.assertEqual([method for method, _ in runtime.calls], ["cron.add", "cron.run", "cron.runs"])
+        cron_add = runtime.calls[0][1]
+        self.assertEqual(cron_add["payload"]["kind"], "systemEvent")
+        self.assertEqual(cron_add["delivery"]["mode"], "none")
+        self.assertEqual(cron_add["wakeMode"], "next-heartbeat")
+        self.assertEqual(response["job"]["id"], "job-001")
+        self.assertEqual(response["run"]["status"], "ok")
 
 
 class TestCronOrchestrator(unittest.TestCase):

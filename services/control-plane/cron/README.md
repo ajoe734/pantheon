@@ -41,10 +41,35 @@ The upstream runtime pin is carried in every prepared dispatch envelope:
 Use real pinned values when wiring a live transport. The smoke test uses a fixed
 fake pin to keep the local path deterministic.
 
+## Live Gateway Adapter
+
+`BP5-OSS-002` adds the Pantheon-side gateway adapter under
+`integrations/openclaw/adapter/`.
+
+The live path keeps governance in Pantheon and uses the upstream runtime only as
+the execution substrate:
+
+- `OpenClawCronClient.prepare_dispatch(...)` builds the governed envelope
+- `OpenClawCronGatewayTransport` maps that envelope into upstream `cron.add`,
+  `cron.run`, and `cron.runs` RPC calls
+- the upstream cron payload is a deterministic `systemEvent` summary, not a
+  claim that OpenClaw natively owns Pantheon `WorkflowHandoff` semantics
+- `CronOrchestrator` still owns local handoff normalization and deployment-plan
+  projection
+
+The live transport uses the pinned runtime:
+
+- repository: `https://github.com/openclaw/openclaw`
+- tag: `v2026.4.7`
+- commit: `5050017543011b61df67744ebc6368d889c25a95`
+- image: `ghcr.io/openclaw/openclaw:2026.4.7`
+
 ## Local Commands
 
 ```bash
 python3 services/control-plane/cron/smoke_test.py
+python3 services/control-plane/cron/smoke_test.py --mode live --manage-runtime
+bash scripts/openclaw-gateway-adapter-smoke.sh
 python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py'
 python3 services/control-plane/cron/cli.py --workflow pantheon.ingest --payload-file payload.json
 ```

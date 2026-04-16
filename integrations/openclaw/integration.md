@@ -1,9 +1,9 @@
 # OpenClaw Integration — Pin and Adapter Boundary
 
-Last updated: 2026-04-15
-Owner: BP5-OSS-001 (Codex)
+Last updated: 2026-04-16
+Owner: BP5-OSS-002 (Codex)
 Reviewer: Claude
-Status: governed baseline pinned
+Status: governed runtime adapter realized
 Upstream repo: https://github.com/openclaw/openclaw
 Canonical runtime contract: `OPENCLAW_RUNTIME_CONTRACT.md`
 
@@ -148,3 +148,29 @@ The following are explicitly deferred to `BP5-OSS-002`:
 - proving end-to-end job execution and raw output capture from a configured runtime
 
 That separation is intentional: this task locks the upstream source and the governed seam first, so the next task can implement against a stable target instead of undocumented assumptions.
+
+## 9. BP5-OSS-002 Realization
+
+`BP5-OSS-002` completes the next step that `BP5-OSS-001` explicitly deferred.
+
+Implemented now:
+
+- Pantheon-side runtime control in `integrations/openclaw/adapter/gateway_runtime.py`
+- Pantheon-side cron transport in `integrations/openclaw/adapter/cron_transport.py`
+- a compose-visible runtime dependency path under `docker-compose.yml` service
+  `openclaw-gateway` (profile: `openclaw`)
+- executable live smoke at `scripts/openclaw-gateway-adapter-smoke.sh`
+
+The live smoke path proves:
+
+1. the pinned upstream container can be started as a real gateway dependency
+2. Pantheon can call real upstream `cron.add`, `cron.run`, and `cron.runs`
+3. the governed wrapper still owns handoff normalization and deployment
+   projection locally
+
+Smoke evidence captured on `2026-04-16`:
+
+- command: `bash scripts/openclaw-gateway-adapter-smoke.sh --container-name pantheon-openclaw-gateway-smoke4 --host-port 18795 --gateway-token pantheon-gateway-smoke-token --state-dir /tmp/pantheon-openclaw-gateway-smoke4`
+- artifacts: `/tmp/openclaw-bp5-oss-002.fXeSom/smoke-results.json`
+- result: `ingest`, `review`, `retrain`, and `deploy` all passed against the
+  pinned upstream runtime

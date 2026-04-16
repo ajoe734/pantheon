@@ -1,10 +1,12 @@
 # OpenClaw Integration — Smoke Test Plan
 
-Last updated: 2026-04-15
-Owner: BP5-OSS-001 (Codex)
+Last updated: 2026-04-16
+Owner: BP5-OSS-002 (Codex)
 Reviewer: Claude
-Status: executable baseline defined
-Primary entrypoint: `scripts/openclaw-smoke-test.sh`
+Status: baseline and live adapter smoke paths defined
+Primary entrypoints:
+- `scripts/openclaw-smoke-test.sh`
+- `scripts/openclaw-gateway-adapter-smoke.sh`
 
 ## 1. Objective
 
@@ -34,6 +36,19 @@ Explicitly out of scope for this task:
 - capturing a real runtime job output over the future Pantheon adapter facade
 
 Those end-to-end checks belong to `BP5-OSS-002`.
+
+## 2.5 BP5-OSS-002 Live Adapter Scope
+
+`BP5-OSS-002` adds the live path that `BP5-OSS-001` left out.
+
+Included in scope now:
+
+- booting a configured upstream gateway container from Pantheon
+- probing `/healthz` plus gateway RPC health/status
+- dispatching real upstream cron jobs through the Pantheon-side adapter
+- observing terminal run status through `cron.runs`
+- proving Pantheon-local handoff normalization still happens after live runtime
+  execution
 
 ## 3. Prerequisites
 
@@ -65,6 +80,12 @@ Run only the repo-local normalization half:
 
 ```bash
 bash scripts/openclaw-smoke-test.sh --skip-docker
+```
+
+Run the live gateway adapter smoke:
+
+```bash
+bash scripts/openclaw-gateway-adapter-smoke.sh
 ```
 
 ## 5. What the Script Verifies
@@ -131,3 +152,21 @@ This smoke plan uses only surfaces that were actually verified against the pinne
 - Pantheon's own canonical normalization script and schemas
 
 It deliberately does **not** pretend that the future Pantheon adapter facade already exists upstream.
+
+## 8. Live Adapter Artifacts
+
+The live smoke writes:
+
+- `<work-dir>/smoke-results.json`
+
+It captures:
+
+- gateway probe output
+- upstream cron add/run/runs envelopes
+- governed local results for ingest/review/retrain/deploy
+
+Recorded evidence from `2026-04-16`:
+
+- work dir: `/tmp/openclaw-bp5-oss-002.fXeSom`
+- result file: `/tmp/openclaw-bp5-oss-002.fXeSom/smoke-results.json`
+- outcome: all four workflows passed against a real `ghcr.io/openclaw/openclaw:2026.4.7` gateway container

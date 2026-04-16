@@ -1,6 +1,6 @@
 # OSS Integration Checklist
 
-Last updated: 2026-04-15
+Last updated: 2026-04-16
 Status: execution checklist for upstream OSS components referenced by the OpenClaw target architecture
 
 ## Purpose
@@ -33,7 +33,7 @@ Do not treat a component as integrated just because we wrote contracts around it
 
 | Component | Upstream Type | Current Status | What still needs to happen |
 |---|---|---|---|
-| `OpenClaw` | upstream repo/runtime | `governed` | Source pin is locked to `openclaw/openclaw` tag `v2026.4.7` / commit `5050017543011b61df67744ebc6368d889c25a95`, the runtime artifact is pinned to `ghcr.io/openclaw/openclaw:2026.4.7`, the governed adapter seam is locked under `integrations/openclaw/`, and `scripts/openclaw-smoke-test.sh` now executes a real baseline against the pinned tag / image / normalization fixture. Next: implement the `openclaw-gateway-adapter`, add the real runtime dependency path, and prove end-to-end workflow execution in `BP5-OSS-002`. |
+| `OpenClaw` | upstream repo/runtime | `governed` | Source pin remains locked to `openclaw/openclaw` tag `v2026.4.7` / commit `5050017543011b61df67744ebc6368d889c25a95`, the runtime artifact remains pinned to `ghcr.io/openclaw/openclaw:2026.4.7`, the runnable Pantheon-side adapter now lives under `integrations/openclaw/adapter/`, `docker-compose.yml` now exposes an `openclaw-gateway` runtime dependency path (profile `openclaw`), and `bash scripts/openclaw-gateway-adapter-smoke.sh` has now passed a real upstream gateway smoke on 2026-04-16 for `pantheon.ingest`, `pantheon.review`, `pantheon.retrain`, and `pantheon.deploy`. |
 | `DSPy` | Python package/framework | `governed` | v2.4.5 pinned; runnable adapter lives in `services/learning/dspy/`; canonical evidence is now in `integrations/dspy/{integration,governance,smoke_test}.md`; smoke test and unit coverage passed on 2026-04-15. |
 | `TRL` | Python package/framework | `criteria-defined` | activation criteria documented in `services/learning/trl/ACTIVATION_CRITERIA.md`; entry criteria require ≥200 FB-002 events, ≥100 preference pairs, active imitation baseline, and downstream consumer ready; TRL artifacts remain non-executable governed models (`draft` → `candidate` → `approved`), not `paper/live` execution states; next: pin version, build pair-construction pipeline, smoke test DPO training |
 | `Qlib` | Python package/framework | `criteria-defined` | activation criteria documented in `services/learning/qlib/ACTIVATION_CRITERIA.md`; entry criteria require baseline StrategySpec, 2+ years data, supervised-learning-appropriate problem; LightGBM-first workflow defined; registry target shape now uses canonical `artifact_state` plus deployment staging; next: pin version, build data pipeline adapter, smoke test single model |
