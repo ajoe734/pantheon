@@ -10,9 +10,10 @@
 **Date:** `2026-04-16`
 
 > Scope constraint: support artifact only. This packet does not modify L1 canonical truth, BFF
-> runtime behavior, registry truth, or governance truth. It gives `Claude` a compact re-review
-> surface for the active parent task `BP5-WB-007`, which is currently back in `review` after one
-> blocking dependency-chain correction.
+> runtime behavior, registry truth, or governance truth. It preserves the compact re-review
+> surface that `Claude` used while parent task `BP5-WB-007` was temporarily back in `review`
+> after one blocking dependency-chain correction. The parent task has since been finalized as
+> `done`; this artifact remains historical review evidence only.
 
 ---
 
@@ -33,7 +34,7 @@ artifact itself.
 
 ## 2. Parent Task Snapshot
 
-Current durable task truth from `ai-status.json`:
+Historical re-review snapshot captured by this packet:
 
 | Field | Value |
 |---|---|
@@ -44,6 +45,14 @@ Current durable task truth from `ai-status.json`:
 | Reviewer | `Claude` |
 | Dependencies | `BP5-SVC-014`, `BP5-SVC-009` |
 | Current next note | `Re-review requested: updated TW-04 dependency chain so TW-01 is limited to session identity and transcript events, while the full replay-grade TeachingEvent schema remains explicitly scoped to TW-04. Also aligned the packet header owner/reviewer with current task truth.` |
+
+Current durable truth after the re-review cycle:
+
+- `BP5-WB-007` is already archived as `done` in `ai-task-archive/tasks/BP5-WB-007.json`
+- archive timestamp: `2026-04-16T06:13:48Z`
+- finalized owner note: the corrected `TW-01` / `TW-04` dependency scope is locked, all four
+  Trainer modules remain explicitly not ready for Lovable, and the parent packet family is closed
+  for downstream BFF work
 
 Relevant parent artifacts for this re-review:
 
@@ -126,7 +135,7 @@ session mutation, compare, and replay workflows.
 
 ## 5. Reviewer Handoff
 
-Recommended `Claude` re-review path:
+Historical `Claude` re-review path that this packet asked the reviewer to execute:
 
 1. Re-open `.coordination/reviews/BP5-WB-007-review.md` and verify that its only blocking finding
    was the `TW-04` dependency mis-scope.
@@ -143,6 +152,12 @@ whether the parent `BP5-WB-007` is ready to move from `review` to `review_approv
 Suggested reviewer note:
 
 `BP5-WB-007-SIDECAR-REVIEW` accurately captures the only blocking re-review delta for TW-007. The current packet now keeps the full replay-grade TeachingEvent schema scoped to TW-04, aligns the dependency row with the Trainer backlog, and preserves the explicit not-ready BFF gating for all four Trainer modules.
+
+Completed outcome now recorded in durable state:
+
+- `Claude` approved this sidecar on `2026-04-16T06:17:31Z`
+- `BP5-WB-007` itself was already finalized to `done` before this sidecar closeout, so this packet
+  now serves as archived supporting review evidence rather than an active reviewer to-do
 
 ---
 
