@@ -246,6 +246,67 @@ This keeps the boundary explicit:
 - Secret Manager remains the environment truth for runtime credentials
 - Cloud Run / GKE service accounts, not local shell lore, define who can read which secret
 
+## Nonprod Runtime Foundation
+
+`BP5-GCP-002` extends the baseline from identity-only bootstrap to actual nonprod runtime infrastructure. Run it from the VM after `BP5-GCP-001` is understood and the target runtime project is decided:
+
+```bash
+cd ~/code/pantheon
+gcloud auth login
+gcloud config set project pantheon-nonprod
+bash scripts/gcp_nonprod_foundation.sh \
+  --project-id pantheon-nonprod \
+  --shared-project-id pantheon-shared \
+  --dry-run
+```
+
+Then execute it for real:
+
+```bash
+cd ~/code/pantheon
+bash scripts/gcp_nonprod_foundation.sh \
+  --project-id pantheon-nonprod \
+  --shared-project-id pantheon-shared
+```
+
+What it establishes:
+
+- one custom nonprod VPC plus separate `dev` and `sandbox` subnets
+- Private Service Access for Cloud SQL private IP
+- `pantheon-dev-*` and `pantheon-sandbox-*` runtime service accounts and secret containers
+- per-environment Cloud SQL instances: `pantheon-dev-pg` and `pantheon-sandbox-pg`
+- per-environment Pub/Sub backbone topics and smoke subscriptions
+- per-environment VPC connectors for Cloud Run internal ingress + private egress
+
+Recommended operator follow-up:
+
+```bash
+DEV_DB_HOST=$(gcloud sql instances describe pantheon-dev-pg --project='pantheon-nonprod' --format='value(ipAddresses[0].ipAddress)')
+printf '%s' "postgresql://pantheon_app:REPLACE_ME@${DEV_DB_HOST}:5432/pantheon" | \
+  gcloud secrets versions add pantheon-dev-postgres-url --project='pantheon-nonprod' --data-file=-
+```
+
+Use internal-only Cloud Run deploys in nonprod:
+
+```bash
+gcloud run deploy pantheon-dev-bff \
+  --project='pantheon-nonprod' \
+  --region='asia-east1' \
+  --service-account='pantheon-dev-control-plane@pantheon-nonprod.iam.gserviceaccount.com' \
+  --ingress='internal' \
+  --no-allow-unauthenticated \
+  --vpc-connector='pantheon-dev-connector' \
+  --vpc-egress='private-ranges-only' \
+  --image='asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate' \
+  --set-secrets='DATABASE_URL=pantheon-dev-postgres-url:1'
+```
+
+This keeps the nonprod split explicit:
+
+- shared project owns build and image publication truth
+- runtime project owns environment-scoped DB, Pub/Sub, networking, and runtime secrets
+- `dev` and `sandbox` do not share Cloud SQL instances, Pub/Sub topics, or runtime identities
+
 ## Dashboard Via `/dashboard/`
 
 If you want the dashboard on the standard web port instead of exposing `4173`, install the nginx reverse proxy from the repo:

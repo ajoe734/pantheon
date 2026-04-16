@@ -1364,6 +1364,74 @@ kubectl annotate serviceaccount runtime-manager -n pantheon-dev \
 重點是 deploy artifact 與 secret truth 分開：
 - GitHub / Cloud Build 決定「哪個 image digest」
 - Secret Manager + runtime identity 決定「哪個環境能讀哪些 secret」
+
+### 19.8 Nonprod runtime foundation（`BP5-GCP-002`）
+
+`BP5-GCP-001` 先把 shared build identity 與 baseline secret flow 落成；`BP5-GCP-002` 則把真正的 nonprod runtime substrate 補齊：`dev / sandbox` split、private Cloud SQL、Pub/Sub backbone、Cloud Run internal ingress prerequisite、以及 runtime project 內的環境邊界。
+
+推薦 topology：
+
+- `pantheon-shared`: GitHub OIDC/WIF、Cloud Build、Artifact Registry
+- `pantheon-nonprod`: `dev / sandbox` runtime VPC、Cloud SQL、Pub/Sub、runtime identities、runtime secrets
+
+若目前仍採單 project，也可把 `--shared-project-id` 省略，讓 shared / runtime 都落在同一個 project；腳本仍可收斂成同一組 naming truth。
+
+正式執行時，優先使用 repo 內的 idempotent helper：
+
+```bash
+bash scripts/gcp_nonprod_foundation.sh \
+  --project-id pantheon-nonprod \
+  --shared-project-id pantheon-shared \
+  --dry-run
+```
+
+確認 CIDR 與 project layout 沒問題後，再正式執行：
+
+```bash
+bash scripts/gcp_nonprod_foundation.sh \
+  --project-id pantheon-nonprod \
+  --shared-project-id pantheon-shared
+```
+
+它會一次完成：
+
+- 啟用 nonprod runtime 需要的 APIs（Compute、Service Networking、Cloud SQL、Pub/Sub、VPC Access、Secret Manager）
+- 建立 `pantheon-nonprod` custom VPC 與 `pantheon-nonprod-dev` / `pantheon-nonprod-sandbox` subnets
+- 建立 Private Service Access reserved range，讓 Cloud SQL 使用 private IP
+- 建立 `pantheon-dev-*`、`pantheon-sandbox-*` runtime service accounts 與對應 Secret Manager containers / secret-level IAM
+- 建立 `pantheon-dev-connector`、`pantheon-sandbox-connector`，作為 Cloud Run private egress / Cloud SQL 路徑
+- 建立 `pantheon-dev-pg`、`pantheon-sandbox-pg` 兩個 private Cloud SQL instances 與 `pantheon` database
+- 建立 nonprod Pub/Sub backbone topics 與 smoke subscriptions
+- 輸出 Cloud Run internal ingress 與 GKE Workload Identity 的 deploy snippets
+
+預設 naming：
+
+| Resource kind | Dev | Sandbox |
+|---|---|---|
+| Cloud SQL instance | `pantheon-dev-pg` | `pantheon-sandbox-pg` |
+| VPC connector | `pantheon-dev-connector` | `pantheon-sandbox-connector` |
+| Control-plane SA | `pantheon-dev-control-plane@<PROJECT_ID>` | `pantheon-sandbox-control-plane@<PROJECT_ID>` |
+| Worker SA | `pantheon-dev-worker@<PROJECT_ID>` | `pantheon-sandbox-worker@<PROJECT_ID>` |
+| Execution SA | `pantheon-dev-execution@<PROJECT_ID>` | `pantheon-sandbox-execution@<PROJECT_ID>` |
+| Postgres secret | `pantheon-dev-postgres-url` | `pantheon-sandbox-postgres-url` |
+| Governance topic | `pantheon-dev-governance-events` | `pantheon-sandbox-governance-events` |
+
+Cloud Run deploy 時，nonprod control-plane 應明確採 internal ingress：
+
+```bash
+gcloud run deploy pantheon-dev-bff \
+  --project="pantheon-nonprod" \
+  --region="asia-east1" \
+  --service-account="pantheon-dev-control-plane@pantheon-nonprod.iam.gserviceaccount.com" \
+  --ingress="internal" \
+  --no-allow-unauthenticated \
+  --vpc-connector="pantheon-dev-connector" \
+  --vpc-egress="private-ranges-only" \
+  --image="asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate" \
+  --set-secrets="DATABASE_URL=pantheon-dev-postgres-url:1,OPENCLAW_API_TOKEN=pantheon-dev-openclaw-api-token:1,WEBHOOK_SIGNING_SECRET=pantheon-dev-webhook-signing-secret:1"
+```
+
+`sandbox` 只替換成自己的 connector / service account / secrets；image digest 仍引用 shared Artifact Registry 的同一個 immutable artifact，維持「同 digest 向上升環境」原則。
 - paper / prod promotion 不能退化成把 GitHub secret 注入 runtime
 
 `_SERVICES` 中的每個 ID 必須與 `.github/pantheon-stage0-matrix.json` 中的 `id` 欄位 1:1 對應，`cloudbuild.yaml` 才能正確路由。下表列出已接線的 service 庫存：
