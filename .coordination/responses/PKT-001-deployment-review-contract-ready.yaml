@@ -1,6 +1,6 @@
 feature_id: PKT-001-deployment-review
 type: contract-ready
-source_repo: pantheon
+source_repo: ajoe734/pantheon
 screen: deployment-review-console
 status: published
 published_at: "2026-04-14T10:00:00Z"

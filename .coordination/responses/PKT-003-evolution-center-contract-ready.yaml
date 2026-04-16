@@ -1,6 +1,6 @@
 feature_id: PKT-003-evolution-center
 type: contract-ready
-source_repo: pantheon
+source_repo: ajoe734/pantheon
 screen: evolution-center
 status: published
 published_at: "2026-04-14T14:00:00Z"

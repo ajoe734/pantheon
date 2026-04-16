@@ -1,6 +1,6 @@
 feature_id: PKT-005-sse-substrate
 type: contract-ready
-source_repo: pantheon
+source_repo: ajoe734/pantheon
 screen: sse-reconciliation-substrate
 status: published
 published_at: "2026-04-14T13:30:00Z"

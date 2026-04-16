@@ -1,0 +1,36 @@
+feature_id: PKT-004-persona-management
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: persona-management
+status: published
+published_at: "2026-04-16T00:00:00Z"
+description: "PKT-004 Persona Management composed screen contract-ready handoff. BFF contract, example payload, screen spec, and Lovable task packet are all published."
+artifacts:
+  bff_contract: docs/bff/PKT-004-persona-management.md
+  screen_spec: docs/screens/PKT-004-persona-management.md
+  example_payload: docs/examples/PKT-004-persona-management.json
+  lovable_ui_task: .coordination/responses/PKT-004-persona-management-lovable-ui-task.yaml
+endpoints:
+  - GET /api/v1/operator/persona-management/{persona_id}
+  - POST /api/v1/operator/commands
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+front_actions_required:
+  - build the Persona Management composed screen
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - do not invent fields beyond this handoff packet
+  - render all action CTAs from backend-shaped allowedActions only
+  - display the degradation banner when any meta.surfaces entry is degraded or unavailable
+  - show degraded-panel placeholders per affected surface rather than hiding panels
+acceptance_met:
+  - contract_ready_published: true
+  - lovable_ui_task_published: true
+  - front_repo_receives_handoff_bundle: true
+bff_caveats:
+  - snapshot=preferred accepted but not enforced in v1
+  - viewer role tokens rejected; operator/approver/admin/reviewer required
+  - read-surface staleness not tied to BFF_READ_SURFACE_STATE
