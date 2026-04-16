@@ -1,0 +1,19 @@
+feature_id: PKT-004-capital-binding-drilldowns
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: capital-binding-drilldowns
+blocking: true
+
+summary: Capital/Binding Drilldowns UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: data[].single_runtime_enforced
+    reason: Capital pool list cannot render enforcement badge without this field
+  - field: data[].allowed_deployment_scope
+    reason: Binding list cannot render scope badge without this field
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

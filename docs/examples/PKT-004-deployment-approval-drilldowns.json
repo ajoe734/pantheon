@@ -1,0 +1,81 @@
+{
+  "deployment_plans": {
+    "request": "GET /api/v1/deployment-plans",
+    "response": {
+      "data": [
+        {
+          "id": "plan-F-042",
+          "plan_id": "plan-F-042",
+          "artifact_id": "artifact-042",
+          "artifact_version": "v1.4.2",
+          "target_stage": "paper",
+          "current_stage": "none",
+          "status": "approved",
+          "transition_type": "activate",
+          "capital_pool_id": "pool-main",
+          "binding_ids": ["binding-042"],
+          "approval_decision_id": "approval-042"
+        }
+      ],
+      "meta": { "total": 1, "staleness": null }
+    }
+  },
+  "deployment_plan_detail": {
+    "request": "GET /api/v1/deployment-plans/plan-F-042",
+    "response": {
+      "data": {
+        "id": "plan-F-042",
+        "plan_id": "plan-F-042",
+        "artifact_id": "artifact-042",
+        "artifact_version": "v1.4.2",
+        "target_stage": "paper",
+        "current_stage": "none",
+        "status": "approved",
+        "transition_type": "activate",
+        "capital_pool_id": "pool-main",
+        "binding_ids": ["binding-042"],
+        "runtime_binding_id": "runtime-042",
+        "approval_decision_id": "approval-042",
+        "approval_decision": {
+          "id": "approval-042",
+          "outcome": "approved",
+          "state": "decided",
+          "reviewer": "governance",
+          "decided_at": "2026-04-11T07:55:00Z",
+          "risk_level": "low"
+        }
+      },
+      "meta": { "staleness": null }
+    }
+  },
+  "approval_decisions": {
+    "request": "GET /api/v1/approval-decisions",
+    "response": {
+      "data": [
+        {
+          "id": "approval-042",
+          "outcome": "approved",
+          "state": "decided",
+          "reviewer": "governance",
+          "decided_at": "2026-04-11T07:55:00Z",
+          "risk_level": "low"
+        }
+      ],
+      "meta": { "total": 1, "staleness": null }
+    }
+  },
+  "approval_decision_detail": {
+    "request": "GET /api/v1/approval-decisions/approval-042",
+    "response": {
+      "data": {
+        "id": "approval-042",
+        "outcome": "approved",
+        "state": "decided",
+        "reviewer": "governance",
+        "decided_at": "2026-04-11T07:55:00Z",
+        "risk_level": "low"
+      },
+      "meta": { "staleness": null }
+    }
+  }
+}

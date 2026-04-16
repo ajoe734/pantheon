@@ -1,0 +1,66 @@
+{
+  "capital_pools": {
+    "request": "GET /api/v1/capital-pools",
+    "response": {
+      "data": [
+        {
+          "id": "pool-main",
+          "name": "Primary Capital Pool",
+          "status": "ready",
+          "owner_id": "ops-team",
+          "owner_type": "control-plane",
+          "single_runtime_enforced": true,
+          "risk_policy_ref": "risk-policy-main"
+        }
+      ],
+      "meta": { "total": 1, "staleness": null }
+    }
+  },
+  "capital_pool_detail": {
+    "request": "GET /api/v1/capital-pools/pool-main",
+    "response": {
+      "data": {
+        "id": "pool-main",
+        "name": "Primary Capital Pool",
+        "status": "ready",
+        "owner_id": "ops-team",
+        "owner_type": "control-plane",
+        "single_runtime_enforced": true,
+        "risk_policy_ref": "risk-policy-main"
+      },
+      "meta": { "staleness": null }
+    }
+  },
+  "bindings": {
+    "request": "GET /api/v1/bindings",
+    "response": {
+      "data": [
+        {
+          "id": "binding-042",
+          "persona_id": "persona-alpha",
+          "capital_pool_id": "pool-main",
+          "role": "primary",
+          "validity": "active",
+          "status": "active",
+          "allowed_deployment_scope": "paper"
+        }
+      ],
+      "meta": { "total": 1, "staleness": null }
+    }
+  },
+  "binding_detail": {
+    "request": "GET /api/v1/bindings/binding-042",
+    "response": {
+      "data": {
+        "id": "binding-042",
+        "persona_id": "persona-alpha",
+        "capital_pool_id": "pool-main",
+        "role": "primary",
+        "validity": "active",
+        "status": "active",
+        "allowed_deployment_scope": "paper"
+      },
+      "meta": { "staleness": null }
+    }
+  }
+}

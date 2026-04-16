@@ -1,0 +1,19 @@
+feature_id: PKT-004-persona-management
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: persona-workbench
+screen_id: screen-persona-management
+status: followup-required
+backend_commit: 2782e5021243cca958974059dbf2ceeaac16fdfb
+bff_contract_version: pantheon-bff@2782e5021243cca958974059dbf2ceeaac16fdfb
+delivery_note_path: docs/pantheon-delivery/PKT-004-persona-management/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-004-persona-management/CONTRACT_LOCK.json
+followup_expectation: >-
+  Current Persona Management UI aligns with the published PKT-004 composed read
+  contract and the documented EditPersona / RetirePersona / TerminateSession
+  command payloads. No immediate front-end rework is required. Pantheon
+  follow-up remains backend-owned: decide whether to publish canonical payloads
+  for the remaining allowedActions and normalize data.allowedActions to a full
+  eight-boolean matrix. Republish contract-ready and lovable-ui-task only if
+  that write-scope expansion is published.
+source_payload: .coordination/requests/PKT-004-persona-management-frontend-feedback.yaml
