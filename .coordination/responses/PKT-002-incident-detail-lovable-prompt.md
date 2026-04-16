@@ -1,6 +1,8 @@
 Build the `PKT-002-incident-detail` UI flow in `front-ai-trading-system` using only Pantheon APIs.
 If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `.coordination/requests/PKT-002-incident-detail-bff-gap.yaml` using `.coordination/requests/PKT-002-incident-detail-bff-gap.example.yaml` as the template. Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop.
 Screen: `incident-detail`.
+Workbench: `operator-console`.
+Screen ID: `screen-operator-incident-detail`.
 Allowed endpoints:
 - GET /api/v1/operator/incident-response/{incident_id}
 Constraints:
@@ -18,3 +20,9 @@ Acceptance:
 - display the degradation banner when any meta.surfaces entry is degraded or unavailable
 Completion handoff:
 - When the UI implementation is ready, write `.coordination/requests/PKT-002-incident-detail-ui-done.yaml` using `.coordination/requests/PKT-002-incident-detail-ui-done.example.yaml` as the template. Sync that file back to GitHub and stop so Pantheon supervisor can pick up review/integration work automatically.
+References:
+- docs/screens/PKT-002-incident-detail.md
+- docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md
+- docs/bff/PKT-002-incident-detail.md
+- docs/pantheon-handoffs/PKT-002-incident-detail
+- docs/examples/PKT-002-incident-detail.json
