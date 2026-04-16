@@ -35,6 +35,35 @@ GET   /api/rollback/history
     List rollback bindings (those with a rollback_parent set).
     Optional query param: pool_id — filter by capital_pool_id.
 
+POST  /api/kill-switch/dispatch
+    Emergency kill-switch fast path (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §8).
+    Body: { reason, capital_pool_id, actor_id, [binding_id], [severity],
+            [action_override], [fallback_artifact_id], [fallback_artifact_version],
+            [context] }
+    Returns: { command, audit_entry, safe_mode_after }
+
+GET   /api/kill-switch/<pool_id>/safe-mode
+    Return the current SafeModeState for a capital pool.
+
+POST  /api/kill-switch/<pool_id>/safe-mode
+    Manually advance the safe-mode state (governance recovery path).
+    Body: { target_state, actor_id, [note] }
+
+GET   /api/kill-switch/audit-log
+    Return all kill-switch audit entries for this service instance.
+
+POST  /api/evolution/freeze
+    Execute freeze runtime follow-through for an approved EvolutionDecision.
+    Body: { evolution_decision_id, deployment_plan_id, binding_id, plan_runtime_action, actor_id, [note] }
+
+POST  /api/evolution/retrain
+    Record dispatch of an approved retrain/revalidate EvolutionDecision.
+    Body: { evolution_decision_id, action_type, artifact_id, actor_id, research_job_id, [note] }
+
+POST  /api/evolution/redeploy
+    Execute redeploy follow-through after an approved evolution decision.
+    Body: EvolutionRedeployRequest fields (see service.py).
+
 GET   /__health__
     Liveness probe.
 
@@ -68,6 +97,9 @@ from service import (
     RuntimeManagerService,
     RuntimeManagerError,
 )
+
+# Import kill-switch error type for HTTP error mapping
+from kill_switch_controller import KillSwitchError  # noqa: E402
 
 # Import the store error type so we can map it to HTTP 404/409
 import sys
@@ -377,6 +409,244 @@ def rollback_history():
         "rollbacks": rollback_bindings,
         "count": len(rollback_bindings),
     }), 200
+
+
+@app.route("/api/kill-switch/dispatch", methods=["POST"])
+def kill_switch_dispatch():
+    """Emergency kill-switch fast path.
+
+    KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §8:
+    All triggers (hard or soft) enter via this route and are dispatched by the
+    KillSwitchController through the runtime-manager fast path.
+
+    Required body fields: reason, capital_pool_id, actor_id
+    Optional: binding_id, severity, action_override,
+              fallback_artifact_id, fallback_artifact_version, context
+
+    Returns 200 with { command, audit_entry, safe_mode_after }.
+    """
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    body = request.get_json(force=True) or {}
+
+    required_fields = ["reason", "capital_pool_id", "actor_id"]
+    missing = [f for f in required_fields if not body.get(f)]
+    if missing:
+        return (
+            jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
+            400,
+        )
+
+    svc = _get_service()
+    try:
+        result = svc.execute_kill_switch(body)
+        return jsonify(result), 200
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "KILL_SWITCH_ERROR", "message": str(exc)}}), 422
+    except KillSwitchError as exc:
+        return jsonify({"error": {"code": "KILL_SWITCH_ERROR", "message": str(exc)}}), 422
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/kill-switch/<pool_id>/safe-mode", methods=["GET"])
+def get_safe_mode(pool_id):
+    """Return the current SafeModeState for a capital pool."""
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    svc = _get_service()
+    try:
+        state = svc.get_safe_mode(pool_id)
+        return jsonify({"capital_pool_id": pool_id, "safe_mode_state": state}), 200
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/kill-switch/<pool_id>/safe-mode", methods=["POST"])
+def advance_safe_mode(pool_id):
+    """Manually advance the safe-mode state for a capital pool (governance recovery path).
+
+    Body: { target_state, actor_id, [note] }
+    Returns 200 with { capital_pool_id, safe_mode_state }.
+    """
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    body = request.get_json(force=True) or {}
+
+    required_fields = ["target_state", "actor_id"]
+    missing = [f for f in required_fields if not body.get(f)]
+    if missing:
+        return (
+            jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
+            400,
+        )
+
+    svc = _get_service()
+    try:
+        new_state = svc.advance_safe_mode(
+            pool_id,
+            body["target_state"],
+            actor_id=body["actor_id"],
+            note=body.get("note"),
+        )
+        return jsonify({"capital_pool_id": pool_id, "safe_mode_state": new_state}), 200
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "SAFE_MODE_ERROR", "message": str(exc)}}), 422
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/kill-switch/audit-log", methods=["GET"])
+def kill_switch_audit_log():
+    """Return all kill-switch audit entries for this service instance."""
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    svc = _get_service()
+    try:
+        entries = svc.get_kill_switch_audit_log()
+        return jsonify({"entries": entries, "count": len(entries)}), 200
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/evolution/freeze", methods=["POST"])
+def evolution_freeze():
+    """Execute runtime follow-through for an approved evolution freeze decision.
+
+    EVOLUTION_REVIEW_AND_THRESHOLDS.md §11 / KILL_SWITCH_AND_SAFE_MODE §3.
+
+    Required body fields: evolution_decision_id, deployment_plan_id, binding_id,
+                         plan_runtime_action, actor_id
+    Optional: note
+
+    plan_runtime_action values: freeze_binding | pause_then_freeze
+    (liquidate_then_freeze must route through execute_kill_switch or rollback)
+
+    Returns 200 with { evolution_decision_id, deployment_plan_id, plan_runtime_action,
+                       binding, actor_id, executed_at, note }.
+    """
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    body = request.get_json(force=True) or {}
+
+    required_fields = [
+        "evolution_decision_id", "deployment_plan_id", "binding_id",
+        "plan_runtime_action", "actor_id",
+    ]
+    missing = [f for f in required_fields if not body.get(f)]
+    if missing:
+        return (
+            jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
+            400,
+        )
+
+    svc = _get_service()
+    try:
+        result = svc.evolution_freeze(body)
+        return jsonify(result), 200
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "EVOLUTION_ERROR", "message": str(exc)}}), 422
+    except RuntimeBindingError as exc:
+        code = 404 if "not found" in str(exc).lower() else 409
+        return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), code
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/evolution/retrain", methods=["POST"])
+def evolution_retrain():
+    """Record dispatch of an approved retrain/revalidate EvolutionDecision.
+
+    EVOLUTION_REVIEW_AND_THRESHOLDS.md §12.2: executed means the research job
+    has been governed-ly created; actual retraining happens in the research plane.
+
+    Required body fields: evolution_decision_id, action_type, artifact_id, actor_id,
+                         research_job_id
+    action_type values: retrain | revalidate
+    Optional: note
+
+    Returns 200 with { evolution_decision_id, action_type, artifact_id, actor_id,
+                       dispatched_at, routing_ref, note }.
+    """
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    body = request.get_json(force=True) or {}
+
+    required_fields = [
+        "evolution_decision_id", "action_type", "artifact_id", "actor_id",
+        "research_job_id",
+    ]
+    missing = [f for f in required_fields if not body.get(f)]
+    if missing:
+        return (
+            jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
+            400,
+        )
+
+    svc = _get_service()
+    try:
+        result = svc.evolution_retrain(body)
+        return jsonify(result), 200
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "EVOLUTION_ERROR", "message": str(exc)}}), 422
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/evolution/redeploy", methods=["POST"])
+def evolution_redeploy():
+    """Execute redeploy follow-through after an approved evolution decision.
+
+    EVOLUTION_REVIEW_AND_THRESHOLDS.md §11 (redeploy follow-through row).
+    Creates a new RuntimeBinding from the approved replacement artifact.
+
+    Required body fields: evolution_decision_id, deployment_plan (dict containing
+        plan_id, target_stage, artifact_id, artifact_version, capital_pool_id,
+        persona_capital_binding_id, persona_capital_binding_status,
+        allowed_deployment_scope, loader_checks_passed)
+    Optional: actor_id, note
+    (deployment_plan may also include plan_status, runtime_id)
+
+    Returns 201 with { evolution_decision_id, binding, actor_id,
+                       redeployed_at, note }.
+    """
+    _, err = _require_bearer()
+    if err:
+        return err
+
+    body = request.get_json(force=True) or {}
+
+    required_fields = ["evolution_decision_id", "deployment_plan"]
+    missing = [f for f in required_fields if not body.get(f)]
+    if missing:
+        return (
+            jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
+            400,
+        )
+
+    svc = _get_service()
+    try:
+        result = svc.evolution_redeploy(body)
+        return jsonify(result), 201
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "EVOLUTION_ERROR", "message": str(exc)}}), 422
+    except RuntimeBindingError as exc:
+        code = 409 if "single-runtime" in str(exc).lower() else 422
+        return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), code
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
 
 if __name__ == "__main__":

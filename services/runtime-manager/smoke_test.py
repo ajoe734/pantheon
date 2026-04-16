@@ -788,6 +788,558 @@ def run_rollback_http_tests():
           r_unauth.status_code == 401)
 
 
+def run_kill_switch_and_evolution_tests():
+    """Smoke tests for kill-switch fast path and evolution orchestration — BP5-SVC-013.
+
+    Acceptance criteria:
+      AC-5  kill-switch fast path routes through runtime-manager with audit
+      AC-6  evolution freeze / retrain / redeploy action paths are verified
+    """
+    print("\n=== Kill-Switch Fast Path + Evolution Orchestration — BP5-SVC-013 ===")
+
+    from kill_switch_controller import HardTriggerReason, KillSwitchActionType
+
+    # ------------------------------------------------------------------
+    # AC-5: Kill-switch service layer
+    # ------------------------------------------------------------------
+    svc_ks = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+
+    try:
+        outcome = svc_ks.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-ks-001",
+            "actor_id": "operator-smoke",
+            "severity": 1,
+        })
+        check("kill_switch: execute_kill_switch returns outcome dict",
+              isinstance(outcome, dict) and "command" in outcome and "audit_entry" in outcome)
+        check("kill_switch: safe_mode_after is present",
+              bool(outcome.get("safe_mode_after")))
+        check("kill_switch: audit_entry has actor_id",
+              outcome.get("audit_entry", {}).get("actor_id") == "operator-smoke")
+    except Exception as exc:
+        check("kill_switch: execute_kill_switch service layer", False, str(exc))
+
+    # safe_mode read
+    try:
+        state = svc_ks.get_safe_mode("pool-ks-001")
+        check("kill_switch: get_safe_mode returns a non-empty string", bool(state))
+    except Exception as exc:
+        check("kill_switch: get_safe_mode", False, str(exc))
+
+    # advance safe mode
+    try:
+        new_state = svc_ks.advance_safe_mode(
+            "pool-ks-001", "recovery_testing", actor_id="operator-smoke",
+            note="conditions cleared"
+        )
+        check("kill_switch: advance_safe_mode returns new state string", bool(new_state))
+    except Exception as exc:
+        check("kill_switch: advance_safe_mode", False, str(exc))
+
+    # audit log
+    try:
+        log = svc_ks.get_kill_switch_audit_log()
+        check("kill_switch: audit log has at least one entry", len(log) >= 1)
+    except Exception as exc:
+        check("kill_switch: get_kill_switch_audit_log", False, str(exc))
+
+    # ------------------------------------------------------------------
+    # AC-5b: Kill-switch REPLACE fast path creates replacement binding
+    # ------------------------------------------------------------------
+    from kill_switch_controller import KillSwitchActionType as KSAT  # noqa: E402
+
+    svc_ks_replace = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        # Deploy a live binding first so the pool has an active runtime to replace
+        original_binding = svc_ks_replace.deploy({
+            "plan_id": "plan-ks-replace-orig",
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "artifact_id": "artifact-original",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-ks-replace",
+            "persona_capital_binding_id": "pcb-ks-replace",
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+        })
+        replace_outcome = svc_ks_replace.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-ks-replace",
+            "actor_id": "operator-smoke",
+            "severity": 1,
+            "action_override": KSAT.REPLACE.value,
+            "fallback_artifact_id": "artifact-fallback",
+            "fallback_artifact_version": "2.0.0",
+        })
+        binding_action = replace_outcome.get("binding_action") or {}
+        check("kill_switch REPLACE: binding_action is present",
+              isinstance(binding_action, dict))
+        check("kill_switch REPLACE: action is 'replace'",
+              binding_action.get("action") == KSAT.REPLACE.value)
+        check("kill_switch REPLACE: original binding is retired",
+              binding_action.get("binding", {}).get("status") == "retired")
+        check("kill_switch REPLACE: replacement_binding is present",
+              "replacement_binding" in binding_action)
+        check("kill_switch REPLACE: replacement_binding is active",
+              binding_action.get("replacement_binding", {}).get("status") == "active")
+        check("kill_switch REPLACE: replacement artifact_id is the fallback",
+              binding_action.get("replacement_binding", {}).get("artifact_id") == "artifact-fallback")
+        check("kill_switch REPLACE: replacement artifact_version is the fallback",
+              binding_action.get("replacement_binding", {}).get("artifact_version") == "2.0.0")
+        check("kill_switch REPLACE: replacement inherits capital_pool_id",
+              binding_action.get("replacement_binding", {}).get("capital_pool_id") == "pool-ks-replace")
+        # Verify pool now has the replacement as active (original is retired)
+        active_after = svc_ks_replace._store.get_active_for_pool("pool-ks-replace")
+        check("kill_switch REPLACE: pool active binding is replacement after hot-swap",
+              active_after is not None and active_after.artifact_id == "artifact-fallback")
+    except Exception as exc:
+        check("kill_switch REPLACE fast path end-to-end", False, str(exc))
+
+    # ------------------------------------------------------------------
+    # AC-6a: Evolution freeze service layer
+    # ------------------------------------------------------------------
+    svc_evo = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        binding_for_freeze = svc_evo.deploy({
+            "plan_id": "plan-evo-freeze",
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "artifact_id": "artifact-evo",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-evo-freeze",
+            "persona_capital_binding_id": "pcb-evo-freeze",
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+        })
+        freeze_result = svc_evo.evolution_freeze({
+            "evolution_decision_id": "evo-dec-001",
+            "deployment_plan_id": "dplan-freeze-001",
+            "binding_id": binding_for_freeze.binding_id,
+            "plan_runtime_action": "freeze_binding",
+            "actor_id": "risk-owner-smoke",
+            "note": "smoke test freeze",
+        })
+        check("evolution_freeze: result has expected keys",
+              all(k in freeze_result for k in ("evolution_decision_id", "deployment_plan_id",
+                                                "plan_runtime_action", "binding", "executed_at")))
+        check("evolution_freeze: binding is paused after freeze_binding",
+              freeze_result["binding"]["status"] == "paused")
+        check("evolution_freeze: evolution_decision_id is round-tripped",
+              freeze_result["evolution_decision_id"] == "evo-dec-001")
+    except Exception as exc:
+        check("evolution_freeze service layer", False, str(exc))
+
+    # ------------------------------------------------------------------
+    # AC-5c / AC-6a cross-path: kill-switch PAUSE → evolution_freeze follow-through
+    # Verifies that evolution_freeze is idempotent when the binding is already
+    # paused by the kill-switch fast path (review feedback: "evolution_freeze must
+    # tolerate bindings already paused by kill-switch/rollback").
+    # ------------------------------------------------------------------
+    svc_cross_paused = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        b_cross = svc_cross_paused.deploy({
+            "plan_id": "plan-cross-ks-freeze",
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "artifact_id": "artifact-cross",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-cross-freeze",
+            "persona_capital_binding_id": "pcb-cross-freeze",
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+        })
+        # Step 1: kill-switch pauses the binding (hard emergency path)
+        ks_outcome = svc_cross_paused.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-cross-freeze",
+            "actor_id": "operator-smoke-cross",
+            "severity": 1,
+            "action_override": KillSwitchActionType.PAUSE.value,
+            "binding_id": b_cross.binding_id,
+        })
+        paused_by_ks = svc_cross_paused.get(b_cross.binding_id)
+        check("cross-path: kill-switch PAUSE leaves binding paused",
+              paused_by_ks is not None and paused_by_ks.status == "paused")
+
+        # Step 2: governance freeze arrives later on the already-paused binding
+        cross_freeze_result = svc_cross_paused.evolution_freeze({
+            "evolution_decision_id": "evo-dec-cross-001",
+            "deployment_plan_id": "dplan-cross-freeze-001",
+            "binding_id": b_cross.binding_id,
+            "plan_runtime_action": "freeze_binding",
+            "actor_id": "risk-owner-cross",
+            "note": "governance freeze after kill-switch pause",
+        })
+        check("cross-path: evolution_freeze succeeds on already-paused binding (no error)",
+              "binding" in cross_freeze_result)
+        check("cross-path: evolution_freeze result binding is paused",
+              cross_freeze_result["binding"]["status"] == "paused")
+        check("cross-path: evolution_freeze result has evolution_decision_id",
+              cross_freeze_result["evolution_decision_id"] == "evo-dec-cross-001")
+        check("cross-path: evolution_freeze result has executed_at",
+              bool(cross_freeze_result.get("executed_at")))
+    except Exception as exc:
+        check("cross-path kill-switch PAUSE -> evolution_freeze follow-through", False, str(exc))
+
+    # Cross-path: kill-switch drains to pending_pause → evolution_freeze completes drain
+    svc_cross_pp = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        b_pp = svc_cross_pp.deploy({
+            "plan_id": "plan-cross-pp",
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "artifact_id": "artifact-cross-pp",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-cross-pp",
+            "persona_capital_binding_id": "pcb-cross-pp",
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+        })
+        # Manually advance to pending_pause only (simulates kill-switch partial drain)
+        svc_cross_pp.transition(b_pp.binding_id, "pending_pause")
+        pp_binding = svc_cross_pp.get(b_pp.binding_id)
+        check("cross-path pending_pause setup: binding is pending_pause",
+              pp_binding is not None and pp_binding.status == "pending_pause")
+
+        # evolution_freeze should complete the drain to paused
+        pp_freeze_result = svc_cross_pp.evolution_freeze({
+            "evolution_decision_id": "evo-dec-pp-001",
+            "deployment_plan_id": "dplan-pp-001",
+            "binding_id": b_pp.binding_id,
+            "plan_runtime_action": "pause_then_freeze",
+            "actor_id": "risk-owner-pp",
+        })
+        check("cross-path: evolution_freeze on pending_pause binding completes drain to paused",
+              pp_freeze_result["binding"]["status"] == "paused")
+    except Exception as exc:
+        check("cross-path pending_pause -> evolution_freeze drain completion", False, str(exc))
+
+    # Guard: freeze already-terminal binding must fail
+    svc_evo_g = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        b_term = svc_evo_g.deploy({
+            "plan_id": "plan-evo-term",
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "artifact_id": "art-term",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-evo-term",
+            "persona_capital_binding_id": "pcb-evo-term",
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+        })
+        svc_evo_g.retire(b_term.binding_id)
+        svc_evo_g.evolution_freeze({
+            "evolution_decision_id": "evo-dec-term",
+            "deployment_plan_id": "dplan-term-001",
+            "binding_id": b_term.binding_id,
+            "plan_runtime_action": "freeze_binding",
+            "actor_id": "risk-owner-smoke",
+        })
+        check("evolution_freeze: terminal binding is rejected", False,
+              "Expected RuntimeManagerError but succeeded")
+    except RuntimeManagerError:
+        check("evolution_freeze: terminal binding is rejected", True)
+    except Exception as exc:
+        check("evolution_freeze: terminal binding is rejected", False, str(exc))
+
+    # ------------------------------------------------------------------
+    # AC-6b: Evolution retrain service layer
+    # ------------------------------------------------------------------
+    svc_rt = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        retrain_result = svc_rt.evolution_retrain({
+            "evolution_decision_id": "evo-dec-retrain-001",
+            "action_type": "retrain",
+            "artifact_id": "artifact-retrain-target",
+            "actor_id": "reviewer-on-duty",
+            "research_job_id": "rjob-smoke-001",
+            "note": "smoke retrain",
+        })
+        check("evolution_retrain: result has expected keys",
+              all(k in retrain_result for k in ("evolution_decision_id", "action_type",
+                                                 "dispatched_at", "routing_ref")))
+        check("evolution_retrain: routing_ref is set",
+              bool(retrain_result.get("routing_ref")))
+        check("evolution_retrain: action_type round-tripped",
+              retrain_result["action_type"] == "retrain")
+    except Exception as exc:
+        check("evolution_retrain service layer", False, str(exc))
+
+    # Guard: invalid action_type rejected
+    try:
+        svc_rt.evolution_retrain({
+            "evolution_decision_id": "evo-dec-bad",
+            "action_type": "deploy",
+            "artifact_id": "art-bad",
+            "actor_id": "reviewer",
+        })
+        check("evolution_retrain: invalid action_type rejected", False,
+              "Expected RuntimeManagerError but succeeded")
+    except RuntimeManagerError:
+        check("evolution_retrain: invalid action_type rejected", True)
+    except Exception as exc:
+        check("evolution_retrain: invalid action_type rejected", False, str(exc))
+
+    # ------------------------------------------------------------------
+    # AC-6c: Evolution redeploy service layer
+    # ------------------------------------------------------------------
+    svc_rd = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
+    try:
+        redeploy_result = svc_rd.evolution_redeploy({
+            "evolution_decision_id": "evo-dec-redeploy-001",
+            "actor_id": "risk-owner-smoke",
+            "deployment_plan": {
+                "plan_id": "plan-redeploy",
+                "plan_status": "approved",
+                "target_stage": "paper",
+                "artifact_id": "artifact-redeploy",
+                "artifact_version": "2.0.0",
+                "capital_pool_id": "pool-redeploy",
+                "persona_capital_binding_id": "pcb-redeploy",
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": "live",
+                "loader_checks_passed": True,
+            },
+        })
+        check("evolution_redeploy: result has expected keys",
+              all(k in redeploy_result for k in ("evolution_decision_id", "binding",
+                                                  "redeployed_at")))
+        check("evolution_redeploy: binding is active",
+              redeploy_result["binding"]["status"] == "active")
+        check("evolution_redeploy: evolution_decision_id round-tripped",
+              redeploy_result["evolution_decision_id"] == "evo-dec-redeploy-001")
+    except Exception as exc:
+        check("evolution_redeploy service layer", False, str(exc))
+
+
+def run_kill_switch_and_evolution_http_tests():
+    """HTTP smoke for kill-switch and evolution routes — BP5-SVC-013."""
+    print("\n=== Kill-Switch + Evolution HTTP Layer — BP5-SVC-013 ===")
+
+    from kill_switch_controller import HardTriggerReason
+
+    os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = (
+        "/tmp/pantheon/smoke-test/ks-evo-http-bindings.json"
+    )
+    os.environ["PANTHEON_SINGLE_RUNTIME_ENFORCED"] = "true"
+
+    import main  # noqa: PLC0415
+    main._svc = None
+
+    client = main.app.test_client()
+    AUTH = {"Authorization": "Bearer test-token"}
+
+    # --- Kill-switch dispatch ---
+    ks_body = {
+        "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+        "capital_pool_id": "pool-ks-http",
+        "actor_id": "operator-http-smoke",
+        "severity": 1,
+    }
+    r_ks = client.post("/api/kill-switch/dispatch", json=ks_body, headers=AUTH)
+    check("POST /api/kill-switch/dispatch returns 200",
+          r_ks.status_code == 200,
+          r_ks.get_data(as_text=True))
+    if r_ks.status_code == 200:
+        ks_data = r_ks.get_json()
+        check("kill-switch dispatch: command present", "command" in ks_data)
+        check("kill-switch dispatch: audit_entry present", "audit_entry" in ks_data)
+        check("kill-switch dispatch: safe_mode_after present",
+              bool(ks_data.get("safe_mode_after")))
+
+    # Missing fields → 400
+    r_ks_bad = client.post("/api/kill-switch/dispatch", json={}, headers=AUTH)
+    check("POST /api/kill-switch/dispatch empty body returns 400",
+          r_ks_bad.status_code == 400)
+
+    # No token → 401
+    r_ks_noauth = client.post("/api/kill-switch/dispatch", json=ks_body)
+    check("POST /api/kill-switch/dispatch without token returns 401",
+          r_ks_noauth.status_code == 401)
+
+    # --- Safe mode GET ---
+    r_sm = client.get("/api/kill-switch/pool-ks-http/safe-mode", headers=AUTH)
+    check("GET /api/kill-switch/<pool_id>/safe-mode returns 200",
+          r_sm.status_code == 200)
+    if r_sm.status_code == 200:
+        sm_data = r_sm.get_json()
+        check("safe-mode GET: safe_mode_state present",
+              bool(sm_data.get("safe_mode_state")))
+
+    # --- Audit log ---
+    r_audit = client.get("/api/kill-switch/audit-log", headers=AUTH)
+    check("GET /api/kill-switch/audit-log returns 200",
+          r_audit.status_code == 200)
+    if r_audit.status_code == 200:
+        audit_data = r_audit.get_json()
+        check("audit-log: count >= 1", audit_data.get("count", 0) >= 1)
+
+    # --- Kill-switch REPLACE HTTP: assert replacement binding is created ---
+    from kill_switch_controller import KillSwitchActionType as KSAT  # noqa: E402, F811
+
+    # Deploy a binding to replace via HTTP
+    deploy_for_replace = {
+        "plan_id": "plan-ks-http-replace-orig",
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": "art-ks-http-orig",
+        "artifact_version": "1.0.0",
+        "capital_pool_id": "pool-ks-http-replace",
+        "persona_capital_binding_id": "pcb-ks-http-replace",
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "live",
+        "loader_checks_passed": True,
+    }
+    r_dep_replace = client.post("/api/runtimes/deploy", json=deploy_for_replace, headers=AUTH)
+    check("kill-switch REPLACE HTTP setup: deploy returns 201",
+          r_dep_replace.status_code == 201,
+          r_dep_replace.get_data(as_text=True))
+
+    if r_dep_replace.status_code == 201:
+        ks_replace_body = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-ks-http-replace",
+            "actor_id": "operator-http-smoke",
+            "severity": 1,
+            "action_override": KSAT.REPLACE.value,
+            "fallback_artifact_id": "art-ks-http-fallback",
+            "fallback_artifact_version": "2.0.0",
+        }
+        r_ks_replace = client.post(
+            "/api/kill-switch/dispatch", json=ks_replace_body, headers=AUTH
+        )
+        check("POST /api/kill-switch/dispatch REPLACE returns 200",
+              r_ks_replace.status_code == 200,
+              r_ks_replace.get_data(as_text=True))
+        if r_ks_replace.status_code == 200:
+            ks_replace_data = r_ks_replace.get_json()
+            ba = ks_replace_data.get("binding_action") or {}
+            check("kill-switch REPLACE HTTP: action is 'replace'",
+                  ba.get("action") == KSAT.REPLACE.value)
+            check("kill-switch REPLACE HTTP: original binding retired",
+                  ba.get("binding", {}).get("status") == "retired")
+            check("kill-switch REPLACE HTTP: replacement_binding present",
+                  "replacement_binding" in ba)
+            check("kill-switch REPLACE HTTP: replacement is active",
+                  ba.get("replacement_binding", {}).get("status") == "active")
+            check("kill-switch REPLACE HTTP: replacement artifact is the fallback",
+                  ba.get("replacement_binding", {}).get("artifact_id") == "art-ks-http-fallback")
+
+    # --- Evolution freeze HTTP ---
+    # First deploy a binding to freeze
+    deploy_for_freeze = {
+        "plan_id": "plan-evo-http-freeze",
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": "art-evo-http",
+        "artifact_version": "1.0.0",
+        "capital_pool_id": "pool-evo-http-freeze",
+        "persona_capital_binding_id": "pcb-evo-http-freeze",
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "live",
+        "loader_checks_passed": True,
+    }
+    r_dep = client.post("/api/runtimes/deploy", json=deploy_for_freeze, headers=AUTH)
+    check("evolution freeze HTTP setup: deploy returns 201",
+          r_dep.status_code == 201,
+          r_dep.get_data(as_text=True))
+
+    if r_dep.status_code == 201:
+        freeze_binding_id = r_dep.get_json()["binding_id"]
+
+        freeze_body = {
+            "evolution_decision_id": "evo-dec-http-001",
+            "deployment_plan_id": "dplan-http-freeze-001",
+            "binding_id": freeze_binding_id,
+            "plan_runtime_action": "freeze_binding",
+            "actor_id": "risk-owner-http",
+        }
+        r_freeze = client.post("/api/evolution/freeze", json=freeze_body, headers=AUTH)
+        check("POST /api/evolution/freeze returns 200",
+              r_freeze.status_code == 200,
+              r_freeze.get_data(as_text=True))
+        if r_freeze.status_code == 200:
+            fd = r_freeze.get_json()
+            check("evolution/freeze: binding status is paused",
+                  fd["binding"]["status"] == "paused")
+            check("evolution/freeze: evolution_decision_id round-tripped",
+                  fd["evolution_decision_id"] == "evo-dec-http-001")
+
+    # Missing fields → 400
+    r_freeze_bad = client.post("/api/evolution/freeze", json={}, headers=AUTH)
+    check("POST /api/evolution/freeze empty body returns 400",
+          r_freeze_bad.status_code == 400)
+
+    # --- Evolution retrain HTTP ---
+    retrain_body = {
+        "evolution_decision_id": "evo-dec-retrain-http",
+        "action_type": "revalidate",
+        "artifact_id": "art-revalidate-target",
+        "actor_id": "reviewer-http",
+        "research_job_id": "rjob-http-001",
+        "note": "http smoke revalidate",
+    }
+    r_retrain = client.post("/api/evolution/retrain", json=retrain_body, headers=AUTH)
+    check("POST /api/evolution/retrain returns 200",
+          r_retrain.status_code == 200,
+          r_retrain.get_data(as_text=True))
+    if r_retrain.status_code == 200:
+        rd = r_retrain.get_json()
+        check("evolution/retrain: routing_ref present", bool(rd.get("routing_ref")))
+        check("evolution/retrain: action_type round-tripped",
+              rd["action_type"] == "revalidate")
+
+    # Missing fields → 400
+    r_retrain_bad = client.post("/api/evolution/retrain", json={}, headers=AUTH)
+    check("POST /api/evolution/retrain empty body returns 400",
+          r_retrain_bad.status_code == 400)
+
+    # --- Evolution redeploy HTTP ---
+    redeploy_body = {
+        "evolution_decision_id": "evo-dec-redeploy-http",
+        "actor_id": "risk-owner-http",
+        "deployment_plan": {
+            "plan_id": "plan-redeploy-http",
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "artifact_id": "art-redeploy-http",
+            "artifact_version": "2.0.0",
+            "capital_pool_id": "pool-redeploy-http",
+            "persona_capital_binding_id": "pcb-redeploy-http",
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+        },
+    }
+    r_redeploy = client.post("/api/evolution/redeploy", json=redeploy_body, headers=AUTH)
+    check("POST /api/evolution/redeploy returns 201",
+          r_redeploy.status_code == 201,
+          r_redeploy.get_data(as_text=True))
+    if r_redeploy.status_code == 201:
+        rdp = r_redeploy.get_json()
+        check("evolution/redeploy: binding is active",
+              rdp["binding"]["status"] == "active")
+        check("evolution/redeploy: evolution_decision_id round-tripped",
+              rdp["evolution_decision_id"] == "evo-dec-redeploy-http")
+
+    # Missing fields → 400
+    r_redeploy_bad = client.post("/api/evolution/redeploy", json={}, headers=AUTH)
+    check("POST /api/evolution/redeploy empty body returns 400",
+          r_redeploy_bad.status_code == 400)
+
+    # No token → 401
+    r_noauth = client.post("/api/evolution/freeze", json=freeze_body if r_dep.status_code == 201 else {})
+    check("POST /api/evolution/freeze without token returns 401",
+          r_noauth.status_code == 401)
+
+
 def main_runner():
     print("=" * 60)
     print("  runtime-manager smoke test  (BP5-SVC-007 + BP5-SVC-008)")
@@ -821,6 +1373,18 @@ def main_runner():
         run_rollback_http_tests()
     except Exception:
         print(f"\n{FAIL} Unexpected error in rollback HTTP tests:")
+        traceback.print_exc()
+
+    try:
+        run_kill_switch_and_evolution_tests()
+    except Exception:
+        print(f"\n{FAIL} Unexpected error in kill-switch/evolution service tests:")
+        traceback.print_exc()
+
+    try:
+        run_kill_switch_and_evolution_http_tests()
+    except Exception:
+        print(f"\n{FAIL} Unexpected error in kill-switch/evolution HTTP tests:")
         traceback.print_exc()
 
     print("\n" + "=" * 60)

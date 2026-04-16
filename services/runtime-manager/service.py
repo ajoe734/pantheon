@@ -57,12 +57,22 @@ from runtime_binding import (  # noqa: E402
     validate_binding,
     utc_now,
 )
+from kill_switch_controller import (  # noqa: E402
+    KillSwitchController,
+    KillSwitchActionType,
+    KillSwitchError,
+    SafeModeState,
+)
 
 __all__ = [
     "RuntimeManagerService",
     "RuntimeManagerError",
     "DeployPlanRequest",
     "RollbackRequest",
+    "KillSwitchRequest",
+    "EvolutionFreezeRequest",
+    "EvolutionRetrainRequest",
+    "EvolutionRedeployRequest",
 ]
 
 # ---------------------------------------------------------------------------
@@ -144,6 +154,98 @@ class RollbackRequest:
     """
 
 
+class KillSwitchRequest:
+    """Typed descriptor for execute_kill_switch() input — passed as a plain dict.
+
+    Fields the caller must supply
+    --------------------------------
+    reason       str  — HardTriggerReason or SoftTriggerReason value
+    capital_pool_id  str  — pool under emergency
+    actor_id     str  — operator or system component raising the trigger
+
+    Optional fields
+    ---------------
+    binding_id              str  — active RuntimeBinding targeted (if known)
+    severity                int  — numeric severity (1 = highest)
+    action_override         str  — override default action selection from §7 matrix
+    fallback_artifact_id    str  — required when action_override or default is REPLACE
+    fallback_artifact_version str — required when action_override or default is REPLACE
+    context                 dict — arbitrary metadata (broker info, metrics, etc.)
+    """
+
+
+class EvolutionFreezeRequest:
+    """Typed descriptor for evolution_freeze() input — passed as a plain dict.
+
+    Implements the runtime follow-through for an approved evolution freeze
+    decision per EVOLUTION_REVIEW_AND_THRESHOLDS.md §11 and
+    KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md §3.
+
+    Fields the caller must supply
+    --------------------------------
+    evolution_decision_id   str  — approved EvolutionDecision.id
+    binding_id              str  — active RuntimeBinding to freeze
+    freeze_action           str  — freeze_binding | pause_then_freeze | liquidate_then_freeze
+    actor_id                str  — reviewer/operator authorising the freeze
+
+    Optional fields
+    ---------------
+    note                    str  — governance note for audit
+    """
+
+
+class EvolutionRetrainRequest:
+    """Typed descriptor for evolution_retrain() input — passed as a plain dict.
+
+    Records that an approved retrain/revalidate EvolutionDecision has been
+    dispatched to the research plane.  The runtime-manager marks the decision
+    as executed and emits a routing record — actual model retraining happens
+    in the research plane, not here.
+
+    Fields the caller must supply
+    --------------------------------
+    evolution_decision_id   str  — approved EvolutionDecision.id
+    action_type             str  — retrain | revalidate
+    artifact_id             str  — target artifact that will be retrained
+    actor_id                str  — reviewer/operator dispatching retrain
+
+    Optional fields
+    ---------------
+    note                    str
+    """
+
+
+class EvolutionRedeployRequest:
+    """Typed descriptor for evolution_redeploy() input — passed as a plain dict.
+
+    Records the redeploy follow-through after a retrain/revalidate/freeze-lift
+    decision.  The runtime-manager creates the new RuntimeBinding from the
+    approved replacement artifact.
+
+    This is a thin wrapper over deploy() that records the evolution lineage.
+
+    Fields the caller must supply
+    --------------------------------
+    evolution_decision_id   str  — approved EvolutionDecision.id
+    plan_id                 str  — new DeploymentPlan.plan_id
+    target_stage            str  — paper | canary | live
+    artifact_id             str
+    artifact_version        str
+    capital_pool_id         str
+    persona_capital_binding_id  str
+    persona_capital_binding_status  str  — must be 'active'
+    allowed_deployment_scope    str
+    loader_checks_passed    bool  — must be True
+
+    Optional fields
+    ---------------
+    plan_status             str  — default 'approved'
+    runtime_id              str  — auto-generated if absent
+    actor_id                str
+    note                    str
+    """
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -172,6 +274,7 @@ class RuntimeManagerService:
     ) -> None:
         self._store = RuntimeBindingStore(path=store_path)
         self._single_runtime_enforced = single_runtime_enforced
+        self._kill_switch = KillSwitchController()
 
     # ------------------------------------------------------------------ #
     # Primary write operations (Execution Plane only)                     #
@@ -487,6 +590,483 @@ class RuntimeManagerService:
     def transition(self, binding_id: str, new_status: str) -> RuntimeBinding:
         """Transition a binding to a new status via the allowed state machine."""
         return self._store.transition_status(binding_id, new_status)
+
+    # ------------------------------------------------------------------ #
+    # Kill-switch fast path (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY)  #
+    # ------------------------------------------------------------------ #
+
+    def execute_kill_switch(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Dispatch an emergency kill-switch command via the runtime-manager fast path.
+
+        This is the authorised fast-path entry point defined in
+        KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md §2–§8.
+
+        The path is:
+            caller → execute_kill_switch() → KillSwitchController.dispatch()
+                                           → KillSwitchOutcome (command + audit)
+
+        Every call produces an immutable KillSwitchAuditEntry regardless of
+        the emergency class, preserving auditability on the fast path (§5).
+
+        For REPLACE-type actions the caller must supply fallback_artifact_id
+        and fallback_artifact_version.
+
+        Parameters (plain dict)
+        -----------------------
+        reason              : str   — HardTriggerReason or SoftTriggerReason value
+        capital_pool_id     : str   — pool under emergency
+        actor_id            : str   — operator or system component
+
+        Optional
+        --------
+        binding_id          : str   — active RuntimeBinding being targeted
+        severity            : int   — numeric severity (1 = highest)
+        action_override     : str   — KillSwitchActionType value; overrides §7 matrix
+        fallback_artifact_id    : str   — required when action is REPLACE
+        fallback_artifact_version : str — required when action is REPLACE
+        context             : dict  — arbitrary metadata
+
+        Returns
+        -------
+        dict with keys:
+            command     : dict — KillSwitchCommand serialised
+            audit_entry : dict — KillSwitchAuditEntry serialised
+            safe_mode_after : str — SafeModeState after dispatch
+        """
+        from kill_switch_controller import EmergencyTrigger, KillSwitchActionType as KSAT  # noqa: E402
+
+        reason = request.get("reason", "")
+        capital_pool_id = request.get("capital_pool_id", "")
+        actor_id = request.get("actor_id", "")
+
+        try:
+            trigger = EmergencyTrigger(
+                reason=reason,
+                capital_pool_id=capital_pool_id,
+                actor_id=actor_id,
+                binding_id=request.get("binding_id"),
+                severity=request.get("severity"),
+                context=request.get("context") or {},
+            )
+        except KillSwitchError as exc:
+            raise RuntimeManagerError(f"Invalid kill-switch trigger: {exc}") from exc
+
+        action_override = None
+        if request.get("action_override"):
+            try:
+                action_override = KSAT(request["action_override"])
+            except ValueError as exc:
+                raise RuntimeManagerError(
+                    f"Unknown action_override={request['action_override']!r}: {exc}"
+                ) from exc
+
+        try:
+            outcome = self._kill_switch.dispatch(
+                trigger,
+                action_override=action_override,
+                fallback_artifact_id=request.get("fallback_artifact_id"),
+                fallback_artifact_version=request.get("fallback_artifact_version"),
+            )
+        except KillSwitchError as exc:
+            raise RuntimeManagerError(f"Kill-switch dispatch failed: {exc}") from exc
+
+        # Execute the binding action against RuntimeBinding — runtime-manager is the
+        # authoritative executor for pause / liquidate / replace / terminate.
+        # (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §5.2)
+        binding_action = self._execute_kill_switch_binding_action(outcome.command)
+        result = outcome.to_dict()
+        result["binding_action"] = binding_action
+        return result
+
+    def _execute_kill_switch_binding_action(
+        self, command: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Execute the RuntimeBinding state write for a dispatched kill-switch command.
+
+        Resolves the target binding via command.binding_id, falling back to the
+        active binding for command.capital_pool_id.  Executes:
+            PAUSE / RISK_OFF  → pending_pause → paused
+            LIQUIDATE / TERMINATE → retire immediately
+            REPLACE → hot-swap: create fallback replacement binding first, then
+                      retire the current binding.  Uses old binding metadata
+                      (persona_capital_binding_id, deployment_mode) combined with
+                      command.fallback_artifact_id / fallback_artifact_version.
+                      persona_capital_binding_status=active and
+                      allowed_deployment_scope=live are assumed on the emergency
+                      fast path (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §5.2).
+
+        Returns a dict with 'action', 'binding' (old, retired/paused), and for
+        REPLACE also 'replacement_binding' (new active binding).  Returns None
+        when no live binding is found for the target pool.
+        """
+        binding_id = command.binding_id
+        if not binding_id:
+            active = self._store.get_active_for_pool(command.capital_pool_id)
+            if active:
+                binding_id = active.binding_id
+
+        if not binding_id:
+            return None
+
+        try:
+            b = self._store.get(binding_id)
+            if b is None or b.is_terminal():
+                return None
+
+            action_type = command.action_type  # str value from KillSwitchActionType
+            if action_type in (
+                KillSwitchActionType.PAUSE.value,
+                KillSwitchActionType.RISK_OFF.value,
+            ):
+                # Drain: active → pending_pause → paused
+                if b.status == RuntimeBindingStatus.ACTIVE.value:
+                    self._store.transition_status(
+                        binding_id, RuntimeBindingStatus.PENDING_PAUSE.value
+                    )
+                updated = self._store.transition_status(
+                    binding_id, RuntimeBindingStatus.PAUSED.value
+                )
+                return {"action": action_type, "binding": updated.to_dict()}
+
+            elif action_type == KillSwitchActionType.REPLACE.value:
+                # Hot-swap fast path per KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §4.4 and §5.2.
+                # Create the fallback replacement binding BEFORE retiring the current one so
+                # the pool is never left without a live runtime (same ordering as rollback REPLACE).
+                # The single-runtime guard is bypassed only for this specific call via
+                # _allow_cutover_bypass so concurrent deploy() calls on other threads are unaffected.
+                cutover_at = utc_now()
+                deploy_req: Dict[str, Any] = {
+                    "plan_id": f"ks-replace-{command.command_id}",
+                    "plan_status": "approved",
+                    "target_stage": b.deployment_mode,
+                    "artifact_id": command.fallback_artifact_id,
+                    "artifact_version": command.fallback_artifact_version,
+                    "capital_pool_id": command.capital_pool_id,
+                    "persona_capital_binding_id": b.persona_capital_binding_id,
+                    # Emergency assumption: the existing PCB is still active and the
+                    # scope is sufficient (live is the maximum and covers all stages).
+                    "persona_capital_binding_status": "active",
+                    "allowed_deployment_scope": "live",
+                    "loader_checks_passed": True,
+                    "rollback_parent": binding_id,
+                    "rollback_action_type": "replace",
+                }
+                replacement = self.deploy(deploy_req, _allow_cutover_bypass=True)
+                retired = self._store.retire(binding_id, retired_at=cutover_at)
+                return {
+                    "action": action_type,
+                    "binding": retired.to_dict(),
+                    "replacement_binding": replacement.to_dict(),
+                }
+
+            else:
+                # LIQUIDATE, TERMINATE — retire immediately
+                updated = self._store.retire(binding_id, retired_at=utc_now())
+                return {"action": action_type, "binding": updated.to_dict()}
+
+        except (RuntimeBindingError, RuntimeManagerError):
+            # Binding may already be terminal; do not mask the dispatch outcome
+            return None
+
+    def get_safe_mode(self, capital_pool_id: str) -> str:
+        """Return the current SafeModeState for a capital pool (NORMAL if unknown)."""
+        return self._kill_switch.safe_mode_for(capital_pool_id).value
+
+    def advance_safe_mode(
+        self,
+        capital_pool_id: str,
+        target_state: str,
+        actor_id: str,
+        note: Optional[str] = None,
+    ) -> str:
+        """Manually advance the safe-mode state for a pool (governance recovery path).
+
+        Used after conditions are cleared to progress from PAUSED → RECOVERY_TESTING
+        or RECOVERY_TESTING → NORMAL_RESTORED.
+
+        Raises RuntimeManagerError if the transition is not allowed.
+        """
+        try:
+            new_state = self._kill_switch.advance_safe_mode(
+                capital_pool_id,
+                SafeModeState(target_state),
+                actor_id=actor_id,
+                note=note,
+            )
+        except (KillSwitchError, ValueError) as exc:
+            raise RuntimeManagerError(f"Safe-mode advance failed: {exc}") from exc
+        return new_state.value
+
+    def get_kill_switch_audit_log(self) -> List[Dict[str, Any]]:
+        """Return all kill-switch audit entries for this service instance."""
+        return [e.to_dict() for e in self._kill_switch.audit_log()]
+
+    # ------------------------------------------------------------------ #
+    # Evolution orchestration boundaries (EVOLUTION_REVIEW_AND_THRESHOLDS)#
+    # ------------------------------------------------------------------ #
+
+    def evolution_freeze(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the runtime follow-through for an approved evolution freeze decision.
+
+        Per EVOLUTION_REVIEW_AND_THRESHOLDS.md §11 and §11.2:
+        Governance writes the freeze decision and creates a companion
+        DeploymentPlan(current_stage -> frozen).  Runtime-manager only consumes
+        that plan — it does NOT accept arbitrary direct binding mutations.
+
+        Valid plan_runtime_action values (from the DeploymentPlan):
+        - freeze_binding      : transition the active binding to pending_pause → paused.
+          Canonical "stop new entries, preserve book" path for live freeze.
+        - pause_then_freeze   : alias for freeze_binding (drain then pause).
+
+        liquidate_then_freeze is NOT accepted here.  Flatten / zero-exposure
+        escalation must route through the rollback path or execute_kill_switch()
+        per EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.2 and
+        KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §3.
+
+        Parameters (plain dict)
+        -----------------------
+        evolution_decision_id : str  — approved EvolutionDecision.id
+        deployment_plan_id    : str  — companion DeploymentPlan.id created by
+                                       governance/promotion plane
+        binding_id            : str  — active RuntimeBinding to freeze
+        plan_runtime_action   : str  — freeze_binding | pause_then_freeze
+        actor_id              : str  — reviewer/operator authorising the freeze
+
+        Optional
+        --------
+        note                  : str
+
+        Returns
+        -------
+        dict with keys:
+            evolution_decision_id : str
+            deployment_plan_id    : str
+            plan_runtime_action   : str
+            binding               : dict — updated RuntimeBinding
+            actor_id              : str
+            executed_at           : str — ISO-8601 UTC
+            note                  : str | None
+        """
+        evo_id = request.get("evolution_decision_id", "")
+        deployment_plan_id = request.get("deployment_plan_id", "")
+        binding_id = request.get("binding_id", "")
+        plan_runtime_action = request.get("plan_runtime_action", "freeze_binding")
+        actor_id = request.get("actor_id", "")
+        note = request.get("note")
+
+        if not evo_id:
+            raise RuntimeManagerError("evolution_decision_id is required for evolution_freeze.")
+        if not deployment_plan_id:
+            raise RuntimeManagerError(
+                "deployment_plan_id is required for evolution_freeze. "
+                "The companion DeploymentPlan must be created by the governance/promotion "
+                "plane before runtime-manager can execute the freeze follow-through."
+            )
+        if not binding_id:
+            raise RuntimeManagerError("binding_id is required for evolution_freeze.")
+        if not actor_id:
+            raise RuntimeManagerError("actor_id is required for evolution_freeze.")
+
+        _VALID_PLAN_ACTIONS = {"freeze_binding", "pause_then_freeze"}
+        if plan_runtime_action == "liquidate_then_freeze":
+            raise RuntimeManagerError(
+                "plan_runtime_action='liquidate_then_freeze' is not accepted by evolution_freeze. "
+                "Flatten / zero-exposure escalation must route through execute_kill_switch() "
+                "or the rollback path per EVOLUTION_REVIEW_AND_THRESHOLDS §11.2."
+            )
+        if plan_runtime_action not in _VALID_PLAN_ACTIONS:
+            raise RuntimeManagerError(
+                f"Unknown plan_runtime_action={plan_runtime_action!r}. "
+                f"Must be one of {sorted(_VALID_PLAN_ACTIONS)}."
+            )
+
+        current_binding = self._store.require(binding_id)
+        if current_binding.is_terminal():
+            raise RuntimeManagerError(
+                f"Cannot freeze binding {binding_id!r}: already in terminal state "
+                f"{current_binding.status!r}."
+            )
+
+        executed_at = utc_now()
+
+        # Drain: active → pending_pause → paused (per DeploymentPlan runtime_action).
+        # Tolerate bindings already paused or pending_pause by a prior kill-switch or rollback
+        # path — the freeze intent is satisfied if the binding ends up paused regardless of
+        # which path got it there.  This prevents a spurious RuntimeBindingError when the
+        # kill-switch fast path reached PAUSED before the governance freeze arrived.
+        if current_binding.status == RuntimeBindingStatus.ACTIVE.value:
+            self._store.transition_status(binding_id, RuntimeBindingStatus.PENDING_PAUSE.value)
+            updated = self._store.transition_status(binding_id, RuntimeBindingStatus.PAUSED.value)
+        elif current_binding.status == RuntimeBindingStatus.PENDING_PAUSE.value:
+            # Kill-switch already drained to pending_pause; complete the drain step.
+            updated = self._store.transition_status(binding_id, RuntimeBindingStatus.PAUSED.value)
+        else:
+            # Already paused (e.g. paused by kill-switch or rollback) — idempotent re-fetch.
+            updated = self._store.require(binding_id)
+
+        return {
+            "evolution_decision_id": evo_id,
+            "deployment_plan_id": deployment_plan_id,
+            "plan_runtime_action": plan_runtime_action,
+            "binding": updated.to_dict(),
+            "actor_id": actor_id,
+            "executed_at": executed_at,
+            "note": note,
+        }
+
+    def evolution_retrain(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Record dispatch of an approved retrain/revalidate EvolutionDecision.
+
+        Per EVOLUTION_REVIEW_AND_THRESHOLDS.md §12.2: `executed` means the research
+        job / work item has been governed-ly created by the research plane first.
+        The caller must supply the authoritative research_job_id returned by the
+        research plane when it accepted the work item.  Runtime-manager records
+        this reference as the routing_ref — it does NOT fabricate synthetic receipts.
+
+        Actual model retraining happens in the research plane.
+
+        Parameters (plain dict)
+        -----------------------
+        evolution_decision_id : str  — approved EvolutionDecision.id
+        action_type           : str  — retrain | revalidate
+        artifact_id           : str  — target artifact
+        actor_id              : str
+        research_job_id       : str  — authoritative work item id from the research plane
+
+        Optional
+        --------
+        note                  : str
+
+        Returns
+        -------
+        dict with keys:
+            evolution_decision_id : str
+            action_type           : str
+            artifact_id           : str
+            actor_id              : str
+            dispatched_at         : str — ISO-8601 UTC
+            routing_ref           : str — research_job_id echoed as the authoritative ref
+            note                  : str | None
+        """
+        evo_id = request.get("evolution_decision_id", "")
+        action_type = request.get("action_type", "")
+        artifact_id = request.get("artifact_id", "")
+        actor_id = request.get("actor_id", "")
+        research_job_id = request.get("research_job_id", "")
+        note = request.get("note")
+
+        if not evo_id:
+            raise RuntimeManagerError("evolution_decision_id is required for evolution_retrain.")
+        if action_type not in ("retrain", "revalidate"):
+            raise RuntimeManagerError(
+                f"action_type must be 'retrain' or 'revalidate'; got {action_type!r}."
+            )
+        if not artifact_id:
+            raise RuntimeManagerError("artifact_id is required for evolution_retrain.")
+        if not actor_id:
+            raise RuntimeManagerError("actor_id is required for evolution_retrain.")
+        if not research_job_id:
+            raise RuntimeManagerError(
+                "research_job_id is required for evolution_retrain. "
+                "The research plane must create the governed work item first and return "
+                "its job id before runtime-manager can record the dispatch receipt."
+            )
+
+        dispatched_at = utc_now()
+
+        return {
+            "evolution_decision_id": evo_id,
+            "action_type": action_type,
+            "artifact_id": artifact_id,
+            "actor_id": actor_id,
+            "dispatched_at": dispatched_at,
+            "routing_ref": research_job_id,
+            "note": note,
+        }
+
+    def evolution_redeploy(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute redeploy follow-through after an approved evolution decision.
+
+        Per EVOLUTION_REVIEW_AND_THRESHOLDS.md §11 (redeploy follow-through row)
+        and §12.2: the Governance/Promotion plane must first create an
+        ApprovalDecision and a companion DeploymentPlan.  Runtime-manager only
+        *consumes* that plan — it must not accept raw artifact/binding fields as
+        a shadow command surface.
+
+        Callers must pass the pre-created plan as a structured `deployment_plan`
+        dict.  All artifact and binding fields must originate from that plan
+        object, not be supplied independently by the caller.
+
+        Parameters (plain dict)
+        -----------------------
+        evolution_decision_id : str  — approved EvolutionDecision.id
+        deployment_plan       : dict — DeploymentPlan created by the governance/
+                                       promotion plane; required fields inside:
+            plan_id                       : str
+            target_stage                  : str  — paper | canary | live
+            artifact_id                   : str
+            artifact_version              : str
+            capital_pool_id               : str
+            persona_capital_binding_id    : str
+            persona_capital_binding_status: str  — must be 'active'
+            allowed_deployment_scope      : str
+            loader_checks_passed          : bool — must be True
+            plan_status                   : str  — default 'approved'
+            runtime_id                    : str  — optional, auto-generated if absent
+
+        Optional
+        --------
+        actor_id              : str
+        note                  : str
+
+        Returns
+        -------
+        dict with keys:
+            evolution_decision_id : str
+            binding               : dict — new RuntimeBinding
+            actor_id              : str | None
+            redeployed_at         : str — ISO-8601 UTC
+            note                  : str | None
+        """
+        evo_id = request.get("evolution_decision_id", "")
+        if not evo_id:
+            raise RuntimeManagerError("evolution_decision_id is required for evolution_redeploy.")
+
+        deployment_plan = request.get("deployment_plan")
+        if not deployment_plan or not isinstance(deployment_plan, dict):
+            raise RuntimeManagerError(
+                "deployment_plan is required for evolution_redeploy and must be a dict. "
+                "The Governance/Promotion plane must create the ApprovalDecision and "
+                "DeploymentPlan first; runtime-manager only consumes that plan."
+            )
+
+        # Validate that the plan contains the minimum required fields
+        _PLAN_REQUIRED = [
+            "plan_id", "target_stage", "artifact_id", "artifact_version",
+            "capital_pool_id", "persona_capital_binding_id",
+            "persona_capital_binding_status", "allowed_deployment_scope",
+        ]
+        missing_plan_fields = [f for f in _PLAN_REQUIRED if not deployment_plan.get(f)]
+        if "loader_checks_passed" not in deployment_plan:
+            missing_plan_fields.append("loader_checks_passed")
+        if missing_plan_fields:
+            raise RuntimeManagerError(
+                f"deployment_plan is missing required fields: {missing_plan_fields}"
+            )
+
+        deploy_req = dict(deployment_plan)
+        deploy_req.setdefault("plan_status", "approved")
+
+        binding = self.deploy(deploy_req)
+        redeployed_at = utc_now()
+
+        return {
+            "evolution_decision_id": evo_id,
+            "binding": binding.to_dict(),
+            "actor_id": request.get("actor_id"),
+            "redeployed_at": redeployed_at,
+            "note": request.get("note"),
+        }
 
     # ------------------------------------------------------------------ #
     # Read operations (open to authorised consumers)                      #
