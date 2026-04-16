@@ -430,6 +430,53 @@ def test_execute_wrong_role_rejected():
     assert r.status_code == 422
 
 
+def test_medium_risk_operator_cannot_approve_without_risk_owner():
+    """
+    Regression: EVOLUTION_REVIEW_AND_THRESHOLDS.md §6.2 — medium-risk approved
+    owner is Risk Owner only. Operator must not be accepted as a standalone
+    approver (would bypass Risk Owner sign-off).
+    """
+    did = uid()
+    body = {**MEDIUM_RISK_BODY, "decision_id": did, "target_id": f"artifact-op-{did}"}
+    client.post("/api/evolution/proposals", json=body).raise_for_status()
+
+    # Review with a valid reviewer role
+    client.post(f"/api/evolution/proposals/{did}/review", json={
+        "actor_role": "reviewer",
+        "actor_id": "rev-medium",
+        "approval_decision_id": "apv-medium-op",
+    }).raise_for_status()
+
+    # Attempt to approve as operator — must be rejected
+    r = client.post(f"/api/evolution/proposals/{did}/approve", json={
+        "actor_role": "operator",
+        "actor_id": "op-medium",
+    })
+    assert r.status_code == 422, (
+        f"operator must not be able to approve a medium-risk decision alone; "
+        f"got {r.status_code}: {r.text}"
+    )
+
+
+def test_boundary_medium_risk_does_not_surface_operator_as_approved_owner():
+    """
+    The governance read path (boundary_for) must not expose operator as an
+    approved_owner_role for medium-risk decisions.
+    """
+    did = uid()
+    body = {**MEDIUM_RISK_BODY, "decision_id": did, "target_id": f"artifact-bnd-{did}"}
+    client.post("/api/evolution/proposals", json=body).raise_for_status()
+
+    r = client.get(f"/api/evolution/proposals/{did}/boundary")
+    assert r.status_code == 200
+    b = r.json()
+    assert "operator" not in b["approved_owner_roles"], (
+        f"operator must not appear as approved_owner_role for medium-risk; "
+        f"got: {b['approved_owner_roles']}"
+    )
+    assert "risk_owner" in b["approved_owner_roles"]
+
+
 # ---------------------------------------------------------------------------
 # State-machine transitions
 # ---------------------------------------------------------------------------
