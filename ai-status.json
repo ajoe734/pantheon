@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-12-blueprint-gap-convergence-planning",
   "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-16T09:06:24Z",
+  "updated_at": "2026-04-16T16:26:09Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,18 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "blocked",
+      "status": "finalize",
       "current_task_ids": [
-        "BP5-SVC-012",
-        "BP5-WB-006",
-        "BP5-WB-007",
-        "BP5-LUV-001",
-        "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-        "BP5-LUV-003-SIDECAR-REVIEW"
+        "BP5-WB-003"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned review from Codex to Copilot after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
-      "last_update": "2026-04-16T09:06:14Z"
+      "next": "Supervisor resumed BP5-WB-003 for finalize after successful dispatch.",
+      "last_update": "2026-04-16T16:25:08Z"
     },
     {
       "name": "Gemini",
@@ -114,15 +109,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BP5-SVC-016",
-        "BP5-OSS-002",
-        "BP5-OSS-004"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-16T09:04:12Z"
+      "next": "Supervisor auto-started BP5-LUV-008 after successful dispatch.",
+      "last_update": "2026-04-16T16:25:13Z"
     },
     {
       "name": "Codex",
@@ -132,13 +123,31 @@
         "schema",
         "acceptance"
       ],
-      "status": "finalize",
+      "status": "ready",
       "current_task_ids": [
-        "BP5-LUV-003"
+        "BP5-WB-008",
+        "BP5-LUV-008",
+        "BP5-WB-008-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Review approved. Packet family is well-formed, BFF gaps resolved (commit 2782e502), and front-lane handoff is ready to resume. Both acceptance criteria met. Note: sidecar acceptance incorrectly lists BP5-SVC-015 as done (actual: todo) — does not block front-lane pickup but a follow-up loop pass is recommended after BP5-SVC-015 completes.",
-      "last_update": "2026-04-16T08:45:24Z"
+      "next": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "last_update": "2026-04-16T16:25:56Z"
+    },
+    {
+      "name": "Codex2",
+      "capability_lane": [
+        "integration",
+        "status-system",
+        "schema",
+        "acceptance"
+      ],
+      "status": "working",
+      "current_task_ids": [
+        "BP5-OSS-004"
+      ],
+      "branch": "feat/codex-collab-system",
+      "next": "Supervisor auto-started BP5-OSS-004 after successful dispatch.",
+      "last_update": "2026-04-16T16:25:24Z"
     },
     {
       "name": "Copilot",
@@ -148,11 +157,14 @@
         "spec-review",
         "critique"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "BP5-LUV-004",
+        "BP5-LUV-010"
+      ],
       "branch": "feat/grok-research-critique",
-      "next": "Supervisor auto-started BP5-SVC-012-SIDECAR-REVIEW after successful dispatch.",
-      "last_update": "2026-04-16T09:04:57Z"
+      "next": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "last_update": "2026-04-16T16:26:09Z"
     },
     {
       "name": "Qwen",
@@ -162,278 +174,23 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "BP5-SVC-016-SIDECAR-REVIEW"
+      ],
       "branch": "feat/qwen-code-agent",
-      "next": "Supervisor re-dispatched BP5-SVC-012-SIDECAR-REVIEW; task remains in progress.",
-      "last_update": "2026-04-16T09:06:11Z"
+      "next": "Supervisor auto-started BP5-SVC-016-SIDECAR-REVIEW after successful dispatch.",
+      "last_update": "2026-04-16T16:24:09Z"
     }
   ],
   "tasks": [
-    {
-      "id": "BP5-SVC-012",
-      "title": "Realize the EvolutionDecision service and governance read path",
-      "summary_zh": "把 EvolutionDecision lifecycle、actor role、cooldown/convergence 與 evidence link 落成真實 service、schema 與 query path。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Copilot",
-      "depends_on": [
-        "BP5-SVC-010"
-      ],
-      "artifacts": [
-        "services/evolution/",
-        "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
-        "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md"
-      ],
-      "acceptance": [
-        "evolution decisions are created and queried through one canonical service path",
-        "cooldown, convergence, actor role, and evidence linkage rules are enforced in runtime-visible behavior"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "review",
-      "next": "Auto-reassigned review from Codex to Copilot after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
-      "last_update": "2026-04-16T09:05:40Z"
-    },
-    {
-      "id": "BP5-SVC-013",
-      "title": "Realize operational evolution orchestration and kill-switch fast path",
-      "summary_zh": "把 freeze、rollback、retrain、redeploy orchestration 邊界與 emergency kill-switch fast path 落成真實 runtime-manager action path。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Gemini",
-      "depends_on": [
-        "BP5-SVC-008",
-        "BP5-SVC-011",
-        "BP5-SVC-012"
-      ],
-      "artifacts": [
-        "services/runtime-manager/",
-        "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
-        "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
-      ],
-      "acceptance": [
-        "freeze, rollback, retrain, redeploy, kill-switch, and safe-mode actions all use explicit runtime-manager orchestration boundaries",
-        "emergency fast path keeps auditability while meeting kill-switch latency expectations"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-SVC-015",
-      "title": "Remove BFF snapshot and default fallback from the normal integration path",
-      "summary_zh": "把 operator/BFF 目前靠 snapshot/default fallback 撐住的正常路徑收斂成 backend-owned composed reads 與 command-submission path。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "BP5-SVC-003",
-        "BP5-SVC-004",
-        "BP5-SVC-011",
-        "BP5-SVC-013",
-        "BP5-SVC-014"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/read_store.py",
-        "services/control-plane/bff/command_executor.py",
-        "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md"
-      ],
-      "acceptance": [
-        "operator and persona BFF reads no longer treat snapshot/default seed mode as the normal integration path",
-        "degraded operator behavior is explicit and backend-owned instead of UI-invented"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-SVC-016",
-      "title": "Package the honest service stack into Docker, compose, and smoke topology",
-      "summary_zh": "把 service stack 真實包成 Docker/compose/smoke topology，讓 runtime/governance/evidence/BFF/streaming 能以 single-VM baseline 啟動。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "depends_on": [
-        "BP5-SVC-002",
-        "BP5-SVC-003",
-        "BP5-SVC-005",
-        "BP5-SVC-009",
-        "BP5-SVC-010",
-        "BP5-SVC-015"
-      ],
-      "artifacts": [
-        "docker-compose.yml",
-        "Dockerfile*",
-        "docs/remote-dev-gcp-vm.md"
-      ],
-      "acceptance": [
-        "runtime, governance, evidence, BFF, and streaming surfaces boot through one honest compose topology",
-        "smoke scripts prove the stack can start without hidden local-only fallbacks"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-WB-001",
-      "title": "Packetize Persona Workbench Wave 1 surfaces",
-      "summary_zh": "把 Persona management composed screen、Persona drilldowns、Capital/Binding drilldowns、shared Deployment/Approval drilldowns 落成可執行 packet family。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "BP5-SVC-014",
-        "BP5-SVC-015"
-      ],
-      "artifacts": [
-        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
-        "docs/pantheon-handoffs/"
-      ],
-      "acceptance": [
-        "Persona Workbench Wave 1 surfaces have canonical packets and truthful backend dependency notes",
-        "the packet family reuses existing BFF routes instead of inventing shadow data sources"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-WB-002",
-      "title": "Packetize Operator Console Wave 2 surfaces",
-      "summary_zh": "把 Operator Home、Alerts rail、Health status、Runtime state、Paper/Live drift 這批還沒 packetized 的 Wave 2 surfaces 落成真實 packet family。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "BP5-SVC-015",
-        "BP5-SVC-016"
-      ],
-      "artifacts": [
-        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
-        "docs/pantheon-handoffs/"
-      ],
-      "acceptance": [
-        "Operator Console Wave 2 surfaces are packetized with honest composed-read requirements and degraded-state rules",
-        "no Operator Home or drift screen is handed to Lovable before its aggregation contract is explicit"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
     {
       "id": "BP5-WB-003",
       "title": "Packetize Governance Workbench follow-on surfaces",
       "summary_zh": "把 approval queue、deployment diff、rollback review、governance audit rail 這些 Governance follow-on surfaces 補成 packet family。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex2",
       "depends_on": [
         "BP5-SVC-003",
         "BP5-SVC-004",
@@ -465,186 +222,17 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-WB-004",
-      "title": "Packetize Evolution Workbench follow-on surfaces",
-      "summary_zh": "把 inspiration 與 mutation review 這些 Evolution Workbench follow-on surfaces 補成 packet family，而不是只停在 backlog 名稱。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [
-        "BP5-SVC-012",
-        "BP5-SVC-013"
-      ],
-      "artifacts": [
-        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
-        "docs/pantheon-handoffs/"
-      ],
-      "acceptance": [
-        "evolution follow-on screens cite canonical evolution, incident, and rollback objects",
-        "packet language exists for inspiration and mutation review instead of backlog-only placeholders"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-WB-005",
-      "title": "Packetize the Research Workbench family",
-      "summary_zh": "把 Research Ticket、Search、Analyze、Experiment Launch、Artifact Compare 五個模組逐一補成 canonical packet family 與 backend gap matrix。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [
-        "BP5-SVC-005",
-        "BP5-SVC-014"
-      ],
-      "artifacts": [
-        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
-        "docs/pantheon-handoffs/"
-      ],
-      "acceptance": [
-        "each Research Workbench module has a packet, backend dependency matrix, and internal ordering",
-        "Lovable readiness stays false until the needed BFF routes and read models are explicit"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
       "status": "review_approved",
-      "next": "Supervisor resumed BP5-WB-005 for finalize after successful dispatch.",
-      "last_update": "2026-04-16T09:05:30Z",
-      "review_notes_zh": [
-        "已核對 RW-01 到 RW-05 的 packet family、module-scoped backend gap matrix、backlog-canonical lifecycle token，以及 Launch 到 Artifact Compare 的依賴邊界；無阻塞性問題。"
-      ],
-      "review_file": "docs/pantheon-handoffs/RW-005-research-workbench/REVIEW.md"
-    },
-    {
-      "id": "BP5-WB-006",
-      "title": "Packetize the Knowledge Workbench family",
-      "summary_zh": "把 Institutional Memory、Research Notes、Evidence Refs、Insight Cards、Strategy Spec 五個 Knowledge modules 補成 packet family 與 backend gap matrix。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Copilot",
-      "depends_on": [
-        "BP5-SVC-010",
-        "BP5-SVC-011",
-        "BP5-SVC-014"
-      ],
-      "artifacts": [
-        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
-        "docs/pantheon-handoffs/"
-      ],
-      "acceptance": [
-        "Knowledge Workbench modules have canonical packets and explicit BFF or read-model prerequisites",
-        "module ordering from Institutional Memory to Strategy Spec is preserved in the packet plan"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "review",
-      "next": "Auto-reassigned review from Codex to Copilot after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
-      "last_update": "2026-04-16T09:06:14Z"
-    },
-    {
-      "id": "BP5-WB-007",
-      "title": "Packetize the Trainer Workbench family",
-      "summary_zh": "把 teaching session、before/after review 與 trainer shell 補成 Trainer Workbench packet family，並明確標出缺失的 BFF flow。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [
-        "BP5-SVC-014",
-        "BP5-SVC-009"
-      ],
-      "artifacts": [
-        "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
-        "docs/pantheon-handoffs/"
-      ],
-      "acceptance": [
-        "Trainer Workbench surfaces have canonical packet language and explicit BFF prerequisites",
-        "teaching-history and trainer-specific flows are separated instead of hidden inside Persona screens"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "review",
-      "next": "BP5-WB-007 is complete per archive (done at 2026-04-16T06:13:48Z, commit 23fac36). The live ai-status.json entry was stale (never synced after prior-session closeout). Artifact: docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md. The only blocking review finding (TW-04 dependency mis-scope) was fixed and confirmed in the BP5-WB-007-SIDECAR-REVIEW. Please re-verify and approve to sync the live state to done.",
-      "last_update": "2026-04-16T08:51:59Z"
+      "next": "Supervisor resumed BP5-WB-003 for finalize after successful dispatch.",
+      "last_update": "2026-04-16T16:25:08Z"
     },
     {
       "id": "BP5-WB-008",
       "title": "Packetize the Consultation Workbench family",
       "summary_zh": "把 consult requests、committee review、debate、red-team outputs 補成 Consultation Workbench packet family 與 backend gap matrix。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
+      "owner": "Codex",
+      "reviewer": "Claude",
       "depends_on": [
         "BP5-SVC-003",
         "BP5-SVC-012",
@@ -677,142 +265,15 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-LUV-001",
-      "title": "Review the returned feedback bundles for F-042 and PKT-001 governance review queue",
-      "summary_zh": "把 F-042 與 PKT-001-governance-review-queue 已回來的 frontend feedback bundle 正式審核，轉成 closeout 或 follow-up queue。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        "current-work.md",
-        ".coordination/responses/F-042-lovable-ui-task.yaml",
-        ".coordination/responses/PKT-001-governance-review-queue-lovable-ui-task.yaml"
-      ],
-      "acceptance": [
-        "feedback-returned packets are either accepted with closure notes or converted into explicit follow-up tasks",
-        "the Lovable queue no longer treats returned feedback as invisible or already-done work"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "blocked",
-      "next": "Auto-reassigned BP5-LUV-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-04-16T07:18:31Z",
-      "waiting_for": "Gemini"
-    },
-    {
-      "id": "BP5-LUV-002",
-      "title": "Drive PKT-001 deployment-review through the Lovable implementation loop",
-      "summary_zh": "把 deployment-review-console 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "BP5-SVC-015",
-        "BP5-SVC-016"
-      ],
-      "artifacts": [
-        ".coordination/responses/PKT-001-deployment-review-lovable-ui-task.yaml",
-        ".coordination/responses/PKT-001-deployment-review-lovable-prompt.md"
-      ],
-      "acceptance": [
-        "deployment-review-console completes one full Lovable loop instead of remaining parked at lovable-ui-task",
-        "Pantheon records ui-done or explicit runtime-gap follow-up for the screen"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-LUV-003",
-      "title": "Drive PKT-002 incident-home through the Lovable implementation loop",
-      "summary_zh": "把 incident-home 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "BP5-SVC-011",
-        "BP5-SVC-015"
-      ],
-      "artifacts": [
-        ".coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml",
-        ".coordination/responses/PKT-002-incident-home-lovable-prompt.md"
-      ],
-      "acceptance": [
-        "incident-home completes one full Lovable loop with explicit closure or follow-up",
-        "Pantheon records whether the screen is implementation-complete or blocked on a backend/runtime gap"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "review_approved",
-      "next": "Review approved. Packet family is well-formed, BFF gaps resolved (commit 2782e502), and front-lane handoff is ready to resume. Both acceptance criteria met. Note: sidecar acceptance incorrectly lists BP5-SVC-015 as done (actual: todo) — does not block front-lane pickup but a follow-up loop pass is recommended after BP5-SVC-015 completes.",
-      "last_update": "2026-04-16T08:45:24Z",
-      "review_notes_zh": [
-        "審查通過。lovable-ui-task 與 prompt 兩份產出物完整正確，BFF 缺口已記錄並解決，前端接手包就緒。",
-        "注意：sidecar acceptance 中 BP5-SVC-015 狀態誤記為 done，實際為 todo；不阻擋前端接手，但 BP5-SVC-015 完成後應補跑一次 loop 驗證。"
-      ],
-      "review_file": "support/reviews/BP5-LUV-003-claude-review.md"
+      "next": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "last_update": "2026-04-16T16:25:56Z"
     },
     {
       "id": "BP5-LUV-004",
       "title": "Drive PKT-002 incident-detail through the Lovable implementation loop",
       "summary_zh": "把 incident-detail 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
+      "owner": "Copilot",
       "reviewer": "Claude",
       "depends_on": [
         "BP5-SVC-011",
@@ -845,57 +306,16 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
-    },
-    {
-      "id": "BP5-LUV-005",
-      "title": "Drive PKT-002 incident-action-drawer through the Lovable implementation loop",
-      "summary_zh": "把 incident-action-drawer 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
-      "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "BP5-SVC-011",
-        "BP5-SVC-015"
-      ],
-      "artifacts": [
-        ".coordination/responses/PKT-002-incident-action-drawer-lovable-ui-task.yaml",
-        ".coordination/responses/PKT-002-incident-action-drawer-lovable-prompt.md"
-      ],
-      "acceptance": [
-        "incident-action-drawer completes one full Lovable loop with explicit closure or follow-up",
-        "operator action affordances stay backend-shaped and command-safe"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "phase": "phase5",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-15T15:29:24Z",
-        "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "last_update": "2026-04-16T16:26:09Z"
     },
     {
       "id": "BP5-LUV-006",
       "title": "Drive PKT-003 evolution-center through the Lovable implementation loop",
       "summary_zh": "把 evolution-center 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex2",
       "depends_on": [
         "BP5-SVC-012",
         "BP5-SVC-013",
@@ -928,16 +348,16 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-04-16T16:11:49Z"
     },
     {
       "id": "BP5-LUV-007",
       "title": "Drive PKT-003 lineage-view through the Lovable implementation loop",
       "summary_zh": "把 lineage-view 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex2",
       "depends_on": [
         "BP5-SVC-010",
         "BP5-SVC-015"
@@ -969,8 +389,8 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Supervisor preempted BP5-LUV-007 to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-04-16T16:14:48Z"
     },
     {
       "id": "BP5-LUV-008",
@@ -978,7 +398,7 @@
       "summary_zh": "把 post-incident-review-console 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
       "owner": "Codex",
-      "reviewer": "Claude",
+      "reviewer": "Codex2",
       "depends_on": [
         "BP5-SVC-011",
         "BP5-SVC-013",
@@ -1011,16 +431,16 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-04-16T16:25:29Z"
     },
     {
       "id": "BP5-LUV-009",
       "title": "Drive PKT-005 degradation-banner through the Lovable implementation loop",
       "summary_zh": "把 global-degradation-banner 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex2",
       "depends_on": [
         "BP5-SVC-016"
       ],
@@ -1051,16 +471,16 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-04-16T16:25:34Z"
     },
     {
       "id": "BP5-LUV-010",
       "title": "Drive PKT-005 sse-substrate through the Lovable implementation loop",
       "summary_zh": "把 sse-reconciliation-substrate 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Copilot",
+      "reviewer": "Codex2",
       "depends_on": [
         "BP5-SVC-016"
       ],
@@ -1091,15 +511,15 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "last_update": "2026-04-16T16:23:34Z"
     },
     {
       "id": "BP5-OSS-002",
       "title": "Realize the OpenClaw runtime adapter and smoke-tested execution path",
       "summary_zh": "把 OpenClaw 從 adapter-started 真正推進到 gateway adapter、runtime dependency path、smoke-tested execution substrate。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Gemini",
+      "owner": "Claude",
       "reviewer": "Codex",
       "depends_on": [
         "BP5-OSS-001",
@@ -1134,16 +554,16 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Reassigned from Gemini (quota/auth issue) to Claude",
+      "last_update": "2026-04-16T15:26:00Z"
     },
     {
       "id": "BP5-OSS-004",
       "title": "Define the executable activation path for deferred Qlib, TRL, and RL stack rows",
       "summary_zh": "把 Qlib、TRL、FinRL、RLlib、W&B 等 deferred rows 從 criteria-only 狀態推進成 entry test、adapter prerequisite 或明確不啟用證據。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Gemini",
-      "reviewer": "Codex",
+      "owner": "Codex2",
+      "reviewer": "Claude",
       "depends_on": [
         "BP5-SVC-012",
         "BP5-OSS-003"
@@ -1175,17 +595,17 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "status": "in_progress",
+      "next": "Supervisor auto-started BP5-OSS-004 after successful dispatch.",
+      "last_update": "2026-04-16T16:25:24Z"
     },
     {
       "id": "BP5-CICD-002",
       "title": "Implement Cloud Build to Artifact Registry publish flow",
       "summary_zh": "把 Cloud Build -> Artifact Registry 的 image truth pipeline、provenance、publish policy 與 environment-safe identity flow 落成。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Gemini",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex2",
       "depends_on": [
         "BP5-CICD-001",
         "BP5-SVC-016"
@@ -1217,15 +637,15 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Reassigned from Gemini (quota/auth issue) to Claude",
+      "last_update": "2026-04-16T15:27:00Z"
     },
     {
       "id": "BP5-GCP-001",
       "title": "Stand up workload identity and Secret Manager baseline",
       "summary_zh": "先把 Workload Identity Federation、service accounts、Secret Manager namespace 與 deploy-time secret flow 落成可執行 baseline。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Gemini",
+      "owner": "Codex2",
       "reviewer": "Claude",
       "depends_on": [
         "BP5-CICD-002"
@@ -1257,15 +677,15 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Reassigned from Gemini (quota/auth issue) to Codex2",
+      "last_update": "2026-04-16T15:26:00Z"
     },
     {
       "id": "BP5-GCP-002",
       "title": "Stand up Cloud SQL, Pub/Sub, ingress, and nonprod environment foundation",
       "summary_zh": "把 Cloud SQL、Pub/Sub、ingress、network boundary、nonprod environment split 與 runtime prerequisites 落成可執行 foundation。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Gemini",
+      "owner": "Codex2",
       "reviewer": "Claude",
       "depends_on": [
         "BP5-GCP-001"
@@ -1297,511 +717,634 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-15T15:29:24Z"
+      "next": "Reassigned from Gemini (quota/auth issue) to Codex2",
+      "last_update": "2026-04-16T15:26:00Z"
     },
     {
-      "id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "title": "Prepare BP5-SVC-011 acceptance packet and dependency map",
-      "summary_zh": "平行支援 BP5-SVC-011，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "title": "Fix: owner and reviewer were identical (both Codex2); restoring intended assignment Codex/Codex2.",
+      "summary_zh": "平行支援 BP5-WB-008，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "review",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
       "depends_on": [
-        "BP5-SVC-009",
-        "BP5-SVC-010"
+        "BP5-SVC-003",
+        "BP5-SVC-012",
+        "BP5-SVC-014"
       ],
       "artifacts": [
-        "support/sidecars/BP5-SVC-011/BP5-SVC-011-SIDECAR-ACCEPTANCE.md"
+        "support/sidecars/BP5-WB-008/BP5-WB-008-SIDECAR-ACCEPTANCE.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Acceptance packet for BP5-SVC-011 is complete. Section 9 records your prior reviewer validation (2026-04-16). Please formally approve via 'approve' command so we can move to done. No canonical truth was modified. All 127 tests passing. Both upstream deps (BP5-SVC-009, BP5-SVC-010) done.",
-      "last_update": "2026-04-16T09:00:47Z",
+      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-04-16T16:22:46Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "BP5-SVC-011",
+      "helper_parent": "BP5-WB-008",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "BP5-LUV-003-SIDECAR-REVIEW",
-      "title": "Prepare BP5-LUV-003 review packet and evidence summary",
-      "summary_zh": "平行支援 BP5-LUV-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "id": "BP5-SVC-016-SIDECAR-REVIEW",
+      "title": "Prepare BP5-SVC-016 review packet and evidence summary",
+      "summary_zh": "平行支援 BP5-SVC-016，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "review",
+      "owner": "Qwen",
+      "reviewer": "Codex2",
+      "status": "in_progress",
       "depends_on": [
-        "BP5-SVC-011"
+        "BP5-SVC-002",
+        "BP5-SVC-003",
+        "BP5-SVC-005",
+        "BP5-SVC-009",
+        "BP5-SVC-010",
+        "BP5-SVC-015"
       ],
       "artifacts": [
-        "support/sidecars/BP5-LUV-003/BP5-LUV-003-SIDECAR-REVIEW.md"
+        "support/sidecars/BP5-SVC-016/BP5-SVC-016-SIDECAR-REVIEW.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Review packet complete. Evidence summary, acceptance criteria assessment, artifact inventory, and known SIDECAR-ACCEPTANCE inaccuracy (BP5-SVC-015 status) all documented. Ready for Codex review.",
-      "last_update": "2026-04-16T08:53:54Z",
+      "next": "Supervisor auto-started BP5-SVC-016-SIDECAR-REVIEW after successful dispatch.",
+      "last_update": "2026-04-16T16:24:09Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "BP5-LUV-003",
+      "helper_parent": "BP5-SVC-016",
       "helper_kind": "review_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "BP5-SVC-012-SIDECAR-REVIEW",
-      "title": "Prepare BP5-SVC-012 review packet and evidence summary",
-      "summary_zh": "平行支援 BP5-SVC-012，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "id": "BP5-LUV-005-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BP5-LUV-005 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BP5-LUV-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Qwen",
+      "reviewer": "Codex2",
       "status": "todo",
       "depends_on": [
-        "BP5-SVC-010"
+        "BP5-SVC-011",
+        "BP5-SVC-015"
       ],
       "artifacts": [
-        "support/sidecars/BP5-SVC-012/BP5-SVC-012-SIDECAR-REVIEW.md"
+        "support/sidecars/BP5-LUV-005/BP5-LUV-005-SIDECAR-ACCEPTANCE.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "last_update": "2026-04-16T09:06:24Z",
+      "next": "Auto-reassigned ownership from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.. Task returned to todo until Qwen starts a fresh run.",
+      "last_update": "2026-04-16T16:13:52Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "BP5-SVC-012",
-      "helper_kind": "review_packet",
+      "helper_parent": "BP5-LUV-005",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BP5-CICD-002-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BP5-CICD-002 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BP5-CICD-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Phase 5: Full Blueprint Gap Closure",
+      "owner": "Qwen",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "BP5-CICD-001",
+        "BP5-SVC-016"
+      ],
+      "artifacts": [
+        "support/sidecars/BP5-CICD-002/BP5-CICD-002-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.. Task returned to todo until Qwen starts a fresh run.",
+      "last_update": "2026-04-16T16:16:05Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BP5-CICD-002",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BP5-LUV-002-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BP5-LUV-002 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BP5-LUV-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Phase 5: Full Blueprint Gap Closure",
+      "owner": "Qwen",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "BP5-SVC-015",
+        "BP5-SVC-016"
+      ],
+      "artifacts": [
+        "support/sidecars/BP5-LUV-002/BP5-LUV-002-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "last_update": "2026-04-16T16:23:46Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BP5-LUV-002",
+      "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
     {
-      "task_id": "BP5-SVC-012",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:25:59Z",
-      "resolved_at": "2026-04-15T22:26:26Z"
-    },
-    {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:26:07Z",
-      "resolved_at": "2026-04-15T22:26:31Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:29:19Z",
-      "resolved_at": "2026-04-15T22:30:17Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:30:47Z",
-      "resolved_at": "2026-04-15T22:31:04Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:32:27Z",
-      "resolved_at": "2026-04-15T22:33:07Z"
-    },
-    {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:32:50Z",
-      "resolved_at": "2026-04-15T22:33:44Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:36:14Z",
-      "resolved_at": "2026-04-15T22:36:53Z"
-    },
-    {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-15T22:36:35Z",
-      "resolved_at": "2026-04-15T22:37:21Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
+      "task_id": "BP5-WB-008",
       "from": "Claude",
       "to": "Copilot",
       "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-15T22:40:16Z",
-      "resolved_at": "2026-04-15T22:40:59Z"
+      "created_at": "2026-04-16T14:05:49Z",
+      "resolved_at": "2026-04-16T14:07:17Z"
     },
     {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
+      "task_id": "BP5-WB-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:10:33Z",
+      "resolved_at": "2026-04-16T14:13:04Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:12:37Z",
+      "resolved_at": "2026-04-16T14:13:38Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
       "from": "Claude",
       "to": "Codex",
       "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-15T22:40:34Z",
-      "resolved_at": "2026-04-15T22:54:06Z"
+      "created_at": "2026-04-16T14:13:04Z",
+      "resolved_at": "2026-04-16T14:17:56Z"
     },
     {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-04-15T22:54:06Z",
-      "resolved_at": "2026-04-15T22:54:44Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-04-15T22:55:03Z",
-      "resolved_at": "2026-04-15T22:55:20Z"
-    },
-    {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T00:17:42Z",
-      "resolved_at": "2026-04-16T00:18:21Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
+      "task_id": "BP5-OSS-004",
       "from": "Claude",
       "to": "Codex",
       "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-16T00:18:45Z",
-      "resolved_at": "2026-04-16T00:19:12Z"
+      "created_at": "2026-04-16T14:19:16Z",
+      "resolved_at": "2026-04-16T14:19:39Z"
     },
     {
-      "task_id": "BP5-SVC-012",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "task_id": "BP5-WB-008",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-16T00:23:17Z",
-      "resolved_at": "2026-04-16T00:23:54Z"
+      "created_at": "2026-04-16T14:22:56Z",
+      "resolved_at": "2026-04-16T14:24:25Z"
     },
     {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Copilot",
-      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T00:23:25Z",
-      "resolved_at": "2026-04-16T00:23:58Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
+      "task_id": "BP5-WB-008",
       "from": "Claude",
       "to": "Codex",
-      "message": "Please review the EvolutionDecision service realization. All 33 tests pass. Covers: full lifecycle (propose->review->approve->execute->cancel/reject), cooldown/observation window policy enforcement per EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md, actor-role matrix enforcement per EVOLUTION_REVIEW_AND_THRESHOLDS.md, single-active-rule, evidence linkage requirement, threshold evaluator endpoint, and boundary query. Ready for Codex review.",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-16T00:24:48Z",
-      "resolved_at": "2026-04-16T09:02:22Z"
+      "created_at": "2026-04-16T14:26:37Z",
+      "resolved_at": "2026-04-16T14:27:01Z"
     },
     {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T00:27:15Z",
-      "resolved_at": "2026-04-16T00:27:41Z"
-    },
-    {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T00:27:51Z",
-      "resolved_at": "2026-04-16T07:18:51Z"
-    },
-    {
-      "task_id": "BP5-LUV-001",
-      "from": "Qwen",
+      "task_id": "BP5-WB-008",
+      "from": "Codex2",
       "to": "Claude",
-      "message": "Auto-reassigned BP5-LUV-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-16T07:18:31Z",
-      "resolved_at": "2026-04-16T07:18:31Z"
+      "created_at": "2026-04-16T14:31:35Z",
+      "resolved_at": "2026-04-16T14:34:36Z"
     },
     {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T07:19:52Z",
-      "resolved_at": "2026-04-16T07:20:32Z"
-    },
-    {
-      "task_id": "BP5-WB-005",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T07:20:12Z",
-      "resolved_at": "2026-04-16T08:45:42Z"
-    },
-    {
-      "task_id": "BP5-LUV-003",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Incident-home resumed-cycle packet repaired and ready for review. Updated the lovable-ui-task and prompt so the front lane now receives the correct workbench/screen metadata, canonical spec/example links, required feedback paths, and the backend-delivery context that explains the BFF gap has already been resolved.",
-      "status": "done",
-      "created_at": "2026-04-16T07:23:01Z",
-      "resolved_at": "2026-04-16T08:45:24Z"
-    },
-    {
-      "task_id": "BP5-LUV-003",
-      "from": "Claude",
+      "task_id": "BP5-OSS-004",
+      "from": "Codex2",
       "to": "Codex",
-      "message": "Review approved. Packet family is well-formed, BFF gaps resolved (commit 2782e502), and front-lane handoff is ready to resume. Both acceptance criteria met. Note: sidecar acceptance incorrectly lists BP5-SVC-015 as done (actual: todo) — does not block front-lane pickup but a follow-up loop pass is recommended after BP5-SVC-015 completes.",
-      "status": "pending",
-      "created_at": "2026-04-16T08:45:24Z"
-    },
-    {
-      "task_id": "BP5-WB-005",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Canonical packet family and backend gap matrix complete for all five Research Workbench modules (RW-01 through RW-05). Per-module promotion criteria, dependency chain, and separation rules are documented. Ready for Codex review.",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-16T08:47:48Z",
-      "resolved_at": "2026-04-16T09:05:06Z"
+      "created_at": "2026-04-16T14:31:54Z",
+      "resolved_at": "2026-04-16T14:33:10Z"
     },
     {
-      "task_id": "BP5-WB-007",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "BP5-WB-007 is complete per archive (done at 2026-04-16T06:13:48Z, commit 23fac36). The live ai-status.json entry was stale (never synced after prior-session closeout). Artifact: docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md. The only blocking review finding (TW-04 dependency mis-scope) was fixed and confirmed in the BP5-WB-007-SIDECAR-REVIEW. Please re-verify and approve to sync the live state to done.",
-      "status": "pending",
-      "created_at": "2026-04-16T08:51:59Z"
-    },
-    {
-      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Review packet complete. Evidence summary, acceptance criteria assessment, artifact inventory, and known SIDECAR-ACCEPTANCE inaccuracy (BP5-SVC-015 status) all documented. Ready for Codex review.",
-      "status": "pending",
-      "created_at": "2026-04-16T08:53:54Z"
-    },
-    {
-      "task_id": "BP5-WB-006",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T08:57:55Z",
-      "resolved_at": "2026-04-16T08:58:33Z"
-    },
-    {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T08:58:04Z",
-      "resolved_at": "2026-04-16T08:58:38Z"
-    },
-    {
-      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T08:58:14Z",
-      "resolved_at": "2026-04-16T09:00:54Z"
-    },
-    {
-      "task_id": "BP5-WB-006",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Packet family complete. Please review docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md against acceptance criteria: (1) all five KW modules have canonical packets and explicit BFF/read-model prerequisites — verified in backend gap tables for KW-01 through KW-05; (2) module ordering Institutional Memory → Research Notes → Evidence Refs → Insight Cards → Strategy Spec is preserved in the Internal Ordering and Dependency Chain section. Non-blocking note: lifecycle contract for KW-01 (draft|active|archived) is flagged as a gap to be resolved before BFF implementation; this is a known prerequisite gap, not a missing packet element.",
-      "status": "done",
-      "created_at": "2026-04-16T08:59:53Z",
-      "resolved_at": "2026-04-16T09:06:14Z"
-    },
-    {
-      "task_id": "BP5-SVC-011-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Acceptance packet for BP5-SVC-011 is complete. Section 9 records your prior reviewer validation (2026-04-16). Please formally approve via 'approve' command so we can move to done. No canonical truth was modified. All 127 tests passing. Both upstream deps (BP5-SVC-009, BP5-SVC-010) done.",
-      "status": "pending",
-      "created_at": "2026-04-16T09:00:47Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review found a medium-risk approval-matrix policy violation: operator can approve medium-risk EvolutionDecision without Risk Owner sign-off. See .coordination/reviews/BP5-SVC-012-review.md.",
-      "status": "done",
-      "created_at": "2026-04-16T09:02:22Z",
-      "resolved_at": "2026-04-16T09:02:22Z"
-    },
-    {
-      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "task_id": "BP5-WB-008",
       "from": "Claude",
       "to": "Gemini",
       "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-16T09:03:44Z",
-      "resolved_at": "2026-04-16T09:04:12Z"
+      "created_at": "2026-04-16T14:34:36Z",
+      "resolved_at": "2026-04-16T14:35:59Z"
     },
     {
-      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
-      "from": "Codex",
-      "to": "Copilot",
-      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-16T09:04:28Z",
-      "resolved_at": "2026-04-16T09:04:57Z"
-    },
-    {
-      "task_id": "BP5-WB-005",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review approved. Verified RW-01 through RW-05 packet family, module-scoped backend gap matrix, backlog-canonical lifecycle tokens, and the Launch→Artifact Compare dependency boundary. Ready for Claude finalization.",
-      "status": "pending",
-      "created_at": "2026-04-16T09:05:06Z"
-    },
-    {
-      "task_id": "BP5-SVC-012",
+      "task_id": "BP5-OSS-004",
       "from": "Claude",
       "to": "Codex",
-      "message": "Fixed approval-matrix policy violation: removed OPERATOR from APPROVAL_OWNER_MATRIX[MEDIUM] in evolution_decision.py (§6.2 requires Risk Owner as the primary approver; Operator is supplementary only). Added two regression tests: one verifying operator cannot approve medium-risk standalone (422), one verifying boundary_for() does not expose operator in approved_owner_roles for medium-risk. All 39 evolution service tests and 27 control-plane governance tests pass. Reproduction script from review now returns 422.",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-16T09:05:07Z",
-      "resolved_at": "2026-04-16T09:05:40Z"
+      "created_at": "2026-04-16T14:34:48Z",
+      "resolved_at": "2026-04-16T14:36:04Z"
     },
     {
-      "task_id": "BP5-SVC-012",
-      "from": "Codex",
+      "task_id": "BP5-WB-008",
+      "from": "Codex2",
       "to": "Copilot",
-      "message": "Auto-reassigned review from Codex to Copilot after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
-      "status": "pending",
-      "created_at": "2026-04-16T09:05:40Z"
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:44:59Z",
+      "resolved_at": "2026-04-16T14:45:59Z"
     },
     {
-      "task_id": "BP5-WB-006",
-      "from": "Codex",
+      "task_id": "BP5-OSS-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:45:14Z",
+      "resolved_at": "2026-04-16T14:45:34Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:45:15Z",
+      "resolved_at": "2026-04-16T14:48:46Z"
+    },
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Codex2",
       "to": "Copilot",
-      "message": "Auto-reassigned review from Codex to Copilot after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
-      "status": "pending",
-      "created_at": "2026-04-16T09:06:14Z"
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:45:34Z",
+      "resolved_at": "2026-04-16T15:03:44Z"
     },
     {
-      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:47:50Z",
+      "resolved_at": "2026-04-16T14:48:26Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:54:08Z",
+      "resolved_at": "2026-04-16T14:55:29Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:56:11Z",
+      "resolved_at": "2026-04-16T14:56:34Z"
+    },
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:04:03Z",
+      "resolved_at": "2026-04-16T15:04:55Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:23:20Z",
+      "resolved_at": "2026-04-16T15:25:03Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:23:46Z",
+      "resolved_at": "2026-04-16T15:25:14Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:28:07Z",
+      "resolved_at": "2026-04-16T15:29:24Z"
+    },
+    {
+      "task_id": "BP5-SVC-016-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:28:56Z",
+      "resolved_at": "2026-04-16T15:31:57Z"
+    },
+    {
+      "task_id": "BP5-LUV-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:29:48Z",
+      "resolved_at": "2026-04-16T15:31:44Z"
+    },
+    {
+      "task_id": "BP5-LUV-005-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:30:09Z",
+      "resolved_at": "2026-04-16T15:34:04Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:44:01Z",
+      "resolved_at": "2026-04-16T15:45:52Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:46:30Z",
+      "resolved_at": "2026-04-16T15:48:33Z"
+    },
+    {
+      "task_id": "BP5-LUV-006",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:46:51Z",
+      "resolved_at": "2026-04-16T16:03:12Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Consultation Workbench packet family complete. Commit 6881a9c delivers PACKET_FAMILY.md at docs/pantheon-handoffs/CW-008-consultation-workbench/. Coverage: CW-01 (Consult Request), CW-02 (Debate Transcript), CW-03 (Committee Board), CW-04 (Red-team Memo). Backend gap matrix enumerates 17 missing routes and object contracts. All modules marked Lovable-readiness: false with explicit promotion gates. Queue semantics and allowedActions for sponsor decision and governance review handoff are explicitly defined. Please review against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-04-16T15:47:04Z",
+      "resolved_at": "2026-04-16T15:50:46Z"
+    },
+    {
+      "task_id": "BP5-CICD-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:49:21Z",
+      "resolved_at": "2026-04-16T15:50:47Z"
+    },
+    {
+      "task_id": "BP5-LUV-007",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:50:11Z",
+      "resolved_at": "2026-04-16T15:59:05Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested. 1) Normalize the request-to-session field name to  everywhere; CW-01 currently mixes  in the request-detail surface with  in backend gaps and dependency text, which makes the packet contract ambiguous. 2) Remove or re-scope red-team severity taxonomy as a current prerequisite/gap unless you are explicitly adding it as a net-new contract; CW-04 says recommendations stay L3-anchored plain lists and severity tiers are future extensions, but the packet still lists severity taxonomy as part of the current prerequisite/relationship summary.",
+      "status": "done",
+      "created_at": "2026-04-16T15:50:46Z",
+      "resolved_at": "2026-04-16T15:50:46Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:53:31Z",
+      "resolved_at": "2026-04-16T15:55:12Z"
+    },
+    {
+      "task_id": "BP5-LUV-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:55:41Z",
+      "resolved_at": "2026-04-16T15:56:57Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:59:55Z",
+      "resolved_at": "2026-04-16T16:00:59Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T16:05:17Z",
+      "resolved_at": "2026-04-16T16:06:56Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T16:07:34Z",
+      "resolved_at": "2026-04-16T16:09:21Z"
+    },
+    {
+      "task_id": "BP5-LUV-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T16:17:56Z",
+      "resolved_at": "2026-04-16T16:19:10Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "GW-003 PACKET_FAMILY.md published at docs/pantheon-handoffs/GW-003-governance-workbench/PACKET_FAMILY.md (commit ead8560). Family covers GV-02 Approval Queue (PKT-006), GV-04 Deployment Diff (PKT-007), GV-05 Rollback Review (PKT-008), GV-06 Governance Audit Rail (PKT-009). Backend gap matrix enumerates 4 missing operator-composed BFF routes and 6 missing contracts. All surfaces anchor to PKT-001/F-042 baselines without forking governance semantics. Lovable readiness is false for all four until BFF routes are implemented. Please review against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-04-16T16:21:28Z",
+      "resolved_at": "2026-04-16T16:23:31Z"
+    },
+    {
+      "task_id": "BP5-LUV-008",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T16:23:08Z",
+      "resolved_at": "2026-04-16T16:25:13Z"
+    },
+    {
+      "task_id": "BP5-LUV-009",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T16:23:21Z",
+      "resolved_at": "2026-04-16T16:25:18Z"
+    },
+    {
+      "task_id": "BP5-WB-003",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review passed: GW-003 packet family anchors GV-02/GV-04/GV-05/GV-06 to PKT-001, F-042, deployment, and rollback canon; four missing BFF routes and six missing contracts are explicit, and Lovable readiness remains correctly gated pending backend implementation.",
+      "status": "pending",
+      "created_at": "2026-04-16T16:23:31Z"
+    },
+    {
+      "task_id": "BP5-LUV-010",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-16T16:23:34Z"
+    },
+    {
+      "task_id": "BP5-LUV-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-16T16:23:46Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
       "from": "Claude",
       "to": "Codex",
       "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "pending",
-      "created_at": "2026-04-16T09:06:24Z"
-    }
-  ],
-  "blockers": [
+      "created_at": "2026-04-16T16:25:56Z"
+    },
     {
-      "task_id": "BP5-LUV-001",
-      "owner": "Qwen",
-      "waiting_for": "Gemini",
-      "message": "Both F-042 and PKT-001-governance-review-queue are blocked on mirror-only front-ai-trading-system checkout. No actual UI source tree available. Requires valid front-ai-trading-system checkout before UI implementation can proceed.",
-      "status": "open",
-      "created_at": "2026-04-15T16:12:00Z"
+      "task_id": "BP5-LUV-004",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-16T16:26:09Z"
     }
   ],
+  "blockers": [],
   "workload": {
     "Claude": 15,
     "Gemini": 30,
     "Codex": 30,
+    "Codex2": 30,
     "Qwen": 15,
     "Copilot": 25
   },
   "workload_summary": {
     "Claude": {
-      "total": 9,
-      "active": 6,
-      "blocked": 1,
-      "done": 0,
-      "review": 5,
-      "review_approved": 1,
-      "todo": 2
-    },
-    "Gemini": {
       "total": 6,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
+      "review_approved": 1,
+      "todo": 5
+    },
+    "Gemini": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
       "review_approved": 0,
-      "todo": 6
+      "todo": 0
     },
     "Codex": {
-      "total": 15,
+      "total": 3,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
-      "todo": 14
+      "review_approved": 0,
+      "todo": 3
+    },
+    "Codex2": {
+      "total": 3,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 3
     },
     "Qwen": {
-      "total": 0,
-      "active": 0,
+      "total": 4,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 4
     },
     "Copilot": {
-      "total": 0,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     }
   }
 }
