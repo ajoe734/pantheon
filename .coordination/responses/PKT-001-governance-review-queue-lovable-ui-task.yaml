@@ -1,10 +1,14 @@
 feature_id: PKT-001-governance-review-queue
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: pending-execution
 pantheon_pr: null
 base_url: null
+workbench: governance-workbench
 screen: governance-review-queue
+screen_id: screen-governance-review-queue
+ui_spec_path: docs/screens/PKT-001-governance-review-queue.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-001-governance-review-queue/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
 - GET /api/v1/operator/governance/review-queue
 - POST /api/v1/operator/commands
@@ -21,10 +25,21 @@ acceptance:
 - render all routing CTAs from backend-shaped allowedActions only
 - pass filters to the BFF as query parameters; do not filter client-side
 - display the degradation banner when any meta.surfaces entry is degraded or unavailable
+required_feedback:
+- docs/pantheon-feedback/PKT-001-governance-review-queue/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-001-governance-review-queue/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-001-governance-review-queue/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-001-governance-review-queue/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-001-governance-review-queue-contract-ready.yaml
 links:
   lovable_project_url: null
-  bff_spec_path: null
-  example_payload_paths: []
+  bff_spec_path: docs/bff/PKT-001-governance-review-queue.md
+  ui_spec_path: docs/screens/PKT-001-governance-review-queue.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-001-governance-review-queue/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-001-governance-review-queue.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-001-governance-review-queue
 gap_handoff_path: .coordination/requests/PKT-001-governance-review-queue-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-001-governance-review-queue-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-001-governance-review-queue-ui-done.yaml

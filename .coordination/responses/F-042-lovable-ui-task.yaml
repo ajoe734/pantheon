@@ -1,7 +1,7 @@
 feature_id: F-042
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: followup-required
 pantheon_pr: null
 base_url: null
 workbench: governance-review
@@ -31,7 +31,7 @@ required_feedback:
 delivery_dependencies:
 - .coordination/responses/F-042-contract-ready.yaml
 links:
-  lovable_project_url: https://lovable.dev/projects/140c41d5-9cd8-4d6b-ba02-66d5941d0dbe
+  lovable_project_url: null
   bff_spec_path: docs/bff/F-042-promotion-review.md
   ui_spec_path: docs/screens/F-042-promotion-review.md
   frontend_change_spec_path: docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md

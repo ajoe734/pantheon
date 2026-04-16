@@ -1,0 +1,23 @@
+{
+  "feature_id": "F-042",
+  "gaps": [
+    {
+      "file": "src/lib/bffClient.ts",
+      "type": "missing_header",
+      "detail": "Authorization header is missing in API requests",
+      "resolution": "Add Bearer token to all fetch calls"
+    },
+    {
+      "file": "src/lib/bffClient.ts",
+      "type": "schema_mismatch",
+      "detail": "Parsing 'error' instead of 'errors' array in response",
+      "resolution": "Update error handling to iterate over the errors array"
+    },
+    {
+      "file": "src/pages/promotion/types.ts",
+      "type": "type_drift",
+      "detail": "Using 'unavailable' instead of 'error' for surface status",
+      "resolution": "Update types to use 'error' as per BFF spec"
+    }
+  ]
+}
