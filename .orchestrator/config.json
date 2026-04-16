@@ -88,6 +88,14 @@
         "Copilot"
       ],
       "Codex": [
+        "Codex2",
+        "Qwen",
+        "Claude",
+        "Copilot",
+        "Gemini"
+      ],
+      "Codex2": [
+        "Codex",
         "Qwen",
         "Claude",
         "Copilot",
@@ -120,6 +128,14 @@
         "Copilot"
       ],
       "Codex": [
+        "Codex2",
+        "Qwen",
+        "Claude",
+        "Copilot",
+        "Gemini"
+      ],
+      "Codex2": [
+        "Codex",
         "Qwen",
         "Claude",
         "Copilot",
@@ -267,6 +283,13 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex.md"
     },
+    "codex2": {
+      "display_name": "Codex (2)",
+      "provider": "codex2",
+      "adapter": "codex",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
     "copilot": {
       "display_name": "Copilot",
       "provider": "copilot",
@@ -358,6 +381,27 @@
       },
       "codex": {
         "cli": "codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2": {
+      "delivery_mode": "codex",
+      "file_inbox": {
+        "path": ".llm-inbox/codex2.md",
+        "open_in_vscode": false
+      },
+      "codex": {
+        "cli": "codex",
+        "api_key_env": "OPENAI_API_KEY_2",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -448,6 +492,9 @@
     "owned_statuses": [
       "in_progress",
       "todo"
+    ],
+    "sidecar_only_agents": [
+      "Qwen"
     ],
     "dependency_done_statuses": [
       "done"

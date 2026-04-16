@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+import os
+
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import agent_config_for, command_exists, config_path, new_runtime_id, runtime_log_path, spawn_background_process
 
 
 class CodexAdapter(BaseAdapter):
     name = "codex"
+
+    def _provider_settings(self, agent_id: str) -> tuple[dict, dict]:
+        """Return (provider_block, codex_settings) for the given agent_id.
+
+        Looks up the provider key from the agent config first, then falls back
+        to the literal agent_id, then to "codex".  This lets codex2 / codex3
+        carry their own provider blocks with separate api_key_env values.
+        """
+        agent_cfg = agent_config_for(self.config, agent_id)
+        provider_key = agent_cfg.get("provider") or agent_id or "codex"
+        provider = (
+            self.config.get("providers", {}).get(provider_key)
+            or self.config.get("providers", {}).get("codex")
+            or {}
+        )
+        codex_settings = provider.get("codex", {})
+        return provider, codex_settings
 
     def capability(self, agent_id: str) -> DeliveryCapability:
         cli = command_exists("codex")
@@ -36,8 +55,7 @@ class CodexAdapter(BaseAdapter):
                 notes=capability.notes,
             )
 
-        provider = self.config.get("providers", {}).get("codex", {})
-        codex_settings = provider.get("codex", {})
+        _provider, codex_settings = self._provider_settings(request.agent_id)
         cli = codex_settings.get("cli") or "codex"
         command = [
             cli,
@@ -54,12 +72,23 @@ class CodexAdapter(BaseAdapter):
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.append(request.message)
 
+        # Build env: inherit current environment, then override OPENAI_API_KEY
+        # if api_key_env is set in this provider's codex block.
+        spawn_env: dict[str, str] | None = None
+        api_key_env = codex_settings.get("api_key_env", "").strip()
+        if api_key_env and api_key_env != "OPENAI_API_KEY":
+            api_key_value = os.environ.get(api_key_env, "")
+            if api_key_value:
+                spawn_env = dict(os.environ)
+                spawn_env["OPENAI_API_KEY"] = api_key_value
+
         run_id = new_runtime_id("codex")
         log_path = runtime_log_path("codex", request.agent_id)
         process, _ = spawn_background_process(
             command,
             cwd=config_path(self.config, "status_file").parents[0],
             log_path=log_path,
+            env=spawn_env,
         )
 
         return DeliveryResult(
