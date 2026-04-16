@@ -34,7 +34,7 @@ Real-time data is delayed. Reviews are reliable but not realtime.
 
 ### Warning — stale
 
-Condition: `meta.staleness` is non-null AND `meta.staleness.served_from ∈ ["cache", "reconstructed"]`, AND no surface is `"unavailable"`. The per-surface `status` values for affected surfaces will be `"degraded"` — the STALE variant is distinguished from DEGRADED by the `meta.staleness.served_from` field.
+Condition: `meta.staleness` is non-null AND `meta.staleness.served_from ∈ ["cache", "reconstructed"]`, AND at least one surface has `status = "degraded"`, AND no surface is `"unavailable"`. The STALE variant is distinguished from DEGRADED by the `meta.staleness.served_from` field. A response where all surfaces are `ok` but `served_from = "cache"` falls through to `none` because there is no degradation signal to show.
 
 Display:
 ```
@@ -88,7 +88,7 @@ if BFF request failed or all meta.surfaces[*].status == "unavailable":
     show_banner("CRITICAL")
 elif any meta.surfaces[*].status == "unavailable":
     show_banner("PARTIAL", surfaces=meta.surfaces)
-elif meta.staleness is not null and meta.staleness.served_from in ["cache", "reconstructed"]:
+elif meta.staleness is not null and meta.staleness.served_from in ["cache", "reconstructed"] and any meta.surfaces[*].status == "degraded":
     show_banner("STALE", staleness=meta.staleness)
 elif any meta.surfaces[*].status == "degraded":
     show_banner("DEGRADED")
@@ -109,7 +109,7 @@ For split-read screens (PKT-002 Incident Home): use the merged surface map from 
 
 - Banner is not visible when all `meta.surfaces` entries are `ok`.
 - DEGRADED variant appears when any surface is degraded.
-- STALE variant appears when `meta.staleness.served_from ∈ ["cache", "reconstructed"]` and no surface is `unavailable`; shows humanised age from `meta.staleness.last_known_at`.
+- STALE variant appears when `meta.staleness.served_from ∈ ["cache", "reconstructed"]` and at least one surface is `degraded` and no surface is `unavailable`; shows humanised age from `meta.staleness.last_known_at`.
 - PARTIAL variant lists each degraded or unavailable surface by humanised name.
 - CRITICAL variant appears when the BFF request itself fails or all surfaces are `unavailable`.
 - Banner disappears automatically when the screen refreshes and all surfaces return to `ok`.

@@ -1,0 +1,7 @@
+{
+  "feature_id": "PKT-005-degradation-banner",
+  "reviewed_source_commit": "7406990a8311ef6865491fcdb883b677a98ff6c9",
+  "status": "no_open_gaps",
+  "note": "The PKT-005 contract defines meta.surfaces and meta.staleness as fields that every existing composed view must include. No new BFF endpoint is required. The frontend reads only the meta fields already present in screen-level BFF responses. No contract shape gaps were found during this implementation pass.",
+  "requests": []
+}

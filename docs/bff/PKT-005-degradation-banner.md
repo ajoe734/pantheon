@@ -113,9 +113,9 @@ Required `meta.surfaces` keys:
 | Key | Sub-surface it guards |
 |---|---|
 | `incident` | Incident case record |
-| `runtime_status` | Active runtimes affected |
+| `affected_bindings` | Affected binding records |
 | `kill_switch` | Kill-switch current state |
-| `telemetry` | Telemetry snapshot |
+| `allowedActions` | Action authority flags |
 
 ### `GET /api/v1/operator/post-incident-review/{incident_id}`
 

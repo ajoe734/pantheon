@@ -35,7 +35,7 @@
     },
 
     "stale_banner": {
-      "_description": "Cache-served response — show STALE banner with age. Per-surface status is 'degraded' (not 'stale'). The STALE variant is triggered by meta.staleness.served_from='cache', which takes priority over the DEGRADED variant in the decision tree.",
+      "_description": "Cache-served incident-response — show STALE banner with age. The STALE variant requires both meta.staleness.served_from='cache' and at least one degraded surface. Per-surface status uses the PKT-002 incident-response surface keys.",
       "meta": {
         "snapshot_at": "2026-04-14T12:00:00Z",
         "staleness": {
@@ -45,15 +45,15 @@
         },
         "surfaces": {
           "incident": { "status": "ok" },
-          "runtime_status": { "status": "degraded" },
+          "affected_bindings": { "status": "degraded" },
           "kill_switch": { "status": "ok" },
-          "telemetry": { "status": "ok" }
+          "allowedActions": { "status": "ok" }
         }
       }
     },
 
     "partial_banner": {
-      "_description": "Mixed surface health — show PARTIAL banner listing each surface",
+      "_description": "Mixed surface health on incident-response — show PARTIAL banner listing each surface. Uses PKT-002 incident-response surface keys.",
       "meta": {
         "snapshot_at": "2026-04-14T12:00:00Z",
         "staleness": {
@@ -62,9 +62,9 @@
         },
         "surfaces": {
           "incident": { "status": "ok" },
-          "runtime_status": { "status": "degraded" },
+          "affected_bindings": { "status": "degraded" },
           "kill_switch": { "status": "unavailable" },
-          "telemetry": { "status": "ok" }
+          "allowedActions": { "status": "ok" }
         }
       }
     },
