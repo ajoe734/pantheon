@@ -1,0 +1,428 @@
+name: Coordination Manual Replay v3
+
+# workflow_dispatch trigger for replaying a stalled or failed closed-loop step
+# without reauthoring payloads.
+#
+# Replay rules:
+#  - Replay is transport/workflow recovery only; payload contents are immutable.
+#  - payload_path must still exist at source_commit in source_repo.
+#  - payload type must match event_type.
+#  - trigger_mode is fixed to "replay" for all runs of this workflow.
+#  - If payload content must change, publish a new normal-cycle payload instead.
+#
+# Transport note:
+#  - workflow input source_commit points to the commit that contains payload_path
+#  - payload.source_commit may point to the reviewed UI cycle commit
+#
+# See coordination-loop-spec.md §Replay Contract for the full replay rules.
+
+on:
+  workflow_dispatch:
+    inputs:
+      event_type:
+        description: >
+          Loop event to replay. One of:
+            pantheon.contract_ready
+            pantheon.frontend_feedback
+            pantheon.bff_gap
+            pantheon.ui_done
+            pantheon.backend_delivery
+        required: true
+        type: choice
+        options:
+          - pantheon.contract_ready
+          - pantheon.frontend_feedback
+          - pantheon.bff_gap
+          - pantheon.ui_done
+          - pantheon.backend_delivery
+      feature_id:
+        description: Canonical feature or packet id (e.g. F-042, PKT-001-governance-review)
+        required: true
+        type: string
+      payload_path:
+        description: >
+          Repo-relative path to the YAML payload in source_repo
+          (e.g. .coordination/requests/F-042-frontend-feedback.yaml)
+        required: true
+        type: string
+      source_repo:
+        description: >
+          Repo that owns the payload (e.g. ajoe734/front-ai-trading-system
+          or ajoe734/pantheon)
+        required: true
+        type: string
+      source_commit:
+        description: Commit SHA that originally produced or last validated the payload
+        required: true
+        type: string
+      source_ref:
+        description: Branch or tag if targeting a named ref instead of just the SHA (optional)
+        required: false
+        type: string
+      replay_of:
+        description: Prior dispatch run id, workflow run id, or audit token being retried
+        required: true
+        type: string
+      requested_by:
+        description: Operator or automation identity initiating the replay (optional)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  replay:
+    name: Replay loop step
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate replay inputs
+        env:
+          EVENT_TYPE: ${{ inputs.event_type }}
+          FEATURE_ID: ${{ inputs.feature_id }}
+          PAYLOAD_PATH: ${{ inputs.payload_path }}
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          REPLAY_OF: ${{ inputs.replay_of }}
+        run: |
+          missing=()
+          [[ -z "$EVENT_TYPE"    ]] && missing+=("event_type")
+          [[ -z "$FEATURE_ID"    ]] && missing+=("feature_id")
+          [[ -z "$PAYLOAD_PATH"  ]] && missing+=("payload_path")
+          [[ -z "$SOURCE_REPO"   ]] && missing+=("source_repo")
+          [[ -z "$SOURCE_COMMIT" ]] && missing+=("source_commit")
+          [[ -z "$REPLAY_OF"     ]] && missing+=("replay_of")
+
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing required inputs: ${missing[*]}"
+            exit 1
+          fi
+
+          # payload_path must be repo-relative
+          if [[ "$PAYLOAD_PATH" == /* || "$PAYLOAD_PATH" == *..* ]]; then
+            echo "::error::payload_path must be a repo-relative path: $PAYLOAD_PATH"
+            exit 1
+          fi
+
+          # source_commit must look like a full SHA (40 hex chars)
+          if ! [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::source_commit must be a full 40-character SHA: $SOURCE_COMMIT"
+            exit 1
+          fi
+
+          case "$EVENT_TYPE" in
+            pantheon.contract_ready|pantheon.backend_delivery)
+              expected_source_repo="ajoe734/pantheon"
+              ;;
+            pantheon.frontend_feedback|pantheon.bff_gap|pantheon.ui_done)
+              expected_source_repo="ajoe734/front-ai-trading-system"
+              ;;
+            *)
+              echo "::error::Unsupported event_type for replay: $EVENT_TYPE"
+              exit 1
+              ;;
+          esac
+
+          if [[ "$SOURCE_REPO" != "$expected_source_repo" ]]; then
+            echo "::error::source_repo '$SOURCE_REPO' does not match event_type '$EVENT_TYPE' (expected $expected_source_repo)"
+            exit 1
+          fi
+
+      - name: Checkout source repo at source_commit
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_commit }}
+          token: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          path: source-repo
+
+      - name: Confirm payload exists and is byte-stable
+        id: payload-check
+        env:
+          PAYLOAD_PATH: ${{ inputs.payload_path }}
+        run: |
+          full_path="source-repo/$PAYLOAD_PATH"
+          if [[ ! -f "$full_path" ]]; then
+            echo "::error::payload_path '$PAYLOAD_PATH' does not exist in ${{ inputs.source_repo }} at commit ${{ inputs.source_commit }}"
+            exit 1
+          fi
+          sha256=$(sha256sum "$full_path" | awk '{print $1}')
+          echo "payload_sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "full_path=$full_path"   >> "$GITHUB_OUTPUT"
+          echo "Payload exists. SHA-256: $sha256"
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Validate payload type matches event_type
+        env:
+          EVENT_TYPE: ${{ inputs.event_type }}
+          ENVELOPE_FEATURE_ID: ${{ inputs.feature_id }}
+          ENVELOPE_SOURCE_REPO: ${{ inputs.source_repo }}
+          ENVELOPE_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PAYLOAD_FULL_PATH: ${{ steps.payload-check.outputs.full_path }}
+          SOURCE_REPO_ROOT: source-repo
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+          from pathlib import Path
+          import yaml
+
+          event_type          = os.environ["EVENT_TYPE"]
+          envelope_feature_id = os.environ["ENVELOPE_FEATURE_ID"]
+          envelope_source_repo = os.environ["ENVELOPE_SOURCE_REPO"]
+          envelope_source_commit = os.environ["ENVELOPE_SOURCE_COMMIT"]
+          payload_path        = os.environ["PAYLOAD_FULL_PATH"]
+          source_repo_root    = Path(os.environ["SOURCE_REPO_ROOT"])
+
+          allowed_types = {
+              "pantheon.contract_ready":     "contract-ready",
+              "pantheon.frontend_feedback":  "frontend-feedback",
+              "pantheon.bff_gap":            "bff-gap",
+              "pantheon.ui_done":            "ui-done",
+              "pantheon.backend_delivery":   "backend-delivery",
+          }
+          expected_type = allowed_types.get(event_type)
+          if expected_type is None:
+              print(f"::error::Unknown event_type: {event_type}")
+              sys.exit(1)
+
+          with open(payload_path) as f:
+              payload = yaml.safe_load(f)
+
+          errors = []
+
+          payload_feature_id = payload.get("feature_id", "")
+          if payload_feature_id != envelope_feature_id:
+              errors.append(
+                  f"feature_id mismatch: input='{envelope_feature_id}' "
+                  f"payload='{payload_feature_id}'"
+              )
+
+          payload_type = payload.get("type", "")
+          if payload_type != expected_type:
+              errors.append(
+                  f"payload type mismatch: event_type='{event_type}' "
+                  f"requires type='{expected_type}' but got '{payload_type}'"
+              )
+
+          payload_source_repo = payload.get("source_repo", "")
+          if payload_source_repo and payload_source_repo != envelope_source_repo:
+              errors.append(
+                  f"source_repo mismatch: input='{envelope_source_repo}' "
+                  f"payload='{payload_source_repo}'"
+              )
+
+          # input source_commit is the transport commit that must contain the
+          # payload. payload.source_commit may instead pin the reviewed UI
+          # cycle commit that Pantheon should inspect.
+          payload_source_commit = payload.get("source_commit", "")
+          if payload_source_commit and not (
+              len(payload_source_commit) == 40 and
+              all(c in "0123456789abcdef" for c in payload_source_commit)
+          ):
+              errors.append(
+                  f"payload source_commit must be a full 40-character SHA, got '{payload_source_commit}'"
+              )
+
+          paths_to_check = []
+          file_paths_to_exist = []
+          dir_paths_to_exist = []
+
+          if payload_type == "contract-ready":
+              artifacts = payload.get("artifacts", {}) or {}
+              if not isinstance(artifacts, dict):
+                  errors.append("contract-ready.artifacts must be a mapping")
+              else:
+                  for key, value in artifacts.items():
+                      if isinstance(value, str) and value:
+                          paths_to_check.append((f"artifacts.{key}", value))
+                          file_paths_to_exist.append((f"artifacts.{key}", value))
+          elif payload_type == "frontend-feedback":
+              for required in (
+                  "source_repo",
+                  "source_commit",
+                  "feedback_bundle_dir",
+                  "feedback_path",
+                  "api_gap_requests_path",
+                  "ui_decisions_path",
+                  "qa_status_path",
+                  "changed_files",
+                  "pantheon_review_hint",
+              ):
+                  if not payload.get(required):
+                      errors.append(f"frontend-feedback is missing required field: '{required}'")
+              bundle_dir = payload.get("feedback_bundle_dir", "")
+              if bundle_dir:
+                  paths_to_check.append(("feedback_bundle_dir", bundle_dir))
+                  dir_paths_to_exist.append(("feedback_bundle_dir", bundle_dir))
+              for key in ("feedback_path", "api_gap_requests_path", "ui_decisions_path", "qa_status_path"):
+                  value = payload.get(key, "")
+                  if value:
+                      paths_to_check.append((key, value))
+                      file_paths_to_exist.append((key, value))
+              for rel_path in payload.get("changed_files", []):
+                  paths_to_check.append(("changed_files[]", rel_path))
+                  file_paths_to_exist.append(("changed_files[]", rel_path))
+          elif payload_type == "bff-gap":
+              for key in ("gap_summary_path", "payload_path"):
+                  value = payload.get(key, "")
+                  if value:
+                      paths_to_check.append((key, value))
+                      file_paths_to_exist.append((key, value))
+          elif payload_type == "ui-done":
+              for rel_path in payload.get("changed_files", []):
+                  paths_to_check.append(("changed_files[]", rel_path))
+                  file_paths_to_exist.append(("changed_files[]", rel_path))
+              for key in ("completion_payload_path",):
+                  value = payload.get(key, "")
+                  if value:
+                      paths_to_check.append((key, value))
+                      file_paths_to_exist.append((key, value))
+          elif payload_type == "backend-delivery":
+              for key in ("delivery_note_path", "contract_lock_path", "source_payload"):
+                  value = payload.get(key, "")
+                  if value:
+                      paths_to_check.append((key, value))
+              for key in ("delivery_note_path", "contract_lock_path"):
+                  value = payload.get(key, "")
+                  if value:
+                      file_paths_to_exist.append((key, value))
+
+          for field, rel_path in paths_to_check:
+              if rel_path.startswith("/") or ".." in rel_path:
+                  errors.append(
+                      f"payload field '{field}' contains an absolute or traversal path: '{rel_path}'"
+                  )
+
+          for field, rel_path in dir_paths_to_exist:
+              if rel_path.startswith("/") or ".." in rel_path:
+                  continue
+              if not (source_repo_root / rel_path).is_dir():
+                  errors.append(
+                      f"required directory for '{field}' is missing at source_commit: '{rel_path}'"
+                  )
+
+          for field, rel_path in file_paths_to_exist:
+              if rel_path.startswith("/") or ".." in rel_path:
+                  continue
+              if not (source_repo_root / rel_path).is_file():
+                  errors.append(
+                      f"required file for '{field}' is missing at source_commit: '{rel_path}'"
+                  )
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}")
+              sys.exit(1)
+
+          print(f"Replay validation passed: feature_id={envelope_feature_id}, "
+                f"type={payload_type}, event_type={event_type}")
+          PYEOF
+
+      - name: Checkout replay target repo (Pantheon-owned replays)
+        if: ${{ inputs.event_type == 'pantheon.contract_ready' || inputs.event_type == 'pantheon.backend_delivery' }}
+        uses: actions/checkout@v6
+        with:
+          repository: ajoe734/front-ai-trading-system
+          token: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          path: replay-target
+
+      - name: Verify mirrored target artifacts exist before replay
+        if: ${{ inputs.event_type == 'pantheon.contract_ready' || inputs.event_type == 'pantheon.backend_delivery' }}
+        env:
+          EVENT_TYPE: ${{ inputs.event_type }}
+          FEATURE_ID: ${{ inputs.feature_id }}
+          PAYLOAD_FULL_PATH: ${{ steps.payload-check.outputs.full_path }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+          from pathlib import Path
+          import yaml
+
+          event_type = os.environ["EVENT_TYPE"]
+          feature_id = os.environ["FEATURE_ID"]
+          payload_path = os.environ["PAYLOAD_FULL_PATH"]
+          target_root = Path("replay-target")
+
+          with open(payload_path) as f:
+              payload = yaml.safe_load(f)
+
+          errors = []
+          if event_type == "pantheon.contract_ready":
+              handoff_dir = target_root / "docs" / "pantheon-handoffs" / feature_id
+              if not handoff_dir.is_dir():
+                  errors.append(f"mirrored handoff bundle is missing in target repo: '{handoff_dir.as_posix()}'")
+              artifacts = payload.get("artifacts", {}) or {}
+              if isinstance(artifacts, dict):
+                  for key, rel_path in artifacts.items():
+                      if isinstance(rel_path, str) and rel_path and not (target_root / rel_path).is_file():
+                          errors.append(f"mirrored contract artifact for '{key}' is missing in target repo: '{rel_path}'")
+          elif event_type == "pantheon.backend_delivery":
+              for key in ("delivery_note_path", "contract_lock_path", "source_payload"):
+                  rel_path = payload.get(key, "")
+                  if rel_path and not (target_root / rel_path).is_file():
+                      errors.append(f"mirrored backend-delivery file for '{key}' is missing in target repo: '{rel_path}'")
+
+          if errors:
+              for error in errors:
+                  print(f"::error::{error}")
+              sys.exit(1)
+          PYEOF
+
+      - name: Emit replay dispatch
+        env:
+          GH_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          EVENT_TYPE: ${{ inputs.event_type }}
+          FEATURE_ID: ${{ inputs.feature_id }}
+          PAYLOAD_PATH: ${{ inputs.payload_path }}
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          REPLAY_OF: ${{ inputs.replay_of }}
+          REQUESTED_BY: ${{ inputs.requested_by }}
+          PAYLOAD_SHA256: ${{ steps.payload-check.outputs.payload_sha256 }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Determine target repo: Pantheon-owned event types dispatch into
+          # this repo; front-repo events dispatch into the front repo.
+          case "$EVENT_TYPE" in
+            pantheon.contract_ready|pantheon.backend_delivery)
+              TARGET_REPO="ajoe734/front-ai-trading-system"
+              ;;
+            pantheon.frontend_feedback|pantheon.bff_gap|pantheon.ui_done)
+              TARGET_REPO="ajoe734/pantheon"
+              ;;
+            *)
+              echo "::error::Cannot determine target repo for event_type: $EVENT_TYPE"
+              exit 1
+              ;;
+          esac
+
+          echo "Dispatching replay to $TARGET_REPO"
+          echo "  event_type    = $EVENT_TYPE"
+          echo "  feature_id    = $FEATURE_ID"
+          echo "  payload_path  = $PAYLOAD_PATH"
+          echo "  source_repo   = $SOURCE_REPO"
+          echo "  source_commit = $SOURCE_COMMIT"
+          echo "  replay_of     = $REPLAY_OF"
+          [[ -n "$REQUESTED_BY" ]] && echo "  requested_by  = $REQUESTED_BY"
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/$TARGET_REPO/dispatches" \
+            -f event_type="$EVENT_TYPE" \
+            -F client_payload[feature_id]="$FEATURE_ID" \
+            -F client_payload[payload_path]="$PAYLOAD_PATH" \
+            -F client_payload[source_repo]="$SOURCE_REPO" \
+            -F client_payload[source_commit]="$SOURCE_COMMIT" \
+            -F client_payload[source_ref]="${SOURCE_REF:-}" \
+            -F client_payload[trigger_mode]="replay" \
+            -F client_payload[origin_workflow]="coordination-manual-replay/$RUN_ID" \
+            -F client_payload[replay_of]="$REPLAY_OF" \
+            -F client_payload[requested_by]="${REQUESTED_BY:-}" \
+            -F client_payload[payload_sha256]="$PAYLOAD_SHA256"
+
+          echo "Replay dispatch emitted."
