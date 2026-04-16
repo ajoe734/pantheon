@@ -21,6 +21,11 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 from read_store import ReadSurfaceStore
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+AUTH = "Bearer test-operator:operator,admin"
 
 
 def test_consultation_surfaces():
@@ -180,5 +185,96 @@ def test_consultation_surfaces():
     print("Consultation surface (CS-01 to CS-06) tests: ALL PASSED")
 
 
+def test_consultation_routes_requester_happy_path():
+    """HTTP-level: requester session returns populated participants, outcome, and evidence."""
+    # CS-02: detail
+    resp = client.get("/api/v1/consultations/cs-20260410-001", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-02 requester detail failed: {resp.status_code}"
+    body = resp.json()
+    assert body["data"]["session_id"] == "cs-20260410-001"
+    links = body["data"]["_links"]
+    assert "participants" in links
+    assert "outcome" in links
+    assert "evidence" in links
+    print("✅ HTTP CS-02: requester consultation detail OK")
+
+    # CS-03: participants
+    resp = client.get("/api/v1/consultations/cs-20260410-001/participants", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-03 participants failed: {resp.status_code}"
+    data = resp.json()["data"]
+    assert len(data) >= 1, "CS-03: requester path should have at least one participant"
+    roles = {p["consultation_role"] for p in data}
+    assert "requester" in roles, "CS-03: requester role must be present"
+    print(f"✅ HTTP CS-03: requester participants returns {len(data)} participant(s)")
+
+    # CS-04: outcome
+    resp = client.get("/api/v1/consultations/cs-20260410-001/outcome", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-04 outcome failed: {resp.status_code}"
+    outcome = resp.json()["data"]
+    assert outcome["metadata"]["consultation"]["outcome"] is not None, "CS-04: outcome must not be null"
+    print(f"✅ HTTP CS-04: requester outcome={outcome['metadata']['consultation']['outcome']!r}")
+
+    # CS-05: evidence
+    resp = client.get("/api/v1/consultations/cs-20260410-001/evidence", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-05 evidence failed: {resp.status_code}"
+    evidence = resp.json()["data"]
+    assert len(evidence) >= 1, "CS-05: at least one evidence ref"
+    print(f"✅ HTTP CS-05: requester evidence returns {len(evidence)} ref(s)")
+
+
+def test_consultation_routes_responder_path():
+    """HTTP-level: responder session id resolves to root data (non-empty participants/outcome/evidence)."""
+    resp_id = "cs-resp-20260410-001"
+
+    # CS-02: responder detail is served (200)
+    resp = client.get(f"/api/v1/consultations/{resp_id}", headers={"Authorization": AUTH})
+    assert resp.status_code == 200, f"CS-02 responder detail failed: {resp.status_code}"
+    print("✅ HTTP CS-02: responder session detail OK")
+
+    # CS-03: participants are non-empty (resolved from root)
+    resp = client.get(f"/api/v1/consultations/{resp_id}/participants", headers={"Authorization": AUTH})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert len(data) >= 1, "CS-03: responder path must resolve root participants (non-empty)"
+    roles = {p["consultation_role"] for p in data}
+    assert "requester" in roles, "CS-03: root requester must appear in participant list"
+    print(f"✅ HTTP CS-03: responder participants resolved from root — {len(data)} participant(s)")
+
+    # CS-04: outcome is non-null (resolved from root)
+    resp = client.get(f"/api/v1/consultations/{resp_id}/outcome", headers={"Authorization": AUTH})
+    assert resp.status_code == 200
+    outcome_meta = resp.json()["data"]["metadata"]["consultation"]
+    assert outcome_meta["outcome"] is not None, "CS-04: responder path must resolve non-null outcome from root"
+    print(f"✅ HTTP CS-04: responder outcome resolved from root — outcome={outcome_meta['outcome']!r}")
+
+    # CS-05: evidence is non-empty (resolved from root)
+    resp = client.get(f"/api/v1/consultations/{resp_id}/evidence", headers={"Authorization": AUTH})
+    assert resp.status_code == 200
+    evidence = resp.json()["data"]
+    assert len(evidence) >= 1, "CS-05: responder path must resolve non-empty evidence from root"
+    print(f"✅ HTTP CS-05: responder evidence resolved from root — {len(evidence)} ref(s)")
+
+
+def test_consultation_participant_persona_links_resolve():
+    """HTTP-level: persona_id values on participants resolve to real persona records (200)."""
+    resp = client.get(
+        "/api/v1/consultations/cs-20260410-001/participants",
+        headers={"Authorization": AUTH},
+    )
+    assert resp.status_code == 200
+    participants = resp.json()["data"]
+    for p in participants:
+        pid = p.get("persona_id")
+        assert pid, f"participant missing persona_id: {p}"
+        persona_resp = client.get(f"/api/v1/personas/{pid}", headers={"Authorization": AUTH})
+        assert persona_resp.status_code == 200, (
+            f"participant persona_id={pid!r} returns {persona_resp.status_code} — dead link"
+        )
+        print(f"✅ HTTP persona link: /api/v1/personas/{pid} -> 200")
+
+
 if __name__ == "__main__":
     test_consultation_surfaces()
+    test_consultation_routes_requester_happy_path()
+    test_consultation_routes_responder_path()
+    test_consultation_participant_persona_links_resolve()

@@ -231,7 +231,16 @@ def _default_read_data() -> Dict[str, Any]:
                 "strategy_family": "momentum",
                 "created_at": "2026-03-01T00:00:00Z",
                 "last_active_at": "2026-04-11T10:00:00Z",
-            }
+            },
+            "p-risk-analyst": {  # consultation responder persona
+                "id": "p-risk-analyst",
+                "name": "Risk Analyst Persona",
+                "lifecycle_state": "active",
+                "mandate": "risk_review",
+                "strategy_family": "risk_management",
+                "created_at": "2026-02-15T00:00:00Z",
+                "last_active_at": "2026-04-10T10:14:00Z",
+            },
         },
         "sessions": {
             "sess-001": {
@@ -583,12 +592,32 @@ def _default_read_data() -> Dict[str, Any]:
                     "consultation": {
                         "consultation_type": "pre_deployment",
                         "consult_policy_ref": "cp-risk-analyst",
+                        "root_session_id": "cs-20260410-001",
                     }
                 },
             },
         },
         # CS-06: ConsultPolicy records keyed by persona_id
         "consult_policies": {
+            "p-risk-analyst": {
+                "id": "cp-risk-analyst",
+                "persona_id": "p-risk-analyst",
+                "required_reviewers": 1,
+                "required_committees": [],
+                "trigger_rules": [
+                    {
+                        "condition": "pre_deployment_live",
+                        "description": "Risk analyst must review before any live deployment",
+                    },
+                ],
+                "forbidden_solo_actions": ["approve_live_deployment"],
+                "escalation_rules": [
+                    {
+                        "trigger": "responder_rejects",
+                        "escalate_to": "governance_committee",
+                    }
+                ],
+            },
             "persona-alpha": {
                 "id": "cp-alpha",
                 "persona_id": "persona-alpha",
@@ -1327,16 +1356,43 @@ class ReadSurfaceStore:
             return None
         return session
 
+    def _resolve_root_consultation_id(self, session_id: str) -> str:
+        """Return the root (requester) session id for a given consultation session_id.
+
+        For requester sessions the id is returned unchanged.
+        For responder/committee sessions that carry root_session_id in their
+        metadata.consultation, that pointer is followed one level.
+        """
+        session = self._data.get("consultation_sessions", {}).get(session_id)
+        if session is None:
+            return session_id
+        meta_consult = (session.get("metadata") or {}).get("consultation", {})
+        if meta_consult.get("requester_session_id"):
+            # Already the root
+            return session_id
+        root_ref = meta_consult.get("root_session_id")
+        if root_ref:
+            return root_ref
+        return session_id
+
     def get_consultation_participants(self, session_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """CS-03: Return all participant sessions linked to a consultation.
 
         The requester session is identified by session_id = metadata.consultation.requester_session_id.
         Responder sessions are identified by metadata.consultation.responder_session_ids.
         Committee sessions are identified by metadata.consultation.committee_session_ids.
+
+        When called with a responder or committee session id, the root session is
+        resolved via metadata.consultation.root_session_id so that participants,
+        outcome, and evidence are always served from the authoritative root record.
         """
         if not session_id:
             return None
-        root = self._data.get("consultation_sessions", {}).get(session_id)
+        all_sessions = self._data.get("consultation_sessions", {})
+        if session_id not in all_sessions:
+            return None
+        root_id = self._resolve_root_consultation_id(session_id)
+        root = all_sessions.get(root_id)
         if root is None:
             return None
         meta_consult = (root.get("metadata") or {}).get("consultation", {})
@@ -1366,16 +1422,25 @@ class ReadSurfaceStore:
         return participants
 
     def get_consultation_outcome(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        """CS-04: Return the consultation outcome projection for a session."""
+        """CS-04: Return the consultation outcome projection for a session.
+
+        When called with a responder or committee session id, outcome is resolved
+        from the root (requester) session via root_session_id.
+        """
         if not session_id:
             return None
-        session = self.get_consultation(session_id)
+        all_sessions = self._data.get("consultation_sessions", {})
+        if session_id not in all_sessions:
+            return None
+        root_id = self._resolve_root_consultation_id(session_id)
+        session = self.get_consultation(root_id)
         if session is None:
             return None
         meta_consult = (session.get("metadata") or {}).get("consultation", {})
         return {
             "session_id": session_id,
-            "source_session": f"/api/v1/consultations/{session_id}",
+            "root_session_id": root_id,
+            "source_session": f"/api/v1/consultations/{root_id}",
             "metadata": {
                 "consultation": {
                     "outcome": meta_consult.get("outcome"),
@@ -1389,10 +1454,18 @@ class ReadSurfaceStore:
         }
 
     def get_consultation_evidence(self, session_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
-        """CS-05: Return evidence refs attached to a consultation session."""
+        """CS-05: Return evidence refs attached to a consultation session.
+
+        When called with a responder or committee session id, evidence is resolved
+        from the root (requester) session via root_session_id.
+        """
         if not session_id:
             return None
-        session = self.get_consultation(session_id)
+        all_sessions = self._data.get("consultation_sessions", {})
+        if session_id not in all_sessions:
+            return None
+        root_id = self._resolve_root_consultation_id(session_id)
+        session = self.get_consultation(root_id)
         if session is None:
             return None
         meta_consult = (session.get("metadata") or {}).get("consultation", {})
