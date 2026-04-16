@@ -503,6 +503,119 @@ def _default_read_data() -> Dict[str, Any]:
                 "created_at": "2026-04-10T00:00:00Z",
             },
         },
+        # ------------------------------------------------------------------ #
+        # Consultation surfaces (CS-01 – CS-06)
+        # ------------------------------------------------------------------ #
+
+        # CS-01/CS-02/CS-03/CS-04/CS-05: SessionPersona records with
+        # session_type = "consult" or "committee".
+        # All fields are the canonical SessionPersona fields from
+        # PERSONA_RUNTIME_MODEL.md §14, plus metadata.consultation.*
+        # materialized by the Persona Plane.
+        "consultation_sessions": {
+            "cs-20260410-001": {
+                "session_id": "cs-20260410-001",
+                "persona_id": "persona-alpha",
+                "session_type": "consult",
+                "status": "terminated",
+                "started_at": "2026-04-10T10:00:00Z",
+                "ended_at": "2026-04-10T10:15:00Z",
+                "capability_snapshot_id": "cap-001",
+                "trace_id": "trace-cs-20260410-001",
+                "request_id": "req-cs-20260410-001",
+                "context_bundle_ref": "workspace://consultation-context/cs-20260410-001",
+                "task_ref": None,
+                "runtime_binding_id": None,
+                "deployment_stage": None,
+                "capital_pool_id": None,
+                "metadata": {
+                    "consultation": {
+                        "consultation_type": "pre_deployment",
+                        "requester_session_id": "cs-20260410-001",
+                        "responder_session_ids": ["cs-resp-20260410-001"],
+                        "committee_session_ids": [],
+                        "consult_policy_ref": "cp-risk-analyst",
+                        "trigger_rule": "pre_deployment_live",
+                        "required_reviewers": 1,
+                        "required_committees": [],
+                        "forbidden_solo_actions": ["approve_live_deployment"],
+                        "actual_reviewers": 1,
+                        "outcome": "conditional",
+                        "rationale_ref": "workspace://consultation-rationales/cs-20260410-001",
+                        "evidence_refs": [
+                            {
+                                "id": "ev-001",
+                                "type": "evidence_link",
+                                "evidence_type": "telemetry",
+                                "artifact_ref": "artifact-042",
+                                "description": "30-day performance metrics",
+                                "link": "/api/v1/telemetry/artifact-042/performance?time_range=30d",
+                            },
+                            {
+                                "id": "ev-002",
+                                "type": "evidence_link",
+                                "evidence_type": "lineage",
+                                "artifact_ref": "artifact-042",
+                                "description": "Full lineage chain for artifact-042",
+                                "link": "/api/v1/lineage?artifact_id=artifact-042",
+                            },
+                        ],
+                        "escalation_path": None,
+                    }
+                },
+            },
+            "cs-resp-20260410-001": {
+                "session_id": "cs-resp-20260410-001",
+                "persona_id": "p-risk-analyst",
+                "session_type": "consult",
+                "status": "terminated",
+                "started_at": "2026-04-10T10:00:30Z",
+                "ended_at": "2026-04-10T10:14:00Z",
+                "capability_snapshot_id": "cap-001",
+                "trace_id": "trace-cs-resp-20260410-001",
+                "request_id": "req-cs-resp-20260410-001",
+                "context_bundle_ref": "workspace://consultation-context/cs-20260410-001",
+                "task_ref": None,
+                "runtime_binding_id": None,
+                "deployment_stage": None,
+                "capital_pool_id": None,
+                "metadata": {
+                    "consultation": {
+                        "consultation_type": "pre_deployment",
+                        "consult_policy_ref": "cp-risk-analyst",
+                    }
+                },
+            },
+        },
+        # CS-06: ConsultPolicy records keyed by persona_id
+        "consult_policies": {
+            "persona-alpha": {
+                "id": "cp-alpha",
+                "persona_id": "persona-alpha",
+                "required_reviewers": 1,
+                "required_committees": [],
+                "trigger_rules": [
+                    {
+                        "condition": "pre_deployment_live",
+                        "description": "Must consult before any live deployment",
+                    },
+                    {
+                        "condition": "macro_regime_shift",
+                        "description": "Must consult when macro regime shift detected",
+                    },
+                ],
+                "forbidden_solo_actions": [
+                    "approve_live_deployment",
+                    "increase_capital_allocation_above_20pct",
+                ],
+                "escalation_rules": [
+                    {
+                        "trigger": "responder_rejects",
+                        "escalate_to": "governance_committee",
+                    }
+                ],
+            },
+        },
         # TL-03: Telemetry performance by artifact
         "telemetry_performance": {
             "artifact-042": {
@@ -1164,6 +1277,132 @@ class ReadSurfaceStore:
             if snapshot.get("persona_id") == persona_id:
                 return snapshot
         return None
+
+    # ------------------------------------------------------------------ #
+    # Consultation surfaces (CS-01 – CS-06)
+    # ------------------------------------------------------------------ #
+
+    def list_consultations_for_persona(
+        self,
+        persona_id: Optional[str],
+        consultation_type: Optional[str] = None,
+        status: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """CS-01: List consultation sessions for a persona.
+
+        Returns None when the persona cannot be verified (degraded mode).
+        Only returns sessions where persona_id is the requester (the
+        session whose session_id matches metadata.consultation.requester_session_id).
+        """
+        if not persona_id:
+            return None
+        sessions = [
+            s for s in self._data.get("consultation_sessions", {}).values()
+            if s.get("persona_id") == persona_id
+            and s.get("session_type") in {"consult", "committee"}
+            and s.get("session_id") == (
+                (s.get("metadata") or {}).get("consultation", {}).get("requester_session_id")
+            )
+        ]
+        if consultation_type:
+            sessions = [
+                s for s in sessions
+                if (s.get("metadata") or {}).get("consultation", {}).get("consultation_type") == consultation_type
+            ]
+        if status:
+            sessions = [s for s in sessions if s.get("status") == status]
+        sessions = sorted(sessions, key=lambda x: x.get("started_at", ""), reverse=True)
+        return sessions
+
+    def get_consultation(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """CS-02: Return a consultation session by session_id."""
+        if not session_id:
+            return None
+        session = self._data.get("consultation_sessions", {}).get(session_id)
+        if session is None:
+            return None
+        if session.get("session_type") not in {"consult", "committee"}:
+            return None
+        return session
+
+    def get_consultation_participants(self, session_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """CS-03: Return all participant sessions linked to a consultation.
+
+        The requester session is identified by session_id = metadata.consultation.requester_session_id.
+        Responder sessions are identified by metadata.consultation.responder_session_ids.
+        Committee sessions are identified by metadata.consultation.committee_session_ids.
+        """
+        if not session_id:
+            return None
+        root = self._data.get("consultation_sessions", {}).get(session_id)
+        if root is None:
+            return None
+        meta_consult = (root.get("metadata") or {}).get("consultation", {})
+        requester_id = meta_consult.get("requester_session_id")
+        responder_ids: List[str] = meta_consult.get("responder_session_ids") or []
+        committee_ids: List[str] = meta_consult.get("committee_session_ids") or []
+
+        all_sessions = self._data.get("consultation_sessions", {})
+        participants = []
+
+        def _role_for(sid: str) -> str:
+            if sid == requester_id:
+                return "requester"
+            if sid in committee_ids:
+                return "committee_participant"
+            return "responder"
+
+        for sid in [requester_id] + responder_ids + committee_ids:
+            if not sid:
+                continue
+            session = all_sessions.get(sid)
+            if session:
+                enriched = dict(session)
+                enriched["consultation_role"] = _role_for(sid)
+                participants.append(enriched)
+
+        return participants
+
+    def get_consultation_outcome(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """CS-04: Return the consultation outcome projection for a session."""
+        if not session_id:
+            return None
+        session = self.get_consultation(session_id)
+        if session is None:
+            return None
+        meta_consult = (session.get("metadata") or {}).get("consultation", {})
+        return {
+            "session_id": session_id,
+            "source_session": f"/api/v1/consultations/{session_id}",
+            "metadata": {
+                "consultation": {
+                    "outcome": meta_consult.get("outcome"),
+                    "actual_reviewers": meta_consult.get("actual_reviewers"),
+                    "responder_session_ids": meta_consult.get("responder_session_ids", []),
+                    "rationale_ref": meta_consult.get("rationale_ref"),
+                    "evidence_refs": meta_consult.get("evidence_refs", []),
+                    "escalation_path": meta_consult.get("escalation_path"),
+                }
+            },
+        }
+
+    def get_consultation_evidence(self, session_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """CS-05: Return evidence refs attached to a consultation session."""
+        if not session_id:
+            return None
+        session = self.get_consultation(session_id)
+        if session is None:
+            return None
+        meta_consult = (session.get("metadata") or {}).get("consultation", {})
+        return list(meta_consult.get("evidence_refs") or [])
+
+    def get_consult_policy(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """CS-06: Return the ConsultPolicy for a persona."""
+        if not persona_id:
+            return None
+        return self._data.get("consult_policies", {}).get(persona_id)
 
     def get_persona_allowed_actions(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Derive allowed actions for a persona based on lifecycle state and session status.

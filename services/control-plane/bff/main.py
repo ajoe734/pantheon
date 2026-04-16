@@ -1662,6 +1662,249 @@ async def get_telemetry_performance(
 
 
 # --------------------------------------------------------------------------- #
+# Consultation surfaces (CS-01 – CS-06)
+# Derived from PERSONA_RUNTIME_MODEL.md §6, §13, §14 via
+# CONSULTATION_SURFACE_CONTRACT.md.  All surfaces are GET-only —
+# writes are the Persona Plane's responsibility.
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/api/v1/personas/{persona_id}/consultations")
+def list_consultations(
+    persona_id: str,
+    consultation_type: Optional[str] = Query(default=None, alias="filter.consultation_type"),
+    status: Optional[str] = Query(default=None, alias="filter.status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-01: List consultation sessions for a persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if persona is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"No persona with id {persona_id}",
+        )
+
+    consultations = read_store.list_consultations_for_persona(
+        persona_id,
+        consultation_type=consultation_type,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
+    if consultations is None:
+        return {
+            "data": [],
+            "meta": {
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "staleness": {
+                    "served_from": "unavailable",
+                    "last_known_at": utc_now(),
+                },
+            },
+        }
+
+    start = (page - 1) * page_size
+    page_data = consultations[start: start + page_size]
+    return {
+        "data": [
+            {
+                **s,
+                "_links": {
+                    "self": f"/api/v1/consultations/{s['session_id']}",
+                    "participants": f"/api/v1/consultations/{s['session_id']}/participants",
+                    "outcome": f"/api/v1/consultations/{s['session_id']}/outcome",
+                },
+            }
+            for s in page_data
+        ],
+        "meta": {
+            "total": len(consultations),
+            "page": page,
+            "page_size": page_size,
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}")
+def get_consultation(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-02: Consultation session detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_consultation(session_id)
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": {
+            **session,
+            "_links": {
+                "self": f"/api/v1/consultations/{session_id}",
+                "participants": f"/api/v1/consultations/{session_id}/participants",
+                "outcome": f"/api/v1/consultations/{session_id}/outcome",
+                "evidence": f"/api/v1/consultations/{session_id}/evidence",
+            },
+        },
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}/participants")
+def get_consultation_participants(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-03: All participants in a consultation session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    participants = read_store.get_consultation_participants(session_id)
+    if participants is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": [
+            {
+                **p,
+                "_links": {
+                    "self": f"/api/v1/sessions/{p['session_id']}",
+                    "persona": f"/api/v1/personas/{p['persona_id']}",
+                },
+            }
+            for p in participants
+        ],
+        "meta": {
+            "total": len(participants),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}/outcome")
+def get_consultation_outcome(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-04: Consultation outcome projection."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    outcome = read_store.get_consultation_outcome(session_id)
+    if outcome is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": outcome,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}/evidence")
+def get_consultation_evidence(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-05: Evidence refs attached to a consultation session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    evidence = read_store.get_consultation_evidence(session_id)
+    if evidence is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": evidence,
+        "meta": {
+            "total": len(evidence),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/personas/{persona_id}/consult-policy")
+def get_consult_policy(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-06: Consult policy for a persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if persona is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"No persona with id {persona_id}",
+        )
+
+    policy = read_store.get_consult_policy(persona_id)
+    if policy is None:
+        # Policy may not exist yet — return a safe empty structure rather than 404
+        # so operators always get a valid read (policy absence is itself informative)
+        return {
+            "data": {
+                "id": None,
+                "persona_id": persona_id,
+                "required_reviewers": 0,
+                "required_committees": [],
+                "trigger_rules": [],
+                "forbidden_solo_actions": [],
+                "escalation_rules": [],
+            },
+            "meta": {
+                "staleness": _meta_staleness(),
+                "note": "No consult policy found for this persona. Defaulting to empty policy.",
+            },
+        }
+
+    return {
+        "data": policy,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Command submission (write path — async execution)
 # --------------------------------------------------------------------------- #
 
