@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-04-16 08:27:51
+Last updated: 2026-04-16 15:19:06
 
 ## Objective
 
@@ -33,11 +33,11 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Please review the EvolutionDecision service realization. All 33 tests pass. Covers: full lifecycle (propose->review->approve->execute->cancel/reject), cooldown/observation window policy enforcement per EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md, actor-role matrix enforcement per EVOLUTION_REVIEW_AND_THRESHOLDS.md, single-active-rule, evidence linkage requirement, threshold evaluator endpoint, and boundary query. Ready for Codex review.
+- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned BP5-LUV-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created from accepted planning session
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created from accepted planning session
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Supervisor auto-started BP5-SVC-011-SIDECAR-ACCEPTANCE after successful dispatch.
-- `Qwen`: integration, schema, acceptance, code-agent; next: Both F-042 and PKT-001-governance-review-queue are blocked on mirror-only front-ai-trading-system checkout. No actual UI source tree available. Requires valid front-ai-trading-system checkout before UI implementation can proceed.
+- `Qwen`: integration, schema, acceptance, code-agent; next: Supervisor re-dispatched BP5-SVC-011-SIDECAR-ACCEPTANCE; task remains in progress.
 
 ## Delivery Layers
 
@@ -58,7 +58,7 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `BP5-WB-006` | Phase 5: Full Blueprint Gap Closure | Packetize the Knowledge Workbench family | Codex | todo | `BP5-SVC-010`, `BP5-SVC-011`, `BP5-SVC-014` | 把 Institutional Memory、Research Notes、Evidence Refs、Insight Cards、Strategy Spec 五個 Knowledge modules 補成 packet family 與 backend gap matrix。 |
 | `BP5-WB-007` | Phase 5: Full Blueprint Gap Closure | Packetize the Trainer Workbench family | Claude | todo | `BP5-SVC-014`, `BP5-SVC-009` | 把 teaching session、before/after review 與 trainer shell 補成 Trainer Workbench packet family，並明確標出缺失的 BFF flow。 |
 | `BP5-WB-008` | Phase 5: Full Blueprint Gap Closure | Packetize the Consultation Workbench family | Claude | todo | `BP5-SVC-003`, `BP5-SVC-012`, `BP5-SVC-014` | 把 consult requests、committee review、debate、red-team outputs 補成 Consultation Workbench packet family 與 backend gap matrix。 |
-| `BP5-LUV-001` | Phase 5: Full Blueprint Gap Closure | Review the returned feedback bundles for F-042 and PKT-001 governance review queue | Qwen | blocked | - | 把 F-042 與 PKT-001-governance-review-queue 已回來的 frontend feedback bundle 正式審核，轉成 closeout 或 follow-up queue。 |
+| `BP5-LUV-001` | Phase 5: Full Blueprint Gap Closure | Review the returned feedback bundles for F-042 and PKT-001 governance review queue | Claude | blocked | - | 把 F-042 與 PKT-001-governance-review-queue 已回來的 frontend feedback bundle 正式審核，轉成 closeout 或 follow-up queue。 |
 | `BP5-LUV-002` | Phase 5: Full Blueprint Gap Closure | Drive PKT-001 deployment-review through the Lovable implementation loop | Codex | todo | `BP5-SVC-015`, `BP5-SVC-016` | 把 deployment-review-console 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。 |
 | `BP5-LUV-003` | Phase 5: Full Blueprint Gap Closure | Drive PKT-002 incident-home through the Lovable implementation loop | Codex | todo | `BP5-SVC-011`, `BP5-SVC-015` | 把 incident-home 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。 |
 | `BP5-LUV-004` | Phase 5: Full Blueprint Gap Closure | Drive PKT-002 incident-detail through the Lovable implementation loop | Codex | todo | `BP5-SVC-011`, `BP5-SVC-015` | 把 incident-detail 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。 |
@@ -73,7 +73,7 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `BP5-CICD-002` | Phase 5: Full Blueprint Gap Closure | Implement Cloud Build to Artifact Registry publish flow | Gemini | todo | `BP5-CICD-001`, `BP5-SVC-016` | 把 Cloud Build -> Artifact Registry 的 image truth pipeline、provenance、publish policy 與 environment-safe identity flow 落成。 |
 | `BP5-GCP-001` | Phase 5: Full Blueprint Gap Closure | Stand up workload identity and Secret Manager baseline | Gemini | todo | `BP5-CICD-002` | 先把 Workload Identity Federation、service accounts、Secret Manager namespace 與 deploy-time secret flow 落成可執行 baseline。 |
 | `BP5-GCP-002` | Phase 5: Full Blueprint Gap Closure | Stand up Cloud SQL, Pub/Sub, ingress, and nonprod environment foundation | Gemini | todo | `BP5-GCP-001` | 把 Cloud SQL、Pub/Sub、ingress、network boundary、nonprod environment split 與 runtime prerequisites 落成可執行 foundation。 |
-| `BP5-SVC-011-SIDECAR-ACCEPTANCE` | Phase 5: Full Blueprint Gap Closure | [Sidecar] [Auto] [Parent BP5-SVC-011] Prepare BP5-SVC-011 acceptance packet and dependency map | Qwen | todo | `BP5-SVC-009`, `BP5-SVC-010` | 平行支援 BP5-SVC-011，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `BP5-SVC-011-SIDECAR-ACCEPTANCE` | Phase 5: Full Blueprint Gap Closure | [Sidecar] [Auto] [Parent BP5-SVC-011] Prepare BP5-SVC-011 acceptance packet and dependency map | Qwen | in_progress | `BP5-SVC-009`, `BP5-SVC-010` | 平行支援 BP5-SVC-011，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -87,7 +87,7 @@ Run the blueprint gap convergence planning session, compare repo reality against
 |---|---|---|---|---|---|---|---|---|---|
 | `BP5-SVC-012` | Phase 5: Full Blueprint Gap Closure | Realize the EvolutionDecision service and governance read path | 把 EvolutionDecision lifecycle、actor role、cooldown/convergence 與 evidence link 落成真實 service、schema 與 query path。 | Claude | Codex | review | `BP5-SVC-010` | 2026-04-16 08:24:48 | Please review the EvolutionDecision service realization. All 33 tests pass. Covers: full lifecycle (propose->review->approve->execute->cancel/reject), cooldown/observation window policy enforcement per EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md, actor-role matrix enforcement per EVOLUTION_REVIEW_AND_THRESHOLDS.md, single-active-rule, evidence linkage requirement, threshold evaluator endpoint, and boundary query. Ready for Codex review. |
 | `BP5-SVC-013` | Phase 5: Full Blueprint Gap Closure | Realize operational evolution orchestration and kill-switch fast path | 把 freeze、rollback、retrain、redeploy orchestration 邊界與 emergency kill-switch fast path 落成真實 runtime-manager action path。 | Codex | Gemini | todo | `BP5-SVC-008`, `BP5-SVC-011`, `BP5-SVC-012` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
-| `BP5-SVC-014` | Phase 5: Full Blueprint Gap Closure | Realize persona platform and consultation read surfaces | 把 persona identity/session/runtime model 與 consultation read surfaces 落成真實 service/BFF path，避免 persona workbench 只靠文件語意。 | Claude | Codex | review_approved | `BP5-SVC-006`, `BP5-SVC-007`, `BP5-SVC-010` | 2026-04-16 08:26:28 | Supervisor resumed BP5-SVC-014 for finalize after successful dispatch. |
+| `BP5-SVC-014` | Phase 5: Full Blueprint Gap Closure | Realize persona platform and consultation read surfaces | 把 persona identity/session/runtime model 與 consultation read surfaces 落成真實 service/BFF path，避免 persona workbench 只靠文件語意。 | Claude | Codex | review_approved | `BP5-SVC-006`, `BP5-SVC-007`, `BP5-SVC-010` | 2026-04-16 15:18:45 | Supervisor resumed BP5-SVC-014 for finalize after successful dispatch. |
 | `BP5-SVC-015` | Phase 5: Full Blueprint Gap Closure | Remove BFF snapshot and default fallback from the normal integration path | 把 operator/BFF 目前靠 snapshot/default fallback 撐住的正常路徑收斂成 backend-owned composed reads 與 command-submission path。 | Codex | Claude | todo | `BP5-SVC-003`, `BP5-SVC-004`, `BP5-SVC-011`, `BP5-SVC-013`, `BP5-SVC-014` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-SVC-016` | Phase 5: Full Blueprint Gap Closure | Package the honest service stack into Docker, compose, and smoke topology | 把 service stack 真實包成 Docker/compose/smoke topology，讓 runtime/governance/evidence/BFF/streaming 能以 single-VM baseline 啟動。 | Gemini | Codex | todo | `BP5-SVC-002`, `BP5-SVC-003`, `BP5-SVC-005`, `BP5-SVC-009`, `BP5-SVC-010`, `BP5-SVC-015` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-WB-001` | Phase 5: Full Blueprint Gap Closure | Packetize Persona Workbench Wave 1 surfaces | 把 Persona management composed screen、Persona drilldowns、Capital/Binding drilldowns、shared Deployment/Approval drilldowns 落成可執行 packet family。 | Codex | Claude | todo | `BP5-SVC-014`, `BP5-SVC-015` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
@@ -98,7 +98,7 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `BP5-WB-006` | Phase 5: Full Blueprint Gap Closure | Packetize the Knowledge Workbench family | 把 Institutional Memory、Research Notes、Evidence Refs、Insight Cards、Strategy Spec 五個 Knowledge modules 補成 packet family 與 backend gap matrix。 | Codex | Claude | todo | `BP5-SVC-010`, `BP5-SVC-011`, `BP5-SVC-014` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-WB-007` | Phase 5: Full Blueprint Gap Closure | Packetize the Trainer Workbench family | 把 teaching session、before/after review 與 trainer shell 補成 Trainer Workbench packet family，並明確標出缺失的 BFF flow。 | Claude | Codex | todo | `BP5-SVC-014`, `BP5-SVC-009` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-WB-008` | Phase 5: Full Blueprint Gap Closure | Packetize the Consultation Workbench family | 把 consult requests、committee review、debate、red-team outputs 補成 Consultation Workbench packet family 與 backend gap matrix。 | Claude | Codex | todo | `BP5-SVC-003`, `BP5-SVC-012`, `BP5-SVC-014` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
-| `BP5-LUV-001` | Phase 5: Full Blueprint Gap Closure | Review the returned feedback bundles for F-042 and PKT-001 governance review queue | 把 F-042 與 PKT-001-governance-review-queue 已回來的 frontend feedback bundle 正式審核，轉成 closeout 或 follow-up queue。 | Qwen | Codex | blocked | - | 2026-04-16 00:12:00 | Both F-042 and PKT-001-governance-review-queue are blocked on mirror-only front-ai-trading-system checkout. No actual UI source tree available. Requires valid front-ai-trading-system checkout before UI implementation can proceed. |
+| `BP5-LUV-001` | Phase 5: Full Blueprint Gap Closure | Review the returned feedback bundles for F-042 and PKT-001 governance review queue | 把 F-042 與 PKT-001-governance-review-queue 已回來的 frontend feedback bundle 正式審核，轉成 closeout 或 follow-up queue。 | Claude | Codex | blocked | - | 2026-04-16 15:18:31 | Auto-reassigned BP5-LUV-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `BP5-LUV-002` | Phase 5: Full Blueprint Gap Closure | Drive PKT-001 deployment-review through the Lovable implementation loop | 把 deployment-review-console 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。 | Codex | Claude | todo | `BP5-SVC-015`, `BP5-SVC-016` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-LUV-003` | Phase 5: Full Blueprint Gap Closure | Drive PKT-002 incident-home through the Lovable implementation loop | 把 incident-home 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。 | Codex | Claude | todo | `BP5-SVC-011`, `BP5-SVC-015` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-LUV-004` | Phase 5: Full Blueprint Gap Closure | Drive PKT-002 incident-detail through the Lovable implementation loop | 把 incident-detail 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。 | Codex | Claude | todo | `BP5-SVC-011`, `BP5-SVC-015` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
@@ -113,7 +113,7 @@ Run the blueprint gap convergence planning session, compare repo reality against
 | `BP5-CICD-002` | Phase 5: Full Blueprint Gap Closure | Implement Cloud Build to Artifact Registry publish flow | 把 Cloud Build -> Artifact Registry 的 image truth pipeline、provenance、publish policy 與 environment-safe identity flow 落成。 | Gemini | Claude | todo | `BP5-CICD-001`, `BP5-SVC-016` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-GCP-001` | Phase 5: Full Blueprint Gap Closure | Stand up workload identity and Secret Manager baseline | 先把 Workload Identity Federation、service accounts、Secret Manager namespace 與 deploy-time secret flow 落成可執行 baseline。 | Gemini | Claude | todo | `BP5-CICD-002` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
 | `BP5-GCP-002` | Phase 5: Full Blueprint Gap Closure | Stand up Cloud SQL, Pub/Sub, ingress, and nonprod environment foundation | 把 Cloud SQL、Pub/Sub、ingress、network boundary、nonprod environment split 與 runtime prerequisites 落成可執行 foundation。 | Gemini | Claude | todo | `BP5-GCP-001` | 2026-04-15 23:29:24 | Assignment created from accepted planning session |
-| `BP5-SVC-011-SIDECAR-ACCEPTANCE` | Phase 5: Full Blueprint Gap Closure | [Sidecar] [Auto] [Parent BP5-SVC-011] Prepare BP5-SVC-011 acceptance packet and dependency map | 平行支援 BP5-SVC-011，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Qwen | Codex | todo | `BP5-SVC-009`, `BP5-SVC-010` | 2026-04-16 08:27:51 | Helper-claimed by Qwen while Codex completes higher-priority work. |
+| `BP5-SVC-011-SIDECAR-ACCEPTANCE` | Phase 5: Full Blueprint Gap Closure | [Sidecar] [Auto] [Parent BP5-SVC-011] Prepare BP5-SVC-011 acceptance packet and dependency map | 平行支援 BP5-SVC-011，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Qwen | Codex | in_progress | `BP5-SVC-009`, `BP5-SVC-010` | 2026-04-16 15:19:06 | Supervisor re-dispatched BP5-SVC-011-SIDECAR-ACCEPTANCE; task remains in progress. |
 
 ## Handoff Queue
 
@@ -121,7 +121,6 @@ Run the blueprint gap convergence planning session, compare repo reality against
 |---|---|---|---|---|---|
 | `BP5-SVC-012` | Claude | Codex | Please review the EvolutionDecision service realization. All 33 tests pass. Covers: full lifecycle (propose->review->approve->execute->cancel/reject), cooldown/observation window policy enforcement per EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md, actor-role matrix enforcement per EVOLUTION_REVIEW_AND_THRESHOLDS.md, single-active-rule, evidence linkage requirement, threshold evaluator endpoint, and boundary query. Ready for Codex review. | pending | 2026-04-16 08:24:48 |
 | `BP5-SVC-014` | Codex | Claude | Review approved: commit 3f7e6fd closes responder resolution, canonical seed refs, and HTTP regression coverage for consultation surfaces. | pending | 2026-04-16 08:26:13 |
-| `BP5-SVC-011-SIDECAR-ACCEPTANCE` | Codex | Qwen | Helper-claimed by Qwen while Codex completes higher-priority work. | pending | 2026-04-16 08:27:51 |
 
 ## Blockers
 
@@ -137,47 +136,51 @@ Run the blueprint gap convergence planning session, compare repo reality against
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-04-16 08:27:34
-- Tracked features: `11`
-- Lovable-ready packets: `11`
-- Waiting for Lovable/front-end: `9`
-- UI-done returned: `0`
-- Frontend feedback returned: `2`
-- Open BFF gaps: `0`
+- Last coordination scan: 2026-04-16 15:18:31
+- Tracked features: `15`
+- Lovable-ready packets: `15`
+- Waiting for Lovable/front-end: `7`
+- UI-done returned: `2`
+- Frontend feedback returned: `3`
+- Open BFF gaps: `5`
 
 | Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |
 |---|---|---|---|---|---|---|---|
-| `F-042` | promotion-review | `frontend_feedback_received` | yes | yes | no | yes | Pantheon should review the frontend feedback bundle and decide follow-up work. |
+| `F-042` | promotion-review | `frontend_feedback_received` | yes | yes | yes | yes | Pantheon should review the frontend feedback bundle and decide follow-up work. |
 | `PKT-001-deployment-review` | deployment-review-console | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
 | `PKT-001-governance-review-queue` | governance-review-queue | `frontend_feedback_received` | yes | yes | no | yes | Pantheon should review the frontend feedback bundle and decide follow-up work. |
-| `PKT-002-incident-action-drawer` | incident-action-drawer | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
-| `PKT-002-incident-detail` | incident-detail | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
-| `PKT-002-incident-home` | incident-home | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
-| `PKT-003-evolution-center` | evolution-center | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
+| `PKT-002-incident-action-drawer` | incident-action-drawer | `bff_gap_open` | yes | yes | no | no | Pantheon must resolve the open BFF gap before the front-end lane can continue. |
+| `PKT-002-incident-detail` | incident-detail | `bff_gap_open` | yes | yes | no | no | Pantheon must resolve the open BFF gap before the front-end lane can continue. |
+| `PKT-002-incident-home` | incident-home | `bff_gap_open` | yes | yes | no | no | Pantheon must resolve the open BFF gap before the front-end lane can continue. |
+| `PKT-003-evolution-center` | evolution-center | `bff_gap_open` | yes | yes | no | no | Pantheon must resolve the open BFF gap before the front-end lane can continue. |
 | `PKT-003-lineage-view` | lineage-view | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
-| `PKT-003-post-incident-review` | post-incident-review-console | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
+| `PKT-003-post-incident-review` | post-incident-review-console | `bff_gap_open` | yes | yes | no | no | Pantheon must resolve the open BFF gap before the front-end lane can continue. |
+| `PKT-004-capital-binding-drilldowns` | capital-binding-drilldowns | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
+| `PKT-004-deployment-approval-drilldowns` | deployment-approval-drilldowns | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
+| `PKT-004-persona-drilldowns` | persona-drilldowns | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
+| `PKT-004-persona-management` | persona-management | `frontend_feedback_received` | yes | yes | yes | yes | Pantheon should review the frontend feedback bundle and decide follow-up work. |
 | `PKT-005-degradation-banner` | global-degradation-banner | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
 | `PKT-005-sse-substrate` | sse-reconciliation-substrate | `waiting_for_lovable` | yes | yes | no | no | Lovable or the front-end lane can implement the screen and emit ui-done when finished. |
 
 ## Latest Checkpoints
 
-- 2026-04-16 08:27:24 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-04-16 08:27:24 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Helper-claimed by Qwen while Claude completes higher-priority work.
-- 2026-04-16 08:27:24 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Skipped stale queued wake event for BP5-SVC-011-SIDECAR-ACCEPTANCE: task state changed after the wake-up was queued.
-- 2026-04-16 08:27:24 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Worker exited before the task reached a terminal status.
-- 2026-04-16 08:27:25 Orchestrator: PreToolUse: Bash
-- 2026-04-16 08:27:28 Orchestrator: PreToolUse: Bash
-- 2026-04-16 08:27:28 Orchestrator: PostToolUse: Bash
-- 2026-04-16 08:27:31 Orchestrator: PreToolUse: Bash
-- 2026-04-16 08:27:31 Orchestrator: PostToolUse: Bash
-- 2026-04-16 08:27:35 Orchestrator: PreToolUse: Bash
-- 2026-04-16 08:27:35 Orchestrator: PostToolUse: Bash
-- 2026-04-16 08:27:39 Orchestrator: PreToolUse: Bash
-- 2026-04-16 08:27:39 Orchestrator: PostToolUse: Bash
-- 2026-04-16 08:27:39 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-04-16 08:27:41 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Worker started via qwen: owned_ready_dispatch
-- 2026-04-16 08:27:41 Qwen: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Supervisor auto-started BP5-SVC-011-SIDECAR-ACCEPTANCE after successful dispatch.
-- 2026-04-16 08:27:44 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Supervisor auto-started BP5-SVC-011-SIDECAR-ACCEPTANCE after successful dispatch.
-- 2026-04-16 08:27:48 Orchestrator: PreToolUse: Bash
-- 2026-04-16 08:27:49 Orchestrator: PostToolUse: Bash
-- 2026-04-16 08:27:50 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.
+- 2026-04-16 15:18:44 Orchestrator: `PKT-001-deployment-review` Dispatch paused for provider gemini until 2026-04-16 15:25:10: Capacity / rate limit failure
+- 2026-04-16 15:18:44 Orchestrator: `PKT-003-lineage-view` Dispatch paused for provider gemini until 2026-04-16 15:25:10: Capacity / rate limit failure
+- 2026-04-16 15:18:45 Orchestrator: `BP5-SVC-014` Worker started via claude_cli: owned_finalize_dispatch
+- 2026-04-16 15:18:45 Claude: `BP5-SVC-014` Supervisor resumed BP5-SVC-014 for finalize after successful dispatch.
+- 2026-04-16 15:18:46 Orchestrator: SessionStart: SessionStart
+- 2026-04-16 15:18:49 Orchestrator: `BP5-SVC-014` Supervisor resumed BP5-SVC-014 for finalize after successful dispatch.
+- 2026-04-16 15:18:51 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Worker started via qwen: owned_ready_dispatch
+- 2026-04-16 15:18:51 Qwen: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Supervisor auto-started BP5-SVC-011-SIDECAR-ACCEPTANCE after successful dispatch.
+- 2026-04-16 15:18:55 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Supervisor auto-started BP5-SVC-011-SIDECAR-ACCEPTANCE after successful dispatch.
+- 2026-04-16 15:18:58 Orchestrator: PreToolUse: Read
+- 2026-04-16 15:18:58 Orchestrator: PreToolUse: Read
+- 2026-04-16 15:18:58 Orchestrator: PostToolUse: Read
+- 2026-04-16 15:18:58 Orchestrator: PreToolUse: Read
+- 2026-04-16 15:18:58 Orchestrator: PostToolUse: Read
+- 2026-04-16 15:18:58 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Worker exited before the task reached a terminal status.
+- 2026-04-16 15:19:03 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-04-16 15:19:05 Orchestrator: PreToolUse: Grep
+- 2026-04-16 15:19:06 Orchestrator: PostToolUse: Grep
+- 2026-04-16 15:19:06 Orchestrator: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Worker started via qwen: owned_in_progress_dispatch
+- 2026-04-16 15:19:06 Qwen: `BP5-SVC-011-SIDECAR-ACCEPTANCE` Supervisor re-dispatched BP5-SVC-011-SIDECAR-ACCEPTANCE; task remains in progress.

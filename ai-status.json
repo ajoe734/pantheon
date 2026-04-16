@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-12-blueprint-gap-convergence-planning",
   "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-16T00:27:51Z",
+  "updated_at": "2026-04-16T07:19:06Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "blocked",
       "current_task_ids": [
-        "BP5-SVC-012"
+        "BP5-SVC-012",
+        "BP5-LUV-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Please review the EvolutionDecision service realization. All 33 tests pass. Covers: full lifecycle (propose->review->approve->execute->cancel/reject), cooldown/observation window policy enforcement per EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md, actor-role matrix enforcement per EVOLUTION_REVIEW_AND_THRESHOLDS.md, single-active-rule, evidence linkage requirement, threshold evaluator endpoint, and boundary query. Ready for Codex review.",
-      "last_update": "2026-04-16T00:24:48Z"
+      "next": "Auto-reassigned BP5-LUV-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-04-16T07:18:31Z"
     },
     {
       "name": "Gemini",
@@ -159,13 +160,13 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "blocked",
+      "status": "working",
       "current_task_ids": [
-        "BP5-LUV-001"
+        "BP5-SVC-011-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/qwen-code-agent",
-      "next": "Both F-042 and PKT-001-governance-review-queue are blocked on mirror-only front-ai-trading-system checkout. No actual UI source tree available. Requires valid front-ai-trading-system checkout before UI implementation can proceed.",
-      "last_update": "2026-04-15T16:12:00Z"
+      "next": "Supervisor re-dispatched BP5-SVC-011-SIDECAR-ACCEPTANCE; task remains in progress.",
+      "last_update": "2026-04-16T07:19:06Z"
     }
   ],
   "tasks": [
@@ -294,7 +295,7 @@
       },
       "status": "review_approved",
       "next": "Supervisor resumed BP5-SVC-014 for finalize after successful dispatch.",
-      "last_update": "2026-04-16T00:26:28Z",
+      "last_update": "2026-04-16T07:18:45Z",
       "review_notes_zh": [
         "已驗證 responder consultation path 會經由 root_session_id 回到 canonical requester session。",
         "p-risk-analyst persona 與 cp-risk-analyst consult policy 已補齊，相關 links 不再是 dead refs。",
@@ -729,7 +730,7 @@
       "title": "Review the returned feedback bundles for F-042 and PKT-001 governance review queue",
       "summary_zh": "把 F-042 與 PKT-001-governance-review-queue 已回來的 frontend feedback bundle 正式審核，轉成 closeout 或 follow-up queue。",
       "phase": "Phase 5: Full Blueprint Gap Closure",
-      "owner": "Qwen",
+      "owner": "Claude",
       "reviewer": "Codex",
       "depends_on": [],
       "artifacts": [
@@ -760,8 +761,8 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
       },
       "status": "blocked",
-      "next": "Both F-042 and PKT-001-governance-review-queue are blocked on mirror-only front-ai-trading-system checkout. No actual UI source tree available. Requires valid front-ai-trading-system checkout before UI implementation can proceed.",
-      "last_update": "2026-04-15T16:12:00Z",
+      "next": "Auto-reassigned BP5-LUV-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-04-16T07:18:31Z",
       "waiting_for": "Gemini"
     },
     {
@@ -1346,7 +1347,7 @@
       "phase": "Phase 5: Full Blueprint Gap Closure",
       "owner": "Qwen",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "BP5-SVC-009",
         "BP5-SVC-010"
@@ -1359,8 +1360,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "last_update": "2026-04-16T00:27:51Z",
+      "next": "Supervisor re-dispatched BP5-SVC-011-SIDECAR-ACCEPTANCE; task remains in progress.",
+      "last_update": "2026-04-16T07:19:06Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BP5-SVC-011",
@@ -1625,8 +1626,18 @@
       "from": "Codex",
       "to": "Qwen",
       "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-16T00:27:51Z"
+      "status": "done",
+      "created_at": "2026-04-16T00:27:51Z",
+      "resolved_at": "2026-04-16T07:18:51Z"
+    },
+    {
+      "task_id": "BP5-LUV-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned BP5-LUV-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-16T07:18:31Z",
+      "resolved_at": "2026-04-16T07:18:31Z"
     }
   ],
   "blockers": [
@@ -1648,9 +1659,9 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 5,
-      "active": 1,
-      "blocked": 0,
+      "total": 6,
+      "active": 2,
+      "blocked": 1,
       "done": 0,
       "review": 1,
       "review_approved": 1,
@@ -1675,9 +1686,9 @@
       "todo": 16
     },
     "Qwen": {
-      "total": 2,
+      "total": 1,
       "active": 1,
-      "blocked": 1,
+      "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
