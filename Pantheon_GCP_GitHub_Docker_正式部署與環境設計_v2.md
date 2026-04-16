@@ -1166,3 +1166,244 @@ Pantheon 的正式部署模型應該是：
 3. **paper 是 production-like 預演，不是普通 QA 環境**
 4. **canary 是 prod 內 stage，不是第五個 environment**
 5. **所有環境共享 code truth，不共享 runtime truth**
+
+---
+
+## 19. Cloud Build → Artifact Registry 實作參考（BP5-CICD-002）
+
+本節記錄 Stage 1 pipeline 的實作決策，作為 BP5-CICD-002 的正式交付依據。
+
+### 19.1 實作檔案
+
+| 檔案 | 用途 |
+|---|---|
+| `cloudbuild.yaml` | Cloud Build 建置與推送 config；由 GitHub Actions 提交 |
+| `.github/workflows/gcp-deploy.yml` | GitHub Actions 觸發器；負責 WIF 認證與 changed-path 偵測 |
+
+### 19.2 身份模型（無長期金鑰）
+
+```
+GitHub OIDC token
+  └─► GCP Workload Identity Federation
+        Pool:    pantheon-github-pool
+        Provider: pantheon-github-provider
+        Condition: attribute.repository == "ajoe734/pantheon"
+        └─► 短期 access token 給 pantheon-cloud-build SA
+              └─► gcloud builds submit → Cloud Build
+```
+
+GitHub runner 上不存放任何 GCP service account key JSON。
+短期 token 的有效期由 WIF 管理，隨工作流程結束而失效。
+
+### 19.3 GCP 單次設置步驟
+
+正式執行時，優先使用 repo 內的 idempotent helper：
+
+```bash
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+```
+
+若先做 dry-run，但目前 shell 無法用 `gcloud projects describe` 讀到 project number，請一併傳入：
+
+```bash
+bash scripts/gcp_nonprod_baseline.sh \
+  --project-id pantheon-shared \
+  --project-number 123456789012 \
+  --dry-run
+```
+
+它會一次完成：
+- required APIs 啟用
+- GitHub OIDC 用的 Workload Identity Pool / Provider
+- `pantheon-cloud-build` submitter service account
+- nonprod baseline runtime service accounts
+- `pantheon-dev-*` Secret Manager namespace 與 accessor IAM
+
+若需要人工審核或逐步操作，以下命令可作為對照版（同樣屬於 `BP5-GCP-001` 範疇）：
+
+```bash
+PROJECT_ID="pantheon-shared"
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+GITHUB_REPO="ajoe734/pantheon"
+POOL_ID="pantheon-github-pool"
+PROVIDER_ID="pantheon-github-provider"
+SA_EMAIL="pantheon-cloud-build@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# 建立 Workload Identity Pool
+gcloud iam workload-identity-pools create "${POOL_ID}" \
+  --project="${PROJECT_ID}" \
+  --location="global" \
+  --display-name="Pantheon GitHub Actions"
+
+# 建立 Pool Provider（GitHub OIDC）
+gcloud iam workload-identity-pools providers create-oidc "${PROVIDER_ID}" \
+  --project="${PROJECT_ID}" \
+  --location="global" \
+  --workload-identity-pool="${POOL_ID}" \
+  --display-name="Pantheon GitHub Provider" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="attribute.repository == \"${GITHUB_REPO}\"" \
+  --issuer-uri="https://token.actions.githubusercontent.com"
+
+# 建立 Cloud Build 專用 Service Account
+gcloud iam service-accounts create pantheon-cloud-build \
+  --project="${PROJECT_ID}" \
+  --display-name="Pantheon Cloud Build SA"
+
+# 授予 SA 建置與推送 Artifact Registry 的權限
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/cloudbuild.builds.editor"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/artifactregistry.writer"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/storage.objectAdmin"
+
+# 允許 WIF pool 模擬 SA（只允許此 repo）
+gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+  --project="${PROJECT_ID}" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${GITHUB_REPO}"
+
+# 取得 Provider 完整資源名稱，存入 GitHub Repository Variable
+WIF_PROVIDER=$(gcloud iam workload-identity-pools providers describe "${PROVIDER_ID}" \
+  --project="${PROJECT_ID}" \
+  --location="global" \
+  --workload-identity-pool="${POOL_ID}" \
+  --format="value(name)")
+echo "GCP_WIF_PROVIDER=${WIF_PROVIDER}"
+echo "GCP_SERVICE_ACCOUNT=${SA_EMAIL}"
+echo "GCP_PROJECT_ID=${PROJECT_ID}"
+echo "GCP_PROJECT_NUMBER=${PROJECT_NUMBER}"
+```
+
+在 GitHub → Settings → Variables → Repository variables 中新增：
+- `GCP_WIF_PROVIDER`
+- `GCP_SERVICE_ACCOUNT`
+- `GCP_PROJECT_ID`
+- `GCP_PROJECT_NUMBER`
+
+腳本執行完成後，還會另外建立三個 nonprod runtime identities，作為 deploy-time secret reader baseline：
+
+| Runtime lane | Service account | 用途 |
+|---|---|---|
+| Cloud Run control-plane | `pantheon-dev-control-plane@<PROJECT_ID>.iam.gserviceaccount.com` | BFF / router / governance API 這類 stateless API |
+| GKE Autopilot workers | `pantheon-dev-worker@<PROJECT_ID>.iam.gserviceaccount.com` | research / telemetry / async workers |
+| GKE execution workloads | `pantheon-dev-execution@<PROJECT_ID>.iam.gserviceaccount.com` | `runtime-manager` 與 execution-sensitive workloads |
+
+### 19.4 Image naming 與 tag 策略
+
+| Tag | 特性 | 說明 |
+|---|---|---|
+| `:<commit-sha>` | immutable | canonical artifact identity；永不覆寫 |
+| `:dev-candidate` | mutable | 指向 main 分支最新 dev build |
+| `:paper-candidate` | mutable | 指向通過 sandbox gate 的候選 |
+| `:paper-approved` | mutable | 指向 DeploymentPlan 核准後的 paper image |
+| `:prod-approved` | mutable | 指向 prod ApprovalDecision 核准後的 image |
+
+Image base path：`asia-east1-docker.pkg.dev/${PROJECT_ID}/pantheon/<service-id>`
+
+### 19.5 Changed-path gating
+
+`gcp-deploy.yml` 使用 `scripts/ci_stage0.py detect-changes` 偵測本次 push 影響哪些 build targets，並透過 `_SERVICES` substitution 傳給 `cloudbuild.yaml`。只有受影響的 services 才會被 build 和 push，節省 Cloud Build 用量。
+
+`global_changed=true` 時（matrix 檔案或 workflow 本身改變），自動 fallback 到 `_SERVICES=all` 做全量 rebuild。
+
+### 19.6 Secret Manager namespace baseline（nonprod）
+
+`BP5-GCP-001` 不只是建立 secret store，而是把 secret scope 明文化成環境真相。nonprod baseline 先使用 `dev` 前綴：
+
+| Secret ID | Reader identity | 用途 |
+|---|---|---|
+| `pantheon-dev-postgres-url` | control-plane / worker / execution | nonprod shared DB connection string |
+| `pantheon-dev-openclaw-api-token` | control-plane / worker | OpenClaw upstream API token |
+| `pantheon-dev-vendor-marketdata-token` | worker | market data / vendor connector token |
+| `pantheon-dev-webhook-signing-secret` | control-plane | webhook / callback verification |
+| `pantheon-dev-broker-api-key` | execution | paper broker credential |
+| `pantheon-dev-broker-api-secret` | execution | paper broker credential |
+
+規則：
+- secret 名稱必須帶環境前綴；`dev / paper / prod` 不共用同一個 secret container。
+- GitHub repository 不存 runtime secret value，也不代替 Secret Manager。
+- service account 權限以 secret-level IAM 綁定；不要把 `roles/secretmanager.secretAccessor` 廣發到整個 project。
+- script 只建立 secret containers；真正 secret value 由環境 operator 後續 `versions add` 寫入。
+
+### 19.7 Deploy-time secret flow（GitHub 不碰 runtime secret）
+
+正式 flow：
+
+1. GitHub Actions 透過 OIDC/WIF 取得短期 token，僅用於 `gcloud builds submit`
+2. Cloud Build 建 image 並推到 Artifact Registry
+3. deploy action 或 operator 在 Cloud Run / GKE deploy 時指定 runtime service account
+4. runtime platform 透過該 service account 向 Secret Manager 讀取對應 version
+
+Cloud Run example：
+
+```bash
+gcloud run deploy pantheon-dev-bff \
+  --project="pantheon-shared" \
+  --region="asia-east1" \
+  --service-account="pantheon-dev-control-plane@pantheon-shared.iam.gserviceaccount.com" \
+  --image="asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate" \
+  --set-secrets="DATABASE_URL=pantheon-dev-postgres-url:1,OPENCLAW_API_TOKEN=pantheon-dev-openclaw-api-token:1,WEBHOOK_SIGNING_SECRET=pantheon-dev-webhook-signing-secret:1"
+```
+
+GKE example：
+
+```bash
+kubectl create namespace pantheon-dev
+kubectl create serviceaccount runtime-manager -n pantheon-dev
+kubectl annotate serviceaccount runtime-manager -n pantheon-dev \
+  iam.gke.io/gcp-service-account="pantheon-dev-execution@pantheon-shared.iam.gserviceaccount.com"
+```
+
+重點是 deploy artifact 與 secret truth 分開：
+- GitHub / Cloud Build 決定「哪個 image digest」
+- Secret Manager + runtime identity 決定「哪個環境能讀哪些 secret」
+- paper / prod promotion 不能退化成把 GitHub secret 注入 runtime
+
+`_SERVICES` 中的每個 ID 必須與 `.github/pantheon-stage0-matrix.json` 中的 `id` 欄位 1:1 對應，`cloudbuild.yaml` 才能正確路由。下表列出已接線的 service 庫存：
+
+| Service ID | Dockerfile 路徑 | 可被 Stage 0 偵測 | Profile |
+|---|---|---|---|
+| `bff` | `services/control-plane/bff/Dockerfile` | ✓ | core-vm |
+| `router` | `services/control-plane/router/Dockerfile` | ✓ | core-vm |
+| `persona` | `services/control-plane/persona/Dockerfile` | ✓ | core-vm |
+| `governance-api` | `services/governance/Dockerfile` | ✓ | core-vm |
+| `telemetry-ingest` | `services/telemetry/Dockerfile` | ✓ | core-vm |
+| `runtime-manager` | `services/runtime-manager/Dockerfile` | ✓ | core-vm |
+| `mlflow-server` | `services/research/mlflow/Dockerfile` | ✓ | research |
+| `dspy-worker` | `services/learning/dspy/Dockerfile` | ✓ | research |
+| `imitation-worker` | `services/learning/imitation/Dockerfile` | ✓ | research |
+| `research-base` | `services/research/Dockerfile` | ✓ | research |
+| `research-dspy` | `services/research/dspy/Dockerfile` | ✓ | research |
+| `research-finrl` | `services/research/finrl/Dockerfile` | ✓ | research |
+| `research-imitation` | `services/research/imitation/Dockerfile` | ✓ | research |
+| `research-qlib` | `services/research/qlib/Dockerfile` | ✓ | research |
+| `lean` | `lean/Dockerfile` | ✓ | execution-lab |
+| `incidents` | `services/incidents/Dockerfile` | — (manual-only) | — |
+| `postmortems` | `services/postmortems/Dockerfile` | — (manual-only) | — |
+
+Manual-only entries（`incidents`、`postmortems`）目前在 Stage 0 matrix 中沒有 changed-path 定義，只能透過 workflow_dispatch 手動傳入 `_SERVICES=incidents` 觸發。如需接入自動偵測，應在 `.github/pantheon-stage0-matrix.json` 補充對應的 target 定義。
+
+### 19.6 Build provenance
+
+Cloud Build 在每次 image push 後自動透過 Container Analysis API 記錄 build provenance，包括：
+- Build ID
+- Triggering commit SHA
+- Builder image digest
+- Source repo / branch
+- Build config 路徑
+
+Provenance 可透過 `gcloud artifacts docker images describe <image>@<digest> --show-provenance` 查詢。
+
+### 19.7 接受驗收條件回應
+
+| 驗收條件 | 實作依據 |
+|---|---|
+| GitHub CI、Cloud Build、Artifact Registry 形成一條 repo-to-build-to-image path | `gcp-deploy.yml` 觸發 → `gcloud builds submit` → `cloudbuild.yaml` push 到 AR |
+| Publish flow 不依賴 GitHub 內嵌的長期 GCP key | WIF OIDC 流程取代 `credentials_json: ${{ secrets.GCP_SA_KEY }}` |

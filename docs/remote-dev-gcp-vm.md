@@ -181,6 +181,71 @@ cd ~/code/pantheon
 docker compose down --remove-orphans
 ```
 
+## Nonprod GCP Baseline Bootstrap
+
+`BP5-GCP-001` adds a repo-local bootstrap helper for the first real GCP nonprod foundation:
+
+```bash
+cd ~/code/pantheon
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared --dry-run
+```
+
+Then execute it for real once the target project is confirmed:
+
+```bash
+cd ~/code/pantheon
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+```
+
+What it establishes:
+
+- GitHub Actions OIDC -> GCP Workload Identity Federation
+- `pantheon-cloud-build` submitter service account for `.github/workflows/gcp-deploy.yml`
+- baseline runtime service accounts for Cloud Run, GKE Autopilot, and GKE execution workloads
+- `pantheon-dev-*` Secret Manager namespace plus secret-level IAM bindings
+
+Recommended operator flow on the VM:
+
+```bash
+gcloud auth login
+gcloud config set project pantheon-shared
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared --dry-run
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+```
+
+If the dry run cannot read the project number from `gcloud projects describe`, pass it explicitly:
+
+```bash
+bash scripts/gcp_nonprod_baseline.sh \
+  --project-id pantheon-shared \
+  --project-number 123456789012 \
+  --dry-run
+```
+
+After the bootstrap, add real secret versions explicitly:
+
+```bash
+printf '%s' 'REPLACE_ME' | gcloud secrets versions add pantheon-dev-postgres-url \
+  --project='pantheon-shared' --data-file=-
+```
+
+Then wire runtime identities during deploy rather than in GitHub secrets:
+
+```bash
+gcloud run deploy pantheon-dev-bff \
+  --project='pantheon-shared' \
+  --region='asia-east1' \
+  --service-account='pantheon-dev-control-plane@pantheon-shared.iam.gserviceaccount.com' \
+  --image='asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate' \
+  --set-secrets='DATABASE_URL=pantheon-dev-postgres-url:1'
+```
+
+This keeps the boundary explicit:
+
+- GitHub only submits builds with short-lived WIF credentials
+- Secret Manager remains the environment truth for runtime credentials
+- Cloud Run / GKE service accounts, not local shell lore, define who can read which secret
+
 ## Dashboard Via `/dashboard/`
 
 If you want the dashboard on the standard web port instead of exposing `4173`, install the nginx reverse proxy from the repo:
