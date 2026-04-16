@@ -48,9 +48,9 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 
 ### Surface scope
 
-- **Request composer**: form for creating a new consultation request. Fields anchored to the L3 `ConsultRequest` design intent (`Pantheon_API_Service_Contract_設計版.md §5.3.2`, `Pantheon_資料表_Schema_設計版.md §6.9`): `from_persona` (initiating persona identity, maps to `from_persona_id` in the schema), `target_type` (`persona` | `committee` | `red_team`), `target_ref` (target persona or committee identity), `task` (question or problem description), `context_refs` (array of typed context references: `{type, id}`), and `priority` (`low | normal | high | critical`). **Net-new BFF contract addition**: `consultation_type` (`pre_deployment`, `risk_review`, `macro_regime_shift`, `incident_response`, `policy_change`, `general`) is promoted from `SessionPersona.metadata.consultation.consultation_type` in `PERSONA_RUNTIME_MODEL.md` and is not present in the current L3 API shape; it is explicitly called out here as a new field required for BFF routing and workbench filtering, and must be documented as a deliberate contract extension. The submission target is `POST /api/v1/consult/requests`.
+- **Request composer**: form for creating a new consultation request. Fields anchored to the L3 `ConsultRequest` design intent (`Pantheon_API_Service_Contract_設計版.md §5.3.2`, `Pantheon_資料表_Schema_設計版.md §6.9`): `from_persona_id` (initiating persona identity), `target_type` (`persona` | `committee` | `red_team`), `target_ref` (target persona or committee identity), `task` (question or problem description), `context_refs` (array of typed context references: `{type, id}`), and `priority` (`low | normal | high | critical`). **Net-new BFF contract addition**: `consultation_type` (`pre_deployment`, `risk_review`, `macro_regime_shift`, `incident_response`, `policy_change`, `general`) is promoted from `SessionPersona.metadata.consultation.consultation_type` in `PERSONA_RUNTIME_MODEL.md` and is not present in the current L3 API shape; it is explicitly called out here as a new field required for BFF routing and workbench filtering, and must be documented as a deliberate contract extension. The submission target is `POST /api/v1/consult/requests`.
 - **Target selector**: the target persona or committee is selected from a backend-provided list — do not hardcode persona or committee identities client-side. Selection determines which `ConsultPolicy` rules apply.
-- **Request detail**: full view of a submitted `ConsultRequest` showing `request_id`, `status` (`created | running | completed | canceled`), `from_persona_id`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`, `consultation_type` (net-new BFF addition — see request composer note), `created_at`, `completed_at`, linked `session_id` (once the Persona Plane has created the session), and `allowedActions` (cancel).
+- **Request detail**: full view of a submitted `ConsultRequest` showing `request_id`, `status` (`created | running | completed | canceled`), `from_persona_id`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`, `consultation_type` (net-new BFF addition — see request composer note), `created_at`, `completed_at`, `linked_session_id` (once the Persona Plane has created the session), and `allowedActions` (cancel).
 - **Request-to-session status**: a status indicator showing whether the Persona Plane has created a `SessionPersona` for this request. The indicator reads from `linked_session_id` — the BFF does not infer session creation from elapsed time.
 - **Lifecycle state machine**: `created → running → completed | canceled`. Each state is a backend-shaped field on the `ConsultRequest` object — do not derive lifecycle state client-side.
 - **Request list**: paginated list of all consultation requests filterable by `status`, `target_type`, and `consultation_type`. Each row shows `request_id`, `status`, `target_type`, `consultation_type`, `created_at`, and a link to the request detail view.
@@ -60,7 +60,7 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 
 | Route | Status | Notes |
 |---|---|---|
-| `POST /api/v1/consult/requests` | **missing** | create route; request body anchored to L3 design intent: `from_persona`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`; net-new addition: `consultation_type` (from `PERSONA_RUNTIME_MODEL.md` session metadata — explicit BFF contract extension); must return `request_id` and initial `status: created` |
+| `POST /api/v1/consult/requests` | **missing** | create route; request body anchored to L3 design intent: `from_persona_id`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`; net-new addition: `consultation_type` (from `PERSONA_RUNTIME_MODEL.md` session metadata — explicit BFF contract extension); must return `request_id` and initial `status: created` |
 | `GET /api/v1/consult/requests` | **missing** | list route; must support `status`, `target_type`, `consultation_type`, `page_token`, `page_size` query params; must include `meta.surfaces.consult_request_list` |
 | `GET /api/v1/consult/requests/:request_id` | **missing** | detail route; must expose `linked_session_id` (nullable until Persona Plane creates the session), `allowedActions.canCancel`, and `meta.surfaces.consult_request_detail` |
 | `POST /api/v1/consult/requests/:request_id/cancel` | **missing** | cancel command; must be backed by `allowedActions.canCancel`; must not be invocable when `status` is already `completed` |
@@ -142,12 +142,12 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 
 ### Surface scope
 
-- **Findings summary**: top-level view of a published red-team memo. Shows `memo_id`, `request_id`, `memo_type` (`red_team_findings`), `status` (`draft` | `published`, anchored to L3 schema `§6.10`), `author_ref`, `linked_request_id`, and a findings count badge. Note: `archived` is **not** present in the current L3 design intent; if `archived` lifecycle is needed it must be introduced as an explicit net-new contract decision and cannot be assumed as promoted L3 truth.
-- **Recommendation list**: paginated list of recommendations from the red-team memo. Anchored to the L3 design intent (`recommendations_json`), the list is a plain string array in the current L3 shape. **Proposed net-new contract extension** (not yet present in L3): per-recommendation severity tiers (`critical`, `high`, `medium`, `low`) and recommendation workflow status (`open`, `addressed`, `deferred`) are reasonable future requirements but must be introduced as explicit contract additions, not described as promoted L3 truth. Until those fields are settled as canonical BFF contract, the recommendation display uses the L3-anchored plain recommendation list.
+- **Findings summary**: top-level view of a published red-team memo. Shows `memo_id`, `memo_type` (`red_team_findings`), `status` (`draft` | `published`, anchored to L3 schema `§6.10`), `author_ref`, `linked_request_id` (the originating `ConsultRequest`; corresponds to L3 FK field `request_id`), and a findings count badge. Note: `archived` is **not** present in the current L3 design intent; if `archived` lifecycle is needed it must be introduced as an explicit net-new contract decision and cannot be assumed as promoted L3 truth.
+- **Recommendation list**: paginated list of recommendations from the red-team memo. Anchored to the L3 design intent (`recommendations_json`), the list is a plain string array in the current L3 shape. The recommendation display uses the L3-anchored plain recommendation list; per-recommendation severity tiers or workflow-status fields are not part of the current CW-04 scope and must not be added without an explicit net-new contract decision.
 - **Status indicator**: reflects the `status` field from the BFF (L3 field name). When `draft`, show a draft watermark. When `published`, show publish date.
 - **Evidence drawer**: expandable drawer for each recommendation showing the linked evidence objects (telemetry, lineage, consult session, incident case). Evidence links are BFF-resolved — do not construct evidence URLs client-side.
 - **Downstream review handoff**: when the memo is published, the surface shows a downstream handoff CTA if `allowedActions.canInitiateGovernanceReview` is `true`. This navigates the operator to the Governance Workbench review queue with the memo pre-filtered. The CTA is hidden unless the `allowedActions` signal is present and truthy.
-- **Memo list**: paginated list of all red-team memos filterable by `status`. Each row shows `memo_id`, `status`, `linked_request_id`, `author_ref`, and a recommendation count. **Net-new BFF contract additions** (not in L3): filtering by `consultation_type` and per-recommendation severity summary counts require explicit contract extension decisions before they may be added to this surface.
+- **Memo list**: paginated list of all red-team memos filterable by `status`. Each row shows `memo_id`, `status`, `linked_request_id`, `author_ref`, and a recommendation count.
 - **Degradation**: when `meta.surfaces.redteam_memo` is `degraded`, show the last-known memo state with a staleness banner. When `unavailable`, show the canonical unavailable banner with no memo content.
 
 ### Backend gaps
@@ -155,14 +155,14 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 | Route | Status | Notes |
 |---|---|---|
 | `GET /api/v1/consult/memos` | **missing** | red-team memo list route; must support `status` filter (`draft | published`), `page_token`, `page_size`; must include `meta.surfaces.redteam_memo`; `consultation_type` filter and severity-tier summary are net-new additions and must not be treated as promoted L3 truth |
-| `GET /api/v1/consult/memos/:memo_id` | **missing** | memo detail route; L3-anchored fields: `memo_id`, `request_id`, `memo_type`, `author_ref`, `summary`, `recommendations` (plain list per L3 `recommendations_json`), `evidence_refs`, `status`; must expose `allowedActions.canInitiateGovernanceReview`, `linked_request_id`, `linked_session_id`, and `meta.surfaces.redteam_memo` |
+| `GET /api/v1/consult/memos/:memo_id` | **missing** | memo detail route; L3-anchored fields: `memo_id`, `linked_request_id` (L3: `request_id`), `memo_type`, `author_ref`, `summary`, `recommendations` (plain list per L3 `recommendations_json`), `evidence_refs`, `status`; must expose `allowedActions.canInitiateGovernanceReview`, `linked_session_id`, and `meta.surfaces.redteam_memo` |
 | `ConsultMemo` read model | **missing** | the memo lifecycle (`draft → published`, anchored to L3 schema `§6.10`), the L3-defined recommendation and evidence-ref shapes, and the evidence-link contract must be promoted from L3 design intent to canonical BFF truth; `archived` state and per-recommendation severity or workflow status are **not** in the current L3 shape and must be introduced as explicit net-new contract decisions before appearing in BFF truth |
 | Red-team session-to-memo mapping | **missing** | the relationship between a `red_team` session type, the originating `ConsultRequest`, and the published `ConsultMemo` must be defined as an explicit BFF contract — the UI cannot derive it from raw session data |
 | `allowedActions.canInitiateGovernanceReview` signal | **missing** | backend-shaped authority signal that enables the downstream review handoff CTA; must be falsy unless the memo is published and governance routing is available |
 
 ### Packetization prerequisite
 
-The `ConsultMemo` read model (published memo lifecycle, finding severity taxonomy, recommendation shape, and evidence-link contract), the red-team session-to-memo mapping, and the `allowedActions.canInitiateGovernanceReview` authority signal must all be defined as canonical BFF truth before a red-team memo screen can be packet-defined. Depends on `CW-01` request identity and `CW-02` transcript or session evidence semantics.
+The `ConsultMemo` read model (published memo lifecycle, recommendation shape, and evidence-link contract), the red-team session-to-memo mapping, and the `allowedActions.canInitiateGovernanceReview` authority signal must all be defined as canonical BFF truth before a red-team memo screen can be packet-defined. Per-recommendation severity taxonomy is a future contract extension and is not a prerequisite for the current CW-04 packetization. Depends on `CW-01` request identity and `CW-02` transcript or session evidence semantics.
 
 ### Lovable readiness gate
 
@@ -176,7 +176,7 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `POST /api/v1/consult/requests` | CW-01 | missing write route | request creation form and lifecycle foundation; body fields anchored to L3: `from_persona`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`; `consultation_type` is a net-new BFF contract extension |
+| `POST /api/v1/consult/requests` | CW-01 | missing write route | request creation form and lifecycle foundation; body fields anchored to L3: `from_persona_id`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`; `consultation_type` is a net-new BFF contract extension |
 | `GET /api/v1/consult/requests` | CW-01, CW-02, CW-03, CW-04 | missing read route | request list and cross-module request identity |
 | `GET /api/v1/consult/requests/:request_id` | CW-01 | missing read route | request detail, `linked_session_id`, and `allowedActions.canCancel` |
 | `POST /api/v1/consult/requests/:request_id/cancel` | CW-01 | missing write route | cancel command; gated by `allowedActions.canCancel` |
@@ -192,7 +192,7 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | Synthesis summary shape | CW-03 | missing object contract | `outcome`, `rationale_ref`, `evidence_refs[]`, `dissent_refs[]`; client must not derive from participant signals |
 | `GET /api/v1/consult/memos` | CW-04 | missing read route | red-team memo list and filter surface |
 | `GET /api/v1/consult/memos/:memo_id` | CW-04 | missing read route | memo detail, recommendations, `allowedActions.canInitiateGovernanceReview` |
-| `ConsultMemo` read model | CW-04 | missing object contract | L3-anchored lifecycle: `draft → published` (per L3 schema §6.10); `archived` state is **not** in the current L3 design intent — if introduced it must be an explicit net-new contract decision, not assumed as promoted L3 truth; recommendation shape (plain list per L3 `recommendations_json`) and evidence-link contract must be promoted from L3 design intent to canonical BFF truth; per-recommendation severity tiers and workflow status are **not** in L3 and must be introduced as explicit contract additions before appearing in BFF truth |
+| `ConsultMemo` read model | CW-04 | missing object contract | L3-anchored lifecycle: `draft → published` (per L3 schema §6.10); `archived` state is **not** in the current L3 design intent — if introduced it must be an explicit net-new contract decision, not assumed as promoted L3 truth; recommendation shape (plain list per L3 `recommendations_json`) and evidence-link contract must be promoted from L3 design intent to canonical BFF truth |
 | Red-team session-to-memo mapping | CW-04 | missing contract | explicit relationship between `red_team` session, originating `ConsultRequest`, and published `ConsultMemo` |
 | `allowedActions.canInitiateGovernanceReview` | CW-04 | missing authority signal | downstream review handoff CTA must be hidden unless this backend-shaped signal is present and truthy |
 
@@ -249,7 +249,7 @@ The UI must never:
 
 This packet family adds two write routes at the BFF layer:
 
-- `POST /api/v1/consult/requests` — request creation; body fields anchored to L3 with `consultation_type` as a net-new BFF contract extension.
+- `POST /api/v1/consult/requests` — request creation; body fields anchored to L3 (`from_persona_id`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`) with `consultation_type` as a net-new BFF contract extension.
 - `POST /api/v1/consult/requests/:request_id/cancel` — request cancellation; must be gated by `allowedActions.canCancel`; must not be invocable when `status` is already `completed`.
 
 Session creation, outcome recording, and evidence attachment remain Persona Plane responsibility.
@@ -266,7 +266,7 @@ All four modules must inherit the canonical degradation banner from `PKT-005`. T
 - `CW-01`: request-write path and request lifecycle (not covered by CS-**)
 - `CW-02`: ordered transcript surface (CS-02 detail does not provide event ordering or replay)
 - `CW-03`: committee board projection (CS-03 participants does not provide quorum, synthesis, or sponsor state)
-- `CW-04`: red-team memo read model (CS-04 outcome does not provide memo lifecycle, severity taxonomy, or downstream handoff)
+- `CW-04`: red-team memo read model (CS-04 outcome does not provide memo lifecycle, recommendation list, or downstream handoff)
 
 ---
 

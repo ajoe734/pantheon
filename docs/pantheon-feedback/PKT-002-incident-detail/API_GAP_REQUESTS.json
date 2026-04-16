@@ -1,0 +1,6 @@
+{
+  "feature_id": "PKT-002-incident-detail",
+  "status": "no_open_gaps",
+  "note": "All eleven BFF gaps documented in .coordination/requests/PKT-002-incident-detail-bff-gap.yaml were resolved by BP5-SVC-011 and BP5-SVC-015. No new contract shape gaps were found during this implementation pass.",
+  "requests": []
+}
