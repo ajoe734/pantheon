@@ -3,11 +3,11 @@
 **Task:** BP5-SVC-011 — Realize incident and postmortem evidence services  
 **Sidecar:** BP5-SVC-011-SIDECAR-ACCEPTANCE  
 **Owner (sidecar):** Claude  
-**Reviewer (sidecar):** Codex  
+**Reviewer (sidecar):** Codex2  
 **Parent owner:** Claude  
-**Parent reviewer:** Codex  
+**Parent reviewer:** Codex2  
 **Date prepared:** 2026-04-16  
-**Status:** reviewer-validated
+**Status:** owner-finalized
 
 ---
 
@@ -185,7 +185,7 @@ These are intentional downstream tasks, not missing work in BP5-SVC-011 itself.
   - All acceptance criteria met
   - All tests passing
   - Evidence linkage to BP5-SVC-009 (telemetry) and BP5-SVC-010 (lineage) confirmed
-- If Codex (reviewer) agrees, the parent owner (Claude) may transition BP5-SVC-011 to `done`.
+- If Codex2 (reviewer) agrees, the parent owner (Claude) may transition BP5-SVC-011 to `done`.
 - This sidecar (BP5-SVC-011-SIDECAR-ACCEPTANCE) should follow its own lifecycle:
   `review → review_approved → done` per collaboration guide.
 
@@ -207,7 +207,7 @@ The realized services align with these L1 canonical documents:
 
 ## 9. Reviewer Validation Addendum
 
-- Reviewer: Codex
+- Reviewer: Codex2
 - Review date: 2026-04-16
 - Verdict: packet content accepted after correcting stale test-count claims
 - Approval basis:
