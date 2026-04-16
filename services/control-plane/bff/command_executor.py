@@ -22,6 +22,10 @@ log = logging.getLogger(__name__)
 _INTERNAL_API_BASE = os.getenv(
     "PANTHEON_INTERNAL_API_URL", "http://localhost:5001"
 )
+_GOVERNANCE_API_BASE = os.getenv(
+    "PANTHEON_GOVERNANCE_API_URL",
+    os.getenv("PANTHEON_EVOLUTION_API_URL", _INTERNAL_API_BASE),
+)
 _REQUEST_TIMEOUT = int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))
 
 
@@ -30,8 +34,47 @@ def _internal_url(path: str) -> str:
     return f"{base}{path}"
 
 
+def _governance_url(path: str) -> str:
+    base = _GOVERNANCE_API_BASE.rstrip("/")
+    return f"{base}{path}"
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _actor_context(
+    params: Dict[str, Any],
+    auth_token: Optional[str] = None,
+) -> tuple[str, str]:
+    """Resolve actor_id/actor_role for governance-owned evolution commands."""
+    token_actor_id: Optional[str] = None
+    token_roles: list[str] = []
+    if auth_token:
+        token_parts = auth_token.split(":")
+        if token_parts:
+            raw_actor_id = token_parts[0].strip()
+            token_actor_id = raw_actor_id or None
+        if len(token_parts) > 1:
+            token_roles = [role.strip() for role in token_parts[1].split(",") if role.strip()]
+
+    actor_id = (
+        params.get("approved_by_id")
+        or params.get("actor_id")
+        or token_actor_id
+    )
+    actor_role = params.get("approved_by_role") or params.get("actor_role")
+    if not actor_role:
+        for preferred_role in ("admin", "approver", "reviewer", "operator"):
+            if preferred_role in token_roles:
+                actor_role = preferred_role
+                break
+
+    if not actor_id:
+        raise ValueError("Evolution command requires actor_id or an authenticated operator token.")
+    if not actor_role:
+        raise ValueError("Evolution command requires actor_role/approved_by_role or a role-bearing operator token.")
+    return str(actor_id), str(actor_role)
 
 
 def _post_json(
@@ -158,14 +201,39 @@ def _execute_approve_evolution_decision(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """ApproveEvolutionDecision: internal API not yet defined; record decision locally."""
+    """Dispatch ApproveEvolutionDecision to the governance-owned evolution API."""
+    decision_id = str(params.get("evolution_decision_id") or "").strip()
+    approval_action = str(params.get("approval_action") or "").strip().lower()
+    if not decision_id:
+        raise ValueError("ApproveEvolutionDecision requires evolution_decision_id.")
+    if approval_action not in {"approve", "reject"}:
+        raise ValueError("ApproveEvolutionDecision requires approval_action=approve|reject.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+    }
+    approval_decision_id = params.get("approval_decision_id")
+    if approval_decision_id:
+        payload["approval_decision_id"] = approval_decision_id
+    note = (
+        params.get("approval_rationale")
+        or params.get("rationale")
+        or params.get("note")
+    )
+    if note:
+        payload["note"] = note
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/{approval_action}")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     return {
-        "evolution_decision_id": params.get("evolution_decision_id"),
-        "approval_action": params.get("approval_action"),
         "command_id": command_id,
-        "approved_by_role": params.get("approved_by_role"),
-        "rationale": params.get("rationale", ""),
-        "timestamp": _utc_now(),
+        "evolution_decision_id": body.get("decision_id", decision_id),
+        "approval_action": approval_action,
+        "decision_state": body.get("decision_state"),
+        "approval_decision_id": body.get("approval_decision_id"),
+        "risk_level": body.get("risk_level"),
     }
 
 
@@ -173,13 +241,43 @@ def _execute_evolution_action(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """ExecuteEvolutionAction: internal API not yet defined; record action locally."""
+    """Dispatch ExecuteEvolutionAction to the governance-owned evolution API."""
+    decision_id = str(params.get("evolution_decision_id") or "").strip()
+    if not decision_id:
+        raise ValueError("ExecuteEvolutionAction requires evolution_decision_id.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+    }
+    for optional_key in (
+        "has_active_runtime",
+        "active_binding_id",
+        "freeze_mode",
+        "rollback_action_type",
+        "fallback_artifact_id",
+        "fallback_artifact_version",
+        "force_stage_freeze",
+    ):
+        if optional_key in params:
+            payload[optional_key] = params.get(optional_key)
+    note = params.get("note") or params.get("rationale")
+    if note:
+        payload["note"] = note
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    execution_result = body.get("execution_result") or {}
     return {
-        "evolution_action_id": params.get("evolution_action_id", f"ea-{command_id[:8]}"),
-        "action_type": params.get("action_type"),
         "command_id": command_id,
-        "status": "dispatched",
-        "timestamp": _utc_now(),
+        "evolution_decision_id": body.get("decision_id", decision_id),
+        "action_type": body.get("action_type") or params.get("action_type"),
+        "decision_state": body.get("decision_state"),
+        "execution_result": execution_result,
+        "execution_ref_id": execution_result.get("execution_ref_id"),
+        "cooldown_ends_at": body.get("cooldown_ends_at"),
+        "observation_window_ends_at": body.get("observation_window_ends_at"),
     }
 
 
@@ -238,6 +336,17 @@ def execute_command_with_status(
         result["execution_started_at"] = started_at
         result["execution_completed_at"] = completed_at
         return CommandStatus.EXECUTED, result, None
+    except urllib.error.HTTPError as exc:
+        error = {
+            "code": "DOWNSTREAM_ERROR",
+            "message": f"Command backend returned {exc.code} for {command_id}",
+            "started_at": started_at,
+            "failed_at": _utc_now(),
+            "downstream_status": exc.code,
+            "suggestion": "Check internal/governance API health and retry if appropriate",
+        }
+        log.error("Command %s HTTP error: %s", command_id, error["message"])
+        return CommandStatus.FAILED, None, error
     except urllib.error.URLError as exc:
         # Covers connection failures, timeouts, SSL errors
         reason = str(getattr(exc, "reason", exc))
@@ -246,24 +355,13 @@ def execute_command_with_status(
         status = CommandStatus.TIMEOUT if is_timeout else CommandStatus.FAILED
         error = {
             "code": code,
-            "message": f"Internal API unreachable for {command_id}: {reason}",
+            "message": f"Command backend unreachable for {command_id}: {reason}",
             "started_at": started_at,
             "failed_at": _utc_now(),
-            "suggestion": "Check internal API availability and network connectivity",
+            "suggestion": "Check internal/governance API availability and network connectivity",
         }
         log.error("Command %s URL error: %s", command_id, error["message"])
         return status, None, error
-    except urllib.error.HTTPError as exc:
-        error = {
-            "code": "DOWNSTREAM_ERROR",
-            "message": f"Internal API returned {exc.code} for {command_id}",
-            "started_at": started_at,
-            "failed_at": _utc_now(),
-            "downstream_status": exc.code,
-            "suggestion": "Check internal API health and retry if appropriate",
-        }
-        log.error("Command %s HTTP error: %s", command_id, error["message"])
-        return CommandStatus.FAILED, None, error
     except TimeoutError:
         error = {
             "code": "COMMAND_TIMEOUT",

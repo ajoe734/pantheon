@@ -172,6 +172,136 @@ class CanonicalSnapshotAdapter:
         return True, None
 
 
+class ServiceBackedReadAdapter:
+    """Best-effort adapter over backend-owned JSON stores produced by services."""
+
+    _DATASETS = {
+        "personas": {
+            "env": "PANTHEON_BFF_PERSONA_REGISTRY_STORE",
+            "dirs": ("PANTHEON_PERSONA_DATA_DIR",),
+            "filenames": ("personas.json",),
+            "keys": ["persona_id", "id"],
+        },
+        "sessions": {
+            "env": "PANTHEON_BFF_PERSONA_SESSION_STORE",
+            "dirs": ("PANTHEON_PERSONA_DATA_DIR",),
+            "filenames": ("sessions.json",),
+            "keys": ["session_id", "id"],
+        },
+        "capability_snapshots": {
+            "env": "PANTHEON_BFF_CAPABILITY_SNAPSHOT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["snapshot_id", "id"],
+        },
+        "teaching_sessions": {
+            "env": "PANTHEON_BFF_TEACHING_SESSION_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["session_id", "id"],
+        },
+        "consultation_sessions": {
+            "env": "PANTHEON_BFF_CONSULTATION_SESSION_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["session_id", "id"],
+        },
+        "consult_policies": {
+            "env": "PANTHEON_BFF_CONSULT_POLICY_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["persona_id", "id"],
+        },
+        "incidents": {
+            "env": "PANTHEON_BFF_INCIDENT_STORE",
+            "dirs": ("INCIDENTS_DATA_DIR", "POSTMORTEMS_DATA_DIR"),
+            "filenames": ("incidents.json",),
+            "keys": ["incident_id", "id"],
+            "nested_key": "incidents",
+        },
+        "postmortems": {
+            "env": "PANTHEON_BFF_POSTMORTEM_STORE",
+            "dirs": ("POSTMORTEMS_DATA_DIR", "INCIDENTS_DATA_DIR"),
+            "filenames": ("incidents.json",),
+            "keys": ["postmortem_id", "id"],
+            "nested_key": "postmortems",
+        },
+        "evolution_decisions": {
+            "env": "PANTHEON_BFF_EVOLUTION_DECISION_STORE",
+            "dirs": ("EVOLUTION_DATA_DIR",),
+            "filenames": ("decisions.json",),
+            "keys": ["decision_id", "id"],
+        },
+        "telemetry_summaries": {
+            "env": "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["runtime_id", "id"],
+        },
+        "telemetry_performance": {
+            "env": "PANTHEON_BFF_TELEMETRY_PERFORMANCE_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["artifact_id", "id"],
+        },
+        "lineage_edges": {
+            "env": "PANTHEON_BFF_LINEAGE_EDGE_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["id"],
+        },
+    }
+
+    def __init__(self) -> None:
+        self._cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._cache_meta: Dict[str, tuple[str, int]] = {}
+
+    def _resolve_path(self, dataset: str) -> Optional[Path]:
+        spec = self._DATASETS[dataset]
+        explicit = os.getenv(spec["env"], "").strip()
+        if explicit:
+            return Path(explicit)
+        candidates: List[Path] = []
+        for dir_env in spec["dirs"]:
+            base = os.getenv(dir_env, "").strip()
+            if not base:
+                continue
+            for filename in spec["filenames"]:
+                candidates.append(Path(base) / filename)
+        return _first_existing(candidates)
+
+    def _load_dataset(self, dataset: str) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        path = self._resolve_path(dataset)
+        if path is None or not path.exists():
+            return False, {}
+
+        stat = path.stat().st_mtime_ns
+        cache_key = str(path)
+        if self._cache_meta.get(dataset) == (cache_key, stat):
+            return True, self._cache.get(dataset, {})
+
+        text = path.read_text(encoding="utf-8").strip()
+        payload = json.loads(text) if text else {}
+        nested_key = self._DATASETS[dataset].get("nested_key")
+        if nested_key and isinstance(payload, dict):
+            payload = payload.get(str(nested_key), {})
+        normalized = _normalize_records(payload, self._DATASETS[dataset]["keys"])
+        self._cache[dataset] = normalized
+        self._cache_meta[dataset] = (cache_key, stat)
+        return True, normalized
+
+    def list_records(self, dataset: str) -> tuple[bool, List[Dict[str, Any]]]:
+        available, records = self._load_dataset(dataset)
+        return available, list(records.values())
+
+    def record(self, dataset: str, record_id: Optional[str]) -> tuple[bool, Optional[Dict[str, Any]]]:
+        if not record_id:
+            available, _ = self._load_dataset(dataset)
+            return available, None
+        available, records = self._load_dataset(dataset)
+        return available, records.get(str(record_id))
+
+
 def _default_read_data() -> Dict[str, Any]:
     return {
         "deployment_plans": {
@@ -670,10 +800,37 @@ def _default_read_data() -> Dict[str, Any]:
 
 
 class ReadSurfaceStore:
+    _LOCAL_DATA_KEYS = {
+        "deployment_plans": "deployment_plans",
+        "approval_decisions": "approval_decisions",
+        "capital_pools": "capital_pools",
+        "persona_bindings": "bindings",
+        "runtime_bindings": "runtime_bindings",
+        "personas": "personas",
+        "sessions": "sessions",
+        "capability_snapshots": "capability_snapshots",
+        "teaching_sessions": "teaching_sessions",
+        "consultation_sessions": "consultation_sessions",
+        "consult_policies": "consult_policies",
+        "incidents": "incidents",
+        "postmortems": "postmortems",
+        "evolution_decisions": "evolution_decisions",
+        "telemetry_summaries": "telemetry_summaries",
+        "telemetry_performance": "telemetry_performance",
+        "lineage_edges": "lineage_edges",
+        "kill_switch": "kill_switch",
+        "rollbacks": "rollbacks",
+        "rollbacks_by_incident": "rollbacks_by_incident",
+        "all_rollbacks": "all_rollbacks",
+        "latest_runs": "latest_runs",
+        "review_summaries": "review_summaries",
+    }
+
     def __init__(self, storage_path: str) -> None:
         self._path = Path(storage_path)
         self._data: Dict[str, Any] = {}
         self._canonical = CanonicalSnapshotAdapter()
+        self._service = ServiceBackedReadAdapter()
         self._load_or_seed()
 
     def _load_or_seed(self) -> None:
@@ -688,6 +845,24 @@ class ReadSurfaceStore:
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(self._data, indent=2, ensure_ascii=True))
+
+    def _local_dataset(self, dataset: str) -> Any:
+        key = self._LOCAL_DATA_KEYS.get(dataset, dataset)
+        return self._data.get(key)
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset in CanonicalSnapshotAdapter._DATASETS:
+            available, _ = self._canonical.list_records(dataset)
+            if available:
+                return "canonical"
+        if dataset in ServiceBackedReadAdapter._DATASETS:
+            available, _ = self._service.list_records(dataset)
+            if available:
+                return "service_store"
+        local_payload = self._local_dataset(dataset)
+        if local_payload not in (None, "", [], {}):
+            return "local_snapshot"
+        return "missing"
 
     @staticmethod
     def _project_canonical_deployment_plan(
@@ -765,6 +940,63 @@ class ReadSurfaceStore:
             "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
         }
 
+    @staticmethod
+    def _project_service_persona(raw: Dict[str, Any]) -> Dict[str, Any]:
+        persona_id = raw.get("persona_id") or raw.get("id")
+        return {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": raw.get("name"),
+            "mandate": raw.get("mandate"),
+            "lifecycle_state": raw.get("lifecycle_state"),
+            "created_at": raw.get("created_at"),
+            "strategy_family": raw.get("strategy_family"),
+            "status": raw.get("status"),
+            "updated_at": raw.get("updated_at"),
+            "metadata": raw.get("metadata", {}),
+        }
+
+    @staticmethod
+    def _project_service_session(raw: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = raw.get("session_id") or raw.get("id")
+        return {
+            "id": session_id,
+            "session_id": session_id,
+            "persona_id": raw.get("persona_id"),
+            "session_type": raw.get("session_type"),
+            "status": raw.get("status"),
+            "started_at": raw.get("started_at"),
+            "ended_at": raw.get("ended_at"),
+            "capability_snapshot_id": raw.get("capability_snapshot_id"),
+            "trace_id": raw.get("trace_id"),
+            "request_id": raw.get("request_id"),
+            "runtime_binding_id": raw.get("runtime_binding_id"),
+            "deployment_stage": raw.get("deployment_stage"),
+            "capital_pool_id": raw.get("capital_pool_id"),
+            "context_bundle_ref": raw.get("context_bundle_ref"),
+            "metadata": raw.get("metadata", {}),
+        }
+
+    @staticmethod
+    def _project_service_evolution_decision(raw: Dict[str, Any]) -> Dict[str, Any]:
+        decision_id = raw.get("decision_id") or raw.get("id")
+        decision_state = raw.get("decision_state") or raw.get("status")
+        linked_incident_id = raw.get("linked_incident_id") or raw.get("incident_ref")
+        target_id = raw.get("target_id") or raw.get("artifact_id")
+        return {
+            "id": decision_id,
+            "decision_id": decision_id,
+            "action_type": raw.get("action_type"),
+            "risk_level": raw.get("risk_level"),
+            "status": decision_state,
+            "decision_state": decision_state,
+            "incident_ref": linked_incident_id,
+            "linked_incident_id": linked_incident_id,
+            "artifact_id": target_id,
+            "created_at": raw.get("created_at"),
+            "execution_result": raw.get("execution_result"),
+        }
+
     def _derive_can_promote_to_paper(
         self,
         plan: Optional[Dict[str, Any]],
@@ -793,7 +1025,11 @@ class ReadSurfaceStore:
         mandate: Optional[str] = None,
         strategy_family: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        personas = list(self._data.get("personas", {}).values())
+        available, raw_personas = self._service.list_records("personas")
+        if available:
+            personas = [self._project_service_persona(persona) for persona in raw_personas]
+        else:
+            personas = list(self._data.get("personas", {}).values())
         if lifecycle_state:
             personas = [p for p in personas if p.get("lifecycle_state") == lifecycle_state]
         if mandate:
@@ -965,6 +1201,15 @@ class ReadSurfaceStore:
         """
         if not persona_id:
             return None
+        if self.get_persona(persona_id) is None:
+            return None
+        available, raw_bindings = self._canonical.list_records("persona_bindings")
+        if available:
+            return [
+                self._project_canonical_binding(binding)
+                for binding in raw_bindings
+                if binding.get("persona_id") == persona_id
+            ]
         return [
             binding
             for binding in self._data.get("bindings", {}).values()
@@ -974,6 +1219,9 @@ class ReadSurfaceStore:
     def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:
             return None
+        available, raw = self._service.record("personas", persona_id)
+        if available:
+            return self._project_service_persona(raw) if raw else None
         return self._data.get("personas", {}).get(persona_id)
 
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -1043,7 +1291,9 @@ class ReadSurfaceStore:
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        incidents = list(self._data.get("incidents", {}).values())
+        available, incidents = self._service.list_records("incidents")
+        if not available:
+            incidents = list(self._data.get("incidents", {}).values())
         if status:
             incidents = [i for i in incidents if i.get("status") == status]
         if severity:
@@ -1053,17 +1303,29 @@ class ReadSurfaceStore:
         return sorted(incidents, key=lambda x: x.get("created_at", ""), reverse=True)
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("incidents", incident_id)
+        if available:
+            return raw
         return self._data.get("incidents", {}).get(incident_id)
 
     def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]:
         # time_range deferred — v1 returns all postmortems
+        available, postmortems = self._service.list_records("postmortems")
+        if available:
+            return postmortems
         return list(self._data.get("postmortems", {}).values())
 
     def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("postmortems", report_id)
+        if available:
+            return raw
         return self._data.get("postmortems", {}).get(report_id)
 
     def get_postmortem_by_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
-        for pm in self._data.get("postmortems", {}).values():
+        available, postmortems = self._service.list_records("postmortems")
+        if not available:
+            postmortems = list(self._data.get("postmortems", {}).values())
+        for pm in postmortems:
             if pm.get("incident_id") == incident_id:
                 return pm
         return None
@@ -1082,11 +1344,22 @@ class ReadSurfaceStore:
     # ------------------------------------------------------------------ #
 
     def get_evolution_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("evolution_decisions", decision_id)
+        if available:
+            return self._project_service_evolution_decision(raw) if raw else None
         return self._data.get("evolution_decisions", {}).get(decision_id)
 
     def get_evolution_decisions_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
+        available, raw_decisions = self._service.list_records("evolution_decisions")
+        if available:
+            decisions = [
+                self._project_service_evolution_decision(raw)
+                for raw in raw_decisions
+            ]
+        else:
+            decisions = list(self._data.get("evolution_decisions", {}).values())
         return [
-            d for d in self._data.get("evolution_decisions", {}).values()
+            d for d in decisions
             if d.get("incident_ref") == incident_id
         ]
 
@@ -1094,6 +1367,9 @@ class ReadSurfaceStore:
         return list(self._data.get("rollbacks_by_incident", {}).get(incident_id, []))
 
     def get_telemetry_summary(self, runtime_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("telemetry_summaries", runtime_id)
+        if available:
+            return raw
         return self._data.get("telemetry_summaries", {}).get(runtime_id)
 
     # ------------------------------------------------------------------ #
@@ -1106,7 +1382,14 @@ class ReadSurfaceStore:
         risk_level: Optional[str] = None,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        decisions = list(self._data.get("evolution_decisions", {}).values())
+        available, raw_decisions = self._service.list_records("evolution_decisions")
+        if available:
+            decisions = [
+                self._project_service_evolution_decision(raw)
+                for raw in raw_decisions
+            ]
+        else:
+            decisions = list(self._data.get("evolution_decisions", {}).values())
         if action_type:
             decisions = [d for d in decisions if d.get("action_type") == action_type]
         if risk_level:
@@ -1116,6 +1399,9 @@ class ReadSurfaceStore:
         return sorted(decisions, key=lambda x: x.get("created_at", ""), reverse=True)
 
     def get_evolution_decision_by_id(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("evolution_decisions", decision_id)
+        if available:
+            return self._project_service_evolution_decision(raw) if raw else None
         return self._data.get("evolution_decisions", {}).get(decision_id)
 
     def list_freeze_orders(
@@ -1152,7 +1438,9 @@ class ReadSurfaceStore:
         self,
         artifact_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        edges = list(self._data.get("lineage_edges", {}).values())
+        available, edges = self._service.list_records("lineage_edges")
+        if not available:
+            edges = list(self._data.get("lineage_edges", {}).values())
         if artifact_id:
             edges = [
                 e for e in edges
@@ -1161,6 +1449,9 @@ class ReadSurfaceStore:
         return sorted(edges, key=lambda x: x.get("created_at", ""), reverse=True)
 
     def get_lineage_edge(self, edge_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("lineage_edges", edge_id)
+        if available:
+            return raw
         return self._data.get("lineage_edges", {}).get(edge_id)
 
     def get_lineage_graph(
@@ -1174,7 +1465,9 @@ class ReadSurfaceStore:
         v1: returns all edges that touch the root_id directly (depth=1 semantics).
         Production implementation would traverse the graph iteratively up to depth.
         """
-        edges = list(self._data.get("lineage_edges", {}).values())
+        available, edges = self._service.list_records("lineage_edges")
+        if not available:
+            edges = list(self._data.get("lineage_edges", {}).values())
         if root_id:
             edges = [
                 e for e in edges
@@ -1203,7 +1496,18 @@ class ReadSurfaceStore:
         """
         # v1: adapt telemetry summaries as event list
         events = []
-        for runtime_id, summary in self._data.get("telemetry_summaries", {}).items():
+        available, summaries = self._service.list_records("telemetry_summaries")
+        if available:
+            summary_records = [
+                (summary.get("runtime_id") or summary.get("id"), summary)
+                for summary in summaries
+            ]
+        else:
+            summary_records = list(self._data.get("telemetry_summaries", {}).items())
+
+        for runtime_id, summary in summary_records:
+            if not runtime_id:
+                continue
             event = {
                 "id": f"tl-evt-{runtime_id}",
                 "runtime_id": runtime_id,
@@ -1235,6 +1539,9 @@ class ReadSurfaceStore:
     # ------------------------------------------------------------------ #
 
     def get_telemetry_performance(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("telemetry_performance", artifact_id)
+        if available:
+            return raw
         return self._data.get("telemetry_performance", {}).get(artifact_id)
 
     # ------------------------------------------------------------------ #
@@ -1248,8 +1555,17 @@ class ReadSurfaceStore:
         """
         if not persona_id:
             return None
+        if self.get_persona(persona_id) is None:
+            return None
+        available, raw_sessions = self._service.list_records("sessions")
+        if available:
+            return [
+                self._project_service_session(session)
+                for session in raw_sessions
+                if session.get("persona_id") == persona_id
+            ]
         return [
-            s for s in self._data.get("sessions", []).values()
+            s for s in self._data.get("sessions", {}).values()
             if s.get("persona_id") == persona_id
         ]
 
@@ -1268,6 +1584,9 @@ class ReadSurfaceStore:
     def get_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not session_id:
             return None
+        available, raw = self._service.record("sessions", session_id)
+        if available:
+            return self._project_service_session(raw) if raw else None
         return self._data.get("sessions", {}).get(session_id)
 
     def get_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
@@ -1277,8 +1596,17 @@ class ReadSurfaceStore:
         """
         if not persona_id:
             return None
+        if self.get_persona(persona_id) is None:
+            return None
+        available, raw_sessions = self._service.list_records("teaching_sessions")
+        if available:
+            return [
+                session
+                for session in raw_sessions
+                if session.get("persona_id") == persona_id
+            ]
         return [
-            s for s in self._data.get("teaching_sessions", []).values()
+            s for s in self._data.get("teaching_sessions", {}).values()
             if s.get("persona_id") == persona_id
         ]
 
@@ -1297,11 +1625,19 @@ class ReadSurfaceStore:
     def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not snapshot_id:
             return None
+        available, raw = self._service.record("capability_snapshots", snapshot_id)
+        if available:
+            return raw
         return self._data.get("capability_snapshots", {}).get(snapshot_id)
 
     def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:
             return None
+        available, snapshots = self._service.list_records("capability_snapshots")
+        if available:
+            for snapshot in snapshots:
+                if snapshot.get("persona_id") == persona_id:
+                    return snapshot
         for snapshot in self._data.get("capability_snapshots", {}).values():
             if snapshot.get("persona_id") == persona_id:
                 return snapshot
@@ -1310,6 +1646,18 @@ class ReadSurfaceStore:
     # ------------------------------------------------------------------ #
     # Consultation surfaces (CS-01 – CS-06)
     # ------------------------------------------------------------------ #
+
+    def _consultation_session_records(self) -> Dict[str, Dict[str, Any]]:
+        available, sessions = self._service.list_records("consultation_sessions")
+        if available:
+            return {
+                str(session_id): session
+                for session in sessions
+                if isinstance(session, dict)
+                for session_id in [session.get("session_id") or session.get("id")]
+                if session_id
+            }
+        return self._data.get("consultation_sessions", {})
 
     def list_consultations_for_persona(
         self,
@@ -1327,8 +1675,11 @@ class ReadSurfaceStore:
         """
         if not persona_id:
             return None
+        if self.get_persona(persona_id) is None:
+            return None
+        all_sessions = self._consultation_session_records()
         sessions = [
-            s for s in self._data.get("consultation_sessions", {}).values()
+            s for s in all_sessions.values()
             if s.get("persona_id") == persona_id
             and s.get("session_type") in {"consult", "committee"}
             and s.get("session_id") == (
@@ -1349,7 +1700,7 @@ class ReadSurfaceStore:
         """CS-02: Return a consultation session by session_id."""
         if not session_id:
             return None
-        session = self._data.get("consultation_sessions", {}).get(session_id)
+        session = self._consultation_session_records().get(session_id)
         if session is None:
             return None
         if session.get("session_type") not in {"consult", "committee"}:
@@ -1363,7 +1714,7 @@ class ReadSurfaceStore:
         For responder/committee sessions that carry root_session_id in their
         metadata.consultation, that pointer is followed one level.
         """
-        session = self._data.get("consultation_sessions", {}).get(session_id)
+        session = self._consultation_session_records().get(session_id)
         if session is None:
             return session_id
         meta_consult = (session.get("metadata") or {}).get("consultation", {})
@@ -1388,7 +1739,7 @@ class ReadSurfaceStore:
         """
         if not session_id:
             return None
-        all_sessions = self._data.get("consultation_sessions", {})
+        all_sessions = self._consultation_session_records()
         if session_id not in all_sessions:
             return None
         root_id = self._resolve_root_consultation_id(session_id)
@@ -1400,7 +1751,6 @@ class ReadSurfaceStore:
         responder_ids: List[str] = meta_consult.get("responder_session_ids") or []
         committee_ids: List[str] = meta_consult.get("committee_session_ids") or []
 
-        all_sessions = self._data.get("consultation_sessions", {})
         participants = []
 
         def _role_for(sid: str) -> str:
@@ -1429,7 +1779,7 @@ class ReadSurfaceStore:
         """
         if not session_id:
             return None
-        all_sessions = self._data.get("consultation_sessions", {})
+        all_sessions = self._consultation_session_records()
         if session_id not in all_sessions:
             return None
         root_id = self._resolve_root_consultation_id(session_id)
@@ -1461,7 +1811,7 @@ class ReadSurfaceStore:
         """
         if not session_id:
             return None
-        all_sessions = self._data.get("consultation_sessions", {})
+        all_sessions = self._consultation_session_records()
         if session_id not in all_sessions:
             return None
         root_id = self._resolve_root_consultation_id(session_id)
@@ -1475,6 +1825,9 @@ class ReadSurfaceStore:
         """CS-06: Return the ConsultPolicy for a persona."""
         if not persona_id:
             return None
+        available, raw = self._service.record("consult_policies", persona_id)
+        if available:
+            return raw
         return self._data.get("consult_policies", {}).get(persona_id)
 
     def get_persona_allowed_actions(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:

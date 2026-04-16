@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -28,8 +30,10 @@ os.environ["BFF_DATA_DIR"] = "/tmp/pantheon/bff_test"
 os.environ.setdefault("BFF_READ_SURFACE_STATE", "fresh")
 
 from fastapi.testclient import TestClient
+import main as bff_main
 from main import app, command_store
 from models import CommandStatus, CommandType, ErrorCode
+from read_store import ReadSurfaceStore
 
 # ------------------------------------------------------------------ helpers --
 
@@ -63,6 +67,9 @@ class TestOperatorBFF(unittest.TestCase):
         self.client = TestClient(app)
         # Reset env to fresh each test
         os.environ["BFF_READ_SURFACE_STATE"] = "fresh"
+        os.makedirs(os.path.dirname(command_store.file_path), exist_ok=True)
+        with open(command_store.file_path, "w", encoding="utf-8") as handle:
+            handle.write("")
 
     # ---------------------------------------------------------------------- #
     # Health
@@ -96,6 +103,34 @@ class TestOperatorBFF(unittest.TestCase):
         meta = payload.get("meta", {})
         self.assertIn("snapshot_at", meta)
         self.assertIn("surfaces", meta)
+
+    def test_deployment_review_marks_local_snapshot_surfaces_degraded(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = ReadSurfaceStore(os.path.join(td, "read_surfaces.json"))
+            original_read_store = bff_main.read_store
+            with patch.dict(
+                os.environ,
+                {
+                    "PANTHEON_GOVERNANCE_DATA_DIR": "",
+                    "PANTHEON_RUNTIME_DATA_DIR": "",
+                },
+                clear=False,
+            ):
+                bff_main.read_store = store
+                try:
+                    r = self.client.get(
+                        "/api/v1/operator/deployment-review/plan-F-042",
+                        headers={"Authorization": OPERATOR_TOKEN},
+                    )
+                finally:
+                    bff_main.read_store = original_read_store
+
+            self.assertEqual(r.status_code, 200, r.text)
+            surfaces = r.json()["meta"]["surfaces"]
+            self.assertEqual(surfaces["deployment_plan"]["status"], "degraded")
+            self.assertEqual(surfaces["deployment_plan"]["source"], "local_snapshot")
+            self.assertEqual(surfaces["allowedActions"]["status"], "degraded")
+            self.assertEqual(surfaces["allowedActions"]["source"], "local_snapshot")
 
     # ---------------------------------------------------------------------- #
     # Happy path — submit + poll
@@ -260,6 +295,8 @@ class TestOperatorBFF(unittest.TestCase):
             params={"deployment_plan_id": target_id, "approval_decision": "approve"},
         )
         self.assertEqual(r1.status_code, 202, r1.text)
+        command_id = r1.json()["receipt"]["command_id"]
+        command_store.update_status(command_id, CommandStatus.SUBMITTED)
 
         # Second command on same target while first is submitted/processing → CONCURRENT_MODIFICATION
         r2 = _submit(

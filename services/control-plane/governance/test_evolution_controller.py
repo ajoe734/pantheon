@@ -110,6 +110,8 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
 
         self.assertEqual(outcome.boundary.boundary_key, "freeze_live_no_active_runtime")
         self.assertEqual(outcome.primary_command.execution_plane, "governance")
+        self.assertEqual(outcome.primary_command.action_type, "freeze")
+        self.assertEqual(outcome.primary_command.target_type, "candidate_artifact")
         self.assertFalse(outcome.followthrough_commands)
         self.assertIsNone(outcome.rollback_command)
         self.assertEqual(decision.decision_state, EvolutionDecisionState.EXECUTED)
@@ -229,7 +231,9 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
 
         self.assertEqual(command.execution_plane, "deployment")
         self.assertEqual(command.action_type, "redeploy_followthrough")
+        self.assertEqual(command.target_type, "candidate_artifact")
         self.assertEqual(command.target_stage, "canary")
+        self.assertEqual(command.metadata["parent_action_type"], "retrain")
         self.assertEqual(command.metadata["parent_decision_id"], "evo-ctrl-006")
         self.assertTrue(command.metadata["requires_new_deployment_plan"])
 

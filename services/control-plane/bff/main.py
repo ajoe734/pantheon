@@ -342,6 +342,46 @@ def _surface_status() -> Dict[str, Any]:
     return {"status": "ok"}
 
 
+def _dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: Optional[str] = None,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    surface = dict(_surface_status())
+    source = read_store.dataset_source(dataset)
+    surface["source"] = source
+
+    if source == "local_snapshot":
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
+        surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
+        surface["staleness"] = {
+            "served_from": "local_snapshot",
+            "last_known_at": snapshot_at or utc_now(),
+        }
+    elif source == "missing":
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+        )
+
+    if has_data is False:
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
+        if missing_message:
+            surface["message"] = missing_message
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+        )
+
+    return surface
+
+
 # --------------------------------------------------------------------------- #
 # Degraded-mode helper
 # --------------------------------------------------------------------------- #
@@ -969,15 +1009,50 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {
-                "deployment_plan": _surface_status(),
-                "approval_decision": _surface_status(),
-                "capital_pool": _surface_status(),
-                "bindings": _surface_status(),
-                "runtime_binding": _surface_status(),
-                "rollbacks": _surface_status(),
-                "allowedActions": _surface_status(),
-                "latestRun": _surface_status(),
-                "review": _surface_status(),
+                "deployment_plan": _dataset_surface_status(
+                    "deployment_plans",
+                    snapshot_at=snapshot_at,
+                    has_data=plan is not None,
+                ),
+                "approval_decision": _dataset_surface_status(
+                    "approval_decisions",
+                    snapshot_at=snapshot_at,
+                    has_data=approval_decision is not None,
+                    missing_message="Approval decision unavailable for this deployment plan.",
+                ),
+                "capital_pool": _dataset_surface_status(
+                    "capital_pools",
+                    snapshot_at=snapshot_at,
+                    has_data=pool is not None,
+                    missing_message="Capital pool detail unavailable for this deployment plan.",
+                ),
+                "bindings": _dataset_surface_status(
+                    "persona_bindings",
+                    snapshot_at=snapshot_at,
+                    has_data=bindings is not None,
+                ),
+                "runtime_binding": _dataset_surface_status(
+                    "runtime_bindings",
+                    snapshot_at=snapshot_at,
+                    has_data=runtime_binding is not None,
+                    missing_message="Runtime binding unavailable for this deployment plan.",
+                ),
+                "rollbacks": _dataset_surface_status("rollbacks", snapshot_at=snapshot_at),
+                "allowedActions": _dataset_surface_status(
+                    "allowed_actions",
+                    snapshot_at=snapshot_at,
+                    has_data=allowed_actions is not None,
+                ),
+                "latestRun": _dataset_surface_status(
+                    "latest_runs",
+                    snapshot_at=snapshot_at,
+                    has_data=latest_run is not None,
+                ),
+                "review": _dataset_surface_status(
+                    "review_summaries",
+                    snapshot_at=snapshot_at,
+                    has_data=review is not None,
+                ),
             },
         },
     }
@@ -1154,13 +1229,12 @@ async def get_incident_response(
         if runtime_binding:
             runtime_binding_data = dict(runtime_binding)
 
-    if runtime_binding:
-        surfaces["runtime_binding"] = {"status": "ok"}
-    else:
-        surfaces["runtime_binding"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["runtime_binding"] = _dataset_surface_status(
+        "runtime_bindings",
+        snapshot_at=snapshot_at,
+        has_data=runtime_binding is not None,
+        missing_message="Runtime binding unavailable for this incident.",
+    )
 
     # TL-02: Telemetry summary
     telemetry_summary = None
@@ -1168,28 +1242,30 @@ async def get_incident_response(
     if telemetry_runtime_id:
         telemetry_summary = read_store.get_telemetry_summary(telemetry_runtime_id)
 
-    if telemetry_summary:
-        surfaces["telemetry_summary"] = {"status": "ok"}
-    else:
-        surfaces["telemetry_summary"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["telemetry_summary"] = _dataset_surface_status(
+        "telemetry_summaries",
+        snapshot_at=snapshot_at,
+        has_data=telemetry_summary is not None,
+        missing_message="Telemetry summary unavailable for this incident.",
+    )
 
     # RT-04: Rollbacks
     rollbacks = read_store.get_rollbacks_by_incident(incident_id)
-    surfaces["rollbacks"] = {"status": "ok"}
+    surfaces["rollbacks"] = _dataset_surface_status("rollbacks_by_incident", snapshot_at=snapshot_at)
 
     # EV-04: Evolution decisions for this incident
     # Note: The contract lists EV-04 as rollbacks only. We additionally surface
     # evolution decisions here to give operators full incident context in one view.
     # This is an intentional v1 extension beyond the strict contract.
     evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)
-    surfaces["evolution_decisions"] = {"status": "ok"}
+    surfaces["evolution_decisions"] = _dataset_surface_status(
+        "evolution_decisions",
+        snapshot_at=snapshot_at,
+    )
 
     # IN-05: Kill switch status
     ks = read_store.get_kill_switch_status()
-    surfaces["kill_switch"] = {"status": "ok"}
+    surfaces["kill_switch"] = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
 
     data = {
         "incident": incident,
@@ -1246,14 +1322,15 @@ async def get_persona_management(
 
     # PS-02: Persona bindings (bindings where this persona is the owner)
     persona_bindings = read_store.get_bindings_for_persona(persona_id)
-    if persona_bindings is not None:
-        surfaces["persona_bindings"] = {"status": "ok"}
-    else:
+    persona_bindings_available = persona_bindings is not None
+    if persona_bindings is None:
         persona_bindings = []
-        surfaces["persona_bindings"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["persona_bindings"] = _dataset_surface_status(
+        "persona_bindings",
+        snapshot_at=snapshot_at,
+        has_data=persona_bindings_available,
+        missing_message="Persona bindings unavailable for this persona.",
+    )
 
     # CP-04: Enrich each binding with its capital pool detail
     enriched_bindings = []
@@ -1264,46 +1341,52 @@ async def get_persona_management(
             binding_detail["capital_pool"] = pool
         enriched_bindings.append(binding_detail)
 
-    if enriched_bindings:
-        surfaces["capital_pool_bindings"] = {"status": "ok"}
+    capital_pool_surface = _dataset_surface_status(
+        "capital_pools",
+        snapshot_at=snapshot_at,
+        has_data=bool(enriched_bindings),
+        missing_message="No capital pool bindings available for this persona.",
+    )
+    if surfaces["persona_bindings"]["status"] != "ok":
+        surfaces["capital_pool_bindings"] = dict(surfaces["persona_bindings"])
     else:
-        surfaces["capital_pool_bindings"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+        surfaces["capital_pool_bindings"] = capital_pool_surface
 
     # PS-03: Active sessions for this persona
     sessions = read_store.get_sessions_for_persona(persona_id)
-    if sessions is not None:
-        surfaces["persona_sessions"] = {"status": "ok"}
-    else:
+    sessions_available = sessions is not None
+    if sessions is None:
         sessions = []
-        surfaces["persona_sessions"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["persona_sessions"] = _dataset_surface_status(
+        "sessions",
+        snapshot_at=snapshot_at,
+        has_data=sessions_available,
+        missing_message="Persona sessions unavailable for this persona.",
+    )
 
     # PS-05: Teaching sessions for this persona
     teaching_sessions = read_store.get_teaching_sessions_for_persona(persona_id)
-    if teaching_sessions is not None:
-        surfaces["teaching_sessions"] = {"status": "ok"}
-    else:
+    teaching_sessions_available = teaching_sessions is not None
+    if teaching_sessions is None:
         teaching_sessions = []
-        surfaces["teaching_sessions"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["teaching_sessions"] = _dataset_surface_status(
+        "teaching_sessions",
+        snapshot_at=snapshot_at,
+        has_data=teaching_sessions_available,
+        missing_message="Teaching sessions unavailable for this persona.",
+    )
 
     # Backend-shaped allowed actions (acceptance: backend_shaped_persona_actions)
     allowed_actions = read_store.get_persona_allowed_actions(persona_id)
-    if allowed_actions is not None:
-        surfaces["allowed_actions"] = {"status": "ok"}
-    else:
+    allowed_actions_available = allowed_actions is not None
+    if allowed_actions is None:
         allowed_actions = {}
-        surfaces["allowed_actions"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["allowed_actions"] = _dataset_surface_status(
+        "allowed_actions",
+        snapshot_at=snapshot_at,
+        has_data=allowed_actions_available,
+        missing_message="Allowed actions unavailable for this persona.",
+    )
 
     data = {
         "persona": persona,
@@ -1354,41 +1437,40 @@ async def get_post_incident_review(
 
     # IN-04: Postmortem report
     postmortem = read_store.get_postmortem_by_incident(incident_id)
-    if postmortem:
-        surfaces["postmortem"] = {"status": "ok"}
-    else:
-        surfaces["postmortem"] = {
-            "status": "degraded",
-            "message": "No postmortem report available yet",
-        }
+    surfaces["postmortem"] = _dataset_surface_status(
+        "postmortems",
+        snapshot_at=snapshot_at,
+        has_data=postmortem is not None,
+        missing_message="No postmortem report available yet",
+    )
 
     # EV-01/EV-02: Evolution decisions
     evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)
-    surfaces["evolution_decisions"] = {"status": "ok"}
+    surfaces["evolution_decisions"] = _dataset_surface_status(
+        "evolution_decisions",
+        snapshot_at=snapshot_at,
+    )
 
     # LN-01: Lineage edges — fetch by artifact_id from incident
     artifact_id = incident.get("artifact_id")
     lineage_edges = read_store.list_lineage_edges(artifact_id=artifact_id) if artifact_id else []
-    if lineage_edges:
-        surfaces["lineage"] = {"status": "ok"}
-    else:
-        surfaces["lineage"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-            "note": "No lineage edges found for this artifact",
-        }
+    surfaces["lineage"] = _dataset_surface_status(
+        "lineage_edges",
+        snapshot_at=snapshot_at,
+        has_data=bool(lineage_edges),
+        missing_message="No lineage edges found for this artifact",
+    )
 
     # TL-03: Telemetry performance — use artifact_id (not runtime_id or summary)
     telemetry_performance = None
     if artifact_id:
         telemetry_performance = read_store.get_telemetry_performance(artifact_id)
-    if telemetry_performance:
-        surfaces["telemetry_performance"] = {"status": "ok"}
-    else:
-        surfaces["telemetry_performance"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable"},
-        }
+    surfaces["telemetry_performance"] = _dataset_surface_status(
+        "telemetry_performance",
+        snapshot_at=snapshot_at,
+        has_data=telemetry_performance is not None,
+        missing_message="Telemetry performance unavailable for this artifact.",
+    )
 
     data = {
         "incident": incident,

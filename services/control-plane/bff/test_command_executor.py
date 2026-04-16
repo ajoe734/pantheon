@@ -1,10 +1,8 @@
 """Unit tests for command_executor module."""
-import json
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -95,27 +93,78 @@ class TestKillSwitchExecutor(unittest.TestCase):
 
 
 class TestEvolutionDecisionExecutor(unittest.TestCase):
-    def test_approve_evolution_decision_local(self):
+    @patch("command_executor._post_json")
+    def test_approve_evolution_decision_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-001",
+            "decision_state": "approved",
+            "approval_decision_id": "approval-777",
+            "risk_level": "medium",
+        }
+        auth_token = "op-reviewer:reviewer"
         result = _execute_approve_evolution_decision("cmd-005", {
             "evolution_decision_id": "evo-001",
             "approval_action": "approve",
-            "approved_by_role": "reviewer",
             "rationale": "Looks good",
-        })
+        }, auth_token=auth_token)
         self.assertEqual(result["evolution_decision_id"], "evo-001")
         self.assertEqual(result["command_id"], "cmd-005")
-        self.assertIn("timestamp", result)
+        self.assertEqual(result["decision_state"], "approved")
+        self.assertEqual(result["approval_decision_id"], "approval-777")
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-001/approve",
+            {
+                "actor_id": "op-reviewer",
+                "actor_role": "reviewer",
+                "note": "Looks good",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
 
 
 class TestEvolutionActionExecutor(unittest.TestCase):
-    def test_execute_evolution_action_local(self):
-        result = _execute_evolution_action("cmd-006", {
-            "evolution_action_id": "ea-001",
+    @patch("command_executor._post_json")
+    def test_execute_evolution_action_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-002",
             "action_type": "deploy",
-        })
-        self.assertEqual(result["evolution_action_id"], "ea-001")
+            "decision_state": "executed",
+            "execution_result": {
+                "status": "submitted",
+                "plane": "governance",
+                "executed_at": "2026-04-11T12:05:00Z",
+                "execution_ref_id": "exec-002",
+            },
+            "cooldown_ends_at": "2026-04-12T12:05:00Z",
+        }
+        auth_token = "op-admin:admin"
+        result = _execute_evolution_action("cmd-006", {
+            "evolution_decision_id": "evo-002",
+            "action_type": "deploy",
+            "has_active_runtime": True,
+            "active_binding_id": "rb-002",
+            "freeze_mode": "governance_only",
+            "note": "Execute approved evolution action",
+        }, auth_token=auth_token)
+        self.assertEqual(result["evolution_decision_id"], "evo-002")
         self.assertEqual(result["action_type"], "deploy")
         self.assertEqual(result["command_id"], "cmd-006")
+        self.assertEqual(result["decision_state"], "executed")
+        self.assertEqual(result["execution_ref_id"], "exec-002")
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-002/execute",
+            {
+                "actor_id": "op-admin",
+                "actor_role": "admin",
+                "has_active_runtime": True,
+                "active_binding_id": "rb-002",
+                "freeze_mode": "governance_only",
+                "note": "Execute approved evolution action",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
 
 
 class TestExecuteCommandDispatch(unittest.TestCase):

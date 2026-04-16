@@ -85,6 +85,7 @@ BFF 不負責：
 - UI 顯示 degraded panel
 - 只禁用受影響工作台
 - 其他工作台可繼續服務
+- degraded 狀態必須由 backend / BFF 明確標示來源與可信度，不能由 UI 自行發明 snapshot/default fallback 當正常資料
 
 ## 5.2 BFF total outage
 若 BFF 全部不可用：
