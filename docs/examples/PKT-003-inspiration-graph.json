@@ -1,0 +1,34 @@
+{
+  "_note": "BLOCKED — example payload pending BFF implementation of GET /api/v1/lineage/inspiration/{artifact_id}. This file is a field-shape reference only. Do not use as mock data.",
+  "_blocker": "BFF inspiration route not yet implemented. See docs/bff/PKT-003-inspiration-graph.md for required field shape.",
+  "_packet_status": "blocked",
+  "artifact_id": "artifact-abc123",
+  "inspiration_edges": [
+    {
+      "source_artifact_id": "artifact-def456",
+      "relationship_type": "derived_from",
+      "influence_weight": 0.85
+    },
+    {
+      "source_artifact_id": "artifact-ghi789",
+      "relationship_type": "strategy_applied",
+      "influence_weight": 0.60
+    },
+    {
+      "source_artifact_id": "artifact-jkl012",
+      "relationship_type": "inspired_by",
+      "influence_weight": 0.40
+    }
+  ],
+  "strategy_tags": [
+    "momentum-alpha",
+    "low-volatility",
+    "sector-rotation"
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-16T03:00:00Z",
+    "surfaces": {
+      "inspiration": "fresh"
+    }
+  }
+}
