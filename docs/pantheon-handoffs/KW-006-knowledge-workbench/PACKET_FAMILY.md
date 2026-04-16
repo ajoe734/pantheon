@@ -8,7 +8,7 @@
 - Lovable readiness: **not ready** — Institutional Memory has a design note and schema, and Strategy Spec has a canonical object schema, but none of the five modules yet has a canonical BFF route or a workbench-ready packet contract
 - Recommended wave: Wave 3 — after Operator Console (Waves 1-2) and Persona Workbench (Waves 1-2) packetization are settled
 - Owner: Claude
-- Reviewer: Codex
+- Reviewer: Codex2
 
 ---
 
