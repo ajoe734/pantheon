@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+
+WORKDIR /workspace
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY . /workspace
+
+CMD ["python", "scripts/smoke_honest_stack.py"]

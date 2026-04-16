@@ -127,6 +127,60 @@ Then browse:
 - `http://127.0.0.1:8001/health`
 - `http://127.0.0.1:8002/health`
 
+## Honest Service Stack
+
+The full single-VM baseline for `BP5-SVC-016` now lives in [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:1).
+
+It boots the honest backend stack instead of the old research-worker topology:
+
+- `runtime-manager`
+- `governance`
+- `telemetry`
+- `incidents`
+- `postmortems`
+- `operator-bff`
+- `signal-store`
+
+Start it on the VM:
+
+```bash
+cd ~/code/pantheon
+COMPOSE_BAKE=false docker compose up -d --build
+```
+
+Check health:
+
+```bash
+docker compose ps
+curl -fsS http://127.0.0.1:18081/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18082/health && printf '\n'
+curl -fsS http://127.0.0.1:18083/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18090/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18091/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18001/health && printf '\n'
+```
+
+Run the compose-backed smoke path from inside the same topology:
+
+```bash
+cd ~/code/pantheon
+COMPOSE_BAKE=false docker compose --profile smoke up --build --abort-on-container-exit smoke-stack
+```
+
+That smoke profile proves:
+
+- runtime-manager can create a canonical runtime binding
+- telemetry can ingest an event against that binding
+- incident and postmortem evidence services can persist linked records
+- operator BFF stays in `fresh` mode and replays SSE without local fallback data
+
+When you are done:
+
+```bash
+cd ~/code/pantheon
+docker compose down --remove-orphans
+```
+
 ## Dashboard Via `/dashboard/`
 
 If you want the dashboard on the standard web port instead of exposing `4173`, install the nginx reverse proxy from the repo:
