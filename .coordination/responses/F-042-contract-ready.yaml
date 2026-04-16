@@ -1,6 +1,6 @@
 feature_id: F-042
 type: contract-ready
-source_repo: pantheon
+source_repo: ajoe734/pantheon
 screen: promotion-review
 status: published
 published_at: "2026-04-12T00:00:00Z"
