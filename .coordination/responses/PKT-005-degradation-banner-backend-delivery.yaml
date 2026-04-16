@@ -1,0 +1,16 @@
+feature_id: PKT-005-degradation-banner
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: surface-operator-global-degradation-banner
+status: delivered
+backend_commit: 77443031c31f772dc9ce6682a676e8fa09732cd5
+bff_contract_version: pantheon-bff@77443031c31f772dc9ce6682a676e8fa09732cd5
+delivery_note_path: docs/pantheon-delivery/PKT-005-degradation-banner/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-005-degradation-banner/CONTRACT_LOCK.md
+followup_expectation: >-
+  Pantheon published the normalized PKT-005 degradation-banner packet family at
+  commit 77443031c31f772dc9ce6682a676e8fa09732cd5. The reviewed UI cycle at
+  front commit 7406990a8311ef6865491fcdb883b677a98ff6c9 remains accepted and no
+  additional front-end implementation pass is required for this feature.
+source_payload: .coordination/requests/PKT-005-degradation-banner-frontend-feedback.yaml
