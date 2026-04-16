@@ -1,0 +1,7 @@
+{
+  "feature_id": "PKT-003-post-incident-review",
+  "reviewed_source_commit": "main",
+  "status": "no_open_gaps",
+  "note": "Prior bff-gap (.coordination/requests/PKT-003-post-incident-review-bff-gap.yaml) was resolved before implementation started. The gap was: _project_incident_home_item() in services/control-plane/bff/main.py omitted resolved_at from the incident list projection. A refreshed contract-ready packet was published at 2026-04-16T06:59:27Z confirming the fix. All three endpoints (GET /api/v1/incidents, GET /api/v1/operator/post-incident-review/{incident_id}, GET /api/v1/postmortems) are contract-ready. No new gaps in this implementation cycle.",
+  "requests": []
+}

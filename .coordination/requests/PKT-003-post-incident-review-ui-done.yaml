@@ -1,0 +1,62 @@
+feature_id: PKT-003-post-incident-review
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+screen: post-incident-review-console
+blocking: false
+
+summary: >-
+  Post-Incident Review Console UI is implemented against the refreshed PKT-003
+  BFF contract (resolved_at bff-gap resolved before this cycle started).
+  Two of three allowed endpoints consumed through the existing BFF client:
+  GET /api/v1/incidents and GET /api/v1/operator/post-incident-review/{incident_id}.
+  GET /api/v1/postmortems is not implemented in this delivery (deferred follow-up).
+  URL state key is 'incident' (not 'incident_id').
+  Acceptance criteria met for the implemented scope.
+
+changed_files:
+  - src/pages/operator/PostIncidentReviewConsole.tsx
+  - src/pages/operator/types.ts
+  - src/lib/bffClient.ts
+
+bff_gap_resolved:
+  prior_gap_file: .coordination/requests/PKT-003-post-incident-review-bff-gap.yaml
+  resolution: >-
+    resolved_at was missing from _project_incident_home_item() in
+    services/control-plane/bff/main.py. The fix adds resolved_at to the
+    incident list item projection. A refreshed contract-ready packet was
+    published at 2026-04-16T06:59:27Z confirming the resolution.
+
+acceptance_checklist:
+  - Incident list panel renders from GET /api/v1/incidents?status=resolved with incident_id, title, status, artifact_id, resolved_at: true
+  - Row click loads detail panel via GET /api/v1/operator/post-incident-review/{incident_id}?snapshot=preferred: true
+  - Incident summary renders incident_id, title, status, artifact_id, artifact_version, runtime_id, trace_id: true
+  - Postmortem panel renders postmortem_id/status/root_cause/action_items when meta.surfaces.postmortem=ok: true
+  - Postmortem panel shows Postmortem pending with incident_id when meta.surfaces.postmortem=degraded: true
+  - Postmortem panel shows unavailable banner when meta.surfaces.postmortem=unavailable; panel not hidden: true
+  - Evolution decisions renders action_type, risk_level, status, artifact_id per item; No evolution decisions when empty: true
+  - Lineage edges renders from_artifact_id, to_artifact_id, relationship; No lineage evidence when empty or degraded: true
+  - Telemetry performance renders total_pnl, max_drawdown, sharpe_ratio, window; No telemetry evidence when null or degraded: true
+  - Degradation banner non-dismissable; names each affected surface; content not hidden: true
+  - Staleness banner non-dismissable when meta.staleness present: true
+  - meta.surfaces gating comes from BFF response only; no local derivation: true
+  - No raw fetch or axios in component files: true
+  - No demo providers imported: true
+  - Missing meta.surfaces key emits bff-gap alert state; no silent mock fallback: true
+
+integration_boundary_notes:
+  - URL state key is 'incident' (searchParams.get/set/delete 'incident'). A key named 'incident_id' is not implemented in this delivery.
+  - GET /api/v1/postmortems is listed in allowed_endpoints but is not implemented. No bffClient method for this endpoint exists. Postmortem panel data comes entirely from the composed GET /api/v1/operator/post-incident-review/{incident_id} response.
+  - Wiring GET /api/v1/postmortems for navigation context is a deferred follow-up item.
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - wire post-incident-review-console into the Operator Console routing surface when workbench shell is finalized
+  - runtime verification against live BFF after pre-existing production-build blocker is cleared elsewhere in the working tree
+  - implement GET /api/v1/postmortems in bffClient.ts for breadcrumb/navigation context when Operator Console routing surface is finalized
+
+pantheon_feedback_artifacts:
+  - docs/pantheon-feedback/PKT-003-post-incident-review/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-003-post-incident-review/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-003-post-incident-review/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-003-post-incident-review/QA_STATUS.md
