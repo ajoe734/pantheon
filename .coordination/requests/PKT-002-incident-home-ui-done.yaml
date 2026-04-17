@@ -1,39 +1,36 @@
 feature_id: PKT-002-incident-home
 type: ui-done
-source_repo: ajoe734/pantheon
-source_branch: master
-source_commit: null
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 37ebcafacb68ff617f097271c46eaac4a478cbb8
 screen: incident-home
 blocking: false
 
 summary: >-
-  Pantheon has completed its full pre-implementation loop for PKT-002-incident-home.
-  BFF gaps were documented, backend was aligned, contract-ready and Lovable UI task
-  were dispatched. The Lovable implementation prompt is ready for pickup. Pantheon
-  records the screen as dispatch-complete; actual UI implementation is pending Lovable
-  execution. QA entry criteria documented in docs/pantheon-feedback/PKT-002-incident-home/.
+  Incident Home UI is implemented with a routed operator screen, shared BFF client
+  wiring for both read surfaces, merged degradation-banner handling, and a kill-switch
+  control rail that reflects degraded or unavailable status without local state derivation.
 
-loop_state: dispatch-complete
-implementation_state: pending-lovable-pickup
+loop_state: implementation-complete
+implementation_state: pantheon-review-pending
 
 changed_files:
-  - .coordination/responses/PKT-002-incident-home-contract-ready.yaml
-  - .coordination/responses/PKT-002-incident-home-backend-delivery.yaml
-  - .coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml
-  - .coordination/responses/PKT-002-incident-home-lovable-prompt.md
+  - src/pages/operator/IncidentHome.tsx
+  - src/pages/operator/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
   - docs/pantheon-feedback/PKT-002-incident-home/LOVABLE_CHANGE_FEEDBACK.md
   - docs/pantheon-feedback/PKT-002-incident-home/API_GAP_REQUESTS.json
   - docs/pantheon-feedback/PKT-002-incident-home/UI_DECISIONS.md
   - docs/pantheon-feedback/PKT-002-incident-home/QA_STATUS.md
 
 follow_up_requested:
-  - Lovable should pick up .coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml
-    and implement the screen per the frontend change spec
-  - When implementation is complete, Lovable publishes a ui-done with actual commit details
-  - Pantheon supervisor runs QA acceptance when ui-done arrives
-  - BP5-SVC-015 (Remove BFF snapshot and default fallback) should be tracked separately
+  - review the UI against the published PKT-002 contract and example payload
+  - run the next Pantheon-owned integration or acceptance step against a live BFF when available
+  - keep BP5-SVC-015 style snapshot cleanup tracked separately from this UI loop
 
 acceptance:
-  - Pantheon coordination loop is complete (gap → delivery → dispatch)
-  - Pantheon records screen as dispatch-complete with explicit follow-up documented
-  - QA entry criteria and feedback artifacts are published
+  - Incident Home list panel renders from GET /api/v1/incidents through the shared BFF client
+  - Kill switch control rail renders from GET /api/v1/kill-switch/status with degraded or unavailable warnings
+  - Pantheon-visible follow-up state is written back through ui-done and feedback artifacts

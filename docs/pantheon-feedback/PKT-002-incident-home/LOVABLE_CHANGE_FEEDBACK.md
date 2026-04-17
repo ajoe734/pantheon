@@ -3,43 +3,35 @@
 Feature ID: `PKT-002-incident-home`
 Screen: `incident-home`
 Workbench: `operator-console`
-Loop status: **dispatch-complete / awaiting-lovable-pickup**
+Loop status: **implementation-complete / pantheon-review-pending**
 
-## Dispatch Summary
+Reviewed the current `ajoe734/front-ai-trading-system` working tree on top of commit
+`37ebcafacb68ff617f097271c46eaac4a478cbb8`.
 
-Pantheon completed the full pre-implementation loop:
+## Outcome
 
-1. **BFF gap filed** — All blocking envelope divergences documented in
-   `.coordination/requests/PKT-002-incident-home-bff-gap.yaml`.
-2. **Backend delivery confirmed** — Both `GET /api/v1/incidents` and
-   `GET /api/v1/kill-switch/status` are aligned to the published contract
-   (commit `2782e5021243cca958974059dbf2ceeaac16fdfb`).
-3. **Contract-ready published** — `.coordination/responses/PKT-002-incident-home-contract-ready.yaml`
-4. **Lovable UI task dispatched** — `.coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml`
-   and `.coordination/responses/PKT-002-incident-home-lovable-prompt.md` are ready for pickup.
+Pantheon review result: accepted for follow-up handoff.
 
-## Required Changes for Lovable
+The Incident Home screen is implemented against the published PKT-002 contract and
+example payload, including the incident list query path, merged degradation banner,
+and kill-switch control rail with explicit degraded or unavailable states.
 
-Per `.coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml`:
+## Verified Against Pantheon
 
-- Build the **Incident Home list panel** (`src/pages/operator/IncidentHome.tsx`)
-- Build the **kill switch control rail badge** (`src/components/operator/KillSwitchBadge.tsx`)
-- Add incident-home types to `src/pages/operator/types.ts`
-- Add BFF fetch calls to `src/lib/bffClient.ts` (no raw fetch in components)
+- `GET /api/v1/incidents` is consumed through the shared `operatorApi.listIncidentHome()` client.
+- `GET /api/v1/kill-switch/status` is consumed through the shared `operatorApi.getIncidentHomeKillSwitchStatus()` client.
+- No raw `fetch()` or `axios` calls were added inside the screen component.
+- The screen merges `meta.surfaces.incident_list` and `meta.surfaces.kill_switch` into the global degradation banner instead of deriving reliability locally.
+- The kill-switch control rail renders a non-dismissable warning state when `meta.surfaces.kill_switch` is `degraded` and an explicit unavailable alert when it is `unavailable`.
+- Missing required contract fields surface a `bff-gap` alert state instead of a mocked or inferred UI.
 
-## Constraints Confirmed
+## Notes
 
-- Use existing BFF client only
-- Do not add raw `fetch` or `axios` calls in component files
-- Do not import demo providers
-- Do not invent fields beyond the handoff packet
-- Render kill switch badge from `GET /api/v1/kill-switch/status` only
-- Render non-dismissable warning banner when `meta.surfaces.kill_switch` is degraded or unavailable
-- Display degradation banner when any `meta.surfaces` entry is degraded or unavailable
+- The current implementation renders the kill-switch rail inline on the Incident Home page rather than via a separate `KillSwitchBadge` component. This still matches the packet requirement because the rail is sourced only from the kill-switch endpoint and stays outside the incident list.
+- The list view supports the packet's status filter model via query params and preserves pagination through `page_info.next_page_token`.
+- This review included static verification plus local lint/build checks, but not a live browser session against a running Pantheon BFF.
 
-## Follow-up
+## Pantheon Follow-up
 
-- BP5-SVC-015 (`Remove BFF snapshot and default fallback from normal integration path`) is still
-  `todo` — this is a cleanup task and does not block the UI implementation loop.
-- Once Lovable implements the screen, it should write
-  `.coordination/requests/PKT-002-incident-home-ui-done.yaml` to signal completion.
+- No Pantheon API gap is requested in this cycle.
+- The next Pantheon-owned step is runtime verification against a live BFF plus any later cleanup tied to snapshot policy changes.

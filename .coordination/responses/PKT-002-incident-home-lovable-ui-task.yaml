@@ -1,10 +1,15 @@
 feature_id: PKT-002-incident-home
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: follow-up-required
+cycle: 2
 pantheon_pr: null
 base_url: null
+workbench: operator-console
 screen: incident-home
+screen_id: screen-operator-incident-home
+ui_spec_path: docs/screens/PKT-002-incident-home.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-002-incident-home/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
 - GET /api/v1/incidents
 - GET /api/v1/kill-switch/status
@@ -13,6 +18,16 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
+- publish ui-done and frontend-feedback from one Git-visible front-repo commit
+  that contains the PKT-002 request pair and docs/pantheon-feedback/PKT-002-incident-home/
+- ensure both request bodies set source_commit to that exact Git-visible
+  publication commit
+- the currently mirrored tuple advertises source_commit
+  37ebcafacb68ff617f097271c46eaac4a478cbb8, but that snapshot does not contain
+  the canonical request pair or feedback bundle
+- the local front working tree request pair still points at
+  faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7, which also does not contain the
+  canonical request pair or feedback bundle
 acceptance:
 - build the Incident Home list panel and kill switch control rail badge
 - use only the existing BFF client
@@ -23,11 +38,32 @@ acceptance:
 - render the non-dismissable warning banner when meta.surfaces.kill_switch is degraded
   or unavailable
 - display the degradation banner when any meta.surfaces entry is degraded or unavailable
+- publish the cycle-2 ui-done and frontend-feedback payloads from one Git-visible
+  commit that contains the request pair, docs/pantheon-feedback/PKT-002-incident-home/,
+  `src/pages/operator/IncidentHome.tsx`, `src/pages/operator/types.ts`,
+  `src/lib/bffClient.ts`, `src/App.tsx`, and `src/components/AppSidebar.tsx`
+- the published request bodies must set source_commit to that actual Git-visible
+  publication commit
+required_feedback:
+- docs/pantheon-feedback/PKT-002-incident-home/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-002-incident-home/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-002-incident-home/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-002-incident-home/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-002-incident-home-contract-ready.yaml
+- .coordination/responses/PKT-002-incident-home-backend-delivery.yaml
 links:
   lovable_project_url: null
-  bff_spec_path: null
-  example_payload_paths: []
+  bff_spec_path: docs/bff/PKT-002-incident-home.md
+  ui_spec_path: docs/screens/PKT-002-incident-home.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-002-incident-home/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-002-incident-home.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-002-incident-home
+  backend_delivery_path: .coordination/responses/PKT-002-incident-home-backend-delivery.yaml
 gap_handoff_path: .coordination/requests/PKT-002-incident-home-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-002-incident-home-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-002-incident-home-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-002-incident-home-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-002-incident-home-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/PKT-002-incident-home-review.md

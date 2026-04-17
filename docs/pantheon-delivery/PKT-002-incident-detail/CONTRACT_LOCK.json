@@ -1,18 +1,22 @@
 {
   "feature_id": "PKT-002-incident-detail",
-  "status": "followup-required",
-  "backend_commit": "bcec65873a386a1ebcc787488586e25d97ad69fe",
-  "bff_contract_version": "pantheon-bff@bcec65873a386a1ebcc787488586e25d97ad69fe",
+  "status": "blocked",
+  "backend_commit": "8845859c8c58b686eb057ab8c238f4e2fcaba90a",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@8845859c8c58b686eb057ab8c238f4e2fcaba90a",
+  "bff_contract_version": "pantheon-bff@8845859c8c58b686eb057ab8c238f4e2fcaba90a+working-tree",
   "source_payload": ".coordination/requests/PKT-002-incident-detail-ui-done.yaml",
-  "reported_source_commit": "faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7",
-  "verified_front_workspace_head": "87340e96ce4247ccc177e8dff7579e804991b895",
-  "review_file": ".coordination/reviews/BP6-UI-REVIEW-001-review.md",
+  "reported_source_commit": "c08acb3ea59f4c56ced578820aa6a5129a309de1",
+  "verified_front_workspace_head": "60f366e0a745ce3bb10e913e53b332d6557e23f1",
+  "review_file": ".coordination/reviews/PKT-002-incident-detail-review.md",
+  "needs_runtime_request": ".coordination/requests/PKT-002-incident-detail-needs-runtime.yaml",
   "endpoints": [
     "GET /api/v1/operator/incident-response/{incident_id}"
   ],
   "contract_paths": [
     "docs/bff/PKT-002-incident-detail.md",
     "docs/examples/PKT-002-incident-detail.json",
+    "docs/screens/PKT-002-incident-detail.md",
     "docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md"
   ],
   "feedback_bundle": [
@@ -27,15 +31,21 @@
   ],
   "pantheon_api_gap": true,
   "closure_evidence": [
-    "Pantheon mirrored the current sibling ui-done and feedback bundle into the task artifacts",
-    "Targeted ESLint passed for IncidentDetail, IncidentActionDrawer, types, bffClient, and App in the sibling front repo",
-    "Sibling front production build passed during Pantheon verification",
-    "Replay remains unclean because reported source_commit faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7 does not contain the ui-done payload path and the refreshed artifacts are still working-tree-only at front HEAD 87340e96ce4247ccc177e8dff7579e804991b895"
+    "Tracked front HEAD still routes Incident Detail at /incidents/:incidentId and preserves the published composed read contract plus explicit degraded/unavailable states",
+    "Pantheon acceptance slice `python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions'` failed because test_composed_incident_response received 404 for GET /api/v1/operator/incident-response/inc-20260410-001 in the current working tree runtime",
+    "Advertised front source_commit c08acb3ea59f4c56ced578820aa6a5129a309de1 does not contain .coordination/requests/PKT-002-incident-detail-ui-done.yaml",
+    "Current front HEAD 60f366e0a745ce3bb10e913e53b332d6557e23f1 contains ui-done plus the feedback bundle, but still does not publish the canonical frontend-feedback request",
+    "Current sibling working tree keeps IncidentDetail CTA wiring, active_commands rendering, and meta.staleness only in an uncommitted diff",
+    "Even the current working-tree IncidentDetail summary still omits opened_at and the action-authority strip still omits the per-action rationale copy required by the PKT-002 screen spec"
   ],
   "followup_scope": [
-    "Republish the PKT-002 ui-done request and mirrored feedback bundle from a Git-visible front commit that contains the payload paths and the touched Incident Detail implementation files",
+    "Restore the Pantheon runtime acceptance path so GET /api/v1/operator/incident-response/{incident_id} passes local smoke verification without changing the published contract or inventing alternate endpoints",
+    "Keep the current incident-detail read contract unchanged while fixing the current runtime/test regression on the composed route",
+    "Publish the canonical PKT-002 frontend-feedback + ui-done request pair from a Git-visible front commit that contains both payload paths and the final Incident Detail implementation file",
+    "Republish the Incident Detail CTA navigation, active_commands rendering, and meta.staleness fixes from that same Git-visible front commit",
+    "Render data.incident.opened_at in the Incident summary panel",
+    "Add the required short rationale copy for each action in the Incident Detail action-authority strip",
     "Keep the current /incidents/:incidentId -> /incident-action-drawer integration boundary truthful in the republished artifacts",
-    "Preserve the current composed-read contract, explicit degraded or unavailable states, meta.staleness behavior, and data.kill_switch.active_commands[] rendering when republishing",
     "Publish or document the canonical HardRollback target_artifact_id source for Incident Detail launched drawers, or keep that command explicitly disabled in this host context"
   ]
 }

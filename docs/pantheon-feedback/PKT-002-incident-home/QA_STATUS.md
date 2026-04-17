@@ -3,38 +3,26 @@
 Feature ID: `PKT-002-incident-home`
 Screen: `incident-home`
 Workbench: `operator-console`
-QA phase: **pending-lovable-implementation**
+QA phase: **static-verification-complete**
 
 ## Status
 
-The Pantheon coordination loop (gap → delivery → dispatch) is complete. QA cannot begin until
-Lovable implements the screen and publishes a `ui-done` handoff.
+Static verification complete.
 
-## Pre-QA Checklist (Pantheon side)
+## Checks completed
 
-| Item | Status |
-|---|---|
-| BFF gap documented | ✅ `.coordination/requests/PKT-002-incident-home-bff-gap.yaml` |
-| Backend delivery confirmed | ✅ commit `2782e502` |
-| Contract-ready published | ✅ `.coordination/responses/PKT-002-incident-home-contract-ready.yaml` |
-| Lovable UI task dispatched | ✅ `.coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml` |
-| Example payload available | ✅ `docs/examples/PKT-002-incident-home.json` |
-| Screen spec available | ✅ `docs/screens/PKT-002-incident-home.md` |
-| BFF spec available | ✅ `docs/bff/PKT-002-incident-home.md` |
-| Frontend change spec available | ✅ `docs/pantheon-handoffs/PKT-002-incident-home/FRONTEND_CHANGE_SPEC.md` |
+- `npx eslint src/pages/operator/IncidentHome.tsx src/pages/operator/types.ts src/lib/bffClient.ts src/App.tsx src/components/AppSidebar.tsx`
+- `npm run build`
+- Contract fields were cross-checked against `docs/bff/PKT-002-incident-home.md`, `docs/screens/PKT-002-incident-home.md`, and `docs/examples/PKT-002-incident-home.json`.
+- Screen logic was checked for the required states: loading, contract gap, incident-list unavailable, kill-switch degraded, kill-switch unavailable, and pagination via `page_info.next_page_token`.
 
-## QA Entry Criteria (when Lovable ui-done arrives)
+## Not completed in this cycle
 
-- `.coordination/requests/PKT-002-incident-home-ui-done.yaml` published by Lovable
-- Incident list panel renders from `GET /api/v1/incidents`
-- Kill switch badge renders from `GET /api/v1/kill-switch/status`
-- Degradation banner appears when any `meta.surfaces` entry is degraded or unavailable
-- Non-dismissable warning banner appears when `meta.surfaces.kill_switch` is degraded or unavailable
-- No raw fetch calls in component files
-- No demo provider imports
-- No invented fields
+- Live browser QA against a running `GET /api/v1/incidents` endpoint.
+- Live browser QA against a running `GET /api/v1/kill-switch/status` endpoint.
+- Runtime verification after any future snapshot-policy cleanup changes land.
 
-## Dependency Notes
+## Risk note
 
-- `BP5-SVC-015` (Remove BFF snapshot and default fallback) is `todo` and may affect QA once
-  the screen is live. Monitor for snapshot field availability during QA.
+The remaining risk is runtime verification only. No open contract-shape gap remains in the reviewed
+Incident Home code path.

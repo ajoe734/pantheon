@@ -6,43 +6,43 @@ Workbench: `operator-console`
 
 ## Key UI Decisions
 
-### 1. Kill Switch Badge on Control Rail
+### 1. Split the screen into two authoritative reads
 
-**Decision:** The kill switch status badge is always rendered on the operator console control rail,
-not inline in the incident list.
+**Decision:** `IncidentHome.tsx` performs one read for the incident list and one read for the
+kill-switch rail, then merges the two metas only for banner presentation.
 
-**Rationale:** Kill switch state is a platform-level control surface. It must be visible regardless
-of which incident the operator is viewing. Embedding it in the list would create inconsistent
-visibility.
+**Rationale:** The packet defines two distinct BFF surfaces. Keeping them separate preserves
+contract boundaries while still allowing a single degradation summary at the page level.
 
-**Source:** `GET /api/v1/kill-switch/status` → `kill_switch.status`
+### 2. Keep the kill-switch rail outside the incident table
 
-### 2. Non-Dismissable Warning Banner for Kill Switch Degradation
+**Decision:** The kill-switch state is rendered as a dedicated control-rail card in the right-hand
+column, not as a table column or a per-row badge.
 
-**Decision:** When `meta.surfaces.kill_switch` is `degraded` or `unavailable`, display a
-non-dismissable warning banner above the incident list.
+**Rationale:** Kill-switch status is platform-wide control state. Rendering it separately avoids
+implying that the state belongs to a single incident row.
 
-**Rationale:** Kill switch degradation is a safety-critical signal. Operators must not be able to
-accidentally dismiss it. The `non_dismissable` constraint is enforced at the component level.
+### 3. Use explicit unavailable and degraded states
 
-### 3. Degradation Banner for Any Surface Degradation
+**Decision:** When `meta.surfaces.kill_switch` is `unavailable`, the UI renders a destructive
+unknown-state alert. When it is `degraded`, the UI renders the last known state plus a
+non-dismissable warning.
 
-**Decision:** Display a general degradation banner when any entry in `meta.surfaces` is `degraded`
-or `unavailable`.
+**Rationale:** The packet distinguishes safety-critical uncertainty from stale-but-usable data.
+Collapsing those states would mislead operators.
 
-**Rationale:** The degradation banner provides a single summary indicator for partial data
-reliability. This avoids per-field inline error states that would fragment the operator's attention.
+### 4. Treat missing envelope fields as a contract gap
 
-### 4. No Local State Derivation
+**Decision:** The screen validates required list and kill-switch fields before rendering the success
+state and shows a `bff-gap` alert when required fields are absent.
 
-**Decision:** All status values (kill switch, degradation) come exclusively from BFF API responses.
-No local derivation or caching.
+**Rationale:** The Lovable task explicitly forbids inventing fields. Contract violations must be
+surfaced for Pantheon follow-up instead of papered over in the UI.
 
-**Rationale:** Local derivation creates divergence between what the operator sees and the actual
-system state. All authority lives in the Pantheon BFF.
+### 5. Route all reads through the shared BFF client
 
-### 5. BFF Client Only
+**Decision:** The screen uses `operatorApi.listIncidentHome()` and
+`operatorApi.getIncidentHomeKillSwitchStatus()` from `src/lib/bffClient.ts`.
 
-**Decision:** All API calls go through the existing `bffClient` in `src/lib/bffClient.ts`.
-
-**Rationale:** Consistent error handling, auth, and retry logic. No raw fetch in component files.
+**Rationale:** This keeps auth, base URL resolution, and error handling centralized and satisfies
+the no-raw-fetch constraint from the handoff packet.
