@@ -263,3 +263,4 @@ R = `roles/secretmanager.secretAccessor` granted by bootstrap script.
 - The `webhook-signing-secret` should be a freshly generated random value per environment; the command above uses `openssl rand -hex 32` for this.
 - Cloud Run deploy examples that reference secret versions (`:1`) are in the bootstrap script Step 8 output. After adding a second secret version, update deploy commands accordingly (use `:latest` or the specific numeric version).
 - This document is the execution confirmation record for BP6-STATE-004 and satisfies the operator follow-up noted in BP5-GCP-002 review notes.
+- Finalized: 2026-04-17. Review cycle complete (Codex); semicolon-normalization fix verified in commit 02e437f.
