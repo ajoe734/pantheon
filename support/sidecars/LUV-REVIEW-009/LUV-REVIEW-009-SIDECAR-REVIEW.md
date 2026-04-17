@@ -1,113 +1,114 @@
 # LUV-REVIEW-009 Sidecar Review Packet
 
-## Scope
+Last updated: 2026-04-17
+Sidecar task: `LUV-REVIEW-009-SIDECAR-REVIEW`
+Parent task: `LUV-REVIEW-009`
+Parent owner: `Claude`
+Parent reviewer: `Codex`
+Packet reviewer: `Codex`
+Status: final closeout snapshot for archival approval, not pending parent reviewer intake
 
-This is a support-only review packet for `LUV-REVIEW-009` (`PKT-004-persona-drilldowns`).
-It does not alter canonical truth, runtime behavior, coordination contracts, or the parent task's disposition by itself.
-Its purpose is to hand `Codex` a compact reviewer packet for the current closeout state after the missing feedback artifact was restored.
+> Scope declaration: support artifact only. This packet does not change canonical truth, runtime behavior, coordination contracts, or the already-closed parent task. It records the final durable state after the parent review finished, because the earlier sidecar version froze a pre-close snapshot and was no longer accurate.
 
-## Current Snapshot
+## 1. Current Snapshot
 
-- Parent task: `LUV-REVIEW-009`
-- Parent owner: `Claude`
-- Parent reviewer: `Codex`
-- Parent status in `ai-status.json`: `review`
-- Parent last update: `2026-04-17T17:38:44Z`
-- Sidecar task: `LUV-REVIEW-009-SIDECAR-REVIEW`
-- Sidecar owner: `Claude` (reassigned from Qwen after worker failure)
-- Sidecar reviewer: `Codex`
-- Helper kind: `review_packet`
-- Packet refreshed: `2026-04-17T18:00:00Z`
+Current durable state from `ai-status.json` and `python3 scripts/ai_status.py show LUV-REVIEW-009`:
 
-Parent durable state: all blocking acceptance criteria are now resolved.
+- Parent `LUV-REVIEW-009` is no longer active; it is archived at `ai-task-archive/tasks/LUV-REVIEW-009.json`
+- Parent terminal status is `done`
+- Parent archived at `2026-04-17T18:13:20Z`
+- Parent final `next` message says:
+  - PKT-004 loop closed
+  - all eight acceptance criteria pass
+  - source commit is `6c27d00`
+  - transport is truthful at `de1f86a`
+  - no contract or implementation defect blocks close
+- Sidecar `LUV-REVIEW-009-SIDECAR-REVIEW` is still active only because it was handed off before the parent task finished
 
-- all six drilldown surfaces (PS-01 to PS-06) implemented and routed
-- dead CTAs (Management, Deployment Plans, Approval Decisions) removed from PersonaCatalog.tsx and PersonaDetail.tsx at commit `6c27d009836601657709f33064e8e4cc9c27f9ab`
-- full four-file feedback bundle present in one Git-visible commit
-- coordination files republished at commit `de1f86a` pointing to truthful source_commit
-- Pantheon mirrored response sets `disposition: ready_for_review` and `loop_close_condition: met`
-- branch: `pkt-004-detail-fix`, transport anchor: `de1f86a`
-- parent `next`: "Dead CTAs removed, full feedback bundle published, and coordination files now transport-truthful. All previously failing acceptance criteria now pass. Requesting final review to close LUV-REVIEW-009."
+This means there is no remaining parent reviewer gate to perform. The useful role of this sidecar is now to preserve an accurate final support snapshot and return to `Claude` for formal sidecar closure.
 
-## Evidence Used
+## 2. Why The Earlier Sidecar Packet Became Stale
 
-- `AI_COLLABORATION_GUIDE.md`
-- `.orchestrator/task-briefs/luv_review_009_sidecar_review.md`
-- `ai-status.json` (LUV-REVIEW-009 and LUV-REVIEW-009-SIDECAR-REVIEW entries)
-- `.coordination/reviews/PKT-004-persona-drilldowns-review.md`
-- `.coordination/responses/PKT-004-persona-drilldowns-frontend-feedback.yaml` (updated_at 2026-04-17T17:42:00Z)
-- `.coordination/responses/PKT-004-persona-drilldowns-lovable-ui-task.yaml`
-- Handoff history from `ai-status.json` (Codex→Claude round-trip, all replay blockers resolved)
+The previous version of this file described the parent as:
 
-## Review Delta Since The Prior Rejection
+- still in `review`
+- still awaiting `Codex` reviewer intake
+- still carrying a mirrored response with `disposition: ready_for_review`
 
-The Pantheon review cycle went through multiple rounds of Codex rejection and Claude remediation. The full history is in the `handoffs` array of `ai-status.json`. Here is the condensed narrative:
+That is no longer true.
 
-| Round | Codex rejection reason | Claude fix |
-|---|---|---|
-| 1 | dead CTA routes exposed; build fails on missing persona pages | committed three missing persona pages at front commit `6c6b4e8` |
-| 2 | `GovernanceDeploymentDiff.tsx` missing from build; no-useless-catch in AuthProvider.tsx | added both files; lint clean on local fix commit `c7d15d6` |
-| 3 | fixed commit not on origin/main; source_commit fails `^{commit}` verification | pushed PKT-004 surfaces to GitHub origin/main at `f47e010` |
-| 4 | ESLint still fails in `Detail.tsx`; `/personas/:id` wired to demo `Detail.tsx` not `PersonaDetail.tsx` | removed all dead CTAs at commit `6c27d00`; republished coordination at `de1f86a` |
+Fresh evidence shows the workflow already advanced past that point:
 
-After round 4, the Pantheon mirrored response at `.coordination/responses/PKT-004-persona-drilldowns-frontend-feedback.yaml` sets:
-- `disposition: ready_for_review`
+1. `.coordination/responses/PKT-004-persona-drilldowns-frontend-feedback.yaml` now records:
+   - `reviewed_by: Codex`
+   - `reviewed_at: 2026-04-17T18:07:44Z`
+   - `disposition: close`
+   - `lovable_ui_task_status: closed`
+2. `.coordination/reviews/PKT-004-persona-drilldowns-review.md` already says:
+   - no blocking findings remain
+   - approve `PKT-004-persona-drilldowns` for loop closure
+3. Archived parent handoffs show the final parent sequence:
+   - `2026-04-17T17:59:17Z`: Claude returned the refreshed Git-visible request pair for final review
+   - `2026-04-17T18:11:47Z`: Codex approved the parent review
+   - `2026-04-17T18:13:20Z`: Claude finalized `LUV-REVIEW-009` to `done`
+
+So the earlier sidecar packet was not wrong about the implementation outcome, but it was stale about lifecycle state and reviewer posture.
+
+## 3. Final Durable Evidence
+
+### 3.1 Parent outcome
+
+The archived parent snapshot at `ai-task-archive/tasks/LUV-REVIEW-009.json` is now the durable source for the closeout outcome:
+
+- task title: `Review returned frontend feedback and close loop for PKT-004-persona-drilldowns`
+- terminal status: `done`
+- review notes:
+  - `審查通過`
+  - `PKT-004 Persona Drilldowns 已達 loop-complete，無需再開 Pantheon API gap。`
+
+### 3.2 Reviewer disposition
+
+The authoritative review packet is `.coordination/reviews/PKT-004-persona-drilldowns-review.md`, which records:
+
+- no blocking findings remain
+- the Git-visible request/feedback chain is replayable
+- the shipped UI stays inside the published read-only PKT-004 contract
+- targeted front validation passed on the reviewed tree
+- Pantheon BFF verification still matches the contract
+- decision: approve for loop closure
+
+### 3.3 Final coordination response
+
+The current mirrored response at `.coordination/responses/PKT-004-persona-drilldowns-frontend-feedback.yaml` confirms:
+
+- `disposition: close`
+- `api_gaps: []`
 - `loop_close_condition: met`
-- all eight acceptance criteria results: `pass`
+- `next_action: none`
+- `follow_up_items` contains only one deferred non-blocking QA item
 
-## Current Evidence Summary
+It also records all nine reviewed acceptance checks as `pass`, including:
 
-### What is now strong
+- six Persona Drilldown surfaces implemented
+- existing BFF client only
+- no raw fetch calls in components
+- query params passed through to the BFF
+- contract-gap handoff used instead of mocking missing fields
+- no write actions in this module
+- navigation remains within the PKT-004 drilldown packet
+- targeted verification passed
+- the request pair was published from a truthful Git-visible transport chain
 
-1. Dead CTAs fully removed:
-   - Management CTA removed from `PersonaCatalog.tsx`
-   - Management, Deployment Plans, and Approval Decisions CTAs removed from `PersonaDetail.tsx`
-   - Source: commit `6c27d009836601657709f33064e8e4cc9c27f9ab` on branch `pkt-004-detail-fix`
-2. Four-file feedback bundle present in one Git-visible commit (`6c27d00`):
-   - `LOVABLE_CHANGE_FEEDBACK.md`
-   - `API_GAP_REQUESTS.json`
-   - `UI_DECISIONS.md`
-   - `QA_STATUS.md`
-3. Coordination files republished and transport-truthful:
-   - Both `frontend-feedback` and `ui-done` now reference `6c27d009836601657709f33064e8e4cc9c27f9ab` as `source_commit`
-   - Updated at commit `de1f86a` (branch HEAD)
-4. Pantheon mirrored response confirms all eight acceptance criteria pass:
-   - six drilldown surfaces (PS-01 to PS-06) implemented and routed
-   - BFF-client-only data access
-   - query-param filtering preserved
-   - no raw fetch calls in components
-   - bff-gap handoff wired for missing required fields
-   - read-only surfaces
-   - no dead CTA routes remain
-   - truthful Git-visible transport anchor
-5. No API gaps; non-blocking items are deferred live QA and bundle size warning only.
+## 4. Sidecar Disposition
 
-### What is still worth noticing
+This sidecar should now be treated as an archival support packet, not as a live reviewer-intake bundle.
 
-1. The sibling front repo branch is `pkt-004-detail-fix`, not merged to `main` yet.
-2. Whether merger to `main` is a prerequisite for close is a transport-hygiene policy question for the parent reviewer, not a content or correctness issue.
-3. `loop_close_condition: met` is already recorded in the Pantheon mirrored response.
+Recommended disposition for `LUV-REVIEW-009-SIDECAR-REVIEW`:
 
-## Reviewer Handoff
+- approve the sidecar because this refreshed file now accurately reflects the final parent outcome
+- do not reopen or re-review the parent `LUV-REVIEW-009`; it is already archived `done`
+- return the sidecar to `Claude` only for formal closeout of the helper task itself
 
-For `Codex` as parent reviewer:
+## 5. Suggested Approval Message
 
-1. All previously blocking issues from rejection rounds 1–4 are resolved. Do not review against prior rejection notes.
-2. The authoritative close-case evidence is `.coordination/responses/PKT-004-persona-drilldowns-frontend-feedback.yaml` (updated_at `2026-04-17T17:42:00Z`), which records `loop_close_condition: met` and all eight criteria as `pass`.
-3. Transport anchor is `pkt-004-detail-fix @ de1f86a` (contains `6c27d00` as source_commit). The only remaining question is whether you require merge to `main` before approving.
-4. Remaining risk is limited to deferred live QA and optional transport-hygiene preference — not a contract or implementation defect.
-
-## Recommended Reviewer Decision Frame
-
-Recommended outcome for the sidecar packet itself: treat this refreshed packet as accurate reviewer intake.
-
-Recommended parent-task decision frame:
-
-1. Review against the current `.coordination/responses/PKT-004-persona-drilldowns-frontend-feedback.yaml` and the eight acceptance criteria results — all `pass`.
-2. Decide whether `pkt-004-detail-fix @ de1f86a` is a sufficient transport anchor, or whether merge to `main` is required first.
-3. If transport anchor is acceptable: approve `LUV-REVIEW-009` using `scripts/ai-status.sh approve`.
-4. If `main`-merge is required first: record one narrow follow-up only — "merge `pkt-004-detail-fix` to `main` and republish transport anchor" — then approve.
-
-## Suggested Parent Approval Wording
-
-`Re-review complete: all eight PKT-004 acceptance criteria pass on source commit 6c27d00 (branch pkt-004-detail-fix). Dead CTAs removed, full feedback bundle published, coordination files transport-truthful at de1f86a. Remaining items are deferred live QA and optional main-merge hygiene — no contract or implementation defect blocks close.`
+`Sidecar packet refreshed to final closeout truth: the earlier intake-oriented summary was stale, but the parent LUV-REVIEW-009 is already archived done, the current PKT-004 frontend-feedback response is disposition=close with loop_close_condition met, and the support artifact now accurately captures the final reviewer and owner decisions.`
