@@ -1,11 +1,11 @@
 # Deferred OSS Activation Map
 
 **Task**: BP5-OSS-004
-**Owner**: Claude
-**Reviewer**: Codex
+**Owner**: Codex2
+**Reviewer**: Claude
 **Scope**: Define the executable activation path for deferred Qlib, TRL, FinRL, RLlib, and W&B rows
-**Status**: Done — review approved by Codex 2026-04-16
-**Last Updated**: 2026-04-16
+**Status**: Done — review approved by Claude 2026-04-16
+**Last Updated**: 2026-04-17
 
 ---
 
@@ -30,8 +30,8 @@ and workflow design. This map adds:
 
 | Row | Checklist Status | Package/Container Pinned? | Governed Adapter Present? | Smoke Path Present? | Phase-5 Activation Owner |
 |---|---|---|---|---|---|
-| `Qlib` | `criteria-defined` | Yes — `pyqlib==0.9.1` in `services/research/qlib/requirements.txt`; Qlib Dockerfile exists | No | No | Claude (BP5-OSS-004 owner) → hand off to Qwen for adapter + smoke implementation |
-| `TRL` | `criteria-defined` | No package pin; no worker image present | No | No | Qwen (gate doc owner) — activated only after FB-002/imitation prerequisites are met |
+| `Qlib` | `criteria-defined` | Yes — `pyqlib==0.9.1` in `services/research/qlib/requirements.txt`; Qlib Dockerfile exists | No | No | Codex2 (BP5-OSS-004 owner) → hand off to Qwen for adapter + smoke implementation |
+| `TRL` | `smoke-tested` | Yes — `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt` | Yes — `GovernedPreferencePairAdapter` + `StubDPOBackend` + `TRLDPOBackend` + `run_trl_dpo_workflow` | Yes — smoke passes (16 unit tests + assertions OK, 2026-04-17); evidence in `integrations/trl/` | Claude (OSS-NEXT-002 owner) — production blocked on runtime data gates |
 | `FinRL` | `criteria-defined` | Yes — `finrl==0.3.6` in `services/research/finrl/requirements.txt`; FinRL Dockerfile exists | No | No | Copilot (RL path owner) → governed adapter path requires explicit RL-path approval first |
 | `RLlib` | `version-pinned` | Yes — `ray[rllib]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile stub exists | No | No | Copilot (RL path owner) → RL path approval gate required before adapter work |
 | `W&B` | `criteria-defined` | No SDK pin landed yet | Partial — blocking design exists against real MLflow-first adapter; `EXPERIMENT_BACKEND` selector now in `services/registry/experiments/config.py` (default `"mlflow"`, no W&B backend wired) | No | Qwen (gate doc owner) → blocked on adapter generalization; no implementation work may begin until MLflow-first stabilizes |
@@ -74,8 +74,8 @@ and run a single LightGBM model on a 10-ticker, 1-year stub dataset to validate 
 Emit a registry artifact envelope using canonical `artifact_state=draft` per the shape in
 `ACTIVATION_CRITERIA.md §3.1`.
 
-**Activation owner for follow-on work**: Qwen (Qlib capability lane); Claude is accountable for
-this activation map; Codex reviews. The adapter + smoke task should be materialized as a separate
+**Activation owner for follow-on work**: Qwen (Qlib capability lane); Codex2 is accountable for
+this activation map; Claude reviews. The adapter + smoke task should be materialized as a separate
 execution task once this BP5-OSS-004 map is approved.
 
 ---
@@ -84,25 +84,34 @@ execution task once this BP5-OSS-004 map is approved.
 
 **Gate doc**: `services/learning/trl/ACTIVATION_CRITERIA.md` (approved, OSS-003)
 
-**Current repo truth**:
+**Current repo truth** (updated 2026-04-17 — OSS-NEXT-002):
 
-- No `trl` package pin exists in any `requirements.txt` or Dockerfile in this slice.
-- `services/learning/trl/PREFERENCE_LEARNING_CONTRACT.md` and `WORKFLOW_DEFINITION.md` provide
-  detailed pair-construction and governance workflow.
-- The gate doc specifies `trl>=0.8.0` as the expected version but this has not been pinned.
+- `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt`;
+  compatibility verified against DSPy v2.4.5, imitation v1.0.1, MLflow 3.10.1, pyqlib 0.9.1.
+- Governed pair-construction adapter: `GovernedPreferencePairAdapter` in
+  `services/learning/trl/adapter/trl_adapter.py`. Handles approve/reject/edit events from FB-002
+  with actor_role/promotion_state/artifact_id governance filters.
+- `StubDPOBackend` (CI/smoke, no ML deps) and `TRLDPOBackend` (upstream TRL DPO,
+  distilbert-base-uncased) both implemented.
+- `run_trl_dpo_workflow()` entrypoint emits canonical `artifact_state=draft` registry entries.
+- Smoke test passes: 16 unit tests + assertions OK (2026-04-17). Evidence in `integrations/trl/`.
+- `services/learning/trl/PREFERENCE_LEARNING_CONTRACT.md` and `WORKFLOW_DEFINITION.md` remain
+  authoritative for pair-construction contract and workflow design.
 - The imitation integration (LP-002, `governed`) is complete and is TRL's declared prerequisite.
 - The FB-002 feedback volume threshold (≥200 events, ≥100 preference pairs) is a runtime-data
-  gate, not a code gate.
+  gate, not a code gate — cannot be pre-staged.
 
-**What TRL still needs before it leaves `criteria-defined`**:
+**What TRL still needs before production activation**:
 
 | Evidence required | Status |
 |---|---|
-| Version pin (`trl>=0.8.0`) in `services/learning/trl/requirements.txt` | Missing |
-| Pair-construction pipeline feeding FB-002 events | Missing |
-| Minimal DPO smoke test on 50–100 synthetic preference pairs | Missing |
-| Confirmation that `trl>=0.8.0` does not conflict with DSPy/imitation/MLflow/Qlib | Missing |
+| Version pin (`trl>=0.8.0`) in `services/learning/trl/requirements.txt` | Done — `trl>=0.8.0,<0.10.0` |
+| Pair-construction pipeline feeding FB-002 events | Done — `GovernedPreferencePairAdapter` |
+| Minimal DPO smoke test on synthetic preference pairs | Done — 16 unit tests + smoke assertions OK |
+| Dependency compatibility confirmed | Done — verified in `requirements.txt` header comment |
 | FB-002 event volume at runtime (≥200 events, ≥100 pairs) | Runtime gate — cannot be pre-staged |
+| LP-002 imitation baseline active with approved artifacts | Runtime gate — LP-002 is governed |
+| Downstream consumer ready (EV-001, LP-005, or LP-001) | Runtime gate — requires downstream activation |
 
 **Activation prerequisite chain**:
 1. LP-002 imitation baseline must be active and producing governed `artifact_state=approved` artifacts
@@ -110,13 +119,12 @@ execution task once this BP5-OSS-004 map is approved.
 3. ≥100 valid preference pairs must be constructable from those events per `PREFERENCE_LEARNING_CONTRACT.md §4`
 4. At least one downstream consumer (EV-001, LP-005, or LP-001) must be ready to accept preference models
 
-**Executable next step**: Pin `trl>=0.8.0` in `services/learning/trl/requirements.txt`, verify
-dependency compatibility, and implement a minimal pair-construction pipeline that can be smoke-tested
-against synthetic preference pairs. The smoke test should produce a DPO training artifact with the
-metadata envelope from `ACTIVATION_CRITERIA.md §3.1` (using `artifact_state=draft`).
+**Executable next step**: All code gates are now closed. The remaining gates are runtime-data gates.
+When FB-002 accumulates sufficient event volume, execute a production DPO training run using
+`TRLDPOBackend` and submit the resulting artifact for registry admission per `ACTIVATION_CRITERIA §3.2`.
 
-**Activation owner for follow-on work**: Qwen (gate doc owner; TRL is explicitly Qwen's learning
-lane). TRL follow-on implementation should not begin until the FB-002/imitation prerequisites are met.
+**Activation owner for follow-on work**: Claude (OSS-NEXT-002 task owner) for smoke/baseline evidence;
+Qwen (gate doc owner) for production DPO run when runtime data gates clear.
 
 ---
 
@@ -152,10 +160,10 @@ lane). TRL follow-on implementation should not begin until the FB-002/imitation 
 3. ≥2 years intraday OHLCV + order fills must be available for the target universe
 4. Explicit RL path approval decision must be recorded (human gate or governance review)
 
-**Executable next step**: FinRL implementation work is blocked until the RL path approval gate is
-passed. The immediate executable action is to document the RL path approval decision point as a
-formal governance checkpoint — i.e., create a `services/learning/rl/RL_PATH_APPROVAL_GATE.md`
-that names the exact evidence and approver required to open the FinRL/RLlib implementation lane.
+**Executable next step**: FinRL implementation work remains blocked until the RL path approval gate
+is passed. The prerequisite checkpoint is now formalized in
+`services/learning/rl/RL_PATH_APPROVAL_GATE.md`. The next executable action is to assemble the
+required evidence package and obtain approval to open the governed FinRL adapter lane.
 
 **Activation owner for follow-on work**: Copilot (LP-005/RL path owner). The governed adapter
 and smoke path for FinRL are Copilot's lane once the RL path gate is passed.
@@ -195,9 +203,10 @@ and smoke path for FinRL are Copilot's lane once the RL path gate is passed.
 
 **Executable next step**: The version-pin gap is now closed. The blocking gate is the RL path
 approval decision (same as FinRL). No adapter or training work may proceed until all five entry
-criteria in `PATH_DEFINITION.md §1` are met and formally recorded (including Qlib supervised
-alpha exhaustion). The immediate executable action is to formalize the RL path approval gate in
-`services/learning/rl/RL_PATH_APPROVAL_GATE.md`, naming the exact evidence and approver required.
+criteria in `PATH_DEFINITION.md §1` are met and formally recorded (including Qlib supervised alpha
+exhaustion). That checkpoint now lives in `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; the
+next executable action is to assemble the approval packet and then open the governed RLlib/Tune
+implementation lane.
 
 **Activation owner for follow-on work**: Copilot (LP-005/RL path owner). Same RL path gate applies.
 
@@ -241,8 +250,12 @@ accepts configurable backends, and migrate canonical `artifact_state` / `deploym
 support into the experiment bridge — but not before the MLflow 30-day operational history gate
 is met.
 
+**OSS-NEXT-004 decision (2026-04-17)**: W&B is **formally deferred** for the current wave. All
+six entry criteria remain unmet. Detailed re-entry gate now in `WANDB_ACTIVATION.md §7`. Earliest
+eligible reopen: 2026-05-15 (MLflow 30-day history gate).
+
 **Activation owner for follow-on work**: Qwen (gate doc owner). W&B follow-on should be a
-separate execution task once MLflow 30-day history is met and an operator preference is documented.
+separate execution task once all six re-entry conditions in `WANDB_ACTIVATION.md §7.3` are met.
 
 ---
 
@@ -251,9 +264,9 @@ separate execution task once MLflow 30-day history is met and an operator prefer
 | Row | Overall Readiness | Single Blocking Gate | First Executable Proof |
 |---|---|---|---|
 | `Qlib` | Most ready of the five — package pinned, control-plane consumer exists | Governed data-handler adapter and smoke test missing | Adapter + one LightGBM smoke run in `services/research/qlib/adapter/` |
-| `TRL` | Document-complete but execution-empty | No package pin; FB-002/imitation prerequisites not yet met | Pin `trl>=0.8.0`, build pair-construction pipeline, run minimal DPO smoke |
-| `FinRL` | Package/container stub exists; control-plane consumer exists | RL path approval gate not met (Qlib must plateau first) | Formal RL path approval gate doc; then governed single-agent policy-output mapping |
-| `RLlib` | Version pin now landed — package/container stub closed | Same RL path approval gate as FinRL; environment contract not yet a repo-local artifact | Formal RL path approval gate doc (`services/learning/rl/RL_PATH_APPROVAL_GATE.md`); then governed adapter |
+| `TRL` | Code gates closed — blocked on runtime data gates | Package pinned; pair-construction pipeline and DPO smoke path present; production requires ≥200 FB-002 events, ≥100 pairs, active LP-002, and a ready downstream consumer | Accumulate FB-002 volume; run production DPO with `TRLDPOBackend` when gates clear |
+| `FinRL` | Package/container stub exists; control-plane consumer exists | RL path approval gate not met (Qlib must plateau first) | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed single-agent policy-output mapping |
+| `RLlib` | Version pin now landed — package/container stub closed | Same RL path approval gate as FinRL; environment contract not yet a repo-local artifact | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed adapter |
 | `W&B` | Deferred honestly; `EXPERIMENT_BACKEND` selector now landed | Adapter not generalized; MLflow 30-day operational history not yet met | Generalize `RegistryExperimentAdapter` for configurable backends (Qwen lane), after MLflow history gate clears |
 
 ---
