@@ -2,7 +2,7 @@ feature_id: F-042
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: main
-source_commit: bfb87a995d3360aef5ab42d32d25fb6d2ae0328a
+source_commit: 5ddd23283dc87aee07b4b55133757a3161526158
 screen: promotion-review
 blocking: false
 
