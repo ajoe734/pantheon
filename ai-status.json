@@ -1,8 +1,8 @@
 {
   "project": "pantheon",
-  "sprint": "2026-04-12-blueprint-gap-convergence-planning",
-  "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-17T06:25:06Z",
+  "sprint": "2026-04-17-full-blueprint-completion",
+  "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
+  "updated_at": "2026-04-17T08:26:29Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
-        "BP6-SVC-FB-001"
+        "BP6-LUV-017"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Fixed enum coercion: _coerce_enum() added to all dataclass __post_init__ methods (TraderFeedbackEvent, ExecutionTelemetryEvent, GovernedLinkage, EditItem). Raw string fields like event_type='approve' are now coerced to enum instances at construction — FeedbackStore.query(event_type='approve') no longer crashes. 5 new regression tests; 23/23 pass.",
-      "last_update": "2026-04-17T06:25:01Z"
+      "next": "Supervisor resumed BP6-LUV-017 for finalize after successful dispatch.",
+      "last_update": "2026-04-17T08:16:55Z"
     },
     {
       "name": "Gemini",
@@ -111,16 +111,12 @@
       ],
       "status": "ready",
       "current_task_ids": [
-        "BP6-LUV-020",
-        "BP6-SVC-MEM-001",
-        "BP6-STATE-001",
-        "BP6-STATE-002",
-        "BP6-STATE-003",
-        "BP6-STATE-004"
+        "BP6-STATE-004",
+        "BP6-SVC-MEM-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "last_update": "2026-04-17T02:37:17Z"
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-17T02:20:54Z"
     },
     {
       "name": "Codex",
@@ -132,12 +128,12 @@
       ],
       "status": "ready",
       "current_task_ids": [
-        "BP6-LUV-016",
-        "BP6-LUV-017"
+        "BP6-STATE-002",
+        "BP6-STATE-003"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-17T06:23:28Z"
+      "next": "Supervisor preempted BP6-STATE-002 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-04-17T08:23:35Z"
     },
     {
       "name": "Codex2",
@@ -149,12 +145,13 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "BP6-LUV-018",
-        "BP6-LUV-019"
+        "BP6-SVC-MEM-001",
+        "BP6-STATE-001",
+        "BP6-LUV-017-SIDECAR-REVIEW"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started BP6-LUV-019 after successful dispatch.",
-      "last_update": "2026-04-17T06:22:17Z"
+      "next": "Updating ai-status sprint/objective for BP6 blueprint completion and preparing derived sync.",
+      "last_update": "2026-04-17T08:24:47Z"
     },
     {
       "name": "Copilot",
@@ -164,13 +161,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "BP6-LUV-015"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Supervisor auto-started BP6-LUV-015 after successful dispatch.",
-      "last_update": "2026-04-17T06:25:06Z"
+      "next": "Supervisor auto-started BP6-STATE-003 after successful dispatch.",
+      "last_update": "2026-04-17T08:15:49Z"
     },
     {
       "name": "Qwen",
@@ -180,97 +175,24 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+        "BP6-LUV-020-SIDECAR-REVIEW"
+      ],
       "branch": "feat/qwen-code-agent",
-      "next": "Supervisor auto-started BP6-UI-REVIEW-001-SIDECAR-ACCEPTANCE after successful dispatch.",
-      "last_update": "2026-04-17T04:14:37Z"
+      "next": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "last_update": "2026-04-17T08:25:04Z"
     }
   ],
   "tasks": [
-    {
-      "id": "BP6-LUV-015",
-      "title": "Execute F-042 Promotion Review UI through Lovable after BFF gap resolution and integrate",
-      "summary_zh": "BFF gap 解決後觸發 F-042 至 Lovable 執行，完成 Promotion Review UI 整合 loop",
-      "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "depends_on": [
-        "BP6-BFF-001"
-      ],
-      "artifacts": [
-        ".coordination/responses/F-042-lovable-ui-task.yaml"
-      ],
-      "acceptance": [
-        "F-042 lovable-ui-task 達到 loop-complete"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T02:20:54Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "in_progress",
-      "next": "Supervisor auto-started BP6-LUV-015 after successful dispatch.",
-      "last_update": "2026-04-17T06:25:06Z"
-    },
-    {
-      "id": "BP6-LUV-016",
-      "title": "Execute PKT-004-persona-management through Lovable after backend resolution and integrate",
-      "summary_zh": "後端問題解決後觸發 PKT-004-persona-management 至 Lovable，完成整合",
-      "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "BP6-BFF-001"
-      ],
-      "artifacts": [
-        ".coordination/responses/PKT-004-persona-management-lovable-ui-task.yaml"
-      ],
-      "acceptance": [
-        "PKT-004-persona-management 達到 loop-complete"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T02:20:54Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-17T06:23:28Z"
-    },
     {
       "id": "BP6-LUV-017",
       "title": "Execute PKT-006-approval-queue through Lovable and integrate into the frontend",
       "summary_zh": "觸發 PKT-006-approval-queue 至 Lovable 執行，完成 Approval Queue 畫面整合 loop",
       "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex",
       "depends_on": [],
       "artifacts": [
         ".coordination/responses/PKT-006-approval-queue-lovable-ui-task.yaml",
@@ -298,205 +220,17 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "last_update": "2026-04-17T06:15:12Z"
-    },
-    {
-      "id": "BP6-LUV-018",
-      "title": "Execute PKT-007-deployment-diff through Lovable and integrate into the frontend",
-      "summary_zh": "觸發 PKT-007-deployment-diff 至 Lovable 執行，完成 Deployment Diff 畫面整合 loop",
-      "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        ".coordination/responses/PKT-007-deployment-diff-lovable-ui-task.yaml",
-        ".coordination/responses/PKT-007-deployment-diff-contract-ready.yaml"
-      ],
-      "acceptance": [
-        "PKT-007-deployment-diff 達到 loop-complete"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T02:20:54Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "review",
-      "next": "PKT-007 deployment diff frontend implementation is ready for review: added Governance Deployment Diff screen, shared BFF client/types, frontend-feedback bundle, and ui-done in ../front-ai-trading-system; npm run build passed; source_commit is front HEAD 87340e96ce4247ccc177e8dff7579e804991b895 and may still need reviewer confirmation for replay-clean transport.",
-      "last_update": "2026-04-17T06:21:54Z"
-    },
-    {
-      "id": "BP6-LUV-019",
-      "title": "Execute PKT-008-rollback-review through Lovable and integrate into the frontend",
-      "summary_zh": "觸發 PKT-008-rollback-review 至 Lovable 執行，完成整合 loop",
-      "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        ".coordination/responses/PKT-008-rollback-review-lovable-ui-task.yaml",
-        ".coordination/responses/PKT-008-rollback-review-contract-ready.yaml"
-      ],
-      "acceptance": [
-        "PKT-008-rollback-review 達到 loop-complete"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T02:20:54Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "in_progress",
-      "next": "Supervisor auto-started BP6-LUV-019 after successful dispatch.",
-      "last_update": "2026-04-17T06:22:17Z"
-    },
-    {
-      "id": "BP6-LUV-020",
-      "title": "Execute PKT-009-governance-audit-rail through Lovable and integrate into the frontend",
-      "summary_zh": "觸發 PKT-009-governance-audit-rail 至 Lovable 執行，完成整合 loop",
-      "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        ".coordination/responses/PKT-009-governance-audit-rail-lovable-ui-task.yaml",
-        ".coordination/responses/PKT-009-governance-audit-rail-contract-ready.yaml"
-      ],
-      "acceptance": [
-        "PKT-009-governance-audit-rail 達到 loop-complete"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T02:20:54Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "last_update": "2026-04-17T02:37:17Z"
-    },
-    {
-      "id": "BP6-SVC-FB-001",
-      "title": "Implement services/feedback/ preference events store and trajectory schema as TRL activation prerequisite",
-      "summary_zh": "實作 services/feedback/ 基礎路徑：preference events 儲存、trajectory schema → .py 實作 + tests。是 TRL 激活的前置條件。",
-      "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        "services/feedback/"
-      ],
-      "acceptance": [
-        "services/feedback/ 有實作 .py 檔案",
-        "preference events 可寫入並讀回",
-        "smoke test 通過",
-        "至少 3 個單元測試"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T02:20:54Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "review",
-      "next": "Fixed enum coercion: _coerce_enum() added to all dataclass __post_init__ methods (TraderFeedbackEvent, ExecutionTelemetryEvent, GovernedLinkage, EditItem). Raw string fields like event_type='approve' are now coerced to enum instances at construction — FeedbackStore.query(event_type='approve') no longer crashes. 5 new regression tests; 23/23 pass.",
-      "last_update": "2026-04-17T06:25:01Z"
-    },
-    {
-      "id": "BP6-SVC-EVAL-001",
-      "title": "Implement services/evaluation/ core evaluator path with smoke test and unit coverage",
-      "summary_zh": "實作 services/evaluation/ 核心路徑：evaluator contract 落成 .py 實作 + tests",
-      "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        "services/evaluation/"
-      ],
-      "acceptance": [
-        "services/evaluation/ 有核心 .py 實作",
-        "evaluator 可接收 artifact 並輸出評估結果",
-        "smoke test 通過"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T02:20:54Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Helper-claimed by Copilot while Codex completes higher-priority work.",
-      "last_update": "2026-04-17T05:53:11Z"
+      "status": "review_approved",
+      "next": "Supervisor resumed BP6-LUV-017 for finalize after successful dispatch.",
+      "last_update": "2026-04-17T08:16:55Z"
     },
     {
       "id": "BP6-SVC-MEM-001",
       "title": "Implement services/memory/ institutional memory store with smoke test and unit coverage",
       "summary_zh": "實作 services/memory/ 核心路徑：institutional_memory_entry schema 落成 .py 實作 + tests",
       "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Gemini",
-      "reviewer": "Claude",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "depends_on": [],
       "artifacts": [
         "services/memory/"
@@ -524,17 +258,17 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "last_update": "2026-04-17T05:51:01Z"
+      "status": "review",
+      "next": "Implementation complete. Fixed nested-lock deadlocks in mark_reused/supersede, added persisted-entry validation, and added unit + smoke coverage. Verify with: python3 -m unittest services/memory/test_institutional_memory_store.py && python3 services/memory/smoke_test_institutional_memory.py",
+      "last_update": "2026-04-17T08:23:26Z"
     },
     {
       "id": "BP6-STATE-001",
       "title": "Update ai-status.json sprint objective to full blueprint completion and rotate sprint name to BP6",
       "summary_zh": "更新 ai-status.json sprint 名稱和 objective 為 '把系統藍圖完整實現'，反映 BP5 已完成、BP6 開始",
       "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Gemini",
-      "reviewer": "Claude",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "depends_on": [],
       "artifacts": [
         "ai-status.json",
@@ -561,17 +295,17 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "last_update": "2026-04-17T03:42:16Z"
+      "status": "in_progress",
+      "next": "Updating ai-status sprint/objective for BP6 blueprint completion and preparing derived sync.",
+      "last_update": "2026-04-17T08:24:47Z"
     },
     {
       "id": "BP6-STATE-002",
       "title": "Write the actual phase5 consensus packet content to replace the template placeholder",
       "summary_zh": "補寫 phase5 consensus-packet.md 實際接受內容，取代目前仍是模板佔位符的狀態",
       "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Gemini",
-      "reviewer": "Codex",
+      "owner": "Codex",
+      "reviewer": "Claude",
       "depends_on": [],
       "artifacts": [
         "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md"
@@ -598,16 +332,16 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "last_update": "2026-04-17T03:58:25Z"
+      "next": "Supervisor preempted BP6-STATE-002 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-04-17T08:23:35Z"
     },
     {
       "id": "BP6-STATE-003",
       "title": "Reconcile phase5 planning artifacts to match the already-completed execution reality",
       "summary_zh": "更新 execution-materialization.md 和 planning-session.json 以反映 phase5 已執行完成的真實狀態",
       "phase": "Phase 6: Full Blueprint Completion",
-      "owner": "Gemini",
-      "reviewer": "Codex",
+      "owner": "Codex",
+      "reviewer": "Claude",
       "depends_on": [],
       "artifacts": [
         "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md",
@@ -635,8 +369,8 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Helper-claimed by Gemini while Codex is dispatch-paused.",
-      "last_update": "2026-04-17T03:10:04Z"
+      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-04-17T08:16:13Z"
     },
     {
       "id": "BP6-STATE-004",
@@ -675,6 +409,138 @@
       "status": "todo",
       "next": "Assignment created from accepted planning session",
       "last_update": "2026-04-17T02:20:54Z"
+    },
+    {
+      "id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BP6-LUV-020 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BP6-LUV-020，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/BP6-LUV-020/BP6-LUV-020-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-04-17T08:26:28Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BP6-LUV-020",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare BP6-LUV-015 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 BP6-LUV-015，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "BP6-BFF-001"
+      ],
+      "artifacts": [
+        "support/sidecars/BP6-LUV-015/BP6-LUV-015-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "last_update": "2026-04-17T08:25:04Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BP6-LUV-015",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BP6-SVC-MEM-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare BP6-SVC-MEM-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 BP6-SVC-MEM-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/BP6-SVC-MEM-001/BP6-SVC-MEM-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "last_update": "2026-04-17T07:42:25Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BP6-SVC-MEM-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "title": "Prepare BP6-LUV-020 review packet and evidence summary",
+      "summary_zh": "平行支援 BP6-LUV-020，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "owner": "Qwen",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/BP6-LUV-020/BP6-LUV-020-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "last_update": "2026-04-17T08:18:41Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BP6-LUV-020",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BP6-LUV-017-SIDECAR-REVIEW",
+      "title": "Prepare BP6-LUV-017 review packet and evidence summary",
+      "summary_zh": "平行支援 BP6-LUV-017，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/BP6-LUV-017/BP6-LUV-017-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Sidecar review packet created at support/sidecars/BP6-LUV-017/BP6-LUV-017-SIDECAR-REVIEW.md. Packet summarizes current PKT-006 evidence, highlights the mismatch between BP6-LUV-017 review_approved state and the still-blocked Pantheon review/delivery artifacts, and recommends reconciling parent state before any finalize-to-done step.",
+      "last_update": "2026-04-17T08:18:21Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BP6-LUV-017",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -686,32 +552,6 @@
       "status": "done",
       "created_at": "2026-04-17T02:31:32Z",
       "resolved_at": "2026-04-17T02:46:52Z"
-    },
-    {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T02:33:08Z",
-      "resolved_at": "2026-04-17T03:29:20Z"
-    },
-    {
-      "task_id": "BP6-LUV-019",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T02:36:22Z",
-      "resolved_at": "2026-04-17T02:58:06Z"
-    },
-    {
-      "task_id": "BP6-LUV-020",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T02:37:17Z"
     },
     {
       "task_id": "BP6-SVC-MEM-001",
@@ -759,15 +599,6 @@
       "resolved_at": "2026-04-17T03:01:53Z"
     },
     {
-      "task_id": "BP6-LUV-019",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T02:59:33Z",
-      "resolved_at": "2026-04-17T03:29:59Z"
-    },
-    {
       "task_id": "BP6-STATE-002",
       "from": "Codex2",
       "to": "Claude",
@@ -790,8 +621,9 @@
       "from": "Codex",
       "to": "Gemini",
       "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
-      "status": "pending",
-      "created_at": "2026-04-17T03:10:04Z"
+      "status": "done",
+      "created_at": "2026-04-17T03:10:04Z",
+      "resolved_at": "2026-04-17T08:13:48Z"
     },
     {
       "task_id": "BP6-LUV-017",
@@ -803,39 +635,13 @@
       "resolved_at": "2026-04-17T03:57:21Z"
     },
     {
-      "task_id": "BP6-LUV-018",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T03:29:19Z",
-      "resolved_at": "2026-04-17T03:58:11Z"
-    },
-    {
-      "task_id": "BP6-LUV-019",
-      "from": "Claude",
-      "to": "Copilot",
-      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T03:29:59Z",
-      "resolved_at": "2026-04-17T05:04:44Z"
-    },
-    {
-      "task_id": "BP6-SVC-FB-001",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Implementation complete: models.py (GovernedLinkage, TraderFeedbackEvent, ExecutionTelemetryEvent), store.py (append-only FeedbackStore with query), 13 unit tests all passing. Smoke test, edit/rationale validation, draft-exclusion guard, duplicate idempotency, and query filters all verified.",
-      "status": "done",
-      "created_at": "2026-04-17T03:35:49Z",
-      "resolved_at": "2026-04-17T04:20:49Z"
-    },
-    {
       "task_id": "BP6-STATE-001",
       "from": "Claude",
       "to": "Gemini",
       "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T03:42:16Z"
+      "status": "done",
+      "created_at": "2026-04-17T03:42:16Z",
+      "resolved_at": "2026-04-17T07:42:50Z"
     },
     {
       "task_id": "BP6-STATE-002",
@@ -856,21 +662,13 @@
       "resolved_at": "2026-04-17T04:11:42Z"
     },
     {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T03:58:11Z",
-      "resolved_at": "2026-04-17T03:58:42Z"
-    },
-    {
       "task_id": "BP6-STATE-002",
       "from": "Codex",
       "to": "Gemini",
       "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T03:58:25Z"
+      "status": "done",
+      "created_at": "2026-04-17T03:58:25Z",
+      "resolved_at": "2026-04-17T07:58:26Z"
     },
     {
       "task_id": "BP6-LUV-017",
@@ -891,15 +689,6 @@
       "resolved_at": "2026-04-17T04:15:19Z"
     },
     {
-      "task_id": "BP6-LUV-018",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T04:14:49Z",
-      "resolved_at": "2026-04-17T04:31:04Z"
-    },
-    {
       "task_id": "BP6-LUV-017",
       "from": "Claude",
       "to": "Codex",
@@ -918,33 +707,6 @@
       "resolved_at": "2026-04-17T04:49:17Z"
     },
     {
-      "task_id": "BP6-SVC-FB-001",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review requested changes: see .coordination/reviews/BP6-SVC-FB-001-review.md. Blocking issues: append-only guarantee is violated because stored events remain externally mutable after write, and created_at is not validated on ingest so malformed timestamps are accepted and later crash query(). Please snapshot/freeze events and validate RFC3339 timestamps with regression coverage.",
-      "status": "done",
-      "created_at": "2026-04-17T04:20:49Z",
-      "resolved_at": "2026-04-17T04:20:49Z"
-    },
-    {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T04:33:16Z",
-      "resolved_at": "2026-04-17T04:40:56Z"
-    },
-    {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex2",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T04:46:35Z",
-      "resolved_at": "2026-04-17T04:47:26Z"
-    },
-    {
       "task_id": "BP6-LUV-017",
       "from": "Claude",
       "to": "Gemini",
@@ -954,15 +716,6 @@
       "resolved_at": "2026-04-17T05:03:46Z"
     },
     {
-      "task_id": "BP6-SVC-EVAL-001",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T05:32:14Z",
-      "resolved_at": "2026-04-17T05:53:11Z"
-    },
-    {
       "task_id": "BP6-LUV-017",
       "from": "Codex",
       "to": "Codex2",
@@ -970,33 +723,6 @@
       "status": "done",
       "created_at": "2026-04-17T05:33:05Z",
       "resolved_at": "2026-04-17T05:36:56Z"
-    },
-    {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T05:34:46Z",
-      "resolved_at": "2026-04-17T05:35:16Z"
-    },
-    {
-      "task_id": "BP6-LUV-019",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T05:34:59Z",
-      "resolved_at": "2026-04-17T06:06:45Z"
-    },
-    {
-      "task_id": "BP6-LUV-018",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T05:35:47Z",
-      "resolved_at": "2026-04-17T05:52:54Z"
     },
     {
       "task_id": "BP6-LUV-017",
@@ -1012,8 +738,9 @@
       "from": "Claude",
       "to": "Gemini",
       "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T05:51:01Z"
+      "status": "done",
+      "created_at": "2026-04-17T05:51:01Z",
+      "resolved_at": "2026-04-17T07:26:52Z"
     },
     {
       "task_id": "BP6-LUV-017",
@@ -1025,23 +752,6 @@
       "resolved_at": "2026-04-17T05:53:33Z"
     },
     {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T05:52:54Z",
-      "resolved_at": "2026-04-17T05:57:34Z"
-    },
-    {
-      "task_id": "BP6-SVC-EVAL-001",
-      "from": "Codex",
-      "to": "Copilot",
-      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T05:53:11Z"
-    },
-    {
       "task_id": "BP6-LUV-017",
       "from": "Claude",
       "to": "Codex",
@@ -1049,24 +759,6 @@
       "status": "done",
       "created_at": "2026-04-17T05:56:37Z",
       "resolved_at": "2026-04-17T06:13:35Z"
-    },
-    {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T05:57:34Z",
-      "resolved_at": "2026-04-17T06:13:52Z"
-    },
-    {
-      "task_id": "BP6-LUV-019",
-      "from": "Claude",
-      "to": "Copilot",
-      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T06:08:56Z",
-      "resolved_at": "2026-04-17T06:09:46Z"
     },
     {
       "task_id": "BP6-LUV-017",
@@ -1078,91 +770,268 @@
       "resolved_at": "2026-04-17T06:15:12Z"
     },
     {
-      "task_id": "BP6-LUV-018",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "task_id": "BP6-LUV-017",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T06:13:51Z",
-      "resolved_at": "2026-04-17T06:14:43Z"
+      "created_at": "2026-04-17T06:15:12Z",
+      "resolved_at": "2026-04-17T06:39:52Z"
     },
     {
-      "task_id": "BP6-LUV-019",
+      "task_id": "BP6-LUV-017",
       "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T06:14:25Z",
-      "resolved_at": "2026-04-17T06:22:17Z"
+      "created_at": "2026-04-17T06:39:52Z",
+      "resolved_at": "2026-04-17T06:47:07Z"
     },
     {
       "task_id": "BP6-LUV-017",
       "from": "Claude",
       "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T06:15:12Z"
+      "message": "PKT-006-approval-queue loop-complete: GovernanceApprovalQueue.tsx + ApprovalDecisionDetail.tsx committed at front-repo commit 0942961a7e31bdfa5adddddf2d31d72b41b141a9. lovable-ui-task.yaml is loop-complete. Feedback bundle (LOVABLE_CHANGE_FEEDBACK, API_GAP_REQUESTS, UI_DECISIONS, QA_STATUS) and ui-done/frontend-feedback coordination artifacts mirrored to pantheon .coordination/requests/. Build passed. All acceptance criteria met: BFF-only data, backend-shaped CTAs, server-side filters, degradation banner, embedded drawer context from queue payload.",
+      "status": "done",
+      "created_at": "2026-04-17T06:52:09Z",
+      "resolved_at": "2026-04-17T07:08:43Z"
     },
     {
-      "task_id": "BP6-SVC-FB-001",
+      "task_id": "BP6-LUV-017",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. PKT-006-approval-queue ui-done committed at 0942961, GovernanceApprovalQueue.tsx + ApprovalDecisionDetail.tsx complete, feedback bundle present. Owner to finalize.",
+      "status": "pending",
+      "created_at": "2026-04-17T07:08:43Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:27:56Z",
+      "resolved_at": "2026-04-17T07:28:33Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:35:53Z",
+      "resolved_at": "2026-04-17T07:36:51Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:36:08Z",
+      "resolved_at": "2026-04-17T07:40:44Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:36:26Z",
+      "resolved_at": "2026-04-17T07:37:43Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-17T07:42:25Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:46:02Z",
+      "resolved_at": "2026-04-17T07:46:55Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:46:33Z",
+      "resolved_at": "2026-04-17T07:53:06Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
       "from": "Claude",
       "to": "Codex",
-      "message": "Fixed both blocking review issues: (1) deep-copy at write/read boundaries enforces append-only guarantee — post-write mutation to caller's object no longer alters stored history; (2) _validate_rfc3339() in __post_init__ rejects malformed created_at at construction, not silently stored. 18 tests pass including 5 new regression tests covering mutation isolation and invalid timestamp rejection.",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T06:18:43Z",
-      "resolved_at": "2026-04-17T06:21:44Z"
+      "created_at": "2026-04-17T07:47:16Z",
+      "resolved_at": "2026-04-17T08:14:37Z"
     },
     {
-      "task_id": "BP6-LUV-015",
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
       "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T06:19:15Z",
-      "resolved_at": "2026-04-17T06:19:49Z"
+      "created_at": "2026-04-17T07:48:27Z",
+      "resolved_at": "2026-04-17T07:49:09Z"
     },
     {
-      "task_id": "BP6-LUV-016",
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:49:22Z",
+      "resolved_at": "2026-04-17T07:49:58Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
       "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T06:19:29Z",
-      "resolved_at": "2026-04-17T06:22:42Z"
+      "created_at": "2026-04-17T07:50:11Z",
+      "resolved_at": "2026-04-17T07:50:58Z"
     },
     {
-      "task_id": "BP6-SVC-FB-001",
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:51:52Z",
+      "resolved_at": "2026-04-17T07:52:14Z"
+    },
+    {
+      "task_id": "BP6-STATE-002",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:58:43Z",
+      "resolved_at": "2026-04-17T07:59:29Z"
+    },
+    {
+      "task_id": "BP6-STATE-003",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:15:05Z",
+      "resolved_at": "2026-04-17T08:15:49Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
       "from": "Codex",
-      "to": "Claude",
-      "message": "Review failed: services/feedback/models.py still accepts raw string enum fields without runtime coercion/validation, so schema can be bypassed and FeedbackStore.query(event_type=...) crashes with AttributeError on ev.event_type.value. Repro: construct TraderFeedbackEvent with event_type='approve', actor_role='operator', channel='web', write it, then query(event_type='approve'). Please validate/coerce enum-backed fields at construction and add regression coverage for raw-string ingestion across feedback/telemetry events.",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T06:21:44Z",
-      "resolved_at": "2026-04-17T06:21:44Z"
+      "created_at": "2026-04-17T08:17:34Z",
+      "resolved_at": "2026-04-17T08:18:08Z"
     },
     {
-      "task_id": "BP6-LUV-018",
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:17:48Z",
+      "resolved_at": "2026-04-17T08:23:30Z"
+    },
+    {
+      "task_id": "BP6-LUV-017-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Sidecar review packet created at support/sidecars/BP6-LUV-017/BP6-LUV-017-SIDECAR-REVIEW.md. Packet summarizes current PKT-006 evidence, highlights the mismatch between BP6-LUV-017 review_approved state and the still-blocked Pantheon review/delivery artifacts, and recommends reconciling parent state before any finalize-to-done step.",
+      "status": "pending",
+      "created_at": "2026-04-17T08:18:21Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:18:30Z",
+      "resolved_at": "2026-04-17T08:19:56Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-17T08:18:41Z"
+    },
+    {
+      "task_id": "BP6-STATE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:19:27Z",
+      "resolved_at": "2026-04-17T08:24:16Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:19:45Z",
+      "resolved_at": "2026-04-17T08:20:26Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:20:38Z",
+      "resolved_at": "2026-04-17T08:21:27Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:22:10Z",
+      "resolved_at": "2026-04-17T08:22:34Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
       "from": "Codex2",
       "to": "Codex",
-      "message": "PKT-007 deployment diff frontend implementation is ready for review: added Governance Deployment Diff screen, shared BFF client/types, frontend-feedback bundle, and ui-done in ../front-ai-trading-system; npm run build passed; source_commit is front HEAD 87340e96ce4247ccc177e8dff7579e804991b895 and may still need reviewer confirmation for replay-clean transport.",
+      "message": "Implementation complete. Fixed nested-lock deadlocks in mark_reused/supersede, added persisted-entry validation, and added unit + smoke coverage. Verify with: python3 -m unittest services/memory/test_institutional_memory_store.py && python3 services/memory/smoke_test_institutional_memory.py",
       "status": "pending",
-      "created_at": "2026-04-17T06:21:54Z"
+      "created_at": "2026-04-17T08:23:26Z"
     },
     {
-      "task_id": "BP6-LUV-016",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T06:22:42Z",
-      "resolved_at": "2026-04-17T06:23:03Z"
+      "created_at": "2026-04-17T08:24:50Z",
+      "resolved_at": "2026-04-17T08:25:26Z"
     },
     {
-      "task_id": "BP6-SVC-FB-001",
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
       "from": "Claude",
-      "to": "Codex",
-      "message": "Fixed enum coercion: _coerce_enum() added to all dataclass __post_init__ methods (TraderFeedbackEvent, ExecutionTelemetryEvent, GovernedLinkage, EditItem). Raw string fields like event_type='approve' are now coerced to enum instances at construction — FeedbackStore.query(event_type='approve') no longer crashes. 5 new regression tests; 23/23 pass.",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
       "status": "pending",
-      "created_at": "2026-04-17T06:25:01Z"
+      "created_at": "2026-04-17T08:25:04Z"
     }
   ],
   "blockers": [],
@@ -1176,22 +1045,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
-      "active": 1,
+      "total": 2,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
-      "todo": 0
+      "review": 0,
+      "review_approved": 1,
+      "todo": 1
     },
     "Gemini": {
-      "total": 6,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 6
+      "todo": 2
     },
     "Codex": {
       "total": 2,
@@ -1203,15 +1072,24 @@
       "todo": 2
     },
     "Codex2": {
-      "total": 2,
-      "active": 2,
+      "total": 3,
+      "active": 3,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 2,
       "review_approved": 0,
       "todo": 1
     },
     "Qwen": {
+      "total": 2,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 2
+    },
+    "Copilot": {
       "total": 0,
       "active": 0,
       "blocked": 0,
@@ -1219,15 +1097,6 @@
       "review": 0,
       "review_approved": 0,
       "todo": 0
-    },
-    "Copilot": {
-      "total": 2,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 2
     }
   }
 }
