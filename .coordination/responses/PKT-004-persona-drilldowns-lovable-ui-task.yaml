@@ -1,7 +1,7 @@
 feature_id: PKT-004-persona-drilldowns
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: loop-complete
 pantheon_pr: null
 base_url: null
 workbench: persona-workbench
