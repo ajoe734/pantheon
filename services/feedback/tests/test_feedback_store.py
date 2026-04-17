@@ -348,3 +348,84 @@ def test_valid_rfc3339_with_offset_accepted():
         target=_linkage(),
     )
     assert ev.event_id == "evt-offset-ts"
+
+
+# ---------------------------------------------------------------------------
+# Regression: raw-string enum fields are coerced at construction
+# ---------------------------------------------------------------------------
+
+def test_raw_string_event_type_coerced_to_enum():
+    """Exact repro from review: raw string enum fields must be coerced, not stored as plain str."""
+    ev = TraderFeedbackEvent(
+        event_id="raw-str-001",
+        event_type="approve",        # raw string
+        actor_role="operator",       # raw string
+        channel="web",               # raw string
+        created_at="2026-04-17T10:00:00Z",
+        actor_id="op-raw",
+        target=_linkage(),
+    )
+    assert isinstance(ev.event_type, FeedbackEventType)
+    assert isinstance(ev.actor_role, ActorRole)
+    assert isinstance(ev.channel, Channel)
+    assert ev.event_type == FeedbackEventType.APPROVE
+
+
+def test_raw_string_feedback_event_survives_query():
+    """FeedbackStore.query(event_type=...) must not crash when event was ingested via raw string."""
+    store = FeedbackStore()
+    ev = TraderFeedbackEvent(
+        event_id="raw-query-001",
+        event_type="approve",
+        actor_role="operator",
+        channel="web",
+        created_at="2026-04-17T10:00:00Z",
+        actor_id="op-raw",
+        target=_linkage(),
+    )
+    store.write(ev)
+    results = store.query(event_type="approve")
+    assert len(results) == 1
+    assert results[0].event_id == "raw-query-001"
+
+
+def test_raw_string_telemetry_event_type_coerced():
+    """TelemetryEventType and ExecutionMode fields are coerced from raw strings."""
+    ev = ExecutionTelemetryEvent(
+        event_id="raw-telem-001",
+        event_type="pnl_snapshot",
+        execution_mode="paper",
+        created_at="2026-04-17T11:00:00Z",
+        target=_linkage(promotion_state=PromotionState.PAPER),
+        metrics={"pnl": 1.5},
+    )
+    assert isinstance(ev.event_type, TelemetryEventType)
+    assert isinstance(ev.execution_mode, ExecutionMode)
+    assert ev.event_type == TelemetryEventType.PNL_SNAPSHOT
+
+
+def test_invalid_raw_string_enum_rejected():
+    """Invalid raw string must raise ValueError with a helpful message."""
+    with pytest.raises(ValueError, match="event_type"):
+        TraderFeedbackEvent(
+            event_id="raw-bad-001",
+            event_type="not_a_valid_type",
+            actor_role="operator",
+            channel="web",
+            created_at="2026-04-17T10:00:00Z",
+            actor_id="op-raw",
+            target=_linkage(),
+        )
+
+
+def test_raw_string_governed_linkage_enums_coerced():
+    """GovernedLinkage artifact_type and promotion_state are coerced from raw strings."""
+    link = GovernedLinkage(
+        strategy_id="strat-raw",
+        registry_id="reg-raw",
+        artifact_type="strategy_spec",
+        promotion_state="candidate",
+    )
+    assert isinstance(link.artifact_type, ArtifactType)
+    assert isinstance(link.promotion_state, PromotionState)
+    assert link.promotion_state == PromotionState.CANDIDATE

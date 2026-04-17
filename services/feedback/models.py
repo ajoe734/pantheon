@@ -30,6 +30,19 @@ def _validate_rfc3339(value: str, field_name: str = "created_at") -> None:
         ) from exc
 
 
+def _coerce_enum(value: Any, enum_cls: type, field_name: str) -> Any:
+    """Coerce a raw string (or None) to an enum instance; raise ValueError if invalid."""
+    if value is None or isinstance(value, enum_cls):
+        return value
+    try:
+        return enum_cls(value)
+    except ValueError:
+        valid = [e.value for e in enum_cls]
+        raise ValueError(
+            f"{field_name} must be one of {valid!r}; got {value!r}"
+        )
+
+
 class FeedbackEventType(str, Enum):
     APPROVE = "approve"
     EDIT = "edit"
@@ -94,6 +107,9 @@ class EditItem:
     operation: EditOperation
     value: Any = None
 
+    def __post_init__(self) -> None:
+        self.operation = _coerce_enum(self.operation, EditOperation, "operation")
+
 
 @dataclass
 class GovernedLinkage:
@@ -111,6 +127,8 @@ class GovernedLinkage:
     lineage_ref: Optional[str] = None
 
     def __post_init__(self) -> None:
+        self.artifact_type = _coerce_enum(self.artifact_type, ArtifactType, "artifact_type")
+        self.promotion_state = _coerce_enum(self.promotion_state, PromotionState, "promotion_state")
         if not self.strategy_id:
             raise ValueError("strategy_id is required")
         has_registry = self.registry_id is not None
@@ -144,6 +162,9 @@ class TraderFeedbackEvent:
     edits: List[EditItem] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        self.event_type = _coerce_enum(self.event_type, FeedbackEventType, "event_type")
+        self.actor_role = _coerce_enum(self.actor_role, ActorRole, "actor_role")
+        self.channel = _coerce_enum(self.channel, Channel, "channel")
         _validate_rfc3339(self.created_at)
         if self.event_type == FeedbackEventType.EDIT and not self.edits:
             raise ValueError("edits must be non-empty for event_type='edit'")
@@ -170,6 +191,8 @@ class ExecutionTelemetryEvent:
     run_id: Optional[str] = None
 
     def __post_init__(self) -> None:
+        self.event_type = _coerce_enum(self.event_type, TelemetryEventType, "event_type")
+        self.execution_mode = _coerce_enum(self.execution_mode, ExecutionMode, "execution_mode")
         _validate_rfc3339(self.created_at)
         if not self.metrics:
             raise ValueError("metrics must contain at least one entry")
