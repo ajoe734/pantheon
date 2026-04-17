@@ -150,24 +150,58 @@ Expected: each secret shows an enabled version name (e.g., `projects/.../secrets
 
 ---
 
-## Step 3 — Verify service account secret bindings
+## Step 3 — Verify per-secret IAM bindings
 
-The bootstrap script already applies IAM bindings. Confirm they are active:
+The bootstrap script applies `roles/secretmanager.secretAccessor` on each secret individually via `gcloud secrets add-iam-policy-binding`. Verify using per-secret IAM policy (not project-level IAM):
 
 ```bash
+# Coverage map: suffix → expected SA roles that must hold secretAccessor
+# postgres-url          → control-plane, worker, execution
+# openclaw-api-token    → control-plane, worker
+# vendor-marketdata-token → worker
+# webhook-signing-secret  → control-plane
+# broker-api-key          → execution
+# broker-api-secret       → execution
+
+declare -A EXPECTED_ROLES=(
+  ["postgres-url"]="control-plane worker execution"
+  ["openclaw-api-token"]="control-plane worker"
+  ["vendor-marketdata-token"]="worker"
+  ["webhook-signing-secret"]="control-plane"
+  ["broker-api-key"]="execution"
+  ["broker-api-secret"]="execution"
+)
+
+PASS=0
+FAIL=0
+
 for ENV in dev sandbox; do
-  for SA_ROLE in control-plane worker execution; do
-    SA="pantheon-${ENV}-${SA_ROLE}@<PROJECT_ID>.iam.gserviceaccount.com"
-    echo "--- ${SA} ---"
-    gcloud projects get-iam-policy '<PROJECT_ID>' \
-      --flatten='bindings[].members' \
-      --filter="bindings.members:${SA} AND bindings.role:roles/secretmanager.secretAccessor" \
-      --format='table(bindings.role,bindings.members)'
+  for SUFFIX in postgres-url openclaw-api-token vendor-marketdata-token \
+                webhook-signing-secret broker-api-key broker-api-secret; do
+    SECRET="pantheon-${ENV}-${SUFFIX}"
+    POLICY=$(gcloud secrets get-iam-policy "${SECRET}" \
+      --project='<PROJECT_ID>' \
+      --format='value(bindings[role=roles/secretmanager.secretAccessor].members[])')
+
+    for SA_ROLE in ${EXPECTED_ROLES[${SUFFIX}]}; do
+      MEMBER="serviceAccount:pantheon-${ENV}-${SA_ROLE}@<PROJECT_ID>.iam.gserviceaccount.com"
+      if echo "${POLICY}" | grep -qF "${MEMBER}"; then
+        echo "OK   ${SECRET} → ${SA_ROLE}"
+        PASS=$((PASS + 1))
+      else
+        echo "FAIL ${SECRET} → ${SA_ROLE} MISSING"
+        FAIL=$((FAIL + 1))
+      fi
+    done
   done
 done
+
+echo ""
+echo "Result: ${PASS} OK, ${FAIL} FAIL"
+[[ "${FAIL}" -eq 0 ]] && echo "All bindings confirmed." || echo "Fix missing bindings before proceeding."
 ```
 
-Expected: each service account that requires secret access appears as a binding member for `roles/secretmanager.secretAccessor` on the relevant secrets.
+Expected: all lines print `OK` and the final summary shows `0 FAIL`. Each secret's `secretAccessor` binding list matches the coverage matrix below exactly — no more, no fewer roles per secret.
 
 ---
 
