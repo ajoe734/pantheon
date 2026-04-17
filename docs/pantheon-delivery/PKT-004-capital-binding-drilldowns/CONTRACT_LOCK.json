@@ -1,0 +1,26 @@
+{
+  "feature_id": "PKT-004-capital-binding-drilldowns",
+  "status": "followup-required",
+  "backend_commit": "c3fd4fc2de7f1c79f9350dafdd28af2dc90eef6a",
+  "bff_contract_version": "pantheon-bff@c3fd4fc2de7f1c79f9350dafdd28af2dc90eef6a",
+  "source_payload": ".coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.yaml",
+  "source_commit": "46a7a947fee0a375007115df100bac1d84e06e82",
+  "endpoints": [
+    "GET /api/v1/capital-pools",
+    "GET /api/v1/capital-pools/{pool_id}",
+    "GET /api/v1/bindings",
+    "GET /api/v1/bindings/{binding_id}"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-004-capital-binding-drilldowns.md",
+    "docs/examples/PKT-004-capital-binding-drilldowns.json",
+    "docs/screens/PKT-004-capital-binding-drilldowns.md"
+  ],
+  "pantheon_api_gap": false,
+  "coordination_followups": [],
+  "followup_scope": [
+    "publish the four CP-01 to CP-04 page files from the same replayable front commit referenced by ui-done and frontend-feedback so the advertised changed_files exist in the cited source tree",
+    "remove the no-useless-catch ESLint failure in src/auth/AuthProvider.tsx and republish QA evidence that matches the checked-in tree",
+    "rerun live verification for CP-01 to CP-04 with an allowed operator, approver, admin, or reviewer token after the replayable front commit and matching QA evidence are both in place"
+  ]
+}

@@ -1,0 +1,23 @@
+feature_id: PKT-004-capital-binding-drilldowns
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: persona-workbench
+screen_id: capital-binding-drilldowns
+status: followup-required
+backend_commit: c3fd4fc2de7f1c79f9350dafdd28af2dc90eef6a
+bff_contract_version: pantheon-bff@c3fd4fc2de7f1c79f9350dafdd28af2dc90eef6a
+delivery_note_path: docs/pantheon-delivery/PKT-004-capital-binding-drilldowns/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-004-capital-binding-drilldowns/CONTRACT_LOCK.json
+followup_expectation: >-
+  Current PKT-004 review confirms the working-tree UI uses the published
+  capital-pool and binding read routes and that AuthProvider now persists
+  pantheon_operator_token, but the packet is still not replayable because the
+  advertised source_commit 46a7a947fee0a375007115df100bac1d84e06e82 omits the
+  four CP-01 to CP-04 page files named in changed_files. Targeted ESLint also
+  now fails in src/auth/AuthProvider.tsx, so the published QA evidence is
+  stale. Pantheon has aligned GET /api/v1/bindings to honor the documented
+  persona_id filter, so the remaining follow-up is front-owned: publish a
+  single replayable front commit containing the four page files and request
+  pair, restore green QA evidence, and rerun live verification against this
+  refreshed backend delivery bundle.
+source_payload: .coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.yaml
