@@ -1,0 +1,23 @@
+feature_id: PKT-004-persona-management
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: d1b7fe27297e322ecaa49b5a6b830296626ff4ec
+workbench: persona-workbench
+screen_id: screen-persona-management
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-004-persona-management
+feedback_path: docs/pantheon-feedback/PKT-004-persona-management/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-004-persona-management/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-004-persona-management/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-004-persona-management/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - src/App.tsx
+  - src/lib/bffClient.ts
+  - src/pages/Personas.tsx
+  - src/pages/persona/Detail.tsx
+  - src/pages/persona/PersonaManagement.tsx
+  - src/pages/persona/types.ts
+pantheon_review_hint: review-ui
+summary: Persona Management is implemented against the published PKT-004 read route and documented write commands; unsupported backend-authorized actions are left read-only and captured as a non-blocking API gap request.
