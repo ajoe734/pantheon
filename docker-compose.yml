@@ -497,6 +497,66 @@ services:
       retries: 10
       start_period: 5s
 
+  capital:
+    build:
+      context: .
+      dockerfile: services/capital/Dockerfile
+    environment:
+      PORT: "8092"
+      CAPITAL_DATA_DIR: /data/capital
+    volumes:
+      - capital-data:/data/capital
+    ports:
+      - "18092:8092"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  evolution:
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    environment:
+      PORT: "8093"
+      EVOLUTION_DATA_DIR: /data/evolution
+      INCIDENT_DATA_DIR: /data/incident
+    volumes:
+      - evolution-data:/data/evolution
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      governance:
+        condition: service_healthy
+    ports:
+      - "18093:8093"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  lineage-read:
+    build:
+      context: .
+      dockerfile: services/lineage-read/Dockerfile
+    environment:
+      PORT: "8094"
+      LINEAGE_DATA_DIR: /data/lineage
+    volumes:
+      - lineage-data:/data/lineage
+    ports:
+      - "18094:8094"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/__health__', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   smoke-stack:
     profiles: ["smoke"]
     build:
@@ -526,6 +586,8 @@ services:
 
 volumes:
   bff-data:
+  capital-data:
+  evolution-data:
   governance-data:
   incident-data:
   minio-data:
@@ -534,4 +596,5 @@ volumes:
   postgres-data:
   promotion-data:
   runtime-data:
+  lineage-data:
   telemetry-data:
