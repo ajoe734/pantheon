@@ -1,0 +1,31 @@
+{
+  "feature_id": "PKT-004-deployment-approval-drilldowns",
+  "status": "loop-complete",
+  "backend_commit": "287a541774a3431522f815827c8dcf5ce7e71a4b",
+  "bff_contract_version": "pantheon-bff@287a541774a3431522f815827c8dcf5ce7e71a4b",
+  "source_payload": ".coordination/requests/PKT-004-deployment-approval-drilldowns-frontend-feedback.yaml",
+  "ui_done_payload": ".coordination/requests/PKT-004-deployment-approval-drilldowns-ui-done.yaml",
+  "source_commit": "0e93994eddfc8651e696191964c31c65c56c6201",
+  "request_commit": "28b0bb8b281b5969af4be83850be525868ca11b3",
+  "endpoints": [
+    "GET /api/v1/deployment-plans",
+    "GET /api/v1/deployment-plans/{plan_id}",
+    "GET /api/v1/approval-decisions",
+    "GET /api/v1/approval-decisions/{decision_id}"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-004-deployment-approval-drilldowns.md",
+    "docs/examples/PKT-004-deployment-approval-drilldowns.json",
+    "docs/screens/PKT-004-deployment-approval-drilldowns.md"
+  ],
+  "closure_evidence": [
+    "front request pair is Git-visible at request_commit and truthfully points at replay-clean source_commit 0e93994eddfc8651e696191964c31c65c56c6201",
+    "current front checkout passed npm run build and targeted ESLint for the PKT-004 touched files",
+    "Pantheon regression tests passed for PKT-004 deployment and approval drilldowns",
+    "socket-level live local BFF acceptance passed for the four PKT-004 read routes and auth boundaries",
+    "seeded fallback deployment-plan snapshots now backfill the required plan_id field"
+  ],
+  "non_blocking_notes": [
+    "The committed feedback bundle prose still references working-tree baseline 8d23e02dceb690ed35c1b3800749d2ca90ae4369, but the authoritative machine-readable request pair correctly points at source_commit 0e93994eddfc8651e696191964c31c65c56c6201"
+  ]
+}
