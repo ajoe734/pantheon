@@ -2,15 +2,13 @@ feature_id: PKT-002-incident-detail
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: main
-source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7
+source_commit: c08acb3ea59f4c56ced578820aa6a5129a309de1
 screen: incident-detail
 blocking: false
 
 summary: Incident Detail UI is implemented and ready for Pantheon follow-up.
 
 changed_files:
-  - src/App.tsx
-  - src/lib/bffClient.ts
   - src/pages/operator/types.ts
   - src/pages/operator/IncidentDetail.tsx
   - src/components/operator/IncidentActionDrawer.tsx

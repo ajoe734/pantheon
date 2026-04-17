@@ -1,0 +1,69 @@
+feature_id: PKT-002-incident-detail
+type: frontend-feedback
+pantheon_reviewer: Claude
+reviewed_source_commit: c08acb3ea59f4c56ced578820aa6a5129a309de1
+feedback_bundle_commit: dea4186
+feedback_bundle_transport: front-repo main @ dea4186
+
+disposition: follow-up-required
+
+summary: |
+  The PKT-002 Incident Detail UI is substantially aligned with the REST read contract.
+  However, source_commit c08acb3 integrates the PKT-005 SSE substrate directly into
+  IncidentDetail.tsx, opening three SSE streams from the screen component via SseClient
+  (outside the shared BFF client). This deviates from the lovable-ui-task constraint
+  "use existing bff client only / do not add raw fetch in components" and requires
+  explicit Pantheon acknowledgement before the loop can be marked loop-complete.
+
+  The feedback bundle has been republished at front-repo commit dea4186 with truthful
+  documentation of the SSE boundary deviation.
+
+sse_boundary_deviation:
+  component: src/pages/operator/IncidentDetail.tsx
+  streams:
+    - endpoint: /api/v1/runtime/{runtimeId}/events/stream
+      event_types: [runtime_state_changed]
+      filter: runtimeId
+    - endpoint: /api/v1/incidents/stream
+      event_types: [incident_updated]
+      filter: incidentId
+    - endpoint: /api/v1/kill-switch/updates
+      event_types: [kill_switch_activated, kill_switch_deactivated]
+      local_effect: killSwitchActivatedViaSse state
+  degradation_behaviour: >
+    Page degrades gracefully to initial REST snapshot when SSE endpoints are unavailable.
+    SSE connectivity state is rendered in the page header.
+
+api_gap_requests:
+  - id: IDR-GAP-001
+    blocking: false
+    kind: write_contract
+    summary: HardRollback target_artifact_id not published in incident-detail packet
+  - id: IDR-GAP-002
+    blocking: true
+    kind: sse_endpoint_boundary_acknowledgement
+    summary: >
+      Three SSE endpoints used directly in IncidentDetail.tsx are outside the
+      allowed_endpoints boundary. Pantheon must confirm these are live or declare
+      this integration pre-production and update lovable-ui-task allowed_endpoints.
+
+acceptance_criteria_coverage:
+  build_passes: true
+  eslint_passes: true
+  route_incident_detail: true
+  bff_client_for_snapshot: true
+  no_field_invention: true
+  cta_backend_shaped: true
+  degraded_surface_copy: true
+  staleness_banner: true
+  kill_switch_commands_rendered: true
+  sse_boundary_acknowledged: false  # blocking until Pantheon confirms PKT-005 endpoints
+  hard_rollback_target_artifact: false  # non-blocking follow-up
+
+next_front_actions:
+  - none required from front; this cycle is complete from the frontend side
+
+next_pantheon_actions:
+  - confirm PKT-005 SSE endpoints are live or mark integration pre-production (IDR-GAP-002, blocking)
+  - publish canonical rollback target source for HardRollback (IDR-GAP-001, non-blocking)
+  - run live browser QA once BFF is available

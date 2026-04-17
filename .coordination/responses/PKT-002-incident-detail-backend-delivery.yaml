@@ -3,27 +3,34 @@ type: backend-delivery
 target_repo: ajoe734/front-ai-trading-system
 workbench: operator-console
 screen_id: screen-operator-incident-detail
-status: followup-required
-backend_commit: bcec65873a386a1ebcc787488586e25d97ad69fe
-bff_contract_version: pantheon-bff@bcec65873a386a1ebcc787488586e25d97ad69fe
+status: blocked
+backend_commit: 8845859c8c58b686eb057ab8c238f4e2fcaba90a
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@8845859c8c58b686eb057ab8c238f4e2fcaba90a
+bff_contract_version: pantheon-bff@8845859c8c58b686eb057ab8c238f4e2fcaba90a+working-tree
 delivery_note_path: docs/pantheon-delivery/PKT-002-incident-detail/DELIVERY_NOTE.md
 contract_lock_path: docs/pantheon-delivery/PKT-002-incident-detail/CONTRACT_LOCK.json
 followup_expectation: >-
-  Current PKT-002 review confirms the sibling working tree now matches the
-  published read-path UI axes: the detail route is `/incidents/:incidentId`,
-  the Open Action Drawer CTA enters `/incident-action-drawer`, the kill-switch
-  surface renders `active_commands[]`, and the page renders `meta.staleness`.
-  Pantheon mirrored that refreshed ui-done and feedback bundle, re-ran the
-  targeted sibling ESLint and production build successfully, and found one
-  remaining front-owned blocker: the returned handoff is still not replayable
-  because advertised source_commit
-  faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7 does not contain the ui-done payload
-  path and the refreshed request plus feedback files are still untracked at
-  front HEAD 87340e96ce4247ccc177e8dff7579e804991b895. Pantheon also retains one
-  non-blocking write-contract follow-up: Incident Detail launched drawers still
-  need a canonical `target_artifact_id` source for HardRollback, or that
-  command must stay explicitly disabled in this host context.
+  Pantheon re-reviewed the returned PKT-002 incident-detail cycle against the
+  published contract, example payload, mirrored ui-done request, tracked front
+  HEAD 60f366e0a745ce3bb10e913e53b332d6557e23f1, the sibling front working
+  tree, and the current Pantheon BFF runtime in this workspace. The
+  Pantheon-owned acceptance slice is still blocked: running `python3 -m pytest
+  services/control-plane/bff/smoke_test_incident.py -q -k
+  'composed_incident_response or in05_kill_switch_status or
+  in05_kill_switch_unavailable_disables_actions'` fails because
+  `GET /api/v1/operator/incident-response/inc-20260410-001` returns `404 Not
+  Found`. The front handoff also remains replay-incomplete. Advertised
+  source_commit c08acb3ea59f4c56ced578820aa6a5129a309de1 does not contain the
+  ui-done payload path or the mirrored PKT-002 feedback bundle, the canonical
+  `.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml`
+  request is still unpublished at front HEAD, and the current front working
+  tree keeps CTA wiring, `data.kill_switch.active_commands[]`, and
+  `meta.staleness` fixes only in an uncommitted `src/pages/operator/IncidentDetail.tsx`
+  diff. Even in that working-tree copy, the Incident summary still omits
+  `opened_at`, and the action-authority strip still omits the per-action
+  rationale copy required by the PKT-002 screen spec.
 source_payload: .coordination/requests/PKT-002-incident-detail-ui-done.yaml
-reported_source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7
-verified_front_workspace_head: 87340e96ce4247ccc177e8dff7579e804991b895
+reported_source_commit: c08acb3ea59f4c56ced578820aa6a5129a309de1
+verified_front_workspace_head: 60f366e0a745ce3bb10e913e53b332d6557e23f1
 pantheon_api_gap: true

@@ -1,4 +1,7 @@
-Build the `PKT-002-incident-detail` UI flow in `front-ai-trading-system` using only Pantheon APIs.
+Resume the `PKT-002-incident-detail` UI flow in `front-ai-trading-system` using only Pantheon APIs.
+Pantheon has already aligned the blocking BFF envelopes for this screen. Use the
+published contract, example payload, and frontend change spec as the source of
+truth for this resumed implementation cycle.
 If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `.coordination/requests/PKT-002-incident-detail-bff-gap.yaml` using `.coordination/requests/PKT-002-incident-detail-bff-gap.example.yaml` as the template. Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop.
 Screen: `incident-detail`.
 Workbench: `operator-console`.

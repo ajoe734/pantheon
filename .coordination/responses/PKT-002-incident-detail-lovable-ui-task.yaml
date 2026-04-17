@@ -1,7 +1,7 @@
 feature_id: PKT-002-incident-detail
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: followup-required
+status: closed
 cycle: 2
 pantheon_pr: null
 base_url: null
