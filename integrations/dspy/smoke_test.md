@@ -1,6 +1,6 @@
 # DSPy Integration — Smoke Test
 
-Last updated: 2026-04-15
+Last updated: 2026-04-17
 Owner: BP5-OSS-003 (Codex)
 Reviewer: Claude
 Status: executable smoke path verified
@@ -55,20 +55,20 @@ The smoke script loads `examples/preference_dataset_sample.json` and proves that
 
 ## 5. Verified Result
 
-Verified on 2026-04-15 with the default stub backend:
+Verified on 2026-04-17 with the default stub backend:
 
 - backend: `stub_bootstrap_fewshot`
 - training examples: `4`
 - evaluation examples: `4`
 - registry id: `reg-persona-router-prompt-bundle-0.1.0`
 - storage path: `learning/dspy/persona-router/0.1.0/prompt_bundle.json`
-- checksum: `sha256:6cd546bfa0bfc06b86b6aed347a8dbeac40d6ddf4e2226fc226015f989b658e0`
+- checksum: `sha256:9fb5ff92b4050787015afa93119abe1b5b6be04257fbe57a9c08980c41244201`
 - `intent_accuracy = 1.0`
 - `tool_selection_precision = 1.0`
 - `deny_coverage_delta = 0.0`
 - `mandatory_deny_violation_count = 0`
 
-Unit coverage result on 2026-04-15:
+Unit coverage result on 2026-04-17:
 
 - `python3 -m unittest discover -s services/learning/dspy -p 'test_*.py'`
 - `Ran 3 tests`

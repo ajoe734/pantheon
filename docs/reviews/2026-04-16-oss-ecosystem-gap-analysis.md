@@ -99,10 +99,10 @@ These components now satisfy the practical bar for "real integration" inside the
 
 | Component | Current Status | Why it counts as fully integrated |
 |---|---|---|
-| `OpenClaw` | `governed` | upstream source and runtime image pinned; adapter exists in `integrations/openclaw/adapter/`; compose/runtime path exists; smoke script passed on 2026-04-16 |
-| `DSPy` | `governed` | pinned, runnable adapter in `services/learning/dspy/`, evidence pack and smoke coverage exist |
-| `imitation` | `governed` | pinned, runnable adapter in `services/learning/imitation/`, evidence pack and smoke coverage exist |
-| `MLflow` | `governed` | pinned, registry/experiment adapter exists, evidence pack and smoke coverage exist |
+| `OpenClaw` | `governed` | upstream source and runtime image pinned; adapter exists in `integrations/openclaw/adapter/`; compose/runtime path exists; baseline and live gateway smoke both refreshed on 2026-04-17 |
+| `DSPy` | `governed` | pinned, runnable adapter in `services/learning/dspy/`, evidence pack and smoke coverage refreshed on 2026-04-17 |
+| `imitation` | `governed` | pinned, runnable adapter in `services/learning/imitation/`, evidence pack and smoke coverage refreshed on 2026-04-17 |
+| `MLflow` | `governed` | pinned, registry/experiment adapter exists, evidence pack and smoke coverage refreshed on 2026-04-17 |
 
 Gap call:
 

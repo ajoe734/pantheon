@@ -1,6 +1,6 @@
 # imitation Integration — Smoke Test
 
-Last updated: 2026-04-15
+Last updated: 2026-04-17
 Owner: BP5-OSS-003 (Codex)
 Reviewer: Claude
 Status: executable smoke path verified
@@ -54,21 +54,21 @@ The smoke script loads `examples/trajectory_dataset_sample.json` and proves that
 
 ## 5. Verified Result
 
-Verified on 2026-04-15 with the default stub backend:
+Verified on 2026-04-17 with the default stub backend:
 
 - backend: `stub_bc`
 - trajectories: `2`
 - transitions: `4`
 - registry id: `reg-alpha-mean-reversion-imitation-0.1.0`
 - storage path: `learning/imitation/alpha-mean-reversion/0.1.0/artifact_bundle.json`
-- checksum: `sha256:ad0c3716ed96972aa2c41ef4a8166dda29f363f411e20dc6eb948d2ce7d8c5a6`
+- checksum: `sha256:02d757f6a00ef711a34ce21dbc9b90dbb0f6b4e32ee80d8600cff2578cb4ced9`
 - `training_accuracy = 1.0`
 - `action_coverage_ratio = 1.0`
 - `num_trajectories = 2`
 - `num_transitions = 4`
 - `epochs = 1`
 
-Unit coverage result on 2026-04-15:
+Unit coverage result on 2026-04-17:
 
 - `python3 -m unittest discover -s services/learning/imitation -p 'test_*.py'`
 - `Ran 3 tests`

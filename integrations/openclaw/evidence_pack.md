@@ -1,6 +1,6 @@
 # OpenClaw Integration — Evidence Pack
 
-Last updated: 2026-04-15
+Last updated: 2026-04-17
 Owner: BP5-OSS-001 (Codex)
 Reviewer: Claude
 Status: review approved; baseline finalized
@@ -34,7 +34,7 @@ Supporting files:
 | Container digest | `sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c` |
 | Website / docs | `https://openclaw.ai`, `https://docs.openclaw.ai` |
 
-## 3. Hold-Pin Rationale as of 2026-04-15
+## 3. Hold-Pin Rationale as of 2026-04-17
 
 Current upstream release state at verification time:
 
@@ -82,7 +82,7 @@ Normalization dependency:
 
 ## 6. Validation Performed
 
-The following checks were run locally for this task:
+The following checks were rerun locally for `OSS-NEXT-008` on `2026-04-17`:
 
 1. `git ls-remote --tags https://github.com/openclaw/openclaw.git` confirmed `v2026.4.7^{}` resolves to `5050017543011b61df67744ebc6368d889c25a95`
 2. `docker manifest inspect ghcr.io/openclaw/openclaw:2026.4.7` confirmed the pinned image exists
@@ -90,6 +90,12 @@ The following checks were run locally for this task:
 4. `docker run --rm --entrypoint node ghcr.io/openclaw/openclaw:2026.4.7 dist/index.js --help` succeeded
 5. `docker run --rm --entrypoint node ghcr.io/openclaw/openclaw:2026.4.7 dist/index.js gateway --help` succeeded
 6. the governed normalization flow succeeded using the repo-local fixture and canonical schemas
+7. `bash scripts/openclaw-gateway-adapter-smoke.sh` passed all four governed workflow checks and wrote `/tmp/openclaw-bp5-oss-002.OMDUTb/smoke-results.json`
+
+Artifact references captured during the refresh:
+
+- baseline smoke work dir: `/tmp/openclaw-bp5-oss-001.gMVtn9`
+- live smoke work dir: `/tmp/openclaw-bp5-oss-002.OMDUTb`
 
 ## 7. Remaining Work After BP5-OSS-001
 

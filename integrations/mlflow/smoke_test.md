@@ -1,6 +1,6 @@
 # MLflow Integration — Smoke Test
 
-Last updated: 2026-04-15
+Last updated: 2026-04-17
 Owner: BP5-OSS-003 (Codex)
 Reviewer: Claude
 Status: executable smoke path verified
@@ -55,12 +55,12 @@ The smoke script constructs one governed registry entry and proves that:
 
 ## 5. Verified Result
 
-Verified on 2026-04-15 with the default in-memory backend:
+Verified on 2026-04-17 with the default in-memory backend:
 
 - command: `python3 services/registry/experiments/smoke_test.py`
 - result: `LP-003 smoke test passed with backend=memory: registry metadata mapped into experiment metadata.`
 
-Unit coverage result on 2026-04-15:
+Unit coverage result on 2026-04-17:
 
 - `python3 -m unittest discover -s services/registry/experiments -p 'test_*.py'`
 - `Ran 4 tests`

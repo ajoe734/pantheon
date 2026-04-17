@@ -1,6 +1,6 @@
 # OpenClaw Integration — Smoke Test Plan
 
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 Owner: BP5-OSS-002 (Codex)
 Reviewer: Claude
 Status: baseline and live adapter smoke paths defined
@@ -165,8 +165,9 @@ It captures:
 - upstream cron add/run/runs envelopes
 - governed local results for ingest/review/retrain/deploy
 
-Recorded evidence from `2026-04-16`:
+Recorded evidence from `2026-04-17`:
 
-- work dir: `/tmp/openclaw-bp5-oss-002.fXeSom`
-- result file: `/tmp/openclaw-bp5-oss-002.fXeSom/smoke-results.json`
-- outcome: all four workflows passed against a real `ghcr.io/openclaw/openclaw:2026.4.7` gateway container
+- baseline work dir: `/tmp/openclaw-bp5-oss-001.gMVtn9`
+- live work dir: `/tmp/openclaw-bp5-oss-002.OMDUTb`
+- live result file: `/tmp/openclaw-bp5-oss-002.OMDUTb/smoke-results.json`
+- outcome: baseline pin verification passed `6/6`; live gateway smoke passed all four workflows (`pantheon.ingest`, `pantheon.review`, `pantheon.retrain`, `pantheon.deploy`) against `ghcr.io/openclaw/openclaw:2026.4.7`
