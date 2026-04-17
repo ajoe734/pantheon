@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -40,12 +41,22 @@ def _normalize_records(payload: Any, key_candidates: List[str]) -> Dict[str, Dic
     return {}
 
 
+def _parse_rfc3339(value: Any) -> Optional[datetime]:
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 class CanonicalSnapshotAdapter:
     """Best-effort adapter over canonical governance/runtime JSON snapshots.
 
     The BFF remains read-oriented. When canonical snapshot files are available,
-    the read surfaces prefer them. When they are absent, the BFF falls back to
-    the local read-model seed so the operator UI still has a safe bootstrap path.
+    the read surfaces prefer them. When they are absent, the normal integration
+    path must surface backend unavailability explicitly instead of silently
+    inventing local defaults.
     """
 
     _DATASETS = {
@@ -552,7 +563,12 @@ def _default_read_data() -> Dict[str, Any]:
             "active": False,
             "active_freeze_orders": [],
             "last_checked_at": "2026-04-11T12:00:00Z",
+            "last_confirmed_at": "2026-04-11T12:00:00Z",
+            "last_triggered_at": None,
+            "active_commands": [],
+            "secondary_path_available": True,
             "safe_mode_status": "off",
+            "status": "armed",
         },
         # Cross-references for composed views
         "evolution_decisions": {
@@ -564,6 +580,8 @@ def _default_read_data() -> Dict[str, Any]:
                 "incident_ref": "inc-20260410-001",
                 "artifact_id": "artifact-042",
                 "created_at": "2026-04-10T16:00:00Z",
+                "updated_at": "2026-04-11T09:00:00Z",
+                "notes": "Approved for retrain after promotion gate timeout root cause confirmed.",
             },
         },
         "rollbacks_by_incident": {
@@ -623,6 +641,156 @@ def _default_read_data() -> Dict[str, Any]:
                 "initiated_by": "operator-oncall",
                 "reason": "Excessive drawdown triggered automatic rollback",
                 "incident_ref": "inc-20260410-001",
+            },
+        ],
+        "rollback_reviews": {
+            "rollback-rb-001": {
+                "rollback_id": "rollback-rb-001",
+                "target_plan_id": "plan-dp-000",
+                "trigger_reason": "Automated risk trigger: max_drawdown threshold breached during paper trading window.",
+                "requested_at": "2026-04-16T09:30:00Z",
+                "requested_by": "risk-monitor",
+                "rollback_scope": "partial",
+                "affected_persona_count": 2,
+                "affected_binding_count": 3,
+                "target_stage": "paper",
+                "position_impact": [
+                    {
+                        "binding_id": "binding-001",
+                        "persona_id": "persona-alpha",
+                        "current_stage": "paper",
+                        "target_stage": "paper",
+                        "position_impact_summary": "Open long position of 4% portfolio weight will be closed before rollback. No live positions affected.",
+                        "position_data_stale": False,
+                    },
+                    {
+                        "binding_id": "binding-002",
+                        "persona_id": "persona-beta",
+                        "current_stage": "paper",
+                        "target_stage": "paper",
+                        "position_impact_summary": "No open positions; rollback is position-neutral for this binding.",
+                        "position_data_stale": False,
+                    },
+                    {
+                        "binding_id": "binding-003",
+                        "persona_id": "persona-alpha",
+                        "current_stage": "paper",
+                        "target_stage": "paper",
+                        "position_impact_summary": None,
+                        "position_data_stale": True,
+                    },
+                ],
+                "affected_bindings": [
+                    {
+                        "binding_id": "binding-001",
+                        "persona_id": "persona-alpha",
+                        "capital_pool_id": "pool-002",
+                        "current_stage": "paper",
+                    },
+                    {
+                        "binding_id": "binding-002",
+                        "persona_id": "persona-beta",
+                        "capital_pool_id": "pool-001",
+                        "current_stage": "paper",
+                    },
+                    {
+                        "binding_id": "binding-003",
+                        "persona_id": "persona-alpha",
+                        "capital_pool_id": "pool-002",
+                        "current_stage": "paper",
+                    },
+                ],
+                "trigger_evidence": {
+                    "trigger_reason": "Automated risk trigger: max_drawdown threshold breached during paper trading window.",
+                    "evidence_refs": [
+                        {"ref_id": "ev-rb-001", "type": "TelemetryAlert", "url": None},
+                        {"ref_id": "ev-rb-002", "type": "RiskControlEvent", "url": None},
+                    ],
+                    "linked_incident_id": None,
+                },
+                "allowedActions": {
+                    "canApproveRollback": False,
+                    "canRejectRollback": True,
+                },
+                "meta": {
+                    "snapshot_at": "2026-04-16T10:00:00Z",
+                    "surfaces": {
+                        "position_data": {"status": "degraded"},
+                        "rollback_review": {"status": "ok"},
+                        "allowedActions": {"status": "ok"},
+                    },
+                },
+            },
+        },
+        "governance_audit_events": [
+            {
+                "entry_id": "audit-001",
+                "actor": "operator-jane",
+                "action_type": "ApproveDecision",
+                "target_type": "ApprovalDecision",
+                "target_id": "appr-001",
+                "timestamp": "2026-04-16T10:05:00Z",
+                "outcome": "success",
+                "audit_context": {
+                    "reason": "Risk review completed; all evidence within acceptable bounds.",
+                },
+                "evidence_refs": [
+                    {"ref_id": "ev-101", "type": "BacktestResult", "url": None},
+                ],
+            },
+            {
+                "entry_id": "audit-002",
+                "actor": "operator-jane",
+                "action_type": "ForwardToApprovalQueue",
+                "target_type": "GovernanceReviewItem",
+                "target_id": "gov-review-001",
+                "timestamp": "2026-04-16T09:58:00Z",
+                "outcome": "success",
+                "audit_context": {
+                    "reason": "Review complete; forwarding to approval.",
+                },
+                "evidence_refs": [],
+            },
+            {
+                "entry_id": "audit-003",
+                "actor": "risk-monitor",
+                "action_type": "EscalateGovernanceItem",
+                "target_type": "GovernanceReviewItem",
+                "target_id": "gov-review-002",
+                "timestamp": "2026-04-16T09:45:00Z",
+                "outcome": "escalated",
+                "audit_context": {
+                    "reason": None,
+                },
+                "evidence_refs": [
+                    {"ref_id": "ev-103", "type": "EvolutionDecision", "url": None},
+                ],
+            },
+            {
+                "entry_id": "audit-004",
+                "actor": "operator-bob",
+                "action_type": "RejectRollback",
+                "target_type": "Rollback",
+                "target_id": "rollback-rb-001",
+                "timestamp": "2026-04-16T09:40:00Z",
+                "outcome": "success",
+                "audit_context": {
+                    "reason": "Position data is stale; cannot safely approve rollback at this time.",
+                },
+                "evidence_refs": [],
+            },
+            {
+                "entry_id": "audit-005",
+                "actor": "operator-jane",
+                "action_type": "RequestGovernanceChanges",
+                "target_type": "GovernanceReviewItem",
+                "target_id": "gov-review-003",
+                "timestamp": "2026-04-16T09:20:00Z",
+                "outcome": "success",
+                "audit_context": {
+                    "reason": "Capital pool reference needs correction before approval.",
+                },
+                "evidence_refs": [],
             },
         ],
         # LN-01: Lineage edges
@@ -824,13 +992,23 @@ class ReadSurfaceStore:
         "all_rollbacks": "all_rollbacks",
         "latest_runs": "latest_runs",
         "review_summaries": "review_summaries",
+        "rollback_reviews": "rollback_reviews",
+        "governance_audit_events": "governance_audit_events",
     }
 
-    def __init__(self, storage_path: str) -> None:
+    def __init__(
+        self,
+        storage_path: str,
+        *,
+        allow_local_snapshot_fallback: Optional[bool] = None,
+    ) -> None:
         self._path = Path(storage_path)
         self._data: Dict[str, Any] = {}
         self._canonical = CanonicalSnapshotAdapter()
         self._service = ServiceBackedReadAdapter()
+        if allow_local_snapshot_fallback is None:
+            allow_local_snapshot_fallback = False
+        self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
         self._load_or_seed()
 
     def _load_or_seed(self) -> None:
@@ -838,9 +1016,43 @@ class ReadSurfaceStore:
             raw = self._path.read_text().strip()
             if raw:
                 self._data = json.loads(raw)
+                if self._allow_local_snapshot_fallback and self._backfill_local_contract_defaults():
+                    self._save()
                 return
-        self._data = _default_read_data()
-        self._save()
+        if self._allow_local_snapshot_fallback:
+            self._data = _default_read_data()
+            self._save()
+            return
+        self._data = {}
+
+    def _backfill_local_contract_defaults(self) -> bool:
+        changed = False
+        default_data = _default_read_data()
+        evolution_decisions = self._data.get("evolution_decisions")
+        default_decisions = default_data.get("evolution_decisions", {})
+        rollback_reviews = self._data.get("rollback_reviews")
+        default_rollback_reviews = default_data.get("rollback_reviews", {})
+
+        if isinstance(evolution_decisions, dict):
+            for decision_id, default_decision in default_decisions.items():
+                existing_decision = evolution_decisions.get(decision_id)
+                if not isinstance(existing_decision, dict):
+                    continue
+                for key in ("updated_at", "notes"):
+                    if key not in existing_decision and default_decision.get(key) is not None:
+                        existing_decision[key] = default_decision[key]
+                        changed = True
+
+        if rollback_reviews is None:
+            self._data["rollback_reviews"] = json.loads(json.dumps(default_rollback_reviews))
+            changed = True
+        elif isinstance(rollback_reviews, dict):
+            for rollback_id, default_review in default_rollback_reviews.items():
+                if rollback_id not in rollback_reviews:
+                    rollback_reviews[rollback_id] = json.loads(json.dumps(default_review))
+                    changed = True
+
+        return changed
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -849,6 +1061,11 @@ class ReadSurfaceStore:
     def _local_dataset(self, dataset: str) -> Any:
         key = self._LOCAL_DATA_KEYS.get(dataset, dataset)
         return self._data.get(key)
+
+    def _local_fallback(self, dataset: str) -> Any:
+        if not self._allow_local_snapshot_fallback:
+            return None
+        return self._local_dataset(dataset)
 
     def dataset_source(self, dataset: str) -> str:
         if dataset in CanonicalSnapshotAdapter._DATASETS:
@@ -859,7 +1076,7 @@ class ReadSurfaceStore:
             available, _ = self._service.list_records(dataset)
             if available:
                 return "service_store"
-        local_payload = self._local_dataset(dataset)
+        local_payload = self._local_fallback(dataset)
         if local_payload not in (None, "", [], {}):
             return "local_snapshot"
         return "missing"
@@ -920,6 +1137,7 @@ class ReadSurfaceStore:
             "persona_id": raw.get("persona_id"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "role": raw.get("role"),
+            "validity": raw.get("validity"),
             "status": raw.get("status"),
             "approval_decision_id": raw.get("approval_decision_id"),
             "allowed_deployment_scope": raw.get("allowed_deployment_scope"),
@@ -994,6 +1212,8 @@ class ReadSurfaceStore:
             "linked_incident_id": linked_incident_id,
             "artifact_id": target_id,
             "created_at": raw.get("created_at"),
+            "updated_at": raw.get("updated_at"),
+            "notes": raw.get("notes"),
             "execution_result": raw.get("execution_result"),
         }
 
@@ -1029,7 +1249,7 @@ class ReadSurfaceStore:
         if available:
             personas = [self._project_service_persona(persona) for persona in raw_personas]
         else:
-            personas = list(self._data.get("personas", {}).values())
+            personas = list((self._local_fallback("personas") or {}).values())
         if lifecycle_state:
             personas = [p for p in personas if p.get("lifecycle_state") == lifecycle_state]
         if mandate:
@@ -1047,7 +1267,7 @@ class ReadSurfaceStore:
         if available:
             pools = [self._project_canonical_capital_pool(pool) for pool in raw_pools]
         else:
-            pools = list(self._data.get("capital_pools", {}).values())
+            pools = list((self._local_fallback("capital_pools") or {}).values())
         if status:
             pools = [p for p in pools if p.get("status") == status]
         if risk_policy_ref:
@@ -1056,6 +1276,7 @@ class ReadSurfaceStore:
 
     def list_bindings(
         self,
+        persona_id: Optional[str] = None,
         capital_pool_id: Optional[str] = None,
         role: Optional[str] = None,
         validity: Optional[str] = None,
@@ -1064,7 +1285,9 @@ class ReadSurfaceStore:
         if available:
             bindings = [self._project_canonical_binding(binding) for binding in raw_bindings]
         else:
-            bindings = list(self._data.get("bindings", {}).values())
+            bindings = list((self._local_fallback("persona_bindings") or {}).values())
+        if persona_id:
+            bindings = [b for b in bindings if b.get("persona_id") == persona_id]
         if capital_pool_id:
             bindings = [b for b in bindings if b.get("capital_pool_id") == capital_pool_id]
         if role:
@@ -1075,8 +1298,8 @@ class ReadSurfaceStore:
 
     def list_deployment_plans(
         self,
-        stage: Optional[str] = None,
-        target_pool_id: Optional[str] = None,
+        status: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         available, raw_plans = self._canonical.list_records("deployment_plans")
         if available:
@@ -1096,32 +1319,36 @@ class ReadSurfaceStore:
                     runtime_binding_id = str(runtime_binding.get("binding_id") or runtime_binding.get("id") or "")
                 plans.append(self._project_canonical_deployment_plan(raw, runtime_binding_id))
         else:
-            plans = list(self._data.get("deployment_plans", {}).values())
-        if stage:
-            plans = [p for p in plans if str(p.get("stage") or "").lower() == stage.lower()]
-        if target_pool_id:
+            plans = list((self._local_fallback("deployment_plans") or {}).values())
+        if status:
             plans = [
                 p for p in plans
-                if str(p.get("capital_pool_id") or p.get("target_pool_id") or "") == target_pool_id
+                if str(p.get("status") or "").lower() == status.lower()
+            ]
+        if capital_pool_id:
+            plans = [
+                p for p in plans
+                if str(p.get("capital_pool_id") or p.get("target_pool_id") or "") == capital_pool_id
             ]
         return sorted(plans, key=lambda x: x.get("id", ""))
 
     def list_approval_decisions(
         self,
         outcome: Optional[str] = None,
-        reviewer: Optional[str] = None,
-        time_range: Optional[str] = None,
+        state: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         available, raw_decisions = self._canonical.list_records("approval_decisions")
         if available:
             decisions = [self._project_canonical_approval_decision(decision) for decision in raw_decisions]
         else:
-            decisions = list(self._data.get("approval_decisions", {}).values())
+            decisions = list((self._local_fallback("approval_decisions") or {}).values())
         if outcome:
             decisions = [d for d in decisions if str(d.get("outcome") or "").lower() == outcome.lower()]
-        if reviewer:
-            decisions = [d for d in decisions if d.get("reviewer") == reviewer]
-        # time_range filtering deferred in v1
+        if state:
+            decisions = [
+                d for d in decisions
+                if str(d.get("state") or "").lower() == state.lower()
+            ]
         return sorted(decisions, key=lambda x: x.get("decided_at", ""), reverse=True)
 
     def list_runtime_bindings(
@@ -1133,7 +1360,7 @@ class ReadSurfaceStore:
         if available:
             bindings = [self._project_canonical_runtime_binding(binding) for binding in raw_bindings]
         else:
-            bindings = list(self._data.get("runtime_bindings", {}).values())
+            bindings = list((self._local_fallback("runtime_bindings") or {}).values())
         if deployment_mode:
             bindings = [
                 b for b in bindings
@@ -1156,7 +1383,7 @@ class ReadSurfaceStore:
             if runtime_binding:
                 runtime_binding_id = str(runtime_binding.get("binding_id") or runtime_binding.get("id") or "")
             return self._project_canonical_deployment_plan(raw, runtime_binding_id or None)
-        return self._data.get("deployment_plans", {}).get(plan_id)
+        return (self._local_fallback("deployment_plans") or {}).get(plan_id)
 
     def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not decision_id:
@@ -1164,7 +1391,7 @@ class ReadSurfaceStore:
         available, raw = self._canonical.approval_decision(decision_id)
         if available:
             return self._project_canonical_approval_decision(raw) if raw else None
-        return self._data.get("approval_decisions", {}).get(decision_id)
+        return (self._local_fallback("approval_decisions") or {}).get(decision_id)
 
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not pool_id:
@@ -1172,7 +1399,7 @@ class ReadSurfaceStore:
         available, raw = self._canonical.capital_pool(pool_id)
         if available:
             return self._project_canonical_capital_pool(raw) if raw else None
-        return self._data.get("capital_pools", {}).get(pool_id)
+        return (self._local_fallback("capital_pools") or {}).get(pool_id)
 
     def get_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
@@ -1180,7 +1407,7 @@ class ReadSurfaceStore:
         available, raw = self._canonical.binding(binding_id)
         if available:
             return self._project_canonical_binding(raw) if raw else None
-        return self._data.get("bindings", {}).get(binding_id)
+        return (self._local_fallback("persona_bindings") or {}).get(binding_id)
 
     def get_bindings_for_pool(self, pool_id: Optional[str]) -> List[Dict[str, Any]]:
         if not pool_id:
@@ -1190,7 +1417,7 @@ class ReadSurfaceStore:
             return [self._project_canonical_binding(binding) for binding in bindings]
         return [
             binding
-            for binding in self._data.get("bindings", {}).values()
+            for binding in (self._local_fallback("persona_bindings") or {}).values()
             if binding.get("capital_pool_id") == pool_id
         ]
 
@@ -1212,7 +1439,7 @@ class ReadSurfaceStore:
             ]
         return [
             binding
-            for binding in self._data.get("bindings", {}).values()
+            for binding in (self._local_fallback("persona_bindings") or {}).values()
             if binding.get("persona_id") == persona_id
         ]
 
@@ -1222,7 +1449,7 @@ class ReadSurfaceStore:
         available, raw = self._service.record("personas", persona_id)
         if available:
             return self._project_service_persona(raw) if raw else None
-        return self._data.get("personas", {}).get(persona_id)
+        return (self._local_fallback("personas") or {}).get(persona_id)
 
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
@@ -1230,7 +1457,7 @@ class ReadSurfaceStore:
         available, raw = self._canonical.runtime_binding(binding_id)
         if available:
             return self._project_canonical_runtime_binding(raw) if raw else None
-        return self._data.get("runtime_bindings", {}).get(binding_id)
+        return (self._local_fallback("runtime_bindings") or {}).get(binding_id)
 
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not runtime_id:
@@ -1242,7 +1469,7 @@ class ReadSurfaceStore:
                 if raw_runtime_id == runtime_id:
                     return self._project_canonical_runtime_binding(raw)
             return None
-        for binding in self._data.get("runtime_bindings", {}).values():
+        for binding in (self._local_fallback("runtime_bindings") or {}).values():
             if str(binding.get("runtime_id") or binding.get("id") or "") == runtime_id:
                 return binding
         return None
@@ -1250,7 +1477,7 @@ class ReadSurfaceStore:
     def get_rollbacks(self, runtime_id: Optional[str]) -> List[Dict[str, Any]]:
         if not runtime_id:
             return []
-        return list(self._data.get("rollbacks", {}).get(runtime_id, []))
+        return list((self._local_fallback("rollbacks") or {}).get(runtime_id, []))
 
     def get_allowed_actions(self, plan_id: str) -> Dict[str, Any]:
         plan = self.get_deployment_plan(plan_id)
@@ -1259,13 +1486,20 @@ class ReadSurfaceStore:
             return {
                 "canPromoteToPaper": self._derive_can_promote_to_paper(plan, decision)
             }
-        return self._data.get("allowed_actions", {}).get(plan_id, {"canPromoteToPaper": False})
+        if self._allow_local_snapshot_fallback:
+            return (self._local_fallback("allowed_actions") or {}).get(
+                plan_id,
+                {"canPromoteToPaper": False},
+            )
+        return {"canPromoteToPaper": False}
 
     def get_latest_run(self, plan_id: str) -> Dict[str, Any]:
-        return self._data.get("latest_runs", {}).get(plan_id, {"progress": 0.0})
+        if self._allow_local_snapshot_fallback:
+            return (self._local_fallback("latest_runs") or {}).get(plan_id, {"progress": 0.0})
+        return None
 
     def get_review_summary(self, plan_id: str) -> Dict[str, Any]:
-        summary = dict(self._data.get("review_summaries", {}).get(plan_id, {}))
+        summary = dict((self._local_fallback("review_summaries") or {}).get(plan_id, {}))
         plan = self.get_deployment_plan(plan_id)
         decision = self.get_approval_decision(plan.get("approval_decision_id")) if plan else None
         if decision:
@@ -1277,6 +1511,8 @@ class ReadSurfaceStore:
                 risk_level = decision.get("risk_level")
                 if risk_level:
                     summary["riskSummary"] = f"Approval decision risk level: {risk_level}."
+        if not summary:
+            return None
         if "riskSummary" not in summary or not summary["riskSummary"]:
             summary["riskSummary"] = "Risk summary unavailable."
         return summary
@@ -1293,9 +1529,17 @@ class ReadSurfaceStore:
     ) -> List[Dict[str, Any]]:
         available, incidents = self._service.list_records("incidents")
         if not available:
-            incidents = list(self._data.get("incidents", {}).values())
+            incidents = list((self._local_fallback("incidents") or {}).values())
         if status:
-            incidents = [i for i in incidents if i.get("status") == status]
+            requested_statuses = {
+                token.strip().lower()
+                for token in status.split(",")
+                if token.strip()
+            }
+            incidents = [
+                i for i in incidents
+                if str(i.get("status") or "").lower() in requested_statuses
+            ]
         if severity:
             incidents = [i for i in incidents if i.get("severity") == severity]
         if affected_pool_id:
@@ -1306,37 +1550,72 @@ class ReadSurfaceStore:
         available, raw = self._service.record("incidents", incident_id)
         if available:
             return raw
-        return self._data.get("incidents", {}).get(incident_id)
+        return (self._local_fallback("incidents") or {}).get(incident_id)
 
     def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]:
         # time_range deferred — v1 returns all postmortems
         available, postmortems = self._service.list_records("postmortems")
         if available:
             return postmortems
-        return list(self._data.get("postmortems", {}).values())
+        return list((self._local_fallback("postmortems") or {}).values())
 
     def get_postmortem(self, report_id: str) -> Optional[Dict[str, Any]]:
         available, raw = self._service.record("postmortems", report_id)
         if available:
             return raw
-        return self._data.get("postmortems", {}).get(report_id)
+        return (self._local_fallback("postmortems") or {}).get(report_id)
 
     def get_postmortem_by_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         available, postmortems = self._service.list_records("postmortems")
         if not available:
-            postmortems = list(self._data.get("postmortems", {}).values())
+            postmortems = list((self._local_fallback("postmortems") or {}).values())
         for pm in postmortems:
             if pm.get("incident_id") == incident_id:
                 return pm
         return None
 
     def get_kill_switch_status(self) -> Dict[str, Any]:
-        ks = self._data.get("kill_switch", {})
+        ks = self._local_fallback("kill_switch") or {}
+        status = str(ks.get("status") or "").lower()
+        if status not in {"armed", "triggered", "cooling_down"}:
+            safe_mode_status = str(ks.get("safe_mode_status") or "").lower()
+            if safe_mode_status in {"cooling_down", "cooldown"}:
+                status = "cooling_down"
+            elif ks.get("active"):
+                status = "triggered"
+            else:
+                status = "armed"
+
+        active_commands_raw = ks.get("active_commands")
+        if active_commands_raw is None:
+            active_commands_raw = ks.get("active_freeze_orders", [])
+        active_commands: List[str] = []
+        for command in active_commands_raw:
+            if isinstance(command, str):
+                active_commands.append(command)
+                continue
+            if not isinstance(command, dict):
+                continue
+            command_id = (
+                command.get("command_id")
+                or command.get("id")
+                or command.get("type")
+                or command.get("scope")
+            )
+            if command_id:
+                active_commands.append(str(command_id))
+
+        last_confirmed_at = ks.get("last_confirmed_at") or ks.get("last_checked_at", "")
         return {
             "active": ks.get("active", False),
             "active_freeze_orders": ks.get("active_freeze_orders", []),
             "last_checked_at": ks.get("last_checked_at", ""),
             "safe_mode_status": ks.get("safe_mode_status", "off"),
+            "status": status,
+            "last_triggered_at": ks.get("last_triggered_at"),
+            "last_confirmed_at": last_confirmed_at,
+            "active_commands": active_commands,
+            "secondary_path_available": ks.get("secondary_path_available", True),
         }
 
     # ------------------------------------------------------------------ #
@@ -1347,7 +1626,8 @@ class ReadSurfaceStore:
         available, raw = self._service.record("evolution_decisions", decision_id)
         if available:
             return self._project_service_evolution_decision(raw) if raw else None
-        return self._data.get("evolution_decisions", {}).get(decision_id)
+        raw = (self._local_fallback("evolution_decisions") or {}).get(decision_id)
+        return self._project_service_evolution_decision(raw) if raw else None
 
     def get_evolution_decisions_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
         available, raw_decisions = self._service.list_records("evolution_decisions")
@@ -1357,20 +1637,23 @@ class ReadSurfaceStore:
                 for raw in raw_decisions
             ]
         else:
-            decisions = list(self._data.get("evolution_decisions", {}).values())
+            decisions = [
+                self._project_service_evolution_decision(raw)
+                for raw in (self._local_fallback("evolution_decisions") or {}).values()
+            ]
         return [
             d for d in decisions
             if d.get("incident_ref") == incident_id
         ]
 
     def get_rollbacks_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
-        return list(self._data.get("rollbacks_by_incident", {}).get(incident_id, []))
+        return list((self._local_fallback("rollbacks_by_incident") or {}).get(incident_id, []))
 
     def get_telemetry_summary(self, runtime_id: str) -> Optional[Dict[str, Any]]:
         available, raw = self._service.record("telemetry_summaries", runtime_id)
         if available:
             return raw
-        return self._data.get("telemetry_summaries", {}).get(runtime_id)
+        return (self._local_fallback("telemetry_summaries") or {}).get(runtime_id)
 
     # ------------------------------------------------------------------ #
     # Evolution surfaces (EV-01 – EV-04)
@@ -1389,7 +1672,10 @@ class ReadSurfaceStore:
                 for raw in raw_decisions
             ]
         else:
-            decisions = list(self._data.get("evolution_decisions", {}).values())
+            decisions = [
+                self._project_service_evolution_decision(raw)
+                for raw in (self._local_fallback("evolution_decisions") or {}).values()
+            ]
         if action_type:
             decisions = [d for d in decisions if d.get("action_type") == action_type]
         if risk_level:
@@ -1402,14 +1688,15 @@ class ReadSurfaceStore:
         available, raw = self._service.record("evolution_decisions", decision_id)
         if available:
             return self._project_service_evolution_decision(raw) if raw else None
-        return self._data.get("evolution_decisions", {}).get(decision_id)
+        raw = (self._local_fallback("evolution_decisions") or {}).get(decision_id)
+        return self._project_service_evolution_decision(raw) if raw else None
 
     def list_freeze_orders(
         self,
         status: Optional[str] = None,
         scope: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        orders = list(self._data.get("freeze_orders", {}).values())
+        orders = list((self._local_fallback("freeze_orders") or {}).values())
         if status:
             orders = [o for o in orders if o.get("status") == status]
         if scope:
@@ -1422,13 +1709,62 @@ class ReadSurfaceStore:
         action_type: Optional[str] = None,
         time_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        rollbacks = list(self._data.get("all_rollbacks", []))
+        rollbacks = list(self._local_fallback("all_rollbacks") or [])
         if runtime_id:
             rollbacks = [r for r in rollbacks if r.get("runtime_id") == runtime_id]
         if action_type:
             rollbacks = [r for r in rollbacks if r.get("action_type") == action_type]
         # time_range filtering deferred in v1
         return sorted(rollbacks, key=lambda x: x.get("initiated_at", ""), reverse=True)
+
+    def get_rollback_review(self, rollback_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not rollback_id:
+            return None
+        review = (self._local_fallback("rollback_reviews") or {}).get(rollback_id)
+        if review:
+            return json.loads(json.dumps(review))
+        return None
+
+    def list_governance_audit_events(
+        self,
+        *,
+        actor: Optional[str] = None,
+        action_types: Optional[List[str]] = None,
+        target_type: Optional[str] = None,
+        from_ts: Optional[datetime] = None,
+        to_ts: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        events = list(self._local_fallback("governance_audit_events") or [])
+
+        if actor:
+            events = [event for event in events if event.get("actor") == actor]
+        if action_types:
+            allowed = {value for value in action_types if value}
+            events = [event for event in events if event.get("action_type") in allowed]
+        if target_type:
+            events = [event for event in events if event.get("target_type") == target_type]
+
+        if from_ts is not None:
+            events = [
+                event
+                for event in events
+                if (
+                    _parse_rfc3339(event.get("timestamp")) is not None
+                    and _parse_rfc3339(event.get("timestamp")) >= from_ts
+                )
+            ]
+        if to_ts is not None:
+            events = [
+                event
+                for event in events
+                if (
+                    _parse_rfc3339(event.get("timestamp")) is not None
+                    and _parse_rfc3339(event.get("timestamp")) <= to_ts
+                )
+            ]
+
+        events.sort(key=lambda event: event.get("timestamp", ""), reverse=True)
+        return json.loads(json.dumps(events))
 
     # ------------------------------------------------------------------ #
     # Lineage surfaces (LN-01 – LN-03)
@@ -1440,7 +1776,7 @@ class ReadSurfaceStore:
     ) -> List[Dict[str, Any]]:
         available, edges = self._service.list_records("lineage_edges")
         if not available:
-            edges = list(self._data.get("lineage_edges", {}).values())
+            edges = list((self._local_fallback("lineage_edges") or {}).values())
         if artifact_id:
             edges = [
                 e for e in edges
@@ -1452,7 +1788,7 @@ class ReadSurfaceStore:
         available, raw = self._service.record("lineage_edges", edge_id)
         if available:
             return raw
-        return self._data.get("lineage_edges", {}).get(edge_id)
+        return (self._local_fallback("lineage_edges") or {}).get(edge_id)
 
     def get_lineage_graph(
         self,
@@ -1467,7 +1803,7 @@ class ReadSurfaceStore:
         """
         available, edges = self._service.list_records("lineage_edges")
         if not available:
-            edges = list(self._data.get("lineage_edges", {}).values())
+            edges = list((self._local_fallback("lineage_edges") or {}).values())
         if root_id:
             edges = [
                 e for e in edges
@@ -1503,7 +1839,7 @@ class ReadSurfaceStore:
                 for summary in summaries
             ]
         else:
-            summary_records = list(self._data.get("telemetry_summaries", {}).items())
+            summary_records = list((self._local_fallback("telemetry_summaries") or {}).items())
 
         for runtime_id, summary in summary_records:
             if not runtime_id:
@@ -1542,7 +1878,7 @@ class ReadSurfaceStore:
         available, raw = self._service.record("telemetry_performance", artifact_id)
         if available:
             return raw
-        return self._data.get("telemetry_performance", {}).get(artifact_id)
+        return (self._local_fallback("telemetry_performance") or {}).get(artifact_id)
 
     # ------------------------------------------------------------------ #
     # Persona session surfaces (PS-03, PS-05)
@@ -1565,7 +1901,7 @@ class ReadSurfaceStore:
                 if session.get("persona_id") == persona_id
             ]
         return [
-            s for s in self._data.get("sessions", {}).values()
+            s for s in (self._local_fallback("sessions") or {}).values()
             if s.get("persona_id") == persona_id
         ]
 
@@ -1587,7 +1923,7 @@ class ReadSurfaceStore:
         available, raw = self._service.record("sessions", session_id)
         if available:
             return self._project_service_session(raw) if raw else None
-        return self._data.get("sessions", {}).get(session_id)
+        return (self._local_fallback("sessions") or {}).get(session_id)
 
     def get_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """PS-05: Return teaching sessions for a persona.
@@ -1606,7 +1942,7 @@ class ReadSurfaceStore:
                 if session.get("persona_id") == persona_id
             ]
         return [
-            s for s in self._data.get("teaching_sessions", {}).values()
+            s for s in (self._local_fallback("teaching_sessions") or {}).values()
             if s.get("persona_id") == persona_id
         ]
 
@@ -1628,7 +1964,7 @@ class ReadSurfaceStore:
         available, raw = self._service.record("capability_snapshots", snapshot_id)
         if available:
             return raw
-        return self._data.get("capability_snapshots", {}).get(snapshot_id)
+        return (self._local_fallback("capability_snapshots") or {}).get(snapshot_id)
 
     def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:
@@ -1638,7 +1974,7 @@ class ReadSurfaceStore:
             for snapshot in snapshots:
                 if snapshot.get("persona_id") == persona_id:
                     return snapshot
-        for snapshot in self._data.get("capability_snapshots", {}).values():
+        for snapshot in (self._local_fallback("capability_snapshots") or {}).values():
             if snapshot.get("persona_id") == persona_id:
                 return snapshot
         return None
@@ -1657,7 +1993,7 @@ class ReadSurfaceStore:
                 for session_id in [session.get("session_id") or session.get("id")]
                 if session_id
             }
-        return self._data.get("consultation_sessions", {})
+        return self._local_fallback("consultation_sessions") or {}
 
     def list_consultations_for_persona(
         self,
@@ -1828,7 +2164,7 @@ class ReadSurfaceStore:
         available, raw = self._service.record("consult_policies", persona_id)
         if available:
             return raw
-        return self._data.get("consult_policies", {}).get(persona_id)
+        return (self._local_fallback("consult_policies") or {}).get(persona_id)
 
     def get_persona_allowed_actions(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Derive allowed actions for a persona based on lifecycle state and session status.

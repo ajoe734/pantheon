@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Query
@@ -17,8 +18,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from models import (
     BFFError,
-    CommandReceipt,
+    CommandReceiptStatus,
     CommandResultMeta,
+    CommandRoutingPath,
     CommandStatus,
     CommandSubmissionResponse,
     CommandStatusResponse,
@@ -48,7 +50,10 @@ app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 os.makedirs(BFF_DATA_DIR, exist_ok=True)
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
-read_store = ReadSurfaceStore(os.path.join(BFF_DATA_DIR, "read_surfaces.json"))
+read_store = ReadSurfaceStore(
+    os.path.join(BFF_DATA_DIR, "read_surfaces.json"),
+    allow_local_snapshot_fallback=False,
+)
 
 # --------------------------------------------------------------------------- #
 # Auth / identity helpers
@@ -110,6 +115,8 @@ _VALID_PAUSE_ACTIONS = {"pause", "resume"}
 
 _ROLLBACK_REQUIRED = {"rollback_target_type", "target_id", "rollback_to_version"}
 _VALID_ROLLBACK_TARGET_TYPES = {"deployment", "runtime"}
+_APPROVE_ROLLBACK_REQUIRED = {"rollback_id"}
+_REJECT_ROLLBACK_REQUIRED = {"rollback_id", "rejection_reason"}
 
 _KILL_SWITCH_REQUIRED = {"scope", "activate"}
 _VALID_SCOPES = {"persona", "pool", "all"}
@@ -191,6 +198,48 @@ def _validate_execute_rollback(params: Dict[str, Any], identity: OperatorIdentit
             "Operator does not hold the required role",
             precondition_failed="role_check",
             suggestion="Escalate to a user with admin or approver role",
+        )
+
+
+def _validate_approve_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _APPROVE_ROLLBACK_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS,
+            "Missing required params for ApproveRollback",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403, ErrorCode.INSUFFICIENT_ROLE,
+            "ApproveRollback requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_reject_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REJECT_ROLLBACK_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS,
+            "Missing required params for RejectRollback",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("rejection_reason") or "").strip():
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS,
+            "RejectRollback requires a non-empty rejection_reason",
+            "rejection_reason must be a non-empty string",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403, ErrorCode.INSUFFICIENT_ROLE,
+            "RejectRollback requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
         )
 
 
@@ -287,6 +336,8 @@ _VALIDATORS = {
     CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
     CommandType.PAUSE_RUNTIME: _validate_pause_runtime,
     CommandType.EXECUTE_ROLLBACK: _validate_execute_rollback,
+    CommandType.APPROVE_ROLLBACK: _validate_approve_rollback,
+    CommandType.REJECT_ROLLBACK: _validate_reject_rollback,
     CommandType.ACTIVATE_KILL_SWITCH: _validate_activate_kill_switch,
     CommandType.APPROVE_EVOLUTION_DECISION: _validate_approve_evolution_decision,
     CommandType.EXECUTE_EVOLUTION_ACTION: _validate_execute_evolution_action,
@@ -362,8 +413,7 @@ def _dataset_surface_status(
             "last_known_at": snapshot_at or utc_now(),
         }
     elif source == "missing":
-        if surface.get("status") == "ok":
-            surface["status"] = "degraded"
+        surface["status"] = "unavailable"
         surface.setdefault(
             "staleness",
             {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
@@ -371,7 +421,7 @@ def _dataset_surface_status(
 
     if has_data is False:
         if surface.get("status") == "ok":
-            surface["status"] = "degraded"
+            surface["status"] = "unavailable"
         if missing_message:
             surface["message"] = missing_message
         surface.setdefault(
@@ -380,6 +430,400 @@ def _dataset_surface_status(
         )
 
     return surface
+
+
+def _composed_surface_status(
+    *,
+    snapshot_at: Optional[str] = None,
+    available: bool = True,
+    missing_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    surface = dict(_surface_status())
+    surface["source"] = "bff_composed"
+    if available:
+        return surface
+
+    if surface.get("status") == "ok":
+        surface["status"] = "degraded"
+    if missing_message:
+        surface["message"] = missing_message
+    surface.setdefault(
+        "staleness",
+        {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+    )
+    return surface
+
+
+_INCIDENT_SEVERITY_MAP = {
+    "critical": "sev1",
+    "high": "sev1",
+    "medium": "sev2",
+    "low": "sev3",
+    "sev1": "sev1",
+    "sev2": "sev2",
+    "sev3": "sev3",
+}
+
+_KILL_SWITCH_STATUS_MAP = {
+    "armed": "armed",
+    "off": "armed",
+    "normal": "armed",
+    "triggered": "triggered",
+    "guarded": "triggered",
+    "risk_off": "triggered",
+    "cooling_down": "cooling_down",
+    "cooldown": "cooling_down",
+    "paused": "cooling_down",
+}
+
+_ACTION_DRAWER_PRIMARY_ALLOWED_ACTIONS = {
+    "canPause": True,
+    "canRiskOff": True,
+    "canLiquidateAll": False,
+    "canHardRollback": False,
+    "canIssueSafeMode": True,
+}
+
+
+def _incident_home_severity(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    return _INCIDENT_SEVERITY_MAP.get(str(value).strip().lower(), str(value))
+
+
+def _project_incident_home_item(incident: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "incident_id": incident.get("incident_id"),
+        "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")),
+        "status": incident.get("status"),
+        "artifact_id": incident.get("artifact_id"),
+        "opened_at": incident.get("opened_at") or incident.get("created_at"),
+        "resolved_at": incident.get("resolved_at"),
+    }
+
+
+def _project_incident_detail_incident(incident: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "incident_id": incident.get("incident_id"),
+        "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")),
+        "status": incident.get("status"),
+        "artifact_id": incident.get("artifact_id"),
+        "artifact_version": incident.get("artifact_version"),
+        "runtime_id": incident.get("runtime_id"),
+        "trace_id": incident.get("trace_id"),
+        "opened_at": incident.get("opened_at") or incident.get("created_at"),
+    }
+
+
+def _project_affected_binding(
+    binding: Dict[str, Any],
+    incident: Dict[str, Any],
+    runtime_binding: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    raw_stage = (
+        incident.get("deployment_stage")
+        or binding.get("stage")
+        or binding.get("deployment_stage")
+        or (runtime_binding or {}).get("deployment_stage")
+        or binding.get("allowed_deployment_scope")
+    )
+    stage = str(raw_stage or "").strip().lower()
+    if stage not in {"paper", "live"}:
+        stage = "paper"
+
+    return {
+        "binding_id": binding.get("id") or binding.get("binding_id"),
+        "persona_id": binding.get("persona_id"),
+        "capital_pool_id": binding.get("capital_pool_id"),
+        "stage": stage,
+        "binding_status": binding.get("binding_status") or binding.get("status"),
+    }
+
+
+def _project_affected_bindings(
+    incident: Dict[str, Any],
+    runtime_binding: Optional[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], bool]:
+    candidate_ids: List[str] = []
+    for value in [
+        incident.get("persona_capital_binding_id"),
+        (runtime_binding or {}).get("persona_capital_binding_id"),
+    ]:
+        if value in (None, ""):
+            continue
+        string_value = str(value)
+        if string_value not in candidate_ids:
+            candidate_ids.append(string_value)
+
+    affected_bindings: List[Dict[str, Any]] = []
+    for binding_id in candidate_ids:
+        binding = read_store.get_binding(binding_id)
+        if not binding:
+            continue
+        affected_bindings.append(
+            _project_affected_binding(binding, incident, runtime_binding)
+        )
+
+    return affected_bindings, bool(candidate_ids)
+
+
+def _default_incident_allowed_actions() -> Dict[str, bool]:
+    return {
+        "canPause": False,
+        "canRiskOff": False,
+        "canLiquidateAll": False,
+        "canHardRollback": False,
+        "canIssueSafeMode": False,
+        "canOpenActionDrawer": False,
+    }
+
+
+def _derive_incident_allowed_actions(
+    identity: OperatorIdentity,
+    incident: Dict[str, Any],
+) -> Dict[str, bool]:
+    actions = _default_incident_allowed_actions()
+    incident_status = str(incident.get("status") or "").lower()
+    runtime_id = incident.get("runtime_id")
+    if incident_status not in {"open", "in_progress"} or not runtime_id:
+        return actions
+
+    if not {"operator", "admin"}.intersection(identity.roles):
+        return actions
+
+    actions["canPause"] = True
+    actions["canRiskOff"] = True
+    actions["canIssueSafeMode"] = True
+    actions["canOpenActionDrawer"] = True
+    return actions
+
+
+def _decode_page_token(page_token: Optional[str]) -> int:
+    if page_token in (None, ""):
+        return 0
+    try:
+        offset = int(page_token)
+    except (TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid page_token",
+            "page_token must be a non-negative integer offset",
+        ) from exc
+    if offset < 0:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid page_token",
+            "page_token must be a non-negative integer offset",
+        )
+    return offset
+
+
+def _page_slice(items: List[Dict[str, Any]], page_token: Optional[str], page_size: int) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    start = _decode_page_token(page_token)
+    end = start + page_size
+    next_page_token = str(end) if end < len(items) else None
+    return items[start:end], next_page_token
+
+
+def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    return meta
+
+
+def _project_evolution_decision_contract(decision: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(decision)
+    payload["updated_at"] = decision.get("updated_at")
+    payload["notes"] = decision.get("notes")
+    return payload
+
+
+def _project_freeze_order_contract(order: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(order)
+    payload["freeze_order_id"] = order.get("freeze_order_id") or order.get("id")
+    payload["issued_at"] = order.get("issued_at") or order.get("created_at")
+    return payload
+
+
+def _project_rollback_contract(rollback: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(rollback)
+    payload["rollback_id"] = rollback.get("rollback_id") or rollback.get("id")
+    payload["executed_at"] = rollback.get("executed_at") or rollback.get("initiated_at")
+    return payload
+
+
+def _surface_degradation_reason(
+    surface: Dict[str, Any],
+    *,
+    degraded_reason: str,
+    unavailable_reason: str,
+) -> Optional[str]:
+    status = surface.get("status")
+    if status == "ok":
+        return None
+    if status == "unavailable":
+        return unavailable_reason
+    if surface.get("message"):
+        return str(surface["message"])
+    if surface.get("note"):
+        return str(surface["note"])
+    return degraded_reason
+
+
+def _last_triggered_at(ks: Dict[str, Any]) -> Optional[str]:
+    explicit = ks.get("last_triggered_at")
+    if explicit:
+        return str(explicit)
+
+    timestamps: List[str] = []
+    for order in ks.get("active_freeze_orders", []):
+        if not isinstance(order, dict):
+            continue
+        value = order.get("triggered_at") or order.get("created_at")
+        if value:
+            timestamps.append(str(value))
+    return max(timestamps) if timestamps else None
+
+
+def _kill_switch_status_value(ks: Dict[str, Any]) -> str:
+    explicit = str(ks.get("status") or "").strip().lower()
+    if explicit:
+        mapped = _KILL_SWITCH_STATUS_MAP.get(explicit)
+        if mapped:
+            return mapped
+
+    safe_mode_status = str(ks.get("safe_mode_status") or "").strip().lower()
+    mapped = _KILL_SWITCH_STATUS_MAP.get(safe_mode_status)
+    if mapped:
+        if mapped == "armed" and ks.get("active"):
+            return "triggered"
+        return mapped
+
+    return "triggered" if ks.get("active") else "armed"
+
+
+def _kill_switch_active_commands(ks: Dict[str, Any]) -> List[str]:
+    active_commands = ks.get("active_commands")
+    if isinstance(active_commands, list):
+        return [str(value) for value in active_commands if value not in (None, "")]
+
+    derived: List[str] = []
+    for order in ks.get("active_freeze_orders", []):
+        if not isinstance(order, dict):
+            continue
+        value = order.get("command_id") or order.get("id") or order.get("target_id")
+        if value not in (None, ""):
+            derived.append(str(value))
+    return derived
+
+
+def _project_kill_switch_contract(ks: Dict[str, Any], surface: Dict[str, Any]) -> Dict[str, Any]:
+    if surface.get("status") == "unavailable":
+        return {
+            "status": None,
+            "last_triggered_at": None,
+            "last_confirmed_at": None,
+            "active_commands": [],
+        }
+
+    return {
+        "status": _kill_switch_status_value(ks),
+        "last_triggered_at": _last_triggered_at(ks),
+        "last_confirmed_at": ks.get("last_confirmed_at") or ks.get("last_checked_at"),
+        "active_commands": _kill_switch_active_commands(ks),
+    }
+
+
+def _action_drawer_allowed_actions_surface() -> Dict[str, Any]:
+    if _read_surface_state() == "unavailable":
+        return {
+            "status": "unavailable",
+            "message": "Action authority service is unavailable. All CTAs disabled for safety.",
+        }
+    return {"status": "ok"}
+
+
+def _project_action_drawer_allowed_actions(
+    kill_switch_surface: Dict[str, Any],
+    allowed_actions_surface: Dict[str, Any],
+) -> Dict[str, bool]:
+    allowed_actions = {
+        "canPause": False,
+        "canRiskOff": False,
+        "canLiquidateAll": False,
+        "canHardRollback": False,
+        "canIssueSafeMode": False,
+        "secondaryPathAvailable": False,
+    }
+
+    if allowed_actions_surface.get("status") != "ok":
+        return allowed_actions
+
+    secondary_path_available = kill_switch_surface.get("status") != "unavailable"
+    allowed_actions["secondaryPathAvailable"] = secondary_path_available
+
+    if kill_switch_surface.get("status") == "ok":
+        allowed_actions.update(_ACTION_DRAWER_PRIMARY_ALLOWED_ACTIONS)
+        return allowed_actions
+
+    if secondary_path_available:
+        allowed_actions["canPause"] = True
+        allowed_actions["canRiskOff"] = True
+
+    return allowed_actions
+
+
+_COMMAND_RECEIPT_STATUS_MAP = {
+    CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
+    CommandStatus.PROCESSING.value: CommandReceiptStatus.QUEUED,
+    CommandStatus.EXECUTED.value: CommandReceiptStatus.QUEUED,
+    CommandStatus.FAILED.value: CommandReceiptStatus.FAILED,
+    CommandStatus.TIMEOUT.value: CommandReceiptStatus.FAILED,
+}
+
+
+def _expected_completion_at(accepted_at: str, estimated_processing_time_ms: int) -> Optional[str]:
+    if not accepted_at or estimated_processing_time_ms < 0:
+        return None
+    try:
+        parsed = datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    completed_at = parsed + timedelta(milliseconds=estimated_processing_time_ms)
+    return completed_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _project_command_submission_response(
+    *,
+    command_id: str,
+    command: CommandType,
+    accepted_at: str,
+    status: CommandStatus,
+    staleness_warning: Optional[StalenessWarning],
+) -> CommandSubmissionResponse:
+    receipt_status = _COMMAND_RECEIPT_STATUS_MAP.get(status.value, CommandReceiptStatus.FAILED)
+    meta = CommandResultMeta()
+    return CommandSubmissionResponse(
+        receipt_id=command_id,
+        command=command.value,
+        status=receipt_status,
+        accepted_at=accepted_at,
+        routing_path=CommandRoutingPath.DIRECT,
+        expected_completion_at=_expected_completion_at(
+            accepted_at,
+            meta.estimated_processing_time_ms,
+        ),
+        error_message=None,
+        staleness_warning=staleness_warning,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -686,6 +1130,7 @@ async def list_capital_pools(
 
 @app.get("/api/v1/bindings")
 async def list_bindings(
+    persona_id: Optional[str] = None,
     capital_pool_id: Optional[str] = None,
     role: Optional[str] = None,
     validity: Optional[str] = None,
@@ -696,6 +1141,7 @@ async def list_bindings(
     _require_read_role(identity)
 
     bindings = read_store.list_bindings(
+        persona_id=persona_id,
         capital_pool_id=capital_pool_id,
         role=role,
         validity=validity,
@@ -711,15 +1157,18 @@ async def list_bindings(
 
 @app.get("/api/v1/deployment-plans")
 async def list_deployment_plans(
-    stage: Optional[str] = None,
-    target_pool_id: Optional[str] = None,
+    status: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
 ):
     """DP-01: Deployment plan list."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    plans = read_store.list_deployment_plans(stage=stage, target_pool_id=target_pool_id)
+    plans = read_store.list_deployment_plans(
+        status=status,
+        capital_pool_id=capital_pool_id,
+    )
     return {
         "data": plans,
         "meta": {
@@ -732,8 +1181,7 @@ async def list_deployment_plans(
 @app.get("/api/v1/approval-decisions")
 async def list_approval_decisions(
     outcome: Optional[str] = None,
-    reviewer: Optional[str] = None,
-    time_range: Optional[str] = None,
+    state: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
 ):
     """DP-03: Approval decision list."""
@@ -742,8 +1190,7 @@ async def list_approval_decisions(
 
     decisions = read_store.list_approval_decisions(
         outcome=outcome,
-        reviewer=reviewer,
-        time_range=time_range,
+        state=state,
     )
     return {
         "data": decisions,
@@ -1058,6 +1505,102 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
     }
 
 
+@app.get("/api/v1/operator/rollback-review/{rollback_id}")
+async def get_rollback_review(rollback_id: str, authorization: Optional[str] = Header(default=None)):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    review = read_store.get_rollback_review(rollback_id)
+    if not review:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Rollback review not found",
+            f"Rollback review {rollback_id} does not exist",
+        )
+
+    snapshot_at = (
+        ((review.get("meta") or {}).get("snapshot_at"))
+        or utc_now()
+    )
+    meta = dict(review.get("meta") or {})
+    meta["snapshot_at"] = snapshot_at
+    surfaces = dict(meta.get("surfaces") or {})
+    surfaces.setdefault(
+        "rollback_review",
+        _composed_surface_status(snapshot_at=snapshot_at, available=True),
+    )
+    surfaces.setdefault(
+        "position_data",
+        _composed_surface_status(snapshot_at=snapshot_at, available=True),
+    )
+    surfaces.setdefault(
+        "allowedActions",
+        _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=review.get("allowedActions") is not None,
+            missing_message="Rollback approval authority unavailable.",
+        ),
+    )
+    meta["surfaces"] = surfaces
+
+    payload = dict(review)
+    payload["meta"] = meta
+    return payload
+
+
+@app.get("/api/v1/operator/governance/audit")
+async def list_governance_audit_trail(
+    actor: Optional[str] = None,
+    action_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    from_: Optional[datetime] = Query(default=None, alias="from"),
+    to: Optional[datetime] = Query(default=None),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    action_types = None
+    if action_type:
+        action_types = [value.strip() for value in action_type.split(",") if value.strip()]
+
+    entries = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_,
+        to_ts=to,
+    )
+    audit_surface = _dataset_surface_status(
+        "governance_audit_events",
+        snapshot_at=snapshot_at,
+    )
+    if audit_surface.get("status") == "unavailable":
+        entries = []
+        next_page_token = None
+    else:
+        entries, next_page_token = _page_slice(entries, page_token, page_size)
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "audit_trail": audit_surface,
+        },
+    }
+
+    return {
+        "entries": entries,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Incident Surfaces (Wave 2 - Incident Response: IN-01 – IN-05)
 # --------------------------------------------------------------------------- #
@@ -1066,6 +1609,8 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
 @app.get("/api/v1/incidents")
 async def list_incidents(
     status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     severity: Optional[str] = None,
     affected_pool_id: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
@@ -1074,15 +1619,42 @@ async def list_incidents(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incidents = read_store.list_incidents(
         status=status, severity=severity, affected_pool_id=affected_pool_id,
     )
-    return {
-        "data": incidents,
-        "meta": {
-            "total": len(incidents),
-            "staleness": _meta_staleness(),
+    items = [_project_incident_home_item(incident) for incident in incidents]
+    if surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "incident_list": surface,
         },
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    degradation_reason = _surface_degradation_reason(
+        surface,
+        degraded_reason="Incident list is degraded and may be stale.",
+        unavailable_reason="Incident list is currently unavailable.",
+    )
+    if degradation_reason is not None:
+        meta["degradation"] = {"reason": degradation_reason}
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
     }
 
 
@@ -1173,18 +1745,47 @@ async def get_kill_switch_status(authorization: Optional[str] = Header(default=N
             suggestion="Escalate to an admin-role operator",
         )
 
+    snapshot_at = utc_now()
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+    allowed_actions_surface = _action_drawer_allowed_actions_surface()
     ks = read_store.get_kill_switch_status()
+    allowed_actions = _project_action_drawer_allowed_actions(
+        kill_switch_surface,
+        allowed_actions_surface,
+    )
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "kill_switch": kill_switch_surface,
+            "allowedActions": allowed_actions_surface,
+        },
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    degradation: Dict[str, Any] = {}
+    kill_switch_reason = _surface_degradation_reason(
+        kill_switch_surface,
+        degraded_reason="Kill switch status is degraded and may be stale.",
+        unavailable_reason="Kill switch status is currently unavailable.",
+    )
+    if kill_switch_reason is not None:
+        degradation["kill_switch_reason"] = kill_switch_reason
+    allowed_actions_reason = _surface_degradation_reason(
+        allowed_actions_surface,
+        degraded_reason="Action authority is degraded. All CTAs disabled for safety.",
+        unavailable_reason="Action authority service is unavailable. All CTAs disabled for safety.",
+    )
+    if allowed_actions_reason is not None:
+        degradation["allowedActions_reason"] = allowed_actions_reason
+    if degradation:
+        meta["degradation"] = degradation
+
     return {
-        "data": {
-            "active_freeze_orders": ks["active_freeze_orders"],
-            "affected_runtime_bindings": [],  # v1: populated from downstream in production
-            "safe_mode_status": ks["safe_mode_status"],
-        },
-        "meta": {
-            "active": ks["active"],
-            "last_checked_at": ks["last_checked_at"],
-            "staleness": _meta_staleness(),
-        },
+        "kill_switch": _project_kill_switch_contract(ks, kill_switch_surface),
+        "allowedActions": allowed_actions,
+        "meta": meta,
     }
 
 
@@ -1200,8 +1801,8 @@ async def get_incident_response(
     authorization: Optional[str] = Header(default=None),
 ):
     """
-    Composed view for active incident response.
-    Composes: IN-02, RT-03, TL-02, RT-04, EV-04, IN-05
+    Composed view for PKT-002 Incident Detail.
+    Composes: incident record, affected bindings, kill-switch state, and action authority.
     """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
@@ -1217,74 +1818,97 @@ async def get_incident_response(
         )
 
     snapshot_at = utc_now()
-    surfaces = {}
-
-    # RT-03: Runtime binding status
-    binding_id = incident.get("binding_id")
-    runtime_id = incident.get("runtime_id")  # fallback; production resolves from binding
     runtime_binding = None
-    runtime_binding_data = {}
+    binding_id = incident.get("binding_id")
     if binding_id:
         runtime_binding = read_store.get_runtime_binding(binding_id)
-        if runtime_binding:
-            runtime_binding_data = dict(runtime_binding)
+    if runtime_binding is None:
+        runtime_binding = read_store.get_runtime_binding_by_runtime_id(incident.get("runtime_id"))
 
-    surfaces["runtime_binding"] = _dataset_surface_status(
-        "runtime_bindings",
-        snapshot_at=snapshot_at,
-        has_data=runtime_binding is not None,
-        missing_message="Runtime binding unavailable for this incident.",
+    affected_bindings, binding_lookup_expected = _project_affected_bindings(
+        incident,
+        runtime_binding,
     )
-
-    # TL-02: Telemetry summary
-    telemetry_summary = None
-    telemetry_runtime_id = runtime_binding.get("runtime_id") if runtime_binding else runtime_id
-    if telemetry_runtime_id:
-        telemetry_summary = read_store.get_telemetry_summary(telemetry_runtime_id)
-
-    surfaces["telemetry_summary"] = _dataset_surface_status(
-        "telemetry_summaries",
-        snapshot_at=snapshot_at,
-        has_data=telemetry_summary is not None,
-        missing_message="Telemetry summary unavailable for this incident.",
-    )
-
-    # RT-04: Rollbacks
-    rollbacks = read_store.get_rollbacks_by_incident(incident_id)
-    surfaces["rollbacks"] = _dataset_surface_status("rollbacks_by_incident", snapshot_at=snapshot_at)
-
-    # EV-04: Evolution decisions for this incident
-    # Note: The contract lists EV-04 as rollbacks only. We additionally surface
-    # evolution decisions here to give operators full incident context in one view.
-    # This is an intentional v1 extension beyond the strict contract.
-    evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)
-    surfaces["evolution_decisions"] = _dataset_surface_status(
-        "evolution_decisions",
-        snapshot_at=snapshot_at,
-    )
-
-    # IN-05: Kill switch status
     ks = read_store.get_kill_switch_status()
-    surfaces["kill_switch"] = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
 
-    data = {
-        "incident": incident,
-        "runtime_binding": runtime_binding_data,
-        "telemetry_summary": telemetry_summary,
-        "rollbacks": rollbacks,
-        "evolution_decisions": evolution_decisions,
-        "kill_switch": {
-            "active_freeze_orders": ks["active_freeze_orders"],
-            "safe_mode_status": ks["safe_mode_status"],
+    incident_surface = _dataset_surface_status(
+        "incidents",
+        snapshot_at=snapshot_at,
+        has_data=incident is not None,
+    )
+    affected_bindings_surface = _dataset_surface_status(
+        "persona_bindings",
+        snapshot_at=snapshot_at,
+        has_data=(len(affected_bindings) > 0) if binding_lookup_expected else None,
+        missing_message="Affected bindings unavailable for this incident.",
+    )
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+
+    action_derivation_available = bool(incident.get("runtime_id"))
+    allowed_actions_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=action_derivation_available,
+        missing_message="Action authority unavailable for this incident.",
+    )
+    if kill_switch_surface.get("status") == "unavailable":
+        allowed_actions_surface["status"] = "unavailable"
+        allowed_actions_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    allowed_actions = (
+        _derive_incident_allowed_actions(identity, incident)
+        if allowed_actions_surface.get("status") == "ok"
+        else _default_incident_allowed_actions()
+    )
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "incident": incident_surface,
+            "affected_bindings": affected_bindings_surface,
+            "kill_switch": kill_switch_surface,
+            "allowedActions": allowed_actions_surface,
         },
     }
+    if snapshot == "preferred":
+        staleness = _meta_staleness()
+        if staleness is not None:
+            meta["staleness"] = staleness
+
+    degradation: Dict[str, str] = {}
+    affected_bindings_reason = _surface_degradation_reason(
+        affected_bindings_surface,
+        degraded_reason="Affected bindings are degraded and may be incomplete.",
+        unavailable_reason="Affected bindings are currently unavailable.",
+    )
+    if affected_bindings_reason is not None:
+        degradation["affected_bindings_reason"] = affected_bindings_reason
+    kill_switch_reason = _surface_degradation_reason(
+        kill_switch_surface,
+        degraded_reason="Kill switch status is degraded and may be stale.",
+        unavailable_reason="Kill switch status is currently unavailable.",
+    )
+    if kill_switch_reason is not None:
+        degradation["kill_switch_reason"] = kill_switch_reason
+    allowed_actions_reason = _surface_degradation_reason(
+        allowed_actions_surface,
+        degraded_reason="Action authority is degraded; all CTAs are disabled for safety.",
+        unavailable_reason="Action authority is currently unavailable; all CTAs are disabled.",
+    )
+    if allowed_actions_reason is not None:
+        degradation["allowedActions_reason"] = allowed_actions_reason
+    if degradation:
+        meta["degradation"] = degradation
 
     return {
-        "data": data,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": surfaces,
+        "data": {
+            "incident": _project_incident_detail_incident(incident),
+            "affected_bindings": affected_bindings,
+            "kill_switch": _project_kill_switch_contract(ks, kill_switch_surface),
         },
+        "allowedActions": allowed_actions,
+        "meta": meta,
     }
 
 
@@ -1499,21 +2123,30 @@ async def list_evolution_decisions(
     action_type: Optional[str] = None,
     risk_level: Optional[str] = None,
     status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
     """EV-01: Evolution Decision List with optional filters."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    decisions = read_store.list_evolution_decisions(
-        action_type=action_type, risk_level=risk_level, status=status,
-    )
+    snapshot_at = utc_now()
+    decisions = [
+        _project_evolution_decision_contract(decision)
+        for decision in read_store.list_evolution_decisions(
+            action_type=action_type,
+            risk_level=risk_level,
+            status=status,
+        )
+    ]
+    items, next_page_token = _page_slice(decisions, page_token, page_size)
     return {
-        "data": decisions,
-        "meta": {
-            "total": len(decisions),
-            "staleness": _meta_staleness(),
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
         },
+        "meta": _snapshot_meta(snapshot_at),
     }
 
 
@@ -1534,12 +2167,9 @@ async def get_evolution_decision(
             f"Evolution decision {decision_id} does not exist",
         )
 
-    return {
-        "data": decision,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
-    }
+    payload = _project_evolution_decision_contract(decision)
+    payload["meta"] = _snapshot_meta(utc_now())
+    return payload
 
 
 @app.get("/api/v1/freeze-orders")
@@ -1552,13 +2182,14 @@ async def list_freeze_orders(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    orders = read_store.list_freeze_orders(status=status, scope=scope)
+    snapshot_at = utc_now()
+    orders = [
+        _project_freeze_order_contract(order)
+        for order in read_store.list_freeze_orders(status=status, scope=scope)
+    ]
     return {
-        "data": orders,
-        "meta": {
-            "total": len(orders),
-            "staleness": _meta_staleness(),
-        },
+        "items": orders,
+        "meta": _snapshot_meta(snapshot_at),
     }
 
 
@@ -1573,15 +2204,18 @@ async def list_rollbacks(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    rollbacks = read_store.list_all_rollbacks(
-        runtime_id=runtime_id, action_type=action_type, time_range=time_range,
-    )
+    snapshot_at = utc_now()
+    rollbacks = [
+        _project_rollback_contract(rollback)
+        for rollback in read_store.list_all_rollbacks(
+            runtime_id=runtime_id,
+            action_type=action_type,
+            time_range=time_range,
+        )
+    ]
     return {
-        "data": rollbacks,
-        "meta": {
-            "total": len(rollbacks),
-            "staleness": _meta_staleness(),
-        },
+        "items": rollbacks,
+        "meta": _snapshot_meta(snapshot_at),
     }
 
 
@@ -2069,17 +2703,11 @@ async def submit_command(
     # 6. Queue for async processing
     background_tasks.add_task(_process_command_stub, command_id)
 
-    receipt = CommandReceipt(
+    return _project_command_submission_response(
         command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
+        command=cmd.command,
+        accepted_at=submitted_at,
         status=CommandStatus.SUBMITTED,
-        tracking_url=f"/api/v1/operator/commands/{command_id}",
-    )
-
-    return CommandSubmissionResponse(
-        receipt=receipt,
         staleness_warning=staleness_warning,
     )
 
@@ -2189,6 +2817,7 @@ async def degraded_control_guidance():
     state = _read_surface_state()
     guidance = {
         "current_state": state,
+        "command_backend_configured": bool(os.getenv("PANTHEON_INTERNAL_API_URL", "").strip()),
         "primary_path": {
             "url": "/api/v1/operator/commands",
             "status": "available" if state == "fresh" else "degraded",
@@ -2211,7 +2840,7 @@ async def degraded_control_guidance():
             },
             "protected_internal_api": {
                 "description": "Direct HTTP access to control-plane internal API",
-                "base_url": os.getenv("PANTHEON_INTERNAL_API_URL", "http://localhost:5001"),
+                "base_url": os.getenv("PANTHEON_INTERNAL_API_URL", "").strip() or None,
                 "endpoints": {
                     "pause_runtime": "POST /api/internal/v1/runtimes/{binding_id}/pause",
                     "execute_rollback": "POST /api/internal/v1/rollbacks/execute",
