@@ -329,8 +329,11 @@ services:
       context: services/control-plane/router
       dockerfile: Dockerfile
     environment:
+      PORT: "8001"
       PERSONA_URL: http://persona:8002
     depends_on:
+      persona:
+        condition: service_healthy
       operator-bff:
         condition: service_healthy
       governance:
