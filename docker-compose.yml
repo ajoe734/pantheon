@@ -522,9 +522,10 @@ services:
     environment:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
-      INCIDENT_DATA_DIR: /data/incident
+      INCIDENT_DATA_DIR: /data/incidents
     volumes:
       - evolution-data:/data/evolution
+      - incident-data:/data/incidents
     depends_on:
       runtime-manager:
         condition: service_healthy
