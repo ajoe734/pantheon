@@ -1,9 +1,7 @@
-# F-042 Promotion Review — UI Decisions
+# F-042 UI Decisions
 
-## Contract Alignment
-- **Decision**: Reject the UI-local types (`unavailable`) in favor of the canonical backend contract (`error`).
-- **Rationale**: Maintain consistency across all surfaces; `error` is the platform-wide standard for degraded components.
-
-## BFF Client
-- **Decision**: Enforce strictly-typed BFF client for error handling.
-- **Rationale**: The UI should not invent its own error envelope; it must consume the standard `errors` array from Pantheon.
+- The page reads a `plan` query parameter and does not invent a fallback deployment plan when the parameter is absent.
+- Promotion readiness is rendered from `allowedActions.canPromoteToPaper`; the UI does not derive eligibility locally.
+- Governance summary shows both `review.governanceOutcome` and `approval_decision` metadata so the operator sees the backend decision and the approval record together.
+- Missing required contract fields are treated as a contract problem and surfaced as an explicit error state instead of rendering mock values.
+- The promote CTA sends the documented `ApproveDeployment` operator command payload through the shared BFF client.

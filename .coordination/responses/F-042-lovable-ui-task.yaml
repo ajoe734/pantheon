@@ -27,6 +27,11 @@ constraints:
   errors[] envelope
 - keep surface-status typing aligned to ok | degraded | unavailable; do not
   regress to error
+- use approval_decision.state, approval_decision.reviewer, and
+  approval_decision.decided_at as the authoritative decision metadata; do not
+  require optional review.* mirrors to render
+- tolerate latestRun.progress = null and render an explicit unavailable state
+  instead of treating null progress as a contract gap
 acceptance:
 - build the Promotion Review page shell and state rendering
 - use only the existing BFF client
@@ -37,6 +42,10 @@ acceptance:
   integrated state that contains the F-042 feedback bundle
 - ensure the cited integrated state includes live auth/session token wiring for
   Pantheon bearer propagation
+- keep review summary rendering anchored on approval_decision metadata even when
+  review.decisionState, review.decidedAt, or review.reviewer are omitted
+- accept latestRun.progress as nullable while preserving an explicit unavailable
+  message in the shell
 required_feedback:
 - docs/pantheon-feedback/F-042/LOVABLE_CHANGE_FEEDBACK.md
 - docs/pantheon-feedback/F-042/API_GAP_REQUESTS.json
