@@ -1,0 +1,379 @@
+"""
+Institutional memory backbone store for the Pantheon memory plane.
+
+This module provides:
+- InstitutionalMemoryEntry immutable dataclass
+- Semantic and JSON-schema validation helpers
+- Thread-safe in-memory store with optional JSON persistence
+- A simple retrieval helper that respects scope and supersession semantics
+"""
+from __future__ import annotations
+
+import json
+import threading
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include timezone information")
+    offset = parsed.utcoffset()
+    if offset is None or offset != timezone.utc.utcoffset(parsed):
+        raise ValueError("timestamp must be expressed in UTC")
+    return parsed.astimezone(timezone.utc)
+
+
+def _entry_sort_key(entry: "InstitutionalMemoryEntry") -> tuple[int, datetime]:
+    return (entry.reuse_count, _parse_utc_timestamp(entry.written_at))
+
+
+class InstitutionalMemoryError(ValueError):
+    """Raised when entry validation or store operations fail."""
+
+
+class KnowledgeType(str, Enum):
+    INCIDENT_LESSON = "incident_lesson"
+    REGIME_PATTERN = "regime_pattern"
+    POLICY_PRECEDENT = "policy_precedent"
+    RESEARCH_FINDING = "research_finding"
+    EVOLUTION_RATIONALE = "evolution_rationale"
+    CROSS_PERSONA_OBSERVATION = "cross_persona_observation"
+
+
+class SourceEventType(str, Enum):
+    POSTMORTEM_PUBLISHED = "postmortem_published"
+    EVOLUTION_DECISION_APPROVED = "evolution_decision_approved"
+    RESEARCH_TASK_COMPLETED = "research_task_completed"
+    GOVERNANCE_REVIEW_CLOSED = "governance_review_closed"
+    COMMITTEE_RESOLUTION_PUBLISHED = "committee_resolution_published"
+    CONSULTATION_CLOSED = "consultation_closed"
+
+
+class WriteAuthority(str, Enum):
+    INCIDENT_SVC = "incident-svc"
+    EVOLUTION_SVC = "evolution-svc"
+    RESEARCH_SVC = "research-svc"
+    GOVERNANCE_SVC = "governance-svc"
+    CONSULTATION_SVC = "consultation-svc"
+
+
+class Scope(str, Enum):
+    SYSTEM_WIDE = "system_wide"
+    STRATEGY_FAMILY = "strategy_family"
+    INSTRUMENT_CLASS = "instrument_class"
+
+
+@dataclass(frozen=True)
+class InstitutionalMemoryEntry:
+    """Canonical institutional memory object."""
+
+    entry_id: str
+    knowledge_type: str
+    content: Dict[str, Any]
+    source_event_type: str
+    source_event_id: str
+    written_at: str
+    write_authority: str
+    scope: str
+
+    contributing_persona_ids: List[str] = field(default_factory=list)
+    scope_filter: Optional[str] = None
+    embedding_ref: Optional[str] = None
+    superseded_by: Optional[str] = None
+    reuse_count: int = 0
+
+    def __post_init__(self) -> None:
+        try:
+            KnowledgeType(self.knowledge_type)
+        except ValueError as exc:
+            raise InstitutionalMemoryError(
+                f"Invalid knowledge_type: {self.knowledge_type!r}. "
+                f"Must be one of {[e.value for e in KnowledgeType]}."
+            ) from exc
+        try:
+            SourceEventType(self.source_event_type)
+        except ValueError as exc:
+            raise InstitutionalMemoryError(
+                f"Invalid source_event_type: {self.source_event_type!r}. "
+                f"Must be one of {[e.value for e in SourceEventType]}."
+            ) from exc
+        try:
+            WriteAuthority(self.write_authority)
+        except ValueError as exc:
+            raise InstitutionalMemoryError(
+                f"Invalid write_authority: {self.write_authority!r}. "
+                f"Must be one of {[e.value for e in WriteAuthority]}."
+            ) from exc
+        try:
+            Scope(self.scope)
+        except ValueError as exc:
+            raise InstitutionalMemoryError(
+                f"Invalid scope: {self.scope!r}. Must be one of {[e.value for e in Scope]}."
+            ) from exc
+        if self.reuse_count < 0:
+            raise InstitutionalMemoryError("reuse_count must be >= 0")
+        if not isinstance(self.content, dict):
+            raise InstitutionalMemoryError("content must be an object")
+        headline = self.content.get("headline")
+        body = self.content.get("body")
+        if not isinstance(headline, str) or not headline.strip():
+            raise InstitutionalMemoryError("content.headline must be a non-empty string")
+        if not isinstance(body, str) or not body.strip():
+            raise InstitutionalMemoryError("content.body must be a non-empty string")
+
+    @property
+    def is_active(self) -> bool:
+        return not bool(self.superseded_by)
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = asdict(self)
+        return {k: v for k, v in payload.items() if v is not None and v != []}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "InstitutionalMemoryEntry":
+        known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        filtered = {k: v for k, v in data.items() if k in known}
+        return cls(**filtered)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
+    @classmethod
+    def from_json(cls, payload: str) -> "InstitutionalMemoryEntry":
+        return cls.from_dict(json.loads(payload))
+
+
+def validate_institutional_memory(entry: InstitutionalMemoryEntry) -> List[str]:
+    """Return semantic validation errors; empty list means valid."""
+    errors: List[str] = []
+
+    if not entry.entry_id:
+        errors.append("entry_id must not be empty")
+    if not entry.source_event_id:
+        errors.append("source_event_id must not be empty")
+    try:
+        _parse_utc_timestamp(entry.written_at)
+    except ValueError:
+        errors.append("written_at must be an ISO-8601 UTC timestamp")
+    if entry.scope == Scope.SYSTEM_WIDE.value and entry.scope_filter is not None:
+        errors.append("scope_filter must be null/omitted when scope is 'system_wide'")
+    if entry.scope in {Scope.STRATEGY_FAMILY.value, Scope.INSTRUMENT_CLASS.value} and not entry.scope_filter:
+        errors.append("scope_filter is required when scope is strategy_family or instrument_class")
+    if any(not str(persona_id).strip() for persona_id in entry.contributing_persona_ids):
+        errors.append("contributing_persona_ids must not contain blank values")
+    return errors
+
+
+def validate_institutional_memory_json(data: Dict[str, Any]) -> List[str]:
+    """Validate raw dict against the canonical JSON schema."""
+    try:
+        import jsonschema  # type: ignore
+    except ImportError:
+        return []
+
+    schema_path = Path(__file__).parent / "institutional_memory_entry.schema.json"
+    if not schema_path.exists():
+        return [f"Schema file not found: {schema_path}"]
+
+    schema = json.loads(schema_path.read_text())
+    validator = jsonschema.Draft7Validator(schema)
+    errors = []
+    for err in sorted(validator.iter_errors(data), key=lambda e: list(e.path)):
+        errors.append(f"{list(err.path)}: {err.message}")
+    return errors
+
+
+@dataclass(frozen=True)
+class RetrievalHit:
+    """Retrieved entry plus ranking score."""
+
+    entry: InstitutionalMemoryEntry
+    relevance_score: float
+
+
+class InstitutionalMemoryStore:
+    """Thread-safe institutional memory store with optional JSON persistence."""
+
+    def __init__(self, path: Optional[Path] = None) -> None:
+        self._lock = threading.Lock()
+        self._entries: Dict[str, InstitutionalMemoryEntry] = {}
+        self._path = path
+        if path and path.exists():
+            self._load(path)
+
+    def create(self, entry: InstitutionalMemoryEntry) -> InstitutionalMemoryEntry:
+        errors = validate_institutional_memory(entry)
+        if errors:
+            raise InstitutionalMemoryError(f"Invalid institutional memory entry: {errors}")
+        json_errors = validate_institutional_memory_json(entry.to_dict())
+        if json_errors:
+            raise InstitutionalMemoryError(f"Schema validation failed: {json_errors}")
+        with self._lock:
+            if entry.entry_id in self._entries:
+                raise InstitutionalMemoryError(f"Entry already exists: {entry.entry_id}")
+            self._entries[entry.entry_id] = entry
+            self._save()
+            return entry
+
+    def get(self, entry_id: str) -> Optional[InstitutionalMemoryEntry]:
+        with self._lock:
+            return self._entries.get(entry_id)
+
+    def _require_unlocked(self, entry_id: str) -> InstitutionalMemoryEntry:
+        entry = self._entries.get(entry_id)
+        if entry is None:
+            raise InstitutionalMemoryError(f"Entry not found: {entry_id}")
+        return entry
+
+    def require(self, entry_id: str) -> InstitutionalMemoryEntry:
+        with self._lock:
+            return self._require_unlocked(entry_id)
+
+    def list(
+        self,
+        *,
+        knowledge_type: Optional[str] = None,
+        scope: Optional[str] = None,
+        scope_filter: Optional[str] = None,
+        contributing_persona_id: Optional[str] = None,
+        active_only: bool = True,
+    ) -> List[InstitutionalMemoryEntry]:
+        with self._lock:
+            entries = list(self._entries.values())
+
+        if knowledge_type:
+            entries = [entry for entry in entries if entry.knowledge_type == knowledge_type]
+        if scope:
+            entries = [entry for entry in entries if entry.scope == scope]
+        if scope_filter is not None:
+            entries = [entry for entry in entries if entry.scope_filter == scope_filter]
+        if contributing_persona_id:
+            entries = [
+                entry
+                for entry in entries
+                if contributing_persona_id in entry.contributing_persona_ids
+            ]
+        if active_only:
+            entries = [entry for entry in entries if entry.is_active]
+        return sorted(entries, key=_entry_sort_key, reverse=True)
+
+    def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
+        if count <= 0:
+            raise InstitutionalMemoryError("count must be >= 1")
+        with self._lock:
+            entry = self._require_unlocked(entry_id)
+            updated = InstitutionalMemoryEntry(
+                **{**entry.to_dict(), "reuse_count": entry.reuse_count + count}
+            )
+            self._entries[entry_id] = updated
+            self._save()
+            return updated
+
+    def supersede(self, entry_id: str, replacement_entry_id: str) -> InstitutionalMemoryEntry:
+        with self._lock:
+            entry = self._require_unlocked(entry_id)
+            updated = InstitutionalMemoryEntry(
+                **{**entry.to_dict(), "superseded_by": replacement_entry_id}
+            )
+            self._entries[entry_id] = updated
+            self._save()
+            return updated
+
+    def retrieve(
+        self,
+        *,
+        query: str = "",
+        knowledge_type: Optional[str] = None,
+        scope: Optional[str] = None,
+        scope_filter: Optional[str] = None,
+        tags: Optional[Iterable[str]] = None,
+        limit: int = 10,
+    ) -> List[RetrievalHit]:
+        if limit <= 0:
+            return []
+        normalized_tags = {tag.strip().lower() for tag in (tags or []) if str(tag).strip()}
+        query_terms = {term.strip().lower() for term in query.split() if term.strip()}
+
+        hits: List[RetrievalHit] = []
+        for entry in self.list(
+            knowledge_type=knowledge_type,
+            scope=scope,
+            scope_filter=scope_filter,
+            active_only=True,
+        ):
+            haystack_parts = [
+                entry.content.get("headline", ""),
+                entry.content.get("body", ""),
+                " ".join(entry.content.get("tags", []) or []),
+                " ".join(entry.contributing_persona_ids),
+            ]
+            haystack = " ".join(haystack_parts).lower()
+            matched_terms = sum(1 for term in query_terms if term in haystack)
+            entry_tags = {tag.strip().lower() for tag in (entry.content.get("tags", []) or []) if str(tag).strip()}
+            matched_tags = len(normalized_tags.intersection(entry_tags))
+            if query_terms or normalized_tags:
+                if matched_terms == 0 and matched_tags == 0:
+                    continue
+            score = float(matched_terms * 10 + matched_tags * 5 + entry.reuse_count)
+            hits.append(RetrievalHit(entry=entry, relevance_score=score))
+
+        hits.sort(
+            key=lambda hit: (
+                hit.relevance_score,
+                hit.entry.reuse_count,
+                _parse_utc_timestamp(hit.entry.written_at),
+            ),
+            reverse=True,
+        )
+        return hits[:limit]
+
+    def _save(self) -> None:
+        if not self._path:
+            return
+        records = [entry.to_dict() for entry in self._entries.values()]
+        self._path.write_text(json.dumps(records, indent=2), encoding="utf-8")
+
+    def _load(self, path: Path) -> None:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise InstitutionalMemoryError(f"Expected JSON array in {path}")
+        for record in data:
+            json_errors = validate_institutional_memory_json(record)
+            if json_errors:
+                entry_id = record.get("entry_id", "<unknown>") if isinstance(record, dict) else "<unknown>"
+                raise InstitutionalMemoryError(
+                    f"Schema validation failed for persisted entry {entry_id}: {json_errors}"
+                )
+            entry = InstitutionalMemoryEntry.from_dict(record)
+            errors = validate_institutional_memory(entry)
+            if errors:
+                raise InstitutionalMemoryError(f"Invalid persisted entry {entry.entry_id}: {errors}")
+            self._entries[entry.entry_id] = entry
+
+
+_default_store: Optional[InstitutionalMemoryStore] = None
+_store_lock = threading.Lock()
+
+
+def get_store() -> InstitutionalMemoryStore:
+    global _default_store
+    with _store_lock:
+        if _default_store is None:
+            _default_store = InstitutionalMemoryStore()
+        return _default_store
+
+
+def reset_store() -> None:
+    global _default_store
+    with _store_lock:
+        _default_store = None
