@@ -1,0 +1,34 @@
+feature_id: PKT-008-rollback-review
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+screen: governance-rollback-review
+blocking: false
+
+summary: >-
+  Governance Rollback Review UI is implemented in the front-end repo with
+  shared BFF client integration, backend-shaped rollback authority gating,
+  stale position-data handling, and the canonical PKT-008 feedback pair.
+
+changed_files:
+  - .coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml
+  - .coordination/requests/PKT-008-rollback-review-ui-done.yaml
+  - src/pages/governance/GovernanceRollbackReview.tsx
+  - src/pages/governance/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - docs/pantheon-feedback/PKT-008-rollback-review/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-008-rollback-review/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-008-rollback-review/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-008-rollback-review/QA_STATUS.md
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - verify the paired frontend-feedback bundle is mirrored back into Pantheon
+  - confirm loop-complete and close BP6-LUV-019
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
