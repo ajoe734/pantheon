@@ -1,0 +1,29 @@
+feature_id: PKT-009-governance-audit-rail
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 5d419de6683f48fd2174cd5eac6bc50c73f78e13
+workbench: governance-workbench
+screen_id: screen-governance-audit-rail
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-009-governance-audit-rail
+feedback_path: docs/pantheon-feedback/PKT-009-governance-audit-rail/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-009-governance-audit-rail/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-009-governance-audit-rail/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-009-governance-audit-rail/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - .coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.yaml
+  - .coordination/requests/PKT-009-governance-audit-rail-ui-done.yaml
+  - docs/pantheon-feedback/PKT-009-governance-audit-rail/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-009-governance-audit-rail/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-009-governance-audit-rail/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-009-governance-audit-rail/QA_STATUS.md
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/lib/bffClient.ts
+  - src/pages/governance/AuditEntryDetail.tsx
+  - src/pages/governance/GovernanceAuditRail.tsx
+  - src/pages/governance/types.ts
+pantheon_review_hint: review-ui
+summary: Governance Audit Rail now reads the published PKT-009 audit payload through the shared client, preserves Pantheon-owned labels and evidence refs, and aligns audit-surface degradation behavior with the documented control-plane semantics.

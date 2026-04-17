@@ -1,0 +1,33 @@
+feature_id: PKT-009-governance-audit-rail
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: governance-audit-rail
+status: resolved
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-17T07:32:24Z"
+resolved_at: "2026-04-17T08:09:58Z"
+summary: >-
+  Pantheon re-review of the PKT-009 Governance Audit Rail ui-done handoff
+  found that the sibling front-end working tree is statically aligned on the
+  published audit entry shape, shared-client read path, server-backed filters,
+  read-only detail drawer, and audit-trail degradation semantics, but Pantheon
+  still does not serve the published read route GET
+  /api/v1/operator/governance/audit. A local FastAPI TestClient probe returns
+  404 Not Found, so the screen cannot complete end-to-end on the current
+  Pantheon BFF/runtime layer.
+resolution_summary: >-
+  Pantheon now wires GET /api/v1/operator/governance/audit in
+  services/control-plane/bff/main.py, exposes seeded
+  list_governance_audit_events() coverage in services/control-plane/bff/read_store.py
+  for regression testing, and passes targeted PKT-009 contract verification plus
+  the shared BFF smoke suite. The mirrored front request pair is also replay-clean
+  from transport commit 5d419de6683f48fd2174cd5eac6bc50c73f78e13, with metadata
+  follow-up commit b58e077159b6897f9ffa6418444c65e608646bec truthfully pointing
+  frontend-feedback.source_commit back to that transport commit.
+next_step: >-
+  No additional runtime follow-up is required for the current PKT-009 packet.
+  Pantheon review can close the loop using the mirrored replay-clean front
+  request pair and the verified BFF implementation evidence captured in this
+  workspace.
