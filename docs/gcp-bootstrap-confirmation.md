@@ -179,29 +179,51 @@ for ENV in dev sandbox; do
   for SUFFIX in postgres-url openclaw-api-token vendor-marketdata-token \
                 webhook-signing-secret broker-api-key broker-api-secret; do
     SECRET="pantheon-${ENV}-${SUFFIX}"
-    POLICY=$(gcloud secrets get-iam-policy "${SECRET}" \
-      --project='<PROJECT_ID>' \
-      --format='value(bindings[role=roles/secretmanager.secretAccessor].members[])')
 
+    # Build expected member list for this secret
+    EXPECTED_MEMBERS=()
     for SA_ROLE in ${EXPECTED_ROLES[${SUFFIX}]}; do
-      MEMBER="serviceAccount:pantheon-${ENV}-${SA_ROLE}@<PROJECT_ID>.iam.gserviceaccount.com"
-      if echo "${POLICY}" | grep -qF "${MEMBER}"; then
-        echo "OK   ${SECRET} → ${SA_ROLE}"
+      EXPECTED_MEMBERS+=("serviceAccount:pantheon-${ENV}-${SA_ROLE}@<PROJECT_ID>.iam.gserviceaccount.com")
+    done
+
+    # Retrieve actual secretAccessor members from per-secret IAM policy
+    ACTUAL_MEMBERS=$(gcloud secrets get-iam-policy "${SECRET}" \
+      --project='<PROJECT_ID>' \
+      --format='value(bindings[role=roles/secretmanager.secretAccessor].members[])' \
+      | sort)
+
+    # Pass 1: check no required member is missing
+    for MEMBER in "${EXPECTED_MEMBERS[@]}"; do
+      if echo "${ACTUAL_MEMBERS}" | grep -qF "${MEMBER}"; then
+        echo "OK      ${SECRET} → present   ${MEMBER}"
         PASS=$((PASS + 1))
       else
-        echo "FAIL ${SECRET} → ${SA_ROLE} MISSING"
+        echo "FAIL    ${SECRET} → MISSING   ${MEMBER}"
         FAIL=$((FAIL + 1))
       fi
     done
+
+    # Pass 2: check no unexpected extra member is present
+    while IFS= read -r ACTUAL_MEMBER; do
+      [[ -z "${ACTUAL_MEMBER}" ]] && continue
+      FOUND=0
+      for MEMBER in "${EXPECTED_MEMBERS[@]}"; do
+        [[ "${ACTUAL_MEMBER}" == "${MEMBER}" ]] && FOUND=1 && break
+      done
+      if [[ "${FOUND}" -eq 0 ]]; then
+        echo "FAIL    ${SECRET} → EXTRA     ${ACTUAL_MEMBER}"
+        FAIL=$((FAIL + 1))
+      fi
+    done <<< "${ACTUAL_MEMBERS}"
   done
 done
 
 echo ""
 echo "Result: ${PASS} OK, ${FAIL} FAIL"
-[[ "${FAIL}" -eq 0 ]] && echo "All bindings confirmed." || echo "Fix missing bindings before proceeding."
+[[ "${FAIL}" -eq 0 ]] && echo "All bindings confirmed." || echo "Fix unexpected or missing bindings before proceeding."
 ```
 
-Expected: all lines print `OK` and the final summary shows `0 FAIL`. Each secret's `secretAccessor` binding list matches the coverage matrix below exactly — no more, no fewer roles per secret.
+Expected: all lines print `OK` and the final summary shows `0 FAIL`. The script fails on both missing required members **and** unexpected extra members, so a passing run proves the per-secret `secretAccessor` binding set matches the coverage matrix exactly — no more, no fewer.
 
 ---
 
