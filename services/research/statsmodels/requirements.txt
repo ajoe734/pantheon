@@ -1,0 +1,5 @@
+# OSS-NEXT-006 materialization baseline
+# Status: source-selected / version-pinned; no governed adapter implemented yet
+statsmodels==0.14.2
+pandas>=2.2.2,<2.3.0
+numpy>=1.26.4,<2.0.0
