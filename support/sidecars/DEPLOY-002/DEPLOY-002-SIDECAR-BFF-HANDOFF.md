@@ -6,8 +6,8 @@
 **Owner**: Claude
 **Reviewer**: Codex
 **Created**: 2026-04-17
-**Revised**: 2026-04-17 (v2 — aligns compose wiring, port, RBAC, and error codes with current implementation)
-**Status**: ready-for-review
+**Revised**: 2026-04-17 (v3 — review approved; status finalized)
+**Status**: approved
 
 > **Scope boundary**: This is a support artifact only. It does not modify canonical truth, L1 policy files, or the main BFF implementation. Its purpose is to surface BFF query gaps, operator journey readiness, and frontend handoff materials so Codex (parent owner) can absorb relevant findings into DEPLOY-002 finalization.
 
