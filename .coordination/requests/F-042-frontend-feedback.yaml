@@ -1,7 +1,7 @@
 feature_id: F-042
 type: frontend-feedback
 source_repo: ajoe734/front-ai-trading-system
-source_branch: feat/f-042-promotion-review
+source_branch: main
 workbench: governance-review
 screen_id: screen-governance-promotion-review
 status: completed
@@ -15,5 +15,6 @@ changed_files:
   - src/pages/promotion/PromotionReview.tsx
   - src/pages/promotion/types.ts
   - src/lib/bffClient.ts
+  - src/auth/AuthProvider.tsx
 pantheon_review_hint: review-ui
-source_commit: c34048e2e096d3fe9bde1c216c0613535d71f07d
+source_commit: bfb87a995d3360aef5ab42d32d25fb6d2ae0328a

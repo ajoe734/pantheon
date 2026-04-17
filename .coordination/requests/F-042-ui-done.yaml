@@ -1,0 +1,26 @@
+feature_id: F-042
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: bfb87a995d3360aef5ab42d32d25fb6d2ae0328a
+screen: promotion-review
+blocking: false
+
+summary: >-
+  Promotion Review UI is implemented and all BFF integration gaps are resolved.
+  Authorization header (Bearer token via shared BFF client), pantheon_operator_token
+  persistence in AuthProvider, detail.error.* envelope, and 'ok|degraded|unavailable'
+  surface-status are all aligned to the cycle-2 Pantheon contract.
+
+changed_files:
+  - src/pages/promotion/PromotionReview.tsx
+  - src/pages/promotion/types.ts
+  - src/lib/bffClient.ts
+  - src/auth/AuthProvider.tsx
+
+follow_up_requested: []
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
