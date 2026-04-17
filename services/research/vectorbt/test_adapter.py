@@ -133,9 +133,11 @@ class TestGovernedVectorbtInputAdapter(unittest.TestCase):
             "records": list(reversed(_make_records("AAA"))) + _make_records("BBB", base=50.0),
         }
         reversed_result = run_vectorbt_workflow(reversed_dataset)
-        fwd_ret = forward_result.artifact_bundle["per_instrument_metrics"]["AAA"]["total_return"]
-        rev_ret = reversed_result.artifact_bundle["per_instrument_metrics"]["AAA"]["total_return"]
-        self.assertAlmostEqual(fwd_ret, rev_ret, places=6)
+        fwd_metrics = forward_result.artifact_bundle["per_instrument_metrics"]["AAA"]
+        rev_metrics = reversed_result.artifact_bundle["per_instrument_metrics"]["AAA"]
+        for key in ("total_return", "sharpe_ratio", "max_drawdown", "trade_count", "num_bars"):
+            with self.subTest(metric=key):
+                self.assertAlmostEqual(fwd_metrics[key], rev_metrics[key], places=6)
 
 
 # --- StubVectorbtBackend ---
