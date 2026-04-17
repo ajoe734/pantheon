@@ -2,9 +2,11 @@ feature_id: F-042
 type: frontend-feedback
 source_repo: ajoe734/front-ai-trading-system
 source_branch: main
-workbench: governance-review
+source_commit: 79dc1b5ecef69125fb51f1519893c2e87020864d
+workbench: governance-workbench
 screen_id: screen-governance-promotion-review
 status: completed
+cycle: 2
 feedback_bundle_dir: docs/pantheon-feedback/F-042
 feedback_path: docs/pantheon-feedback/F-042/LOVABLE_CHANGE_FEEDBACK.md
 api_gap_requests_path: docs/pantheon-feedback/F-042/API_GAP_REQUESTS.json
@@ -12,9 +14,13 @@ ui_decisions_path: docs/pantheon-feedback/F-042/UI_DECISIONS.md
 qa_status_path: docs/pantheon-feedback/F-042/QA_STATUS.md
 blocking_summary: ""
 changed_files:
+  - src/auth/AuthProvider.tsx
+  - src/lib/bffClient.ts
   - src/pages/promotion/PromotionReview.tsx
   - src/pages/promotion/types.ts
-  - src/lib/bffClient.ts
-  - src/auth/AuthProvider.tsx
 pantheon_review_hint: review-ui
-source_commit: 5ddd23283dc87aee07b4b55133757a3161526158
+summary: >
+  Cycle-2 republish. Promotion Review UI at HEAD (79dc1b5) is replay-clean:
+  SurfaceStatus uses ok|degraded|unavailable (not error), pantheon_operator_token
+  persisted in AuthProvider, Bearer header in bffClient, detail.error.* envelope.
+  No open API gap.

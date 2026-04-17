@@ -1,22 +1,26 @@
 feature_id: F-042
-type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: main
-source_commit: 5ddd23283dc87aee07b4b55133757a3161526158
+source_commit: 79dc1b5ecef69125fb51f1519893c2e87020864d
+submitted_at: "2026-04-17T07:00:00+00:00"
 screen: promotion-review
+type: ui-done
+cycle: 2
 blocking: false
 
-summary: >-
-  Promotion Review UI is implemented and all BFF integration gaps are resolved.
-  Authorization header (Bearer token via shared BFF client), pantheon_operator_token
-  persistence in AuthProvider, detail.error.* envelope, and 'ok|degraded|unavailable'
-  surface-status are all aligned to the cycle-2 Pantheon contract.
+summary: >
+  Cycle-2 republish. HEAD (79dc1b5) contains: pantheon_operator_token
+  persistence + Bearer auth in AuthProvider and bffClient, detail.error.*
+  envelope parsing, and SurfaceStatus typed as ok|degraded|unavailable.
+  All cycle-2 contract requirements met.
 
 changed_files:
   - src/pages/promotion/PromotionReview.tsx
   - src/pages/promotion/types.ts
   - src/lib/bffClient.ts
   - src/auth/AuthProvider.tsx
+
+feedback_bundle_dir: docs/pantheon-feedback/F-042
 
 follow_up_requested: []
 

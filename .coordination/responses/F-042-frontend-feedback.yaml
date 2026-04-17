@@ -1,0 +1,133 @@
+feature_id: F-042
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_source_commit: 79dc1b5ecef69125fb51f1519893c2e87020864d
+reviewed_at: "2026-04-17T11:50:05Z"
+reviewed_by: Codex
+task_id: LUV-REVIEW-001
+
+disposition: follow_up
+disposition_summary: >-
+  F-042 Promotion Review is close to contract-aligned, but the returned request
+  pair is still not replay-clean. The mirrored ui-done/frontend-feedback
+  payloads both advertise source_commit
+  79dc1b5ecef69125fb51f1519893c2e87020864d, yet that Git snapshot still carries
+  the older Promotion Review render path: latestRun.progress is treated as a
+  required number, per-surface status still uses error rather than unavailable,
+  and decision metadata still renders from optional review.* mirrors. The
+  needed contract fixes exist only as uncommitted working-tree changes in
+  src/pages/promotion/PromotionReview.tsx and src/pages/promotion/types.ts.
+  Pantheon therefore requires one more front-owned republish from a single
+  Git-visible commit that contains the code fixes, the canonical request pair,
+  and the F-042 feedback bundle.
+
+acceptance_criteria_results:
+  - criterion: "Build the Promotion Review page shell and state rendering"
+    result: pass
+    notes: >-
+      The screen renders the promotion header, review summary, allowed-actions
+      panel, supporting evidence section, and explicit loading/empty/error/degraded
+      states from backend-shaped data.
+  - criterion: "Use only the existing BFF client"
+    result: pass
+    notes: >-
+      PromotionReview.tsx reads through operatorApi.getDeploymentReview() and
+      writes through operatorApi.sendCommand(); no screen-local API helper was
+      introduced.
+  - criterion: "Do not add raw fetch calls in component files"
+    result: pass
+    notes: >-
+      The reviewed screen imports only the shared BFF client and BffError. No
+      raw fetch()/axios call was added in the page component.
+  - criterion: "Do not invent endpoint fields beyond this handoff packet"
+    result: pass
+    notes: >-
+      The page still surfaces missing required fields explicitly instead of
+      fabricating fallback data. The remaining mismatch is contract handling, not
+      field invention.
+  - criterion: "Render approval decision and governance outcome from backend-shaped fields"
+    result: fail
+    notes: >-
+      The advertised source_commit 79dc1b5 still renders decision state,
+      reviewer, and decided-at from optional review.* mirrors instead of the
+      canonical approval_decision.* fields. governanceOutcome is backend-shaped,
+      but the approval decision portion is not yet correct in the committed
+      snapshot.
+  - criterion: "Republish ui-done and frontend-feedback so they truthfully cite a committed integrated state that contains the F-042 feedback bundle"
+    result: fail
+    notes: >-
+      The mirrored request pair now points at source_commit 79dc1b5, but
+      git-show replay of that commit still returns the older Promotion Review
+      implementation. The accepted fixes currently exist only in the front
+      working tree, not in the advertised Git snapshot.
+  - criterion: "Ensure the cited integrated state includes live auth/session token wiring for Pantheon bearer propagation"
+    result: pass
+    notes: >-
+      AuthProvider persists and clears pantheon_operator_token, and bffClient
+      emits Authorization: Bearer <token> on Pantheon BFF GET/POST requests in
+      the reviewed commit history.
+  - criterion: "Keep review summary rendering anchored on approval_decision metadata even when review.decisionState, review.decidedAt, or review.reviewer are omitted"
+    result: fail
+    notes: >-
+      This criterion is only satisfied in the current front working tree. The
+      advertised source_commit still depends on optional review.* mirrors for the
+      decision-state, reviewer, and decided-at rows.
+  - criterion: "Accept latestRun.progress as nullable while preserving an explicit unavailable message in the shell"
+    result: fail
+    notes: >-
+      The current working tree adds the right null-progress behavior, but the
+      advertised source_commit still treats non-number progress as a contract
+      gap and therefore rejects a valid nullable snapshot.
+
+api_gaps: []
+
+non_blocking_follow_ups:
+  - id: F042-FOLLOWUP-001
+    description: >-
+      Run live browser QA against a running Pantheon
+      GET /api/v1/operator/deployment-review/{plan_id} endpoint after the
+      truthful republish lands.
+  - id: F042-FOLLOWUP-002
+    description: >-
+      Run live command-path QA against POST /api/v1/operator/commands after the
+      truthful republish lands.
+
+required_front_repo_updates:
+  - file: src/pages/promotion/types.ts
+    action: >-
+      Commit the working-tree contract fixes: SurfaceStatus must stay
+      ok|degraded|unavailable, latestRun.progress must be number|null, and the
+      review.* decision mirrors must remain optional.
+  - file: src/pages/promotion/PromotionReview.tsx
+    action: >-
+      Commit the working-tree render fixes: treat latestRun.progress=null as a
+      valid unavailable state and render decision metadata from
+      approval_decision.state/reviewer/decided_at.
+  - file: .coordination/requests/F-042-ui-done.yaml
+    action: >-
+      Republish from the same final front-repo commit that contains the
+      PromotionReview.tsx/types.ts fixes. source_commit must equal that exact
+      publication commit.
+  - file: .coordination/requests/F-042-frontend-feedback.yaml
+    action: >-
+      Republish from the same final front-repo commit as the ui-done payload,
+      and keep the summary truthful about replay cleanliness for the advertised
+      source_commit.
+  - file: docs/pantheon-feedback/F-042
+    action: >-
+      Publish the F-042 feedback bundle in the same final commit as the request
+      pair and the screen fixes so the documented review state is Git-replayable.
+
+loop_close_condition: >-
+  The loop can close once one Git-visible front commit contains the updated
+  PromotionReview.tsx + types.ts pair, the canonical F-042 ui-done request, the
+  canonical F-042 frontend-feedback request, and docs/pantheon-feedback/F-042/*,
+  and both request payloads point source_commit at that same publication commit.
+
+risk_note: >-
+  No Pantheon API expansion is required. The remaining blocker is replay
+  cleanliness plus publication of the already-prepared Promotion Review contract
+  fixes. After that republish, the only residual risk should be runtime-only QA
+  against a live Pantheon BFF instance.
+
+review_findings_ref: .coordination/reviews/BP6-LUV-015-review.md
