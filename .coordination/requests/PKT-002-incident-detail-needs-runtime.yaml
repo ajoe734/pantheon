@@ -1,0 +1,32 @@
+feature_id: PKT-002-incident-detail
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: incident-detail
+status: blocked
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-17T10:43:19Z"
+summary: >-
+  Pantheon re-review of the PKT-002 Incident Detail ui-done handoff confirms
+  the published read contract is still blocked by the Pantheon-owned runtime
+  layer. Running
+  `python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions'`
+  fails because `GET /api/v1/operator/incident-response/inc-20260410-001`
+  returns `404 Not Found` from `TestClient(main.app)`. The front handoff also
+  remains replay-incomplete: advertised source_commit
+  c08acb3ea59f4c56ced578820aa6a5129a309de1 does not contain the ui-done
+  payload, the canonical frontend-feedback request is still unpublished at
+  front HEAD 60f366e0a745ce3bb10e913e53b332d6557e23f1, and the latest
+  IncidentDetail fixes are still only in the sibling working tree. Even that
+  working-tree screen still omits `opened_at` and the required per-action
+  rationale copy from the published PKT-002 screen spec.
+next_step: >-
+  Restore the current Pantheon BFF/runtime acceptance path for
+  `GET /api/v1/operator/incident-response/{incident_id}` without changing the
+  published PKT-002 contract or inventing alternate endpoints. After that
+  runtime fix lands, rerun the targeted smoke slice and require the front repo
+  to republish a replay-clean frontend-feedback + ui-done request pair from a
+  single Git-visible commit that also contains the final IncidentDetail
+  implementation updates, renders `opened_at`, and adds the required
+  per-action rationale copy.
