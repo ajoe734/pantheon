@@ -64,6 +64,18 @@ services:
       retries: 10
       start_period: 10s
 
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-pantheon} $${MINIO_ROOT_PASSWORD:-pantheonminio} &&
+      mc mb --ignore-existing local/$${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      "
+    restart: "no"
+
   telemetry:
     build:
       context: .

@@ -1,43 +1,196 @@
 #!/usr/bin/env bash
+# Pantheon single-VM bootstrap: start the control-plane stack, run DB
+# migrations, and verify every service is healthy.
+#
+# Usage:
+#   bash scripts/bootstrap.sh [--compose-file <file>] [--env-file <file>] [--skip-migration]
+#
+#   Default compose file : docker-compose.control.yml
+#   Default env file     : .env (auto-loaded when present)
+#
+# Examples:
+#   # Production single-VM bring-up
+#   bash scripts/bootstrap.sh
+#
+#   # Use a specific env file
+#   bash scripts/bootstrap.sh --env-file env/prod-control.env.example
+#
+#   # Skip DB migration (e.g. already applied)
+#   bash scripts/bootstrap.sh --skip-migration
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILE="${PANTHEON_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
+COMPOSE_FILE="${ROOT_DIR}/docker-compose.control.yml"
+ENV_FILE=""
+SKIP_MIGRATION=false
 
-if [[ -f "$ROOT_DIR/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ROOT_DIR/.env"
-  set +a
-fi
-
-INFRA_SERVICES=(postgres minio nats)
-
-if [[ $# -gt 0 ]]; then
-  SERVICES=("$@")
-else
-  SERVICES=("${INFRA_SERVICES[@]}")
-fi
-
-echo "==> Starting services: ${SERVICES[*]}"
-docker compose -f "$COMPOSE_FILE" up -d "${SERVICES[@]}"
-
-echo "==> Waiting for services to become healthy..."
-for svc in "${SERVICES[@]}"; do
-  echo -n "    $svc "
-  until [[ "$(docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Health','') if isinstance(d,dict) else next((x.get('Health','') for x in d if x.get('Service')=='$svc'),''))" 2>/dev/null)" == "healthy" ]]; do
-    echo -n "."
-    sleep 2
-  done
-  echo " healthy"
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --compose-file) COMPOSE_FILE="$2"; shift 2 ;;
+    --env-file)     ENV_FILE="$2";     shift 2 ;;
+    --skip-migration) SKIP_MIGRATION=true; shift ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
 done
 
-# Bootstrap MinIO bucket if minio was started
-if printf '%s\n' "${SERVICES[@]}" | grep -q '^minio$'; then
-  echo "==> Creating MinIO bucket via minio-init..."
-  docker compose -f "$COMPOSE_FILE" run --rm minio-init
+# Load .env if present and no explicit env-file given
+if [[ -z "$ENV_FILE" && -f "$ROOT_DIR/.env" ]]; then
+  ENV_FILE="$ROOT_DIR/.env"
+fi
+if [[ -n "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  echo "==> Loaded env: $ENV_FILE"
 fi
 
-echo "==> Done."
-docker compose -f "$COMPOSE_FILE" ps "${SERVICES[@]}"
+COMPOSE_ARGS=(-f "$COMPOSE_FILE")
+if [[ -n "$ENV_FILE" ]]; then
+  COMPOSE_ARGS+=(--env-file "$ENV_FILE")
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: Start infra services and wait for them to be healthy
+# ---------------------------------------------------------------------------
+INFRA_SERVICES=(postgres minio nats)
+echo "==> [1/4] Starting infra services: ${INFRA_SERVICES[*]}"
+docker compose "${COMPOSE_ARGS[@]}" up -d "${INFRA_SERVICES[@]}"
+
+_wait_healthy() {
+  local svc="$1"
+  local timeout="${2:-120}"
+  local elapsed=0
+  echo -n "    $svc "
+  while true; do
+    local health
+    health=$(docker compose "${COMPOSE_ARGS[@]}" ps --format json "$svc" 2>/dev/null \
+      | python3 -c "
+import sys, json
+data = sys.stdin.read().strip()
+if not data:
+    print('')
+    sys.exit(0)
+# docker compose ps --format json can return a list or a single object
+try:
+    parsed = json.loads(data)
+    if isinstance(parsed, list):
+        for item in parsed:
+            if item.get('Service') == '$svc':
+                print(item.get('Health', ''))
+                sys.exit(0)
+        print('')
+    else:
+        print(parsed.get('Health', ''))
+except Exception:
+    print('')
+" 2>/dev/null || true)
+    if [[ "$health" == "healthy" ]]; then
+      echo " healthy"
+      return 0
+    fi
+    if [[ $elapsed -ge $timeout ]]; then
+      echo " TIMEOUT after ${timeout}s"
+      return 1
+    fi
+    echo -n "."
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+}
+
+for svc in "${INFRA_SERVICES[@]}"; do
+  _wait_healthy "$svc"
+done
+
+# Bootstrap MinIO bucket
+echo "==> [1/4] Creating MinIO bucket via minio-init..."
+docker compose "${COMPOSE_ARGS[@]}" run --rm minio-init
+
+# ---------------------------------------------------------------------------
+# Step 2: Run DB migrations
+# ---------------------------------------------------------------------------
+if [[ "$SKIP_MIGRATION" == "true" ]]; then
+  echo "==> [2/4] Skipping DB migrations (--skip-migration flag set)"
+else
+  echo "==> [2/4] Running DB migrations..."
+  # Run inside the postgres container where psql is available; Python migration
+  # runs from host using the published port.
+  POSTGRES_PORT="${POSTGRES_PORT:-15432}"
+  POSTGRES_USER_VAL="${POSTGRES_USER:-postgres}"
+  POSTGRES_PASSWORD_VAL="${POSTGRES_PASSWORD:-postgres}"
+  PANTHEON_APP_DB_USER_VAL="${PANTHEON_APP_DB_USER:-pantheon_app}"
+  PANTHEON_APP_DB_PASSWORD_VAL="${PANTHEON_APP_DB_PASSWORD:-pantheon_app}"
+  PANTHEON_APP_DB_NAME_VAL="${PANTHEON_APP_DB_NAME:-pantheon}"
+
+  # Ensure app user + database exist (idempotent)
+  PGPASSWORD="$POSTGRES_PASSWORD_VAL" psql \
+    -h 127.0.0.1 -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER_VAL" -d postgres \
+    -v ON_ERROR_STOP=1 \
+    -c "DO \$\$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${PANTHEON_APP_DB_USER_VAL}') THEN
+            EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', '${PANTHEON_APP_DB_USER_VAL}', '${PANTHEON_APP_DB_PASSWORD_VAL}');
+          END IF;
+        END \$\$;" \
+    -c "SELECT format('CREATE DATABASE %I OWNER %I', '${PANTHEON_APP_DB_NAME_VAL}', '${PANTHEON_APP_DB_USER_VAL}')
+        WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${PANTHEON_APP_DB_NAME_VAL}') \gexec" \
+    -c "GRANT ALL PRIVILEGES ON DATABASE \"${PANTHEON_APP_DB_NAME_VAL}\" TO \"${PANTHEON_APP_DB_USER_VAL}\";" \
+    2>/dev/null || true
+
+  MIGRATION_DSN="postgresql://${PANTHEON_APP_DB_USER_VAL}:${PANTHEON_APP_DB_PASSWORD_VAL}@127.0.0.1:${POSTGRES_PORT}/${PANTHEON_APP_DB_NAME_VAL}"
+  TELEMETRY_DB_DSN="$MIGRATION_DSN" DATABASE_URL="$MIGRATION_DSN" \
+    bash "$ROOT_DIR/scripts/db_migrate.sh"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3: Start all application services
+# ---------------------------------------------------------------------------
+echo "==> [3/4] Starting all application services..."
+docker compose "${COMPOSE_ARGS[@]}" up -d
+
+APP_SERVICES=(
+  telemetry incidents postmortems operator-bff persona
+  evaluation feedback memory registry optimizer-svc
+  promotion capital evolution lineage-read
+)
+
+for svc in "${APP_SERVICES[@]}"; do
+  _wait_healthy "$svc" 120
+done
+
+# ---------------------------------------------------------------------------
+# Step 4: Health summary
+# ---------------------------------------------------------------------------
+echo ""
+echo "==> [4/4] Final service status:"
+docker compose "${COMPOSE_ARGS[@]}" ps
+
+UNHEALTHY=$(docker compose "${COMPOSE_ARGS[@]}" ps --format json 2>/dev/null \
+  | python3 -c "
+import sys, json
+data = sys.stdin.read().strip()
+if not data:
+    sys.exit(0)
+try:
+    items = json.loads(data)
+    if isinstance(items, dict):
+        items = [items]
+    bad = [i.get('Service','?') for i in items if i.get('Health','') not in ('healthy','')]
+    if bad:
+        print('UNHEALTHY:', ' '.join(bad))
+        sys.exit(1)
+except Exception:
+    pass
+" 2>/dev/null || true)
+
+if [[ -n "$UNHEALTHY" ]]; then
+  echo ""
+  echo "ERROR: Some services are not healthy: $UNHEALTHY"
+  echo "       Run: docker compose ${COMPOSE_ARGS[*]} logs <service>"
+  exit 1
+fi
+
+echo ""
+echo "==> Bootstrap complete. All services are healthy."
