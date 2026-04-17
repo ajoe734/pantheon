@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-17T22:46:19Z",
+  "updated_at": "2026-04-17T23:17:48Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -95,11 +95,11 @@
       ],
       "status": "finalize",
       "current_task_ids": [
-        "OSS-IMPL-003"
+        "DEPLOY-004"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor resumed OSS-IMPL-003 for finalize after successful dispatch.",
-      "last_update": "2026-04-17T19:11:38Z"
+      "next": "Supervisor resumed DEPLOY-004 for finalize after successful dispatch.",
+      "last_update": "2026-04-17T23:17:48Z"
     },
     {
       "name": "Gemini",
@@ -116,7 +116,7 @@
       ],
       "branch": "feat/gemini-research-runtime",
       "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T18:24:30Z"
+      "last_update": "2026-04-17T22:56:51Z"
     },
     {
       "name": "Codex",
@@ -126,13 +126,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "waiting",
       "current_task_ids": [
-        "DEPLOY-002"
+        "DEPLOY-007"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started DEPLOY-002 after successful dispatch.",
-      "last_update": "2026-04-17T22:46:19Z"
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-17T22:55:01Z"
     },
     {
       "name": "Codex2",
@@ -159,8 +159,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Supervisor auto-started OSS-IMPL-002-SIDECAR-REVIEW after successful dispatch.",
-      "last_update": "2026-04-17T18:20:37Z"
+      "next": "Supervisor auto-started DEPLOY-004 after successful dispatch.",
+      "last_update": "2026-04-17T23:05:47Z"
     },
     {
       "name": "Qwen",
@@ -173,8 +173,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/qwen-code-agent",
-      "next": "Supervisor resumed OSS-IMPL-001-SIDECAR-REVIEW for finalize after successful dispatch.",
-      "last_update": "2026-04-17T18:50:33Z"
+      "next": "Supervisor re-dispatched DEPLOY-002-SIDECAR-BFF-HANDOFF; task remains in progress.",
+      "last_update": "2026-04-17T23:04:52Z"
     }
   ],
   "tasks": [
@@ -226,54 +226,12 @@
       "review_file": ".coordination/reviews/PKT-009-governance-audit-rail-review.md"
     },
     {
-      "id": "DEPLOY-002",
-      "title": "phase6-2026-04-16-oss-ecosystem-closure",
-      "summary_zh": "將 capital、evolution、control-plane/bff、control-plane/persona、control-plane/router 加入 docker-compose.yml，補上 Dockerfile（若缺）、port mapping、depends_on、env 變數，讓這五個服務可被 compose 啟動。",
-      "phase": "Phase 7: Deployment",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "depends_on": [
-        "DEPLOY-001"
-      ],
-      "artifacts": [
-        "[\"docker-compose.yml\"",
-        "\"services/capital/Dockerfile\"",
-        "\"services/evolution/Dockerfile\"",
-        "\"services/control-plane/bff/Dockerfile\"",
-        "\"services/control-plane/persona/Dockerfile\"]"
-      ],
-      "acceptance": [
-        "[\"docker compose up 後 capital/evolution/control-plane bff/persona/router 全部 healthy\"]"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T15:05:08Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "in_progress",
-      "next": "Supervisor auto-started DEPLOY-002 after successful dispatch.",
-      "last_update": "2026-04-17T22:46:19Z"
-    },
-    {
       "id": "DEPLOY-004",
       "title": "phase6-2026-04-16-oss-ecosystem-closure",
       "summary_zh": "建立 lineage-read-svc 和 promotion-svc 兩個全新的最小 HTTP 服務：lineage read 提供 GET /api/v1/lineage 查詢路徑，promotion-svc 提供 ApprovalDecision / DeploymentPlan CRUD，各自補 main.py、Dockerfile、requirements.txt，並加入 docker-compose.yml。",
       "phase": "Phase 7: Deployment",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex",
       "depends_on": [
         "DEPLOY-001"
       ],
@@ -307,9 +265,12 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T13:27:11Z"
+      "status": "review_approved",
+      "next": "Supervisor resumed DEPLOY-004 for finalize after successful dispatch.",
+      "last_update": "2026-04-17T23:17:48Z",
+      "review_notes_zh": [
+        "Reviewer acceptance: 已核對 services/lineage-read 與 services/promotion 的 main.py、Dockerfile、requirements.txt、docker-compose wiring 與 healthcheck；並以 TestClient 完成 lineage-read health/create/list/get 及 promotion approval->decide->deployment smoke 驗證，happy path 正常、governance validation 生效。"
+      ]
     },
     {
       "id": "DEPLOY-005",
@@ -525,50 +486,6 @@
       "status": "todo",
       "next": "Assignment created from accepted planning session",
       "last_update": "2026-04-17T13:28:24Z"
-    },
-    {
-      "id": "OSS-IMPL-003",
-      "title": "Implement vectorbt governed adapter with smoke test",
-      "summary_zh": "實作 vectorbt governed adapter：在 services/research/vectorbt/ 建立 GovernedVectorbtAdapter（backtesting / portfolio analytics 路徑）、StubBackend、governed output shape、smoke test、unit tests。OSS_INTEGRATION_CHECKLIST 中 vectorbt 從 not-started 推進到 smoke-tested。",
-      "phase": "Phase 7: Deployment",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        "[\"services/research/vectorbt/adapter/vectorbt_adapter.py\"",
-        "\"services/research/vectorbt/smoke_test.py\"",
-        "\"services/research/vectorbt/test_adapter.py\"",
-        "\"OSS_INTEGRATION_CHECKLIST.md\"]"
-      ],
-      "acceptance": [
-        "[\"unit tests 全部通過\"",
-        "\"smoke test 產生 registry-ready artifact（artifact_state=draft）\"",
-        "\"OSS checklist vectorbt 狀態更新為 smoke-tested\"]"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T15:05:08Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "review_approved",
-      "next": "Supervisor resumed OSS-IMPL-003 for finalize after successful dispatch.",
-      "last_update": "2026-04-17T19:11:38Z",
-      "review_notes_zh": [
-        "本地重跑 vectorbt smoke test 與 28 個 unittest 全數通過，acceptance 三項皆成立。reversed-date regression 已擴充為驗證 AAA 五個 per_instrument_metrics key；目前 checklist 也已更新為 28 tests。"
-      ]
     }
   ],
   "handoffs": [
@@ -627,57 +544,30 @@
       "resolved_at": "2026-04-17T14:40:25Z"
     },
     {
-      "task_id": "OSS-IMPL-003",
+      "task_id": "DEPLOY-004",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T22:55:43Z",
+      "resolved_at": "2026-04-17T22:56:51Z"
+    },
+    {
+      "task_id": "DEPLOY-004",
       "from": "Claude",
       "to": "Codex",
-      "message": "All artifacts delivered: vectorbt_adapter.py (GovernedVectorbtInputAdapter + StubVectorbtBackend + VectorbtBackend), smoke_test.py (passes, assertions OK), test_adapter.py (26/26 pass after syntax fix). OSS_INTEGRATION_CHECKLIST.md advanced from version-pinned to smoke-tested. Please review for acceptance.",
+      "message": "All DEPLOY-004 artifacts verified complete: services/lineage-read/main.py (GET /api/v1/lineage, port 8094) + Dockerfile + requirements.txt; services/promotion/main.py (POST /api/v1/approvals, POST /api/v1/deployments, port 8089) + Dockerfile + requirements.txt; docker-compose.yml entries with healthchecks for both services. Governance module dependencies confirmed at services/control-plane/governance. Ready for Codex acceptance review.",
       "status": "done",
-      "created_at": "2026-04-17T17:45:17Z",
-      "resolved_at": "2026-04-17T18:53:35Z"
+      "created_at": "2026-04-17T23:10:20Z",
+      "resolved_at": "2026-04-17T23:17:16Z"
     },
     {
-      "task_id": "OSS-IMPL-003",
+      "task_id": "DEPLOY-004",
       "from": "Codex",
       "to": "Claude",
-      "message": "Review changes requested: GovernedVectorbtInputAdapter currently ignores per-instrument date ordering and preserves caller record order at services/research/vectorbt/adapter/vectorbt_adapter.py:127-159, so unsorted OHLCV input can silently change backtest results. Fresh repro on current snapshot: reversing AAA records changes stub total_return from 0.008743 to 0.0 while smoke/unit tests still pass. Sort or validate records chronologically per instrument and add regression coverage before returning to review.",
-      "status": "done",
-      "created_at": "2026-04-17T18:53:35Z",
-      "resolved_at": "2026-04-17T18:53:35Z"
-    },
-    {
-      "task_id": "OSS-IMPL-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Date-ordering fix complete. GovernedVectorbtInputAdapter now sorts per-instrument bars by ISO date field before storing (vectorbt_adapter.py:127-165). Two regression tests added to test_adapter.py: reversed-date input produces identical ohlcv_by_instrument bars, and identical per-instrument backtest metrics. 28/28 unit tests pass, smoke test OK. Ready for re-review.",
-      "status": "done",
-      "created_at": "2026-04-17T18:56:52Z",
-      "resolved_at": "2026-04-17T19:00:30Z"
-    },
-    {
-      "task_id": "OSS-IMPL-003",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review changes requested: expand the reversed-date regression to assert the full AAA per_instrument_metrics payload rather than only total_return, and refresh the vectorbt OSS checklist evidence from 26 to 28 passing tests so the artifact matches current verification.",
-      "status": "done",
-      "created_at": "2026-04-17T19:00:30Z",
-      "resolved_at": "2026-04-17T19:00:30Z"
-    },
-    {
-      "task_id": "OSS-IMPL-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Expanded reversed-date regression to assert all 5 AAA per_instrument_metrics keys (total_return, sharpe_ratio, max_drawdown, trade_count, num_bars) via subTest loop. Refreshed OSS checklist evidence from 26 to 28 passing tests. 28/28 pass, 5 subtests pass. Committed 449bcb9. Ready for re-review.",
-      "status": "done",
-      "created_at": "2026-04-17T19:01:53Z",
-      "resolved_at": "2026-04-17T19:11:14Z"
-    },
-    {
-      "task_id": "OSS-IMPL-003",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review approved after re-running smoke test and 28 unit tests locally; the per-instrument date sort fix and expanded five-metric regression coverage satisfy the reopened acceptance checks.",
+      "message": "Approved after reviewer verification: lineage-read and promotion artifacts are complete, compose healthchecks are wired, and service-level smoke checks passed. Ready for owner finalization.",
       "status": "pending",
-      "created_at": "2026-04-17T19:11:14Z"
+      "created_at": "2026-04-17T23:17:16Z"
     }
   ],
   "blockers": [],
@@ -709,13 +599,13 @@
       "todo": 2
     },
     "Codex": {
-      "total": 3,
-      "active": 1,
+      "total": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 1
     },
     "Codex2": {
       "total": 0,
