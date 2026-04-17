@@ -1,0 +1,82 @@
+feature_id: PKT-004-persona-drilldowns
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Claude
+reviewed_at: '2026-04-17T17:10:00Z'
+reviewed_commit: 7089d3e0523e7dbbddad6829b59d95511ee0aff8
+feedback_bundle_transport: front-repo main @ 7089d3e0523e7dbbddad6829b59d95511ee0aff8
+screen: persona-drilldowns
+workbench: persona-workbench
+
+disposition: close
+
+summary: >
+  Pantheon review of the PKT-004 Persona Drilldowns frontend-feedback bundle is
+  complete. Source commit 7089d3e0523e7dbbddad6829b59d95511ee0aff8 delivers all
+  six Persona Drilldown surfaces (PS-01 through PS-06). Static build and targeted
+  ESLint passed across all touched files. No API gaps were raised (API_GAP_REQUESTS
+  status: no_open_gaps). follow_up_needed is explicitly false. All reads flow
+  through the shared personaDrilldownApi namespace in src/lib/bffClient.ts; no
+  component issues raw fetch calls. Filters are forwarded as query parameters to the
+  BFF. Missing required fields render a contract-mismatch state pointing to the
+  bff-gap handoff path rather than silently mocking data. The BFF caveats from the
+  contract-ready handoff (viewer-role rejection, meta.staleness on list surfaces) are
+  handled with dedicated permission and staleness states in the UI. No follow-up
+  Pantheon work is required for this loop.
+
+acceptance_verified:
+  - criterion: build the six Persona Drilldown surfaces (PS-01 to PS-06)
+    status: pass
+    note: >
+      PersonaCatalog.tsx (PS-01), PersonaDetail.tsx (PS-02), PersonaSessionList.tsx
+      (PS-03), SessionDetail.tsx (PS-04), PersonaTeachingHistory.tsx (PS-05), and
+      PersonaCapabilities.tsx (PS-06) are all implemented and routed. Detail.tsx
+      is a thin re-export of PersonaDetail.tsx; no demo-backed surface survives.
+  - criterion: use only the existing BFF client
+    status: pass
+    note: >
+      All persona drilldown reads are issued through personaDrilldownApi methods
+      defined in src/lib/bffClient.ts. The Authorization Bearer token is propagated
+      and error parsing is aligned to the Pantheon detail.error.* envelope.
+  - criterion: do not add raw fetch calls in component files
+    status: pass
+    note: >
+      Targeted ESLint passed on all touched persona drilldown files; no direct
+      fetch calls exist in component or page files per QA_STATUS.md.
+  - criterion: pass filters as query parameters to the BFF; do not filter client-side
+    status: pass
+    note: >
+      lifecycle_state filter for the catalog and status filter for session-list are
+      controlled via URL search params and forwarded unchanged to the BFF.
+  - criterion: emit a bff-gap handoff on missing required fields rather than mocking
+    status: pass
+    note: >
+      Missing required contract fields render an explicit contract-mismatch state
+      that points the operator to .coordination/requests/PKT-004-persona-drilldowns-bff-gap.yaml.
+  - criterion: no write actions defined in this module
+    status: pass
+    note: All six surfaces are read-only. No write or mutation endpoints are called.
+
+api_gaps: []
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >
+      Static verification complete. Live browser QA against a running Pantheon BFF,
+      live authorization QA for viewer vs operator/approver/admin/reviewer roles, and
+      runtime validation that real BFF responses always include every required field
+      are deferred and non-blocking for this close.
+  - type: performance
+    status: deferred_non_blocking
+    note: >
+      Production bundle exceeds Vite's 500 kB chunk warning threshold. Build succeeds
+      and this is not a blocking acceptance criterion for PKT-004.
+
+risk_note: >
+  Remaining risk is runtime-only. The reviewed source commit matches the published
+  frontend-feedback bundle and all contract guards are in place, but this review did
+  not exercise a live Pantheon BFF for role-gated persona endpoints, stale metadata
+  behavior, or production-shaped payload validation.
+
+lovable_ui_task_status: closed
