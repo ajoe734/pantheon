@@ -1,7 +1,8 @@
 feature_id: PKT-002-incident-detail
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ui-done
+status: followup-required
+cycle: 2
 pantheon_pr: null
 base_url: null
 workbench: operator-console
@@ -16,6 +17,12 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
+- publish ui-done from a transport-replayable front-repo commit that contains the
+  returned handoff payload
+- republish the mirrored feedback bundle from the same Git-visible front commit;
+  do not leave the request or feedback files untracked
+- wire the Open Action Drawer CTA into the delivered PKT-002 drawer surface, or
+  narrow the published route/integration boundary so the handoff stays truthful
 acceptance:
 - build the Incident Detail composed view panel from GET /api/v1/operator/incident-response/{incident_id}
 - use only the existing BFF client
@@ -25,6 +32,14 @@ acceptance:
 - render each degraded surface with explicit named copy; never show a generic empty
   state
 - display the degradation banner when any meta.surfaces entry is degraded or unavailable
+- render a non-dismissable staleness banner when meta.staleness is present
+- render data.kill_switch.active_commands[] in the kill-switch surface
+- republished ui-done and feedback artifacts truthfully document the current
+  `/incidents/:incidentId` -> `/incident-action-drawer` integration boundary and
+  touched file list
+- if `HardRollback` remains disabled from Incident Detail, keep the
+  target-artifact follow-up explicit in the mirrored API gap request instead of
+  guessing the command parameter locally
 required_feedback:
 - docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md
 - docs/pantheon-feedback/PKT-002-incident-detail/API_GAP_REQUESTS.json
@@ -44,3 +59,4 @@ gap_handoff_path: .coordination/requests/PKT-002-incident-detail-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-002-incident-detail-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-002-incident-detail-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-002-incident-detail-ui-done.example.yaml
+review_findings_ref: .coordination/reviews/BP6-UI-REVIEW-001-review.md

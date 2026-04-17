@@ -1,0 +1,41 @@
+{
+  "feature_id": "PKT-002-incident-detail",
+  "status": "followup-required",
+  "backend_commit": "bcec65873a386a1ebcc787488586e25d97ad69fe",
+  "bff_contract_version": "pantheon-bff@bcec65873a386a1ebcc787488586e25d97ad69fe",
+  "source_payload": ".coordination/requests/PKT-002-incident-detail-ui-done.yaml",
+  "reported_source_commit": "faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7",
+  "verified_front_workspace_head": "87340e96ce4247ccc177e8dff7579e804991b895",
+  "review_file": ".coordination/reviews/BP6-UI-REVIEW-001-review.md",
+  "endpoints": [
+    "GET /api/v1/operator/incident-response/{incident_id}"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-002-incident-detail.md",
+    "docs/examples/PKT-002-incident-detail.json",
+    "docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "feedback_bundle": [
+    "docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md",
+    "docs/pantheon-feedback/PKT-002-incident-detail/API_GAP_REQUESTS.json",
+    "docs/pantheon-feedback/PKT-002-incident-detail/UI_DECISIONS.md",
+    "docs/pantheon-feedback/PKT-002-incident-detail/QA_STATUS.md"
+  ],
+  "resolved_upstream_dependencies": [
+    "BP5-SVC-011",
+    "BP5-SVC-015"
+  ],
+  "pantheon_api_gap": true,
+  "closure_evidence": [
+    "Pantheon mirrored the current sibling ui-done and feedback bundle into the task artifacts",
+    "Targeted ESLint passed for IncidentDetail, IncidentActionDrawer, types, bffClient, and App in the sibling front repo",
+    "Sibling front production build passed during Pantheon verification",
+    "Replay remains unclean because reported source_commit faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7 does not contain the ui-done payload path and the refreshed artifacts are still working-tree-only at front HEAD 87340e96ce4247ccc177e8dff7579e804991b895"
+  ],
+  "followup_scope": [
+    "Republish the PKT-002 ui-done request and mirrored feedback bundle from a Git-visible front commit that contains the payload paths and the touched Incident Detail implementation files",
+    "Keep the current /incidents/:incidentId -> /incident-action-drawer integration boundary truthful in the republished artifacts",
+    "Preserve the current composed-read contract, explicit degraded or unavailable states, meta.staleness behavior, and data.kill_switch.active_commands[] rendering when republishing",
+    "Publish or document the canonical HardRollback target_artifact_id source for Incident Detail launched drawers, or keep that command explicitly disabled in this host context"
+  ]
+}

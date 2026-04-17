@@ -1,0 +1,29 @@
+feature_id: PKT-002-incident-detail
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: screen-operator-incident-detail
+status: followup-required
+backend_commit: bcec65873a386a1ebcc787488586e25d97ad69fe
+bff_contract_version: pantheon-bff@bcec65873a386a1ebcc787488586e25d97ad69fe
+delivery_note_path: docs/pantheon-delivery/PKT-002-incident-detail/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-002-incident-detail/CONTRACT_LOCK.json
+followup_expectation: >-
+  Current PKT-002 review confirms the sibling working tree now matches the
+  published read-path UI axes: the detail route is `/incidents/:incidentId`,
+  the Open Action Drawer CTA enters `/incident-action-drawer`, the kill-switch
+  surface renders `active_commands[]`, and the page renders `meta.staleness`.
+  Pantheon mirrored that refreshed ui-done and feedback bundle, re-ran the
+  targeted sibling ESLint and production build successfully, and found one
+  remaining front-owned blocker: the returned handoff is still not replayable
+  because advertised source_commit
+  faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7 does not contain the ui-done payload
+  path and the refreshed request plus feedback files are still untracked at
+  front HEAD 87340e96ce4247ccc177e8dff7579e804991b895. Pantheon also retains one
+  non-blocking write-contract follow-up: Incident Detail launched drawers still
+  need a canonical `target_artifact_id` source for HardRollback, or that
+  command must stay explicitly disabled in this host context.
+source_payload: .coordination/requests/PKT-002-incident-detail-ui-done.yaml
+reported_source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7
+verified_front_workspace_head: 87340e96ce4247ccc177e8dff7579e804991b895
+pantheon_api_gap: true

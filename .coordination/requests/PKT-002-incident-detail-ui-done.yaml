@@ -2,65 +2,25 @@ feature_id: PKT-002-incident-detail
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: main
+source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7
 screen: incident-detail
 blocking: false
 
-summary: >-
-  Incident Detail UI is implemented against the corrected PKT-002 BFF contract
-  (all eleven BFF gaps resolved by BP5-SVC-011 and BP5-SVC-015). The single
-  allowed endpoint GET /api/v1/operator/incident-response/{incident_id} is consumed
-  through the existing BFF client. Acceptance criteria met in full.
+summary: Incident Detail UI is implemented and ready for Pantheon follow-up.
 
 changed_files:
-  - src/pages/operator/IncidentDetail.tsx
-  - src/components/operator/AffectedBindings.tsx
-  - src/components/operator/KillSwitchStatusPanel.tsx
-  - src/components/operator/ActionEntryStrip.tsx
-  - src/pages/operator/types.ts
+  - src/App.tsx
   - src/lib/bffClient.ts
-
-bff_gap_resolved:
-  prior_gap_file: .coordination/requests/PKT-002-incident-detail-bff-gap.yaml
-  resolved_by:
-    - BP5-SVC-011
-    - BP5-SVC-015
-  resolution: >-
-    BP5-SVC-011 (incident and evidence services) aligned data.affected_bindings[]
-    (list shape), data.kill_switch (status/last_triggered_at/last_confirmed_at/
-    active_commands[]), allowedActions block (all six CTA flags), and
-    meta.surfaces (incident/affected_bindings/kill_switch/allowedActions keys).
-    Severity enum was mapped to sev1/sev2/sev3 and opened_at was added at the
-    response layer. BP5-SVC-015 removed the BFF snapshot fallback and default
-    path, ensuring the corrected response shape is the only path.
-
-acceptance_checklist:
-  - Incident summary panel renders all required fields from data.incident with no mock data: true
-  - Affected bindings panel renders real data from data.affected_bindings[]: true
-  - meta.surfaces.affected_bindings=ok + empty list renders "No affected bindings recorded": true
-  - meta.surfaces.affected_bindings=degraded renders available records + named degradation notice: true
-  - Kill switch status panel handles ok/degraded/unavailable surface states explicitly: true
-  - Action entry strip derives all CTA visibility from allowedActions only: true
-  - Open Action Drawer CTA disabled when allowedActions.canOpenActionDrawer=false: true
-  - Degradation banner renders non-dismissable when any meta.surfaces entry is not ok: true
-  - Staleness banner renders non-dismissable when meta.staleness is present: true
-  - 404 on incident_id renders "Incident not found" with ID and back action: true
-  - Missing meta.surfaces key emits bff-gap alert state; no silent mock fallback: true
-  - No raw fetch or axios in component files: true
-  - No demo providers imported: true
-  - UI does not re-fetch individual surfaces separately: true
-
-integration_boundary_notes:
-  - Screen is mounted at /operator/incident/:incident_id as a standalone route until the Operator Console workbench shell is finalized.
-  - The reusable IncidentActionDrawer component from the PKT-002 action-drawer cycle is used for the Open Action Drawer CTA; no logic duplicated.
-  - meta.surfaces values are read as objects (meta.surfaces.incident.status) to match the actual example payload shape.
+  - src/pages/operator/types.ts
+  - src/pages/operator/IncidentDetail.tsx
+  - src/components/operator/IncidentActionDrawer.tsx
 
 follow_up_requested:
   - review the UI against the latest Pantheon contract and example payload
-  - wire Incident Detail into the Operator Console routing surface when workbench shell is finalized
-  - runtime verification against live BFF after pre-existing production-build blocker is cleared elsewhere in the working tree
+  - run the next integration / acceptance step
+  - publish the next response packet if Pantheon follow-up is required
 
-pantheon_feedback_artifacts:
-  - docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md
-  - docs/pantheon-feedback/PKT-002-incident-detail/API_GAP_REQUESTS.json
-  - docs/pantheon-feedback/PKT-002-incident-detail/UI_DECISIONS.md
-  - docs/pantheon-feedback/PKT-002-incident-detail/QA_STATUS.md
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
