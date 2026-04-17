@@ -318,6 +318,7 @@ def _default_read_data() -> Dict[str, Any]:
         "deployment_plans": {
             "plan-F-042": {
                 "id": "plan-F-042",
+                "plan_id": "plan-F-042",
                 "stage": "paper",
                 "current_stage": "none",
                 "target_stage": "paper",
@@ -1028,10 +1029,21 @@ class ReadSurfaceStore:
     def _backfill_local_contract_defaults(self) -> bool:
         changed = False
         default_data = _default_read_data()
+        deployment_plans = self._data.get("deployment_plans")
+        default_plans = default_data.get("deployment_plans", {})
         evolution_decisions = self._data.get("evolution_decisions")
         default_decisions = default_data.get("evolution_decisions", {})
         rollback_reviews = self._data.get("rollback_reviews")
         default_rollback_reviews = default_data.get("rollback_reviews", {})
+
+        if isinstance(deployment_plans, dict):
+            for plan_id, default_plan in default_plans.items():
+                existing_plan = deployment_plans.get(plan_id)
+                if not isinstance(existing_plan, dict):
+                    continue
+                if "plan_id" not in existing_plan and default_plan.get("plan_id") is not None:
+                    existing_plan["plan_id"] = default_plan["plan_id"]
+                    changed = True
 
         if isinstance(evolution_decisions, dict):
             for decision_id, default_decision in default_decisions.items():
