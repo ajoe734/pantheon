@@ -5,7 +5,7 @@
 **Reviewer**: Qwen  
 **Phase**: Blueprint Gap P1  
 **Depends On**: PLAN-002 (done)  
-**Last Updated**: 2026-04-15  
+**Last Updated**: 2026-04-17  
 
 _Drafted during Claude helper-claim; finalized by Codex after ownership moved back on 2026-04-13._
 
@@ -60,10 +60,10 @@ For production-path classification, three tiers apply:
 | **OpenClaw** | Experiment orchestration / runtime coordination; upstream runtime wrapping local workflows | `adapter-started` | **Activation-Ready** | Codex | All research families (orchestration layer) | Upstream repo dependency path; `openclaw-gateway-adapter` implementation; pinned-image smoke test |
 | **Qlib** | Supervised alpha research; cross-sectional feature engineering, LightGBM/LSTM alpha signal discovery | `criteria-defined` | **Activation-Ready** | Qwen | Cross-sectional equity alpha | Version pin; data pipeline adapter; single-model smoke test (see `services/learning/qlib/ACTIVATION_CRITERIA.md`) |
 | **TRL** | Preference learning; DPO/RLHF training from governed feedback preference pairs | `criteria-defined` | **Activation-Ready** | Qwen | Persona preference alignment | ≥200 FB-002 events + ≥100 preference pairs; active imitation baseline; version pin; smoke test (see `services/learning/trl/ACTIVATION_CRITERIA.md`) |
-| **FinRL** | Simplified single-agent RL portfolio management; pre-configured trading environments | `criteria-defined` | **Activation-Ready** | Copilot | Single-agent RL trading | Qlib alpha exhausted; sequential decision dependency proven; version pin; smoke test (see `services/learning/rl/PATH_DEFINITION.md`) |
-| **RLlib** | Multi-agent / scalable RL policy training; PPO/SAC via Ray | `criteria-defined` | **Activation-Ready** | Copilot | Multi-agent portfolio optimization | RL path approved; version pin; governed training/eval loop; smoke test |
-| **Ray Tune** | Hyperparameter search over RL/learning experiments; PBT/grid/Bayesian search | `version-pinned` | **Activation-Ready** | Copilot | RL hyperparameter optimization | Governed search output adapter; smoke test with selected learning path; `DockerfileLeanFoundationARM` already pins `ray[tune]` |
-| **W&B** | Optional alternative experiment registry backend to MLflow; SaaS metrics visualization | `criteria-defined` | **Activation-Ready** | Codex | All research families (optional) | Stable MLflow integration first; adapter generalization; explicit operator need; version pin (see `services/registry/experiments/WANDB_ACTIVATION.md`) |
+| **FinRL** | Simplified single-agent RL portfolio management; pre-configured trading environments | `criteria-defined` | **Activation-Ready** | Copilot | Single-agent RL trading | Current wave explicitly deferred on 2026-04-17; reopen only after Qlib alpha is approved and stable for **3 months**; then prove the first governed single-agent smoke path (see `services/learning/rl/PATH_DEFINITION.md`) |
+| **RLlib** | Multi-agent / scalable RL policy training; PPO/SAC via Ray | `criteria-defined` | **Activation-Ready** | Copilot | Multi-agent portfolio optimization | Current wave explicitly deferred on 2026-04-17; stays behind the RL gate and the FinRL first-lane proof; then add governed training/eval loop + smoke test |
+| **Ray Tune** | Hyperparameter search over RL/learning experiments; PBT/grid/Bayesian search | `version-pinned` | **Activation-Ready** | Copilot | RL hyperparameter optimization | Current wave explicitly deferred on 2026-04-17; remains coupled to the RLlib follow-on lane after the FinRL first-lane proof; governed search-output adapter still missing |
+| **W&B** | Optional alternative experiment registry backend to MLflow; SaaS metrics visualization | `criteria-defined` | **Activation-Ready** | Qwen | All research families (optional) | **OSS-NEXT-004 (2026-04-17): formally deferred**; re-entry gate in `WANDB_ACTIVATION.md §7`; requires MLflow ≥30-day history (earliest 2026-05-15), documented operator preference, adapter generalization, canonical state migration, SDK pin, and infrastructure readiness |
 | **vectorbt** | Backtesting and portfolio optimization prototyping; fast vectorized backtest engine | `version-pinned` | **Activation-Ready** | Codex | Rapid strategy prototyping | Governed input adapter; stub/real backend split; smoke test; governance evidence |
 | **statsmodels** | Econometrics and regime analysis; cointegration, VAR, ARIMA, regime-switching models | `version-pinned` | **Activation-Ready** | Codex2 | Regime inference / macro research | Governed input adapter; stub/real backend split; smoke test; governance evidence |
 | **QuantLib** | Derivatives pricing and risk; options pricing, fixed income analytics, Greeks | `version-pinned` | **Activation-Ready** | Claude | Derivatives strategy research | Governed input adapter; stub/real backend split; smoke test; evidence pack |
@@ -106,7 +106,7 @@ The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Pr
 1. OpenClaw    — orchestration semantics affect all paths
 2. Qlib        — first learning framework to activate (supervised alpha path)
 3. TRL         — preference learning after imitation baseline established
-4. FinRL/RLlib/Ray Tune — deferred until Qlib plateaus and RL criteria met
+4. FinRL first, then RLlib/Ray Tune — deferred until Qlib plateaus for **3 months** and the RL gate is reopened
 5. vectorbt    — rapid prototyping path (adapter and smoke path needed)
 6. statsmodels — regime research path (adapter and smoke path needed)
 7. QuantLib    — derivatives path (adapter and smoke path needed)
@@ -122,7 +122,7 @@ The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Pr
 | Experiment lifecycle and registry | MLflow | W&B (future) | Production path |
 | Supervised alpha signal discovery | Qlib (LightGBM-first) | vectorbt (prototyping) | Activation-ready |
 | Preference learning / RLHF | TRL | — | Activation-ready |
-| Sequential RL policy | RLlib + Ray Tune | FinRL (single-agent) | Activation-ready |
+| Sequential RL policy | FinRL (first executable lane after RL re-entry) | RLlib + Ray Tune (follow-on scalable lane) | Activation-ready |
 | Rapid strategy backtesting | vectorbt | — | Activation-ready |
 | Econometrics / regime analysis | statsmodels | — | Activation-ready |
 | Derivatives pricing / risk | QuantLib | — | Activation-ready |
@@ -170,7 +170,7 @@ For activation-ready backends (Qlib, TRL, RL stack):
 
 3. **OpenClaw adapter is in progress but not smoke-tested end-to-end**: OpenClaw affects orchestration semantics for all backends. Its baseline is pinned, but the real gateway adapter and full workflow execution path still need closure.
 
-4. **Ray Tune version pinned but no governed adapter**: `DockerfileLeanFoundationARM` already pins `ray[tune]`, but no adapter exists. This creates a false sense of integration readiness.
+4. **RL stack is activation-ready on paper but explicitly deferred in the accepted session**: the 2026-04-17 human gate keeps RL closed for the current wave. FinRL is the chosen first executable lane once re-entry criteria are met, while RLlib/Ray Tune remain a follow-on path. Without recording that decision in canonical summaries, the matrix overstates near-term readiness.
 
 ---
 
@@ -228,7 +228,7 @@ The gap is real but scoped: the platform has a valid production research path fo
 | vectorbt task materialization | OSS-NEXT-005 materialized baseline complete | Follow-on implementation wave |
 | statsmodels task materialization | OSS-NEXT-006 materialized baseline complete | Follow-on implementation wave |
 | QuantLib task materialization | OSS-NEXT-007 materialized baseline complete | Follow-on implementation wave |
-| RL stack approval gate | After Qlib plateaus | Long-term |
+| RL stack approval gate | After Qlib reaches approved status and stays stable for **3 months**; FinRL is the first executable lane when reopened | Long-term |
 
 ### Acceptance Evidence
 

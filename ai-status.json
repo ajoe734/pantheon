@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-17T14:08:34Z",
+  "updated_at": "2026-04-17T22:46:19Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "finalize",
       "current_task_ids": [
-        "LUV-REVIEW-009"
+        "OSS-IMPL-003"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor auto-started LUV-REVIEW-009 after successful dispatch.",
-      "last_update": "2026-04-17T14:07:15Z"
+      "next": "Supervisor resumed OSS-IMPL-003 for finalize after successful dispatch.",
+      "last_update": "2026-04-17T19:11:38Z"
     },
     {
       "name": "Gemini",
@@ -109,13 +109,14 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
+      "status": "waiting",
       "current_task_ids": [
-        "LUV-REVIEW-014"
+        "DEPLOY-005",
+        "DEPLOY-008"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started LUV-REVIEW-014 after successful dispatch.",
-      "last_update": "2026-04-17T13:24:38Z"
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-04-17T18:24:30Z"
     },
     {
       "name": "Codex",
@@ -125,14 +126,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-        "LUV-REVIEW-007-SIDECAR-REVIEW"
+        "DEPLOY-002"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-17T13:59:50Z"
+      "next": "Supervisor auto-started DEPLOY-002 after successful dispatch.",
+      "last_update": "2026-04-17T22:46:19Z"
     },
     {
       "name": "Codex2",
@@ -145,8 +145,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor resumed LUV-REVIEW-012 for finalize after successful dispatch.",
-      "last_update": "2026-04-17T14:07:21Z"
+      "next": "Supervisor resumed OSS-IMPL-003-SIDECAR-REVIEW for finalize after successful dispatch.",
+      "last_update": "2026-04-17T19:31:57Z"
     },
     {
       "name": "Copilot",
@@ -156,13 +156,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "DEPLOY-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "last_update": "2026-04-17T13:59:58Z"
+      "next": "Supervisor auto-started OSS-IMPL-002-SIDECAR-REVIEW after successful dispatch.",
+      "last_update": "2026-04-17T18:20:37Z"
     },
     {
       "name": "Qwen",
@@ -175,97 +173,11 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/qwen-code-agent",
-      "next": "Supervisor re-dispatched LUV-CLOSE-001-SIDECAR-BFF-HANDOFF; task remains in progress.",
-      "last_update": "2026-04-17T13:59:45Z"
+      "next": "Supervisor resumed OSS-IMPL-001-SIDECAR-REVIEW for finalize after successful dispatch.",
+      "last_update": "2026-04-17T18:50:33Z"
     }
   ],
   "tasks": [
-    {
-      "id": "LUV-REVIEW-009",
-      "title": "Review returned frontend feedback and close loop for PKT-004-persona-drilldowns",
-      "summary_zh": "審閱 PKT-004-persona-drilldowns 的 frontend feedback bundle，判定是否直接關閉、補小修，或拆出具體 follow-up。",
-      "phase": "Execution / Lovable Review Closeout",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [
-        "../front-ai-trading-system/.coordination/responses/PKT-004-persona-drilldowns-contract-ready.yaml",
-        ".coordination/responses/PKT-004-persona-drilldowns-lovable-ui-task.yaml",
-        "/home/edna/code/pantheon/.coordination/responses/PKT-004-persona-drilldowns-lovable-prompt.md",
-        "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml",
-        "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml"
-      ],
-      "acceptance": [
-        "PKT-004-persona-drilldowns 的 frontend feedback 已完成 Pantheon review，並給出明確 disposition",
-        "必要的後續工作已拆成可追蹤項目；若可直接關閉，已補齊 evidence",
-        "coordination summary、task board 與實際前端收尾狀態一致"
-      ],
-      "next": "Supervisor auto-started LUV-REVIEW-009 after successful dispatch.",
-      "last_update": "2026-04-17T14:07:15Z",
-      "feature_id": "PKT-004-persona-drilldowns",
-      "coordination_stage": "frontend_feedback_received",
-      "coordination_next_action": "Pantheon should review the frontend feedback bundle and decide follow-up work.",
-      "coordination_paths": {
-        "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-004-persona-drilldowns-contract-ready.yaml",
-        "lovable_task": ".coordination/responses/PKT-004-persona-drilldowns-lovable-ui-task.yaml",
-        "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-004-persona-drilldowns-lovable-prompt.md",
-        "ui_done": "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml",
-        "frontend_feedback": "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml",
-        "bff_gap": null
-      },
-      "coordination_screen": null,
-      "worker_kind": "front-sync-worker",
-      "source_repo_id": "front_ai_trading_system",
-      "target_repo_id": "front_ai_trading_system",
-      "task_class": "lovable_review_closeout",
-      "auto_created_by": "lovable-closeout-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "LUV-REVIEW-014",
-      "title": "Review returned frontend feedback and close loop for PKT-008-rollback-review",
-      "summary_zh": "審閱 PKT-008-rollback-review 的 frontend feedback bundle，判定是否直接關閉、補小修，或拆出具體 follow-up。",
-      "phase": "Execution / Lovable Review Closeout",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [
-        "../front-ai-trading-system/.coordination/responses/PKT-008-rollback-review-contract-ready.yaml",
-        ".coordination/responses/PKT-008-rollback-review-lovable-ui-task.yaml",
-        "/home/edna/code/pantheon/.coordination/responses/PKT-008-rollback-review-lovable-prompt.md",
-        ".coordination/requests/PKT-008-rollback-review-ui-done.yaml",
-        ".coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml"
-      ],
-      "acceptance": [
-        "PKT-008-rollback-review 的 frontend feedback 已完成 Pantheon review，並給出明確 disposition",
-        "必要的後續工作已拆成可追蹤項目；若可直接關閉，已補齊 evidence",
-        "coordination summary、task board 與實際前端收尾狀態一致"
-      ],
-      "next": "Supervisor auto-started LUV-REVIEW-014 after successful dispatch.",
-      "last_update": "2026-04-17T13:24:38Z",
-      "feature_id": "PKT-008-rollback-review",
-      "coordination_stage": "frontend_feedback_received",
-      "coordination_next_action": "Pantheon should review the frontend feedback bundle and decide follow-up work.",
-      "coordination_paths": {
-        "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-008-rollback-review-contract-ready.yaml",
-        "lovable_task": ".coordination/responses/PKT-008-rollback-review-lovable-ui-task.yaml",
-        "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-008-rollback-review-lovable-prompt.md",
-        "ui_done": ".coordination/requests/PKT-008-rollback-review-ui-done.yaml",
-        "frontend_feedback": ".coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml",
-        "bff_gap": null
-      },
-      "coordination_screen": null,
-      "worker_kind": "runtime-worker",
-      "source_repo_id": "pantheon",
-      "target_repo_id": "front_ai_trading_system",
-      "task_class": "lovable_review_closeout",
-      "auto_created_by": "lovable-closeout-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
     {
       "id": "LUV-REVIEW-015",
       "title": "Review returned frontend feedback and close loop for governance-audit-rail",
@@ -273,7 +185,7 @@
       "phase": "Execution / Lovable Review Closeout",
       "owner": "Gemini",
       "reviewer": "Codex2",
-      "status": "todo",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "../front-ai-trading-system/.coordination/responses/PKT-009-governance-audit-rail-contract-ready.yaml",
@@ -287,8 +199,8 @@
         "必要的後續工作已拆成可追蹤項目；若可直接關閉，已補齊 evidence",
         "coordination summary、task board 與實際前端收尾狀態一致"
       ],
-      "next": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-17T12:21:43Z",
+      "next": "Owner finalized approved task and closed it. Frontend feedback bundle is contract-correct and ready for loop closure.",
+      "last_update": "2026-04-17T14:36:00Z",
       "feature_id": "PKT-009-governance-audit-rail",
       "coordination_stage": "frontend_feedback_received",
       "coordination_next_action": "Pantheon should review the frontend feedback bundle and decide follow-up work.",
@@ -307,98 +219,11 @@
       "task_class": "lovable_review_closeout",
       "auto_created_by": "lovable-closeout-materialization",
       "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare LUV-CLOSE-001 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 LUV-CLOSE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "Execution / Lovable Closeout",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/LUV-CLOSE-001/LUV-CLOSE-001-SIDECAR-BFF-HANDOFF.md"
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "前端 feedback 與 review packet 已核對完成；契約、降級語義、篩選 round-trip 與 replayability 皆符合 PKT-009 要求，無需再開 follow-up。"
       ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-17T13:59:50Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "LUV-CLOSE-001",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "LUV-REVIEW-007-SIDECAR-REVIEW",
-      "title": "Prepare LUV-REVIEW-007 review packet and evidence summary",
-      "summary_zh": "平行支援 LUV-REVIEW-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
-      "phase": "Execution / Lovable Review Closeout",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/LUV-REVIEW-007/LUV-REVIEW-007-SIDECAR-REVIEW.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "last_update": "2026-04-17T13:58:36Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "LUV-REVIEW-007",
-      "helper_kind": "review_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "DEPLOY-001",
-      "title": "phase6-2026-04-16-oss-ecosystem-closure",
-      "summary_zh": "補齊 docker-compose 基礎設施：加入 PostgreSQL、MinIO artifact store、NATS message queue，並補充對應 volume、env、healthcheck，讓所有 control-plane 服務有可用的持久化底座。",
-      "phase": "Phase 7: Deployment",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "depends_on": [],
-      "artifacts": [
-        "[\"docker-compose.yml\"",
-        "\".env.example\"",
-        "\"scripts/bootstrap.sh\"]"
-      ],
-      "acceptance": [
-        "[\"docker compose up 後 postgres/minio/nats healthcheck 全部 healthy\"",
-        "\"services/*/requirements.txt 中的 DB 依賴可以連線\"]"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "last_update": "2026-04-17T13:59:58Z"
+      "review_file": ".coordination/reviews/PKT-009-governance-audit-rail-review.md"
     },
     {
       "id": "DEPLOY-002",
@@ -408,7 +233,7 @@
       "owner": "Codex",
       "reviewer": "Claude",
       "depends_on": [
-        "[\"DEPLOY-001\"]"
+        "DEPLOY-001"
       ],
       "artifacts": [
         "[\"docker-compose.yml\"",
@@ -432,62 +257,15 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
+        "materialized_at": "2026-04-17T15:05:08Z",
         "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
         "consensus_status": "accepted",
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T13:27:11Z"
-    },
-    {
-      "id": "DEPLOY-003",
-      "title": "phase6-2026-04-16-oss-ecosystem-closure",
-      "summary_zh": "為目前只有 library 的五個服務建立最小可部署 HTTP server：evaluation、feedback、memory、registry（查詢 API）、optimizer-svc，每個服務補 main.py + Dockerfile + /__health__ endpoint，並加入 docker-compose.yml。",
-      "phase": "Phase 7: Deployment",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [],
-      "artifacts": [
-        "[\"services/evaluation/main.py\"",
-        "\"services/evaluation/Dockerfile\"",
-        "\"services/feedback/main.py\"",
-        "\"services/feedback/Dockerfile\"",
-        "\"services/memory/main.py\"",
-        "\"services/memory/Dockerfile\"",
-        "\"services/registry/main.py\"",
-        "\"services/registry/Dockerfile\"",
-        "\"services/optimizer-svc/main.py\"",
-        "\"services/optimizer-svc/Dockerfile\"",
-        "\"docker-compose.yml\"]"
-      ],
-      "acceptance": [
-        "[\"五個服務各有 /__health__ 回傳 200\"",
-        "\"docker compose up 後全部 healthy\"]"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T13:27:11Z"
+      "status": "in_progress",
+      "next": "Supervisor auto-started DEPLOY-002 after successful dispatch.",
+      "last_update": "2026-04-17T22:46:19Z"
     },
     {
       "id": "DEPLOY-004",
@@ -497,7 +275,7 @@
       "owner": "Codex",
       "reviewer": "Claude",
       "depends_on": [
-        "[\"DEPLOY-001\"]"
+        "DEPLOY-001"
       ],
       "artifacts": [
         "[\"services/lineage-read/main.py\"",
@@ -523,7 +301,7 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
+        "materialized_at": "2026-04-17T15:05:08Z",
         "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
         "consensus_status": "accepted",
         "human_gate_status": "approved",
@@ -541,10 +319,10 @@
       "owner": "Gemini",
       "reviewer": "Claude",
       "depends_on": [
-        "[\"DEPLOY-001\"",
-        "\"DEPLOY-002\"",
-        "\"DEPLOY-003\"",
-        "\"DEPLOY-004\"]"
+        "DEPLOY-001",
+        "DEPLOY-002",
+        "DEPLOY-003",
+        "DEPLOY-004"
       ],
       "artifacts": [
         "[\".env.example\"",
@@ -569,7 +347,7 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
+        "materialized_at": "2026-04-17T15:05:08Z",
         "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
         "consensus_status": "accepted",
         "human_gate_status": "approved",
@@ -587,7 +365,7 @@
       "owner": "Claude",
       "reviewer": "Codex",
       "depends_on": [
-        "[\"DEPLOY-005\"]"
+        "DEPLOY-005"
       ],
       "artifacts": [
         "[\"scripts/smoke_test_single_vm.sh\"",
@@ -611,7 +389,7 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
+        "materialized_at": "2026-04-17T15:05:08Z",
         "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
         "consensus_status": "accepted",
         "human_gate_status": "approved",
@@ -629,8 +407,8 @@
       "owner": "Codex",
       "reviewer": "Gemini",
       "depends_on": [
-        "[\"DEPLOY-003\"",
-        "\"DEPLOY-004\"]"
+        "DEPLOY-003",
+        "DEPLOY-004"
       ],
       "artifacts": [
         "[\"docker-compose.control.yml\"",
@@ -652,7 +430,7 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
+        "materialized_at": "2026-04-17T15:05:08Z",
         "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
         "consensus_status": "accepted",
         "human_gate_status": "approved",
@@ -694,7 +472,7 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
+        "materialized_at": "2026-04-17T15:05:08Z",
         "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
         "consensus_status": "accepted",
         "human_gate_status": "approved",
@@ -738,7 +516,7 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
       "materialization_ref": {
-        "materialized_at": "2026-04-17T13:28:24Z",
+        "materialized_at": "2026-04-17T15:05:08Z",
         "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
         "consensus_status": "accepted",
         "human_gate_status": "approved",
@@ -747,53 +525,70 @@
       "status": "todo",
       "next": "Assignment created from accepted planning session",
       "last_update": "2026-04-17T13:28:24Z"
+    },
+    {
+      "id": "OSS-IMPL-003",
+      "title": "Implement vectorbt governed adapter with smoke test",
+      "summary_zh": "實作 vectorbt governed adapter：在 services/research/vectorbt/ 建立 GovernedVectorbtAdapter（backtesting / portfolio analytics 路徑）、StubBackend、governed output shape、smoke test、unit tests。OSS_INTEGRATION_CHECKLIST 中 vectorbt 從 not-started 推進到 smoke-tested。",
+      "phase": "Phase 7: Deployment",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/research/vectorbt/adapter/vectorbt_adapter.py\"",
+        "\"services/research/vectorbt/smoke_test.py\"",
+        "\"services/research/vectorbt/test_adapter.py\"",
+        "\"OSS_INTEGRATION_CHECKLIST.md\"]"
+      ],
+      "acceptance": [
+        "[\"unit tests 全部通過\"",
+        "\"smoke test 產生 registry-ready artifact（artifact_state=draft）\"",
+        "\"OSS checklist vectorbt 狀態更新為 smoke-tested\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-04-17T15:05:08Z",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      },
+      "status": "review_approved",
+      "next": "Supervisor resumed OSS-IMPL-003 for finalize after successful dispatch.",
+      "last_update": "2026-04-17T19:11:38Z",
+      "review_notes_zh": [
+        "本地重跑 vectorbt smoke test 與 28 個 unittest 全數通過，acceptance 三項皆成立。reversed-date regression 已擴充為驗證 AAA 五個 per_instrument_metrics key；目前 checklist 也已更新為 28 tests。"
+      ]
     }
   ],
   "handoffs": [
     {
-      "task_id": "LUV-REVIEW-009",
+      "task_id": "LUV-REVIEW-015",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Review packet complete at .coordination/reviews/PKT-009-governance-audit-rail-review.md. Implementation is contract-correct and fully replayable from source_commit 5d419de6683f48fd2174cd5eac6bc50c73f78e13. All acceptance criteria pass. Disposition: APPROVED — loop can close.",
+      "status": "done",
+      "created_at": "2026-04-17T14:30:00Z",
+      "resolved_at": "2026-04-17T14:33:49Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-007",
       "from": "Claude",
       "to": "Copilot",
       "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:00:26Z",
-      "resolved_at": "2026-04-17T12:00:50Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:02:20Z",
-      "resolved_at": "2026-04-17T12:03:06Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:03:52Z",
-      "resolved_at": "2026-04-17T12:04:29Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:08:18Z",
-      "resolved_at": "2026-04-17T12:09:37Z"
     },
     {
       "task_id": "LUV-REVIEW-015",
@@ -805,33 +600,6 @@
       "resolved_at": "2026-04-17T12:17:36Z"
     },
     {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:12:05Z",
-      "resolved_at": "2026-04-17T12:12:28Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:13:15Z",
-      "resolved_at": "2026-04-17T12:14:08Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:15:46Z",
-      "resolved_at": "2026-04-17T12:16:56Z"
-    },
-    {
       "task_id": "LUV-REVIEW-015",
       "from": "Codex",
       "to": "Codex2",
@@ -841,226 +609,75 @@
       "resolved_at": "2026-04-17T12:21:43Z"
     },
     {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "task_id": "LUV-REVIEW-015",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T12:18:50Z",
-      "resolved_at": "2026-04-17T12:42:25Z"
+      "created_at": "2026-04-17T12:21:43Z",
+      "resolved_at": "2026-04-17T14:22:35Z"
     },
     {
       "task_id": "LUV-REVIEW-015",
       "from": "Codex2",
       "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T12:21:43Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "message": "Approved via .coordination/reviews/PKT-009-governance-audit-rail-review.md. Frontend feedback bundle is contract-correct, replayable from source_commit 5d419de6683f48fd2174cd5eac6bc50c73f78e13, and ready for owner finalization to done.",
       "status": "done",
-      "created_at": "2026-04-17T12:42:25Z",
-      "resolved_at": "2026-04-17T12:43:14Z"
+      "created_at": "2026-04-17T14:33:49Z",
+      "resolved_at": "2026-04-17T14:40:25Z"
     },
     {
-      "task_id": "LUV-REVIEW-009",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:42:40Z",
-      "resolved_at": "2026-04-17T12:46:25Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:43:59Z",
-      "resolved_at": "2026-04-17T12:44:40Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:47:01Z",
-      "resolved_at": "2026-04-17T12:47:48Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-009",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:49:11Z",
-      "resolved_at": "2026-04-17T12:49:37Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-009",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:52:50Z",
-      "resolved_at": "2026-04-17T12:53:12Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:54:00Z",
-      "resolved_at": "2026-04-17T12:55:16Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-009",
-      "from": "Claude",
-      "to": "Copilot",
-      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:56:13Z",
-      "resolved_at": "2026-04-17T12:57:16Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-009",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:19:10Z",
-      "resolved_at": "2026-04-17T13:20:26Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:19:22Z",
-      "resolved_at": "2026-04-17T13:20:33Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-007-SIDECAR-REVIEW",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:19:56Z",
-      "resolved_at": "2026-04-17T13:41:05Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-009",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Review found published source_commit 2398427980ea98a66c5fe23547f021d8efa3a53f is not replay-clean: detached worktree build fails because src/App.tsx imports missing persona pages. See .coordination/reviews/PKT-004-persona-drilldowns-review.md and republish ui-done/frontend-feedback with a buildable source_commit before re-review.",
-      "status": "done",
-      "created_at": "2026-04-17T13:23:27Z",
-      "resolved_at": "2026-04-17T13:23:27Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-04-17T13:31:26Z",
-      "resolved_at": "2026-04-17T13:32:03Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:32:33Z",
-      "resolved_at": "2026-04-17T13:32:57Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-009",
+      "task_id": "OSS-IMPL-003",
       "from": "Claude",
       "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "message": "All artifacts delivered: vectorbt_adapter.py (GovernedVectorbtInputAdapter + StubVectorbtBackend + VectorbtBackend), smoke_test.py (passes, assertions OK), test_adapter.py (26/26 pass after syntax fix). OSS_INTEGRATION_CHECKLIST.md advanced from version-pinned to smoke-tested. Please review for acceptance.",
       "status": "done",
-      "created_at": "2026-04-17T13:46:25Z",
-      "resolved_at": "2026-04-17T13:47:46Z"
+      "created_at": "2026-04-17T17:45:17Z",
+      "resolved_at": "2026-04-17T18:53:35Z"
     },
     {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:46:37Z",
-      "resolved_at": "2026-04-17T13:47:53Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-007-SIDECAR-REVIEW",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:47:27Z",
-      "resolved_at": "2026-04-17T13:49:41Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:50:22Z",
-      "resolved_at": "2026-04-17T13:52:35Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-009",
+      "task_id": "OSS-IMPL-003",
       "from": "Codex",
       "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "message": "Review changes requested: GovernedVectorbtInputAdapter currently ignores per-instrument date ordering and preserves caller record order at services/research/vectorbt/adapter/vectorbt_adapter.py:127-159, so unsorted OHLCV input can silently change backtest results. Fresh repro on current snapshot: reversing AAA records changes stub total_return from 0.008743 to 0.0 while smoke/unit tests still pass. Sort or validate records chronologically per instrument and add regression coverage before returning to review.",
       "status": "done",
-      "created_at": "2026-04-17T13:50:39Z",
-      "resolved_at": "2026-04-17T13:54:56Z"
+      "created_at": "2026-04-17T18:53:35Z",
+      "resolved_at": "2026-04-17T18:53:35Z"
     },
     {
-      "task_id": "LUV-REVIEW-007-SIDECAR-REVIEW",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:52:07Z",
-      "resolved_at": "2026-04-17T13:55:21Z"
-    },
-    {
-      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T13:58:04Z",
-      "resolved_at": "2026-04-17T13:59:11Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-007-SIDECAR-REVIEW",
+      "task_id": "OSS-IMPL-003",
       "from": "Claude",
       "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-17T13:58:36Z"
+      "message": "Date-ordering fix complete. GovernedVectorbtInputAdapter now sorts per-instrument bars by ISO date field before storing (vectorbt_adapter.py:127-165). Two regression tests added to test_adapter.py: reversed-date input produces identical ohlcv_by_instrument bars, and identical per-instrument backtest metrics. 28/28 unit tests pass, smoke test OK. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:56:52Z",
+      "resolved_at": "2026-04-17T19:00:30Z"
     },
     {
-      "task_id": "DEPLOY-001",
+      "task_id": "OSS-IMPL-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: expand the reversed-date regression to assert the full AAA per_instrument_metrics payload rather than only total_return, and refresh the vectorbt OSS checklist evidence from 26 to 28 passing tests so the artifact matches current verification.",
+      "status": "done",
+      "created_at": "2026-04-17T19:00:30Z",
+      "resolved_at": "2026-04-17T19:00:30Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003",
       "from": "Claude",
-      "to": "Copilot",
-      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "to": "Codex",
+      "message": "Expanded reversed-date regression to assert all 5 AAA per_instrument_metrics keys (total_return, sharpe_ratio, max_drawdown, trade_count, num_bars) via subTest loop. Refreshed OSS checklist evidence from 26 to 28 passing tests. 28/28 pass, 5 subtests pass. Committed 449bcb9. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T19:01:53Z",
+      "resolved_at": "2026-04-17T19:11:14Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after re-running smoke test and 28 unit tests locally; the per-instrument date sort fix and expanded five-metric regression coverage satisfy the reopened acceptance checks.",
       "status": "pending",
-      "created_at": "2026-04-17T13:59:58Z"
+      "created_at": "2026-04-17T19:11:14Z"
     }
   ],
   "blockers": [],
@@ -1074,31 +691,31 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 4,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 4
-    },
-    "Gemini": {
-      "total": 4,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 4
-    },
-    "Codex": {
-      "total": 5,
+      "total": 3,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
+      "review_approved": 1,
+      "todo": 2
+    },
+    "Gemini": {
+      "total": 3,
+      "active": 0,
+      "blocked": 0,
+      "done": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 5
+      "todo": 2
+    },
+    "Codex": {
+      "total": 3,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 3
     },
     "Codex2": {
       "total": 0,
@@ -1119,13 +736,13 @@
       "todo": 0
     },
     "Copilot": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     }
   }
 }
