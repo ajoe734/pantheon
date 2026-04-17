@@ -132,3 +132,10 @@ closed.
 ## Sidecar Outcome
 
 Support artifact created for reviewer handoff. No canonical files were edited.
+
+## Owner Finalize Checkpoint
+
+As of 2026-04-17, this sidecar packet is complete and remains advisory only:
+the helper task may close, but `BP6-LUV-017` parent must stay unresolved until
+the blocked PKT-006 backend/BFF gaps are actually cleared in Pantheon-visible
+evidence.
