@@ -4,7 +4,7 @@ source_repo: ajoe734/pantheon
 reviewed_by: Claude
 reviewed_at: '2026-04-17T17:10:00Z'
 reviewed_commit: 7089d3e0523e7dbbddad6829b59d95511ee0aff8
-feedback_bundle_transport: front-repo main @ 7089d3e0523e7dbbddad6829b59d95511ee0aff8
+feedback_bundle_transport: front-repo pkt-004-detail-fix @ 1ffa5d8 (bundle complete; LOVABLE_CHANGE_FEEDBACK.md added over reviewed base 7089d3e0523e7dbbddad6829b59d95511ee0aff8)
 screen: persona-drilldowns
 workbench: persona-workbench
 
