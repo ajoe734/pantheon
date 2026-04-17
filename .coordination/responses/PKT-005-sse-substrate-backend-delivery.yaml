@@ -1,0 +1,23 @@
+feature_id: PKT-005-sse-substrate
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: surface-operator-sse-reconciliation
+status: cycle-2-dispatched
+backend_commit: 511f929cbe604447d9d0f226421b89d28da72851
+bff_contract_version: pantheon-bff@95d2bf98217e4587250b4d0b8b5f052e7e74dd8f
+delivery_note_path: docs/pantheon-delivery/PKT-005-sse-substrate/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-005-sse-substrate/CONTRACT_LOCK.md
+followup_expectation: >-
+  Keep the existing PKT-005 SSE contract and endpoints. The reviewed front
+  implementation commit builds and the touched files lint cleanly, but the next
+  UI cycle still needs to republish the request pair from a
+  transport-replayable commit that actually contains the published payload
+  paths, restore the missing frontend-feedback request, move last_event_id only
+  after successful apply, surface the required 60-second delayed-update footer
+  note on each host screen, apply subscribed runtime or incident events to the
+  visible host state instead of informational no-ops, and surface reconciler
+  bff-gap results instead of silently returning. Republish the paired
+  frontend-feedback and ui-done handoffs, or emit bff-gap if live stream fields
+  diverge from the published contract.
+source_payload: .coordination/requests/PKT-005-sse-substrate-ui-done.yaml
