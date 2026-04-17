@@ -186,10 +186,13 @@ for ENV in dev sandbox; do
       EXPECTED_MEMBERS+=("serviceAccount:pantheon-${ENV}-${SA_ROLE}@<PROJECT_ID>.iam.gserviceaccount.com")
     done
 
-    # Retrieve actual secretAccessor members from per-secret IAM policy
+    # Retrieve actual secretAccessor members from per-secret IAM policy.
+    # gcloud value() uses ';' as the list delimiter, so tr splits into one member per line
+    # before sorting — required for Pass 2's line-by-line comparison to work correctly.
     ACTUAL_MEMBERS=$(gcloud secrets get-iam-policy "${SECRET}" \
       --project='<PROJECT_ID>' \
       --format='value(bindings[role=roles/secretmanager.secretAccessor].members[])' \
+      | tr ';' '\n' \
       | sort)
 
     # Pass 1: check no required member is missing
