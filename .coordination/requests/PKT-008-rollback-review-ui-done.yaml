@@ -2,8 +2,19 @@ feature_id: PKT-008-rollback-review
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: main
+source_commit: 73d2b83549564e22cdd1b462a3fe5601db675071
 screen: governance-rollback-review
 blocking: false
+status: closed
+pantheon_disposition: loop-complete
+closed_at: "2026-04-18T06:00:00Z"
+closed_by: Codex2
+review_file: .coordination/reviews/PKT-008-rollback-review-review.md
+resolution_summary: >-
+  Pantheon reviewed the returned UI cycle and confirmed the PKT-008 contract,
+  degraded-mode behavior, and replayability evidence are all complete. The
+  prior runtime gap is resolved, no open API gap remains, and the loop is
+  formally closed on the Pantheon side.
 
 summary: >-
   Governance Rollback Review UI is implemented in the front-end repo with

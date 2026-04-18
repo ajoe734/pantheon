@@ -1,0 +1,62 @@
+feature_id: PKT-008-rollback-review
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: loop-complete
+cycle: 2
+pantheon_pr: null
+base_url: null
+workbench: governance-workbench
+screen: governance-rollback-review
+screen_id: screen-governance-rollback-review
+ui_spec_path: docs/screens/PKT-008-rollback-review.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-008-rollback-review/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/rollback-review/{rollback_id}
+- POST /api/v1/operator/commands
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+- keep the read path on GET /api/v1/operator/rollback-review/{rollback_id} and
+  the write path on POST /api/v1/operator/commands; do not invent alternate
+  endpoints or shadow state
+- keep frontend-feedback.source_commit pinned to the replayable front transport
+  commit that contains the request pair, feedback bundle, and
+  GovernanceRollbackReview.tsx
+acceptance:
+- build the Governance Rollback Review screen with rollback identity header, scope
+  summary, position impact table, affected bindings panel, and trigger evidence drawer
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- do not derive position impact from raw binding or telemetry data; all position impact
+  fields come from position_impact[] in the BFF response
+- render all CTAs from backend-shaped allowedActions only
+- disable the Approve CTA when meta.surfaces.position_data is degraded or unavailable
+  regardless of allowedActions.canApproveRollback
+- show stale-data badge and unknown impact message for position_impact rows where
+  position_data_stale is true
+- republished frontend-feedback and ui-done truthfully reference the same
+  Git-visible front commit that contains the PKT-008 request pair, feedback
+  bundle, and rollback review UI files
+required_feedback:
+- docs/pantheon-feedback/PKT-008-rollback-review/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-008-rollback-review/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-008-rollback-review/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-008-rollback-review/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-008-rollback-review-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-008-rollback-review.md
+  ui_spec_path: docs/screens/PKT-008-rollback-review.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-008-rollback-review/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-008-rollback-review.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-008-rollback-review
+gap_handoff_path: .coordination/requests/PKT-008-rollback-review-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-008-rollback-review-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-008-rollback-review-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-008-rollback-review-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/BP6-LUV-019-review.md
