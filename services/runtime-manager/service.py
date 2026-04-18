@@ -27,6 +27,7 @@ Pre-conditions for deploy()
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
@@ -271,10 +272,18 @@ class RuntimeManagerService:
         self,
         store_path: Optional[Path] = None,
         single_runtime_enforced: bool = True,
+        ks_store_path: Optional[Path] = None,
     ) -> None:
         self._store = RuntimeBindingStore(path=store_path)
         self._single_runtime_enforced = single_runtime_enforced
         self._kill_switch = KillSwitchController()
+        # Derive kill-switch store path alongside the binding store when not supplied.
+        if ks_store_path is None and store_path is not None:
+            ks_store_path = store_path.parent / "kill_switch.json"
+        self._ks_store_path = ks_store_path
+        if self._ks_store_path and self._ks_store_path.exists():
+            data = json.loads(self._ks_store_path.read_text())
+            self._kill_switch.load_state(data)
 
     # ------------------------------------------------------------------ #
     # Primary write operations (Execution Plane only)                     #
@@ -595,6 +604,14 @@ class RuntimeManagerService:
     # Kill-switch fast path (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY)  #
     # ------------------------------------------------------------------ #
 
+    def _persist_ks_state(self) -> None:
+        """Write kill-switch safe-mode and audit state to the durable store."""
+        if self._ks_store_path:
+            self._ks_store_path.parent.mkdir(parents=True, exist_ok=True)
+            self._ks_store_path.write_text(
+                json.dumps(self._kill_switch.dump_state(), indent=2)
+            )
+
     def execute_kill_switch(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch an emergency kill-switch command via the runtime-manager fast path.
 
@@ -673,6 +690,9 @@ class RuntimeManagerService:
         # Execute the binding action against RuntimeBinding — runtime-manager is the
         # authoritative executor for pause / liquidate / replace / terminate.
         # (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §5.2)
+        # Persist audit entry and safe-mode before acknowledging the command
+        # (contract §11.2: durable write must precede ack).
+        self._persist_ks_state()
         binding_action = self._execute_kill_switch_binding_action(outcome.command)
         result = outcome.to_dict()
         result["binding_action"] = binding_action
@@ -795,6 +815,7 @@ class RuntimeManagerService:
             )
         except (KillSwitchError, ValueError) as exc:
             raise RuntimeManagerError(f"Safe-mode advance failed: {exc}") from exc
+        self._persist_ks_state()
         return new_state.value
 
     def get_kill_switch_audit_log(self) -> List[Dict[str, Any]]:

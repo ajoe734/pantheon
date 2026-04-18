@@ -559,6 +559,74 @@ class KillSwitchHttpRouteTests(unittest.TestCase):
         self.assertEqual(entry["reason"], SoftTriggerReason.CANARY_UNDERPERFORMANCE.value)
 
 
+class KillSwitchDurabilityTests(unittest.TestCase):
+    """Regression tests: safe-mode and audit log survive service restart."""
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.store_path = Path(self.tempdir.name) / "bindings.json"
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def _svc(self) -> RuntimeManagerService:
+        return RuntimeManagerService(store_path=self.store_path, single_runtime_enforced=True)
+
+    def test_safe_mode_survives_restart(self):
+        svc1 = self._svc()
+        svc1.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-dur",
+            "actor_id": "op",
+        })
+        self.assertEqual(svc1.get_safe_mode("pool-dur"), SafeModeState.PAUSED.value)
+
+        svc2 = self._svc()
+        self.assertEqual(
+            svc2.get_safe_mode("pool-dur"),
+            SafeModeState.PAUSED.value,
+            "safe-mode state must be readable from a new service instance using the same store",
+        )
+
+    def test_audit_log_survives_restart(self):
+        svc1 = self._svc()
+        svc1.execute_kill_switch({
+            "reason": HardTriggerReason.DRAWDOWN_HARD_BREACH.value,
+            "capital_pool_id": "pool-dur2",
+            "actor_id": "risk-monitor",
+        })
+        self.assertEqual(len(svc1.get_kill_switch_audit_log()), 1)
+
+        svc2 = self._svc()
+        log = svc2.get_kill_switch_audit_log()
+        self.assertEqual(
+            len(log),
+            1,
+            "audit log must be readable from a new service instance using the same store",
+        )
+        self.assertEqual(log[0]["reason"], HardTriggerReason.DRAWDOWN_HARD_BREACH.value)
+
+    def test_safe_mode_advance_survives_restart(self):
+        pool = "pool-dur3"
+        svc1 = self._svc()
+        svc1.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": pool,
+            "actor_id": "op",
+        })
+        svc1.advance_safe_mode(pool, SafeModeState.RECOVERY_TESTING.value, actor_id="gov")
+        self.assertEqual(svc1.get_safe_mode(pool), SafeModeState.RECOVERY_TESTING.value)
+
+        svc2 = self._svc()
+        self.assertEqual(
+            svc2.get_safe_mode(pool),
+            SafeModeState.RECOVERY_TESTING.value,
+            "manual safe-mode advance must persist across restarts",
+        )
+        # Two audit entries: dispatch + manual advance
+        self.assertEqual(len(svc2.get_kill_switch_audit_log()), 2)
+
+
 class KillSwitchLatencyBenchmarkTests(unittest.TestCase):
     """Latency benchmark for the kill-switch fast path.
 

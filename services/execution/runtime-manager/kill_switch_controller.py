@@ -667,3 +667,44 @@ class KillSwitchController:
         )
         self._audit_log.append(audit_entry)
         return target_state
+
+    # ---- State serialization for durable persistence ----
+
+    def dump_state(self) -> Dict[str, Any]:
+        """Return a JSON-serializable snapshot of safe-mode and audit state."""
+        return {
+            "safe_mode": {
+                pool_id: state.value
+                for pool_id, state in self._safe_mode.items()
+            },
+            "audit_log": [e.to_dict() for e in self._audit_log],
+        }
+
+    def load_state(self, data: Dict[str, Any]) -> None:
+        """Restore controller state from a snapshot produced by dump_state()."""
+        self._safe_mode = {
+            pool_id: SafeModeState(state_val)
+            for pool_id, state_val in data.get("safe_mode", {}).items()
+        }
+        self._audit_log = [
+            _audit_entry_from_dict(entry)
+            for entry in data.get("audit_log", [])
+        ]
+
+
+def _audit_entry_from_dict(d: Dict[str, Any]) -> KillSwitchAuditEntry:
+    return KillSwitchAuditEntry(
+        audit_id=d["audit_id"],
+        command_id=d["command_id"],
+        trigger_id=d["trigger_id"],
+        reason=d["reason"],
+        emergency_class=d["emergency_class"],
+        action_type=d["action_type"],
+        capital_pool_id=d["capital_pool_id"],
+        actor_id=d["actor_id"],
+        audited_at=d["audited_at"],
+        safe_mode_before=d["safe_mode_before"],
+        safe_mode_after=d["safe_mode_after"],
+        binding_id=d.get("binding_id"),
+        outcome_note=d.get("outcome_note"),
+    )
