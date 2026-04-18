@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-17T23:17:48Z",
+  "updated_at": "2026-04-18T04:08:49Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -95,11 +95,11 @@
       ],
       "status": "finalize",
       "current_task_ids": [
-        "DEPLOY-004"
+        "DEPLOY-005"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor resumed DEPLOY-004 for finalize after successful dispatch.",
-      "last_update": "2026-04-17T23:17:48Z"
+      "next": "Supervisor resumed DEPLOY-005 for finalize after successful dispatch.",
+      "last_update": "2026-04-18T04:08:12Z"
     },
     {
       "name": "Gemini",
@@ -109,14 +109,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "DEPLOY-005",
-        "DEPLOY-008"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T22:56:51Z"
+      "next": "Supervisor auto-started DEPLOY-008-SIDECAR-REVIEW after successful dispatch.",
+      "last_update": "2026-04-18T00:34:07Z"
     },
     {
       "name": "Codex",
@@ -126,13 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
+      "status": "finalize",
       "current_task_ids": [
-        "DEPLOY-007"
+        "DEPLOY-008-SIDECAR-REVIEW"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T22:55:01Z"
+      "next": "Supervisor resumed DEPLOY-008-SIDECAR-REVIEW for finalize after successful dispatch.",
+      "last_update": "2026-04-18T04:08:49Z"
     },
     {
       "name": "Codex2",
@@ -145,8 +142,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor resumed OSS-IMPL-003-SIDECAR-REVIEW for finalize after successful dispatch.",
-      "last_update": "2026-04-17T19:31:57Z"
+      "next": "Supervisor resumed DEPLOY-009-SIDECAR-ACCEPTANCE for finalize after successful dispatch.",
+      "last_update": "2026-04-18T00:39:11Z"
     },
     {
       "name": "Copilot",
@@ -159,8 +156,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Supervisor auto-started DEPLOY-004 after successful dispatch.",
-      "last_update": "2026-04-17T23:05:47Z"
+      "next": "Supervisor auto-started DEPLOY-009-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-04-18T00:24:09Z"
     },
     {
       "name": "Qwen",
@@ -173,8 +170,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/qwen-code-agent",
-      "next": "Supervisor re-dispatched DEPLOY-002-SIDECAR-BFF-HANDOFF; task remains in progress.",
-      "last_update": "2026-04-17T23:04:52Z"
+      "next": "Supervisor re-dispatched DEPLOY-008-SIDECAR-REVIEW; task remains in progress.",
+      "last_update": "2026-04-18T00:35:17Z"
     }
   ],
   "tasks": [
@@ -226,59 +223,12 @@
       "review_file": ".coordination/reviews/PKT-009-governance-audit-rail-review.md"
     },
     {
-      "id": "DEPLOY-004",
-      "title": "phase6-2026-04-16-oss-ecosystem-closure",
-      "summary_zh": "建立 lineage-read-svc 和 promotion-svc 兩個全新的最小 HTTP 服務：lineage read 提供 GET /api/v1/lineage 查詢路徑，promotion-svc 提供 ApprovalDecision / DeploymentPlan CRUD，各自補 main.py、Dockerfile、requirements.txt，並加入 docker-compose.yml。",
-      "phase": "Phase 7: Deployment",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [
-        "DEPLOY-001"
-      ],
-      "artifacts": [
-        "[\"services/lineage-read/main.py\"",
-        "\"services/lineage-read/Dockerfile\"",
-        "\"services/promotion/main.py\"",
-        "\"services/promotion/Dockerfile\"",
-        "\"docker-compose.yml\"]"
-      ],
-      "acceptance": [
-        "[\"lineage-read GET /api/v1/lineage 回傳有效 JSON\"",
-        "\"promotion POST /api/v1/approvals 可建立 ApprovalDecision\"",
-        "\"兩個服務 docker compose up 後 healthy\"]"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T15:05:08Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "review_approved",
-      "next": "Supervisor resumed DEPLOY-004 for finalize after successful dispatch.",
-      "last_update": "2026-04-17T23:17:48Z",
-      "review_notes_zh": [
-        "Reviewer acceptance: 已核對 services/lineage-read 與 services/promotion 的 main.py、Dockerfile、requirements.txt、docker-compose wiring 與 healthcheck；並以 TestClient 完成 lineage-read health/create/list/get 及 promotion approval->decide->deployment smoke 驗證，happy path 正常、governance validation 生效。"
-      ]
-    },
-    {
       "id": "DEPLOY-005",
       "title": "phase6-2026-04-16-oss-ecosystem-closure",
       "summary_zh": "補齊整套單 VM 部署所需的操作腳本：.env.example（所有服務變數）、DB schema migration（Alembic 或 SQL），以及 bootstrap.sh（一鍵起服務 → 跑 migration → 驗健康）。",
       "phase": "Phase 7: Deployment",
-      "owner": "Gemini",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex2",
       "depends_on": [
         "DEPLOY-001",
         "DEPLOY-002",
@@ -314,9 +264,9 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T13:27:11Z"
+      "status": "review_approved",
+      "next": "Supervisor resumed DEPLOY-005 for finalize after successful dispatch.",
+      "last_update": "2026-04-18T04:08:12Z"
     },
     {
       "id": "DEPLOY-006",
@@ -361,131 +311,37 @@
       "last_update": "2026-04-17T13:27:11Z"
     },
     {
-      "id": "DEPLOY-007",
-      "title": "phase6-2026-04-16-oss-ecosystem-closure",
-      "summary_zh": "建立 docker-compose.control.yml，包含 VM-1 Control Plane 所有服務：BFF、persona、registry、lineage、promotion、capital、evolution、optimizer、feedback、evaluation、memory、telemetry、incidents、postmortems、postgres、nats、minio，加上對應 env.example 和健康檢查。",
+      "id": "DEPLOY-008-SIDECAR-REVIEW",
+      "title": "Prepare DEPLOY-008 review packet and evidence summary",
+      "summary_zh": "平行支援 DEPLOY-008，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
       "phase": "Phase 7: Deployment",
       "owner": "Codex",
-      "reviewer": "Gemini",
-      "depends_on": [
-        "DEPLOY-003",
-        "DEPLOY-004"
-      ],
-      "artifacts": [
-        "[\"docker-compose.control.yml\"",
-        "\"env/prod-control.env.example\"]"
-      ],
-      "acceptance": [
-        "[\"docker compose -f docker-compose.control.yml up 後 VM-1 所有服務 healthy\"",
-        "\"runtime-manager 不在此 compose 檔中\"]"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T15:05:08Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T13:27:11Z"
-    },
-    {
-      "id": "DEPLOY-008",
-      "title": "phase6-2026-04-16-oss-ecosystem-closure",
-      "summary_zh": "建立 docker-compose.exec.yml，包含 VM-2 Execution Plane 所有服務：runtime-manager、pantheon-lean paper runtime、broker/exchange adapter sidecars，加上 VM-2 專用的 env.example 和 secrets 注入指南。",
-      "phase": "Phase 7: Deployment",
-      "owner": "Gemini",
       "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [
         "DEPLOY-007"
       ],
       "artifacts": [
-        "[\"docker-compose.exec.yml\"",
-        "\"env/prod-exec.env.example\"",
-        "\"docs/deployment/exec-vm-secrets-guide.md\"]"
+        "support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-REVIEW.md"
       ],
       "acceptance": [
-        "[\"docker compose -f docker-compose.exec.yml up 後 runtime-manager healthy\"",
-        "\"BFF/registry 等 control plane 服務不出現在此 compose\"",
-        "\"paper runtime 可以啟動\"]"
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
       ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T15:05:08Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T13:28:24Z"
-    },
-    {
-      "id": "DEPLOY-009",
-      "title": "phase6-2026-04-16-oss-ecosystem-closure",
-      "summary_zh": "在雙 VM 環境中驗收完整跨機鏈路：VM-1 發出 DeploymentPlan → VM-2 runtime-manager 接收並建立 RuntimeBinding → paper runtime 啟動 → telemetry 事件回流 VM-1。同時驗收 kill-switch 和 rollback 從 VM-1 發起、VM-2 執行的完整流程。",
-      "phase": "Phase 7: Deployment",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "depends_on": [
-        "DEPLOY-007",
-        "DEPLOY-008"
+      "next": "Supervisor resumed DEPLOY-008-SIDECAR-REVIEW for finalize after successful dispatch.",
+      "last_update": "2026-04-18T04:08:49Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "DEPLOY-008",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過",
+        "review packet 與 DEPLOY-008 archive 及現行 repo 一致；三份 VM-2 artifact（docker-compose.exec.yml、env/prod-exec.env.example、docs/deployment/exec-vm-secrets-guide.md）均存在且與封包描述相符；/__health__ endpoint 確認；acceptance companion 正確標示為歷史性 pre-implementation 記錄；scope 限制符合 sidecar 規則，未修改任何 canonical truth"
       ],
-      "artifacts": [
-        "[\"scripts/smoke_test_dual_vm.sh\"",
-        "\"docs/deployment/dual-vm-acceptance-results.md\"",
-        "\"docs/deployment/operator-failover-guide.md\"]"
-      ],
-      "acceptance": [
-        "[\"DeploymentPlan → RuntimeBinding 跨 VM 流程成功\"",
-        "\"paper runtime 啟動並能接收 mock 交易指令\"",
-        "\"kill-switch 從 VM-1 發起後 VM-2 runtime 正確停止\"",
-        "\"telemetry 事件從 VM-2 回流至 VM-1\"]"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-04-17T15:05:08Z",
-        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
-      },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-17T13:28:24Z"
+      "review_file": "support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-REVIEW.md"
     }
   ],
   "handoffs": [
@@ -544,30 +400,191 @@
       "resolved_at": "2026-04-17T14:40:25Z"
     },
     {
-      "task_id": "DEPLOY-004",
+      "task_id": "DEPLOY-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T23:32:45Z",
+      "resolved_at": "2026-04-17T23:33:49Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T23:37:23Z",
+      "resolved_at": "2026-04-17T23:37:51Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T23:37:51Z",
+      "resolved_at": "2026-04-17T23:39:42Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T23:41:09Z",
+      "resolved_at": "2026-04-17T23:41:36Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "All four DEPLOY-005 artifacts are ready for review: .env.example (expanded to cover all 17 VM-1 services), scripts/db_migrate.sh (idempotent asyncpg DDL for telemetry_events + indexes), scripts/bootstrap.sh (full 4-step single-VM bring-up: infra → bucket → migrations → app services + health poll), docs/deployment/single-vm-runbook.md. Bash syntax checks pass on both scripts.",
+      "status": "done",
+      "created_at": "2026-04-17T23:45:47Z",
+      "resolved_at": "2026-04-17T23:47:47Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: docker-compose.control.yml does not define minio-init, but scripts/bootstrap.sh and the runbook both claim bucket bootstrap via minio-init and bootstrap.sh suppresses failure with '|| true'. Also fix the runbook health-check section because capital/evolution use /health, not /__health__.",
+      "status": "done",
+      "created_at": "2026-04-17T23:47:47Z",
+      "resolved_at": "2026-04-17T23:47:47Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "All review changes addressed: (1) docker-compose.control.yml now defines minio-init using minio/mc with mc mb --ignore-existing; (2) bootstrap.sh || true suppression removed — minio-init failure now propagates; (3) runbook health-check section split: ports 8083-8091/8094 use /__health__, ports 8092 (capital) and 8093 (evolution) use /health. Commit 773004d.",
+      "status": "done",
+      "created_at": "2026-04-17T23:49:32Z",
+      "resolved_at": "2026-04-17T23:51:00Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: scripts/bootstrap.sh still suppresses DB provisioning failure at lines 128-140 via '2>/dev/null || true'. If role/database creation or grant fails, bootstrap can continue into db_migrate.sh and violate the acceptance requirement that migrations/bootstrap complete without hidden errors. Remove the suppression and make the provisioning step fail loudly.",
+      "status": "done",
+      "created_at": "2026-04-17T23:51:00Z",
+      "resolved_at": "2026-04-17T23:51:00Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "DB provisioning suppression removed: 2>/dev/null || true at lines 128-140 eliminated. psql now fails loudly if role/database creation or GRANT fails, so bootstrap cannot silently proceed into db_migrate.sh. Bash syntax check passes. Commit dc5d891.",
+      "status": "done",
+      "created_at": "2026-04-17T23:52:45Z",
+      "resolved_at": "2026-04-17T23:54:04Z"
+    },
+    {
+      "task_id": "DEPLOY-005",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved: DB provisioning in scripts/bootstrap.sh now fails loudly without '2>/dev/null || true'; minio-init exists in docker-compose.control.yml; single-vm runbook health endpoints match compose/service definitions. Bash syntax checks pass. Ready for owner finalization to done.",
+      "status": "pending",
+      "created_at": "2026-04-17T23:54:04Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:11:13Z",
+      "resolved_at": "2026-04-18T00:12:27Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:16:56Z",
+      "resolved_at": "2026-04-18T00:17:53Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:19:19Z",
+      "resolved_at": "2026-04-18T00:30:48Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
       "from": "Codex",
       "to": "Gemini",
       "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T22:55:43Z",
-      "resolved_at": "2026-04-17T22:56:51Z"
+      "created_at": "2026-04-18T00:33:01Z",
+      "resolved_at": "2026-04-18T00:34:07Z"
     },
     {
-      "task_id": "DEPLOY-004",
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
       "from": "Claude",
       "to": "Codex",
-      "message": "All DEPLOY-004 artifacts verified complete: services/lineage-read/main.py (GET /api/v1/lineage, port 8094) + Dockerfile + requirements.txt; services/promotion/main.py (POST /api/v1/approvals, POST /api/v1/deployments, port 8089) + Dockerfile + requirements.txt; docker-compose.yml entries with healthchecks for both services. Governance module dependencies confirmed at services/control-plane/governance. Ready for Codex acceptance review.",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-17T23:10:20Z",
-      "resolved_at": "2026-04-17T23:17:16Z"
+      "created_at": "2026-04-18T00:35:48Z",
+      "resolved_at": "2026-04-18T00:36:14Z"
     },
     {
-      "task_id": "DEPLOY-004",
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
       "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:36:57Z",
+      "resolved_at": "2026-04-18T00:37:39Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:39:52Z",
+      "resolved_at": "2026-04-18T00:40:21Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet prepared at support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-REVIEW.md. It packages the archived done truth for DEPLOY-008, re-validates the current VM-2 execution-plane artifacts, and explicitly marks the older acceptance companion as historical pre-implementation context rather than current truth.",
+      "status": "done",
+      "created_at": "2026-04-18T00:44:09Z",
+      "resolved_at": "2026-04-18T00:46:16Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex2 to Qwen after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-18T00:46:16Z",
+      "resolved_at": "2026-04-18T00:47:08Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Qwen",
       "to": "Claude",
-      "message": "Approved after reviewer verification: lineage-read and promotion artifacts are complete, compose healthchecks are wired, and service-level smoke checks passed. Ready for owner finalization.",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-18T00:47:08Z",
+      "resolved_at": "2026-04-18T04:07:56Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet verified: DEPLOY-008 is archived done at commit 824ca7c, all three VM-2 artifacts exist and match archived review rationale, older acceptance companion correctly documented as historical pre-implementation context, support-only scope respected throughout.",
       "status": "pending",
-      "created_at": "2026-04-17T23:17:16Z"
+      "created_at": "2026-04-18T04:07:56Z"
     }
   ],
   "blockers": [],
@@ -581,22 +598,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 3,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 1,
-      "todo": 2
+      "todo": 1
     },
     "Gemini": {
-      "total": 3,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 1,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     },
     "Codex": {
       "total": 1,
@@ -604,8 +621,8 @@
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
-      "todo": 1
+      "review_approved": 1,
+      "todo": 0
     },
     "Codex2": {
       "total": 0,
