@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -22,6 +23,21 @@ for path in (SERVICE_DIR, EXEC_RUNTIME_DIR):
 
 from runtime_manager_client import RuntimeManagerClient
 from service import RuntimeManagerError, RuntimeManagerService
+
+EXEC_RUNTIME_DIR_STR = str(EXEC_RUNTIME_DIR)
+if EXEC_RUNTIME_DIR_STR not in sys.path:
+    sys.path.insert(0, EXEC_RUNTIME_DIR_STR)
+
+from kill_switch_controller import (  # noqa: E402
+    FAST_PATH_BENCHMARK_ITERATIONS,
+    FAST_PATH_LATENCY_TARGET_MS,
+    EmergencyTrigger,
+    HardTriggerReason,
+    KillSwitchActionType,
+    KillSwitchController,
+    SafeModeState,
+    SoftTriggerReason,
+)
 
 
 def _valid_deploy_request(**overrides):
@@ -218,6 +234,387 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(payload["action_type"], "replace")
         self.assertEqual(payload["old_binding"]["status"], "retired")
         self.assertEqual(payload["new_binding"]["artifact_id"], "artifact-delta")
+
+
+class KillSwitchControllerUnitTests(unittest.TestCase):
+    """Pure unit tests for KillSwitchController — no I/O."""
+
+    def setUp(self) -> None:
+        self.controller = KillSwitchController()
+
+    def _hard_trigger(self, **kwargs):
+        defaults = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-ks-001",
+            "actor_id": "operator-1",
+        }
+        defaults.update(kwargs)
+        return EmergencyTrigger(**defaults)
+
+    def _soft_trigger(self, **kwargs):
+        defaults = {
+            "reason": SoftTriggerReason.DRIFT_ABOVE_WARNING_THRESHOLD.value,
+            "capital_pool_id": "pool-ks-002",
+            "actor_id": "alert-engine",
+        }
+        defaults.update(kwargs)
+        return EmergencyTrigger(**defaults)
+
+    # --- fast-path dispatch ---
+
+    def test_hard_trigger_bypasses_review_queue(self):
+        outcome = self.controller.dispatch(self._hard_trigger())
+        self.assertTrue(outcome.command.bypass_review_queue)
+        self.assertEqual(outcome.command.dispatch_path, "runtime_manager_fast_path")
+        self.assertEqual(outcome.command.emergency_class, "hard")
+        self.assertEqual(outcome.command.priority, 1)
+
+    def test_soft_trigger_bypasses_review_queue(self):
+        outcome = self.controller.dispatch(self._soft_trigger())
+        self.assertTrue(outcome.command.bypass_review_queue)
+        self.assertEqual(outcome.command.emergency_class, "soft")
+        self.assertEqual(outcome.command.priority, 2)
+
+    def test_action_override_respected(self):
+        outcome = self.controller.dispatch(
+            self._soft_trigger(),
+            action_override=KillSwitchActionType.LIQUIDATE,
+        )
+        self.assertEqual(outcome.command.action_type, "liquidate")
+
+    def test_replace_action_requires_fallback_artifact(self):
+        from kill_switch_controller import KillSwitchError
+        with self.assertRaises(KillSwitchError):
+            self.controller.dispatch(
+                self._hard_trigger(),
+                action_override=KillSwitchActionType.REPLACE,
+            )
+
+    def test_replace_action_succeeds_with_fallback_artifact(self):
+        outcome = self.controller.dispatch(
+            self._hard_trigger(),
+            action_override=KillSwitchActionType.REPLACE,
+            fallback_artifact_id="artifact-fallback",
+            fallback_artifact_version="1.0.0",
+        )
+        self.assertEqual(outcome.command.action_type, "replace")
+        self.assertEqual(outcome.command.fallback_artifact_id, "artifact-fallback")
+
+    # --- audit trail ---
+
+    def test_dispatch_creates_audit_entry(self):
+        self.controller.dispatch(self._hard_trigger())
+        entries = self.controller.audit_log()
+        self.assertEqual(len(entries), 1)
+        e = entries[0]
+        self.assertEqual(e.reason, HardTriggerReason.OPERATOR_EMERGENCY_STOP.value)
+        self.assertIsNotNone(e.audit_id)
+        self.assertIsNotNone(e.audited_at)
+        self.assertEqual(e.safe_mode_before, SafeModeState.NORMAL.value)
+
+    def test_multiple_dispatches_accumulate_audit_entries(self):
+        self.controller.dispatch(self._hard_trigger())
+        self.controller.dispatch(self._soft_trigger())
+        self.assertEqual(len(self.controller.audit_log()), 2)
+
+    def test_audit_entry_records_safe_mode_transition(self):
+        outcome = self.controller.dispatch(self._hard_trigger())
+        entry = self.controller.audit_log()[0]
+        self.assertEqual(entry.safe_mode_after, outcome.safe_mode_after.value)
+        self.assertNotEqual(entry.safe_mode_before, SafeModeState.PAUSED.value)
+
+    def test_manual_safe_mode_advance_emits_audit_entry(self):
+        pool = "pool-recovery"
+        # NORMAL → PAUSED via dispatch
+        self.controller.dispatch(self._hard_trigger(capital_pool_id=pool))
+        # PAUSED → RECOVERY_TESTING via governance advance
+        self.controller.advance_safe_mode(
+            pool, SafeModeState.RECOVERY_TESTING, actor_id="governance-gate"
+        )
+        entries = self.controller.audit_log()
+        self.assertEqual(len(entries), 2)
+        adv_entry = entries[1]
+        self.assertEqual(adv_entry.safe_mode_before, SafeModeState.PAUSED.value)
+        self.assertEqual(adv_entry.safe_mode_after, SafeModeState.RECOVERY_TESTING.value)
+        self.assertEqual(adv_entry.actor_id, "governance-gate")
+
+    # --- safe-mode state machine ---
+
+    def test_soft_trigger_advances_safe_mode_to_risk_off(self):
+        outcome = self.controller.dispatch(self._soft_trigger())
+        self.assertEqual(outcome.safe_mode_after, SafeModeState.RISK_OFF)
+
+    def test_hard_operator_stop_advances_safe_mode_to_paused(self):
+        outcome = self.controller.dispatch(self._hard_trigger())
+        self.assertEqual(outcome.safe_mode_after, SafeModeState.PAUSED)
+
+
+class KillSwitchServiceTests(unittest.TestCase):
+    """Service-layer kill-switch fast-path tests."""
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.store_path = Path(self.tempdir.name) / "bindings.json"
+        self.service = RuntimeManagerService(store_path=self.store_path, single_runtime_enforced=True)
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def _deploy_active_binding(self, pool_id="pool-ks-svc"):
+        return self.service.deploy(_valid_deploy_request(
+            capital_pool_id=pool_id,
+            runtime_id=f"rt-ks-{pool_id}",
+        ))
+
+    def test_execute_kill_switch_pause_transitions_active_binding(self):
+        binding = self._deploy_active_binding()
+        result = self.service.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-ks-svc",
+            "actor_id": "operator-1",
+            "binding_id": binding.binding_id,
+        })
+        self.assertIn("command", result)
+        self.assertIn("audit_entry", result)
+        self.assertEqual(result["command"]["action_type"], "pause")
+        self.assertEqual(result["command"]["bypass_review_queue"], True)
+        ba = result["binding_action"]
+        self.assertEqual(ba["binding"]["status"], "paused")
+
+    def test_execute_kill_switch_populates_audit_trail(self):
+        self._deploy_active_binding()
+        self.service.execute_kill_switch({
+            "reason": HardTriggerReason.DRAWDOWN_HARD_BREACH.value,
+            "capital_pool_id": "pool-ks-svc",
+            "actor_id": "risk-monitor",
+        })
+        log = self.service.get_kill_switch_audit_log()
+        self.assertEqual(len(log), 1)
+        self.assertEqual(log[0]["reason"], HardTriggerReason.DRAWDOWN_HARD_BREACH.value)
+        self.assertIn("audit_id", log[0])
+        self.assertIn("audited_at", log[0])
+
+    def test_execute_kill_switch_soft_trigger_risk_off(self):
+        self._deploy_active_binding()
+        result = self.service.execute_kill_switch({
+            "reason": SoftTriggerReason.DRIFT_ABOVE_WARNING_THRESHOLD.value,
+            "capital_pool_id": "pool-ks-svc",
+            "actor_id": "drift-detector",
+        })
+        self.assertEqual(result["command"]["action_type"], "risk_off")
+        self.assertEqual(result["safe_mode_after"], SafeModeState.RISK_OFF.value)
+
+    def test_get_safe_mode_returns_normal_for_unknown_pool(self):
+        state = self.service.get_safe_mode("pool-unknown")
+        self.assertEqual(state, SafeModeState.NORMAL.value)
+
+    def test_advance_safe_mode_follows_allowed_transition(self):
+        pool = "pool-recovery-svc"
+        # Drive to PAUSED via kill-switch
+        self.service.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": pool,
+            "actor_id": "operator-1",
+        })
+        self.assertEqual(self.service.get_safe_mode(pool), SafeModeState.PAUSED.value)
+        # Advance to RECOVERY_TESTING
+        new_state = self.service.advance_safe_mode(
+            pool, SafeModeState.RECOVERY_TESTING.value, actor_id="governance"
+        )
+        self.assertEqual(new_state, SafeModeState.RECOVERY_TESTING.value)
+
+    def test_invalid_kill_switch_reason_raises_error(self):
+        with self.assertRaises(RuntimeManagerError):
+            self.service.execute_kill_switch({
+                "reason": "not_a_valid_reason",
+                "capital_pool_id": "pool-ks-svc",
+                "actor_id": "operator-1",
+            })
+
+
+class KillSwitchHttpRouteTests(unittest.TestCase):
+    """HTTP route tests for kill-switch endpoints."""
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.store_path = Path(self.tempdir.name) / "bindings.json"
+        self.main = _load_main_module(self.store_path)
+        self.client = self.main.app.test_client()
+        self.auth = {"Authorization": "Bearer test-token"}
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def _deploy(self, pool_id="pool-ks-http"):
+        return self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(capital_pool_id=pool_id, runtime_id="rt-ks-http"),
+            headers=self.auth,
+        ).get_json()
+
+    def test_kill_switch_dispatch_pause_hard_trigger(self):
+        binding = self._deploy()
+        response = self.client.post(
+            "/api/kill-switch/dispatch",
+            json={
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-ks-http",
+                "actor_id": "operator-1",
+                "binding_id": binding["binding_id"],
+            },
+            headers=self.auth,
+        )
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("command", payload)
+        self.assertIn("audit_entry", payload)
+        self.assertTrue(payload["command"]["bypass_review_queue"])
+        self.assertEqual(payload["command"]["action_type"], "pause")
+
+    def test_kill_switch_dispatch_requires_reason(self):
+        response = self.client.post(
+            "/api/kill-switch/dispatch",
+            json={"capital_pool_id": "pool-ks-http", "actor_id": "op"},
+            headers=self.auth,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("reason", response.get_json()["error"]["message"])
+
+    def test_kill_switch_dispatch_requires_bearer_token(self):
+        response = self.client.post(
+            "/api/kill-switch/dispatch",
+            json={
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-ks-http",
+                "actor_id": "op",
+            },
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_get_safe_mode_returns_normal_initially(self):
+        response = self.client.get(
+            "/api/kill-switch/pool-ks-http/safe-mode",
+            headers=self.auth,
+        )
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["safe_mode_state"], SafeModeState.NORMAL.value)
+
+    def test_get_safe_mode_reflects_dispatch(self):
+        self._deploy()
+        self.client.post(
+            "/api/kill-switch/dispatch",
+            json={
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-ks-http",
+                "actor_id": "op",
+            },
+            headers=self.auth,
+        )
+        response = self.client.get(
+            "/api/kill-switch/pool-ks-http/safe-mode",
+            headers=self.auth,
+        )
+        self.assertEqual(response.get_json()["safe_mode_state"], SafeModeState.PAUSED.value)
+
+    def test_advance_safe_mode_via_post(self):
+        # Drive to PAUSED first
+        self._deploy()
+        self.client.post(
+            "/api/kill-switch/dispatch",
+            json={
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": "pool-ks-http",
+                "actor_id": "op",
+            },
+            headers=self.auth,
+        )
+        response = self.client.post(
+            "/api/kill-switch/pool-ks-http/safe-mode",
+            json={"target_state": "recovery_testing", "actor_id": "governance"},
+            headers=self.auth,
+        )
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["safe_mode_state"], SafeModeState.RECOVERY_TESTING.value)
+
+    def test_audit_log_endpoint_returns_entries(self):
+        self._deploy()
+        self.client.post(
+            "/api/kill-switch/dispatch",
+            json={
+                "reason": SoftTriggerReason.CANARY_UNDERPERFORMANCE.value,
+                "capital_pool_id": "pool-ks-http",
+                "actor_id": "canary-monitor",
+            },
+            headers=self.auth,
+        )
+        response = self.client.get("/api/kill-switch/audit-log", headers=self.auth)
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["count"], 1)
+        entry = payload["entries"][0]
+        self.assertIn("audit_id", entry)
+        self.assertIn("audited_at", entry)
+        self.assertEqual(entry["reason"], SoftTriggerReason.CANARY_UNDERPERFORMANCE.value)
+
+
+class KillSwitchLatencyBenchmarkTests(unittest.TestCase):
+    """Latency benchmark for the kill-switch fast path.
+
+    Verifies that the pure-Python hot path (classify + dispatch with no I/O)
+    meets FAST_PATH_LATENCY_TARGET_MS per iteration over FAST_PATH_BENCHMARK_ITERATIONS.
+
+    KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §8 requires the fast path to be
+    measurably lower latency than the normal governance review queue.
+    """
+
+    def test_dispatch_hot_path_meets_latency_target(self):
+        controller = KillSwitchController()
+        trigger = EmergencyTrigger(
+            reason=HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            capital_pool_id="pool-bench",
+            actor_id="benchmark",
+        )
+
+        # Warm up — ensure no first-call JIT penalties skew the measurement.
+        for _ in range(10):
+            controller.dispatch(trigger)
+
+        # Re-create controller so the warm-up audit entries don't accumulate.
+        controller = KillSwitchController()
+
+        start = time.perf_counter()
+        for _ in range(FAST_PATH_BENCHMARK_ITERATIONS):
+            controller.dispatch(trigger)
+        elapsed_s = time.perf_counter() - start
+
+        total_ms = elapsed_s * 1000.0
+        per_iter_ms = total_ms / FAST_PATH_BENCHMARK_ITERATIONS
+        budget_ms = FAST_PATH_LATENCY_TARGET_MS * FAST_PATH_BENCHMARK_ITERATIONS
+
+        self.assertLessEqual(
+            total_ms,
+            budget_ms,
+            msg=(
+                f"Kill-switch fast path too slow: {per_iter_ms:.4f} ms/iter "
+                f"(target {FAST_PATH_LATENCY_TARGET_MS} ms/iter, "
+                f"total {total_ms:.1f} ms over {FAST_PATH_BENCHMARK_ITERATIONS} iterations)"
+            ),
+        )
+
+    def test_audit_log_grows_with_each_dispatch(self):
+        """Audit entries are accumulated — verify count matches dispatches."""
+        controller = KillSwitchController()
+        trigger = EmergencyTrigger(
+            reason=SoftTriggerReason.CANARY_UNDERPERFORMANCE.value,
+            capital_pool_id="pool-audit-bench",
+            actor_id="benchmark",
+        )
+        n = 50
+        for _ in range(n):
+            controller.dispatch(trigger)
+        self.assertEqual(len(controller.audit_log()), n)
 
 
 if __name__ == "__main__":
