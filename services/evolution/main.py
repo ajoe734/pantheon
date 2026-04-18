@@ -52,6 +52,7 @@ from evolution_controller import (  # type: ignore
     FreezeFollowthroughMode,
     ThresholdEvaluator,
 )
+from deployment_plan import DeploymentStage  # type: ignore
 from evolution_decision import (  # type: ignore
     EvolutionActionType,
     EvolutionActorRole,
@@ -70,14 +71,19 @@ from evolution_decision import (  # type: ignore
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from models import (  # type: ignore
+    ActionPathEntry,
+    ActionPathsResponse,
     ApproveRequest,
     BoundaryResponse,
     CancelRequest,
     DecisionResponse,
+    DispatchCommandResponse,
     ExecuteRequest,
     ProposeRequest,
     RejectRequest,
+    RedeployFollowthroughRequest,
     ReviewRequest,
+    RollbackFollowthroughRequest,
     ThresholdEvalRequest,
     ThresholdEvalResponse,
 )
@@ -520,6 +526,286 @@ def get_boundary(
         default_observation_days=boundary.default_observation_days,
         followthrough=list(boundary.followthrough),
         notes=boundary.notes,
+    )
+
+
+# --- Rollback follow-through -------------------------------------------------
+
+@app.post(
+    "/api/evolution/proposals/{decision_id}/rollback-followthrough",
+    response_model=DecisionResponse,
+)
+def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest):
+    """
+    Execute the rollback operational follow-through on an approved EvolutionDecision.
+
+    This is a convenience wrapper over the generic execute endpoint that fixes
+    ``freeze_mode=rollback`` so callers do not need to know the internal enum.
+
+    The decision must already carry a ``freeze`` action type and be in
+    ``approved`` state.  A ``RollbackCommand`` is emitted to the runtime plane;
+    the Evolution Decision moves to ``executed``.
+
+    Cooldown / observation windows
+    ------------------------------
+    Rollback follow-through does NOT open a new evolution cooldown window.
+    The parent EvolutionDecision's existing cooldown and observation clocks are
+    reused (per ``EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2``).
+
+    Owner / threshold
+    -----------------
+    - Reviewed owner: inherits from the triggering parent review chain.
+    - Approved owner: same parent approval chain; no parallel chain is created.
+    - Cooldown: parent decision window (high-risk freeze: 14 days).
+    - Execution plane: ``runtime`` (Rollback Controller → Runtime Manager).
+    - Policy source: ``ROLLBACK_AND_POSITION_SEMANTICS.md §10`` and
+      ``EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1``.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    if not body.active_binding_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "rollback-followthrough requires an active_binding_id; "
+                "freeze decisions without an active runtime or binding must use "
+                "the governance-only or freeze-stage path instead."
+            ),
+        )
+    try:
+        freeze_mode = FreezeFollowthroughMode.ROLLBACK
+        controller.execute_approved(
+            decision,
+            actor_role=body.actor_role,
+            actor_id=body.actor_id,
+            has_active_runtime=True,
+            active_binding_id=body.active_binding_id,
+            freeze_mode=freeze_mode,
+            rollback_action_type=body.rollback_action_type,
+            fallback_artifact_id=body.fallback_artifact_id,
+            fallback_artifact_version=body.fallback_artifact_version,
+        )
+        store.put(decision)
+    except (EvolutionDecisionError, EvolutionControllerError) as exc:
+        raise _domain_error(exc) from exc
+    log.info(
+        "evolution.rollback_followthrough decision_id=%s actor=%s",
+        decision_id,
+        body.actor_id,
+    )
+    return _decision_to_response(decision)
+
+
+# --- Redeploy follow-through -------------------------------------------------
+
+@app.post(
+    "/api/evolution/proposals/{decision_id}/redeploy-followthrough",
+    response_model=DispatchCommandResponse,
+)
+def redeploy_followthrough(decision_id: str, body: RedeployFollowthroughRequest):
+    """
+    Request a redeploy follow-through command for an executed EvolutionDecision.
+
+    Redeploy is not an independent ``EvolutionDecision`` — it is the deployment
+    follow-through after a retrain / revalidate / revive / freeze-lift has
+    already been executed.  This endpoint validates that the parent decision is
+    in the ``executed`` state and that the request falls within the active
+    observation window, then returns a ``DispatchCommand`` that the deployment
+    plane can consume to create a new ``ApprovalDecision`` and ``DeploymentPlan``.
+
+    Owner / threshold
+    -----------------
+    - ``paper`` stage: ``reviewer_on_duty`` or ``automated_gate``.
+    - ``canary`` / ``live`` stages: ``reviewer``, ``risk_owner``, ``operator``.
+    - Cooldown: no new evolution cooldown; parent observation window still governs.
+    - Execution plane: ``deployment`` (Governance / Promotion plane creates the plan).
+    - Policy source: ``PAPER_CANARY_LIVE_POLICY.md §5–§8`` and
+      ``EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1``.
+
+    The returned ``DispatchCommand`` carries ``metadata.reviewed_owner_roles``,
+    ``metadata.approved_owner_roles``, ``cooldown_ends_at``, and
+    ``observation_window_ends_at`` so the deployment plane can enforce the
+    appropriate governance gate without reading the policy document directly.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    parent_action = _enum_value(decision.action_type)
+    if parent_action not in _REDEPLOY_ELIGIBLE_ACTION_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Redeploy follow-through is not allowed after a '{parent_action}' decision. "
+                f"Valid parent action families: {sorted(_REDEPLOY_ELIGIBLE_ACTION_TYPES)}."
+            ),
+        )
+    try:
+        command = controller.create_redeploy_followthrough(
+            decision,
+            artifact_id=body.artifact_id,
+            artifact_version=body.artifact_version,
+            approval_decision_id=body.approval_decision_id,
+            target_stage=body.target_stage,
+            requested_at=body.requested_at,
+            sponsor_persona_id=body.sponsor_persona_id,
+        )
+    except EvolutionControllerError as exc:
+        raise _domain_error(exc) from exc
+    log.info(
+        "evolution.redeploy_followthrough decision_id=%s artifact=%s@%s stage=%s",
+        decision_id,
+        body.artifact_id,
+        body.artifact_version,
+        body.target_stage,
+    )
+    d = command.to_dict()
+    return DispatchCommandResponse(
+        command_id=d["command_id"],
+        decision_id=d["decision_id"],
+        execution_plane=d["execution_plane"],
+        action_type=d["action_type"],
+        target_type=d["target_type"],
+        target_id=d["target_id"],
+        target_version=d["target_version"],
+        target_stage=d.get("target_stage"),
+        cooldown_ends_at=d["cooldown_ends_at"],
+        observation_window_ends_at=d["observation_window_ends_at"],
+        metadata=d.get("metadata", {}),
+    )
+
+
+# --- Action-paths routing matrix ---------------------------------------------
+
+# Valid parent action types for a redeploy follow-through per §11.1.
+# Freeze is NOT eligible — a freeze governance decision has no deployment
+# follow-through unless it was lifted (revive) or replaced by a retrain.
+_REDEPLOY_ELIGIBLE_ACTION_TYPES: frozenset[str] = frozenset({
+    "retrain",
+    "revalidate",
+    "revive",
+    "observe",
+    "require_more_data",
+    "flag_for_review",
+})
+
+_ACTION_PATHS = [
+    {
+        "path_key": "freeze_non_live",
+        "action_family": "freeze",
+        "trigger_source": "§7.3–§7.6: PSI > 0.30, performance degradation, execution drift escalated, or Severity-2",
+        "reviewed_owner": "Reviewer, Risk Owner",
+        "approved_owner": "Risk Owner",
+        "cooldown_days": 7,
+        "observation_days": 7,
+        "execution_plane": "governance",
+        "followthrough": ["deployment.freeze_stage (optional when active paper/canary runtime)"],
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1",
+        "notes": "Governance quarantine only; no automatic runtime rollback unless reviewer explicitly requires it.",
+    },
+    {
+        "path_key": "freeze_live_no_active_runtime",
+        "action_family": "freeze",
+        "trigger_source": "§7.5–§7.6: Severity-1, repeated Severity-2 (30d), unresolved binding/approval mismatch",
+        "reviewed_owner": "Governance Committee",
+        "approved_owner": "Governance Committee",
+        "cooldown_days": 14,
+        "observation_days": 14,
+        "execution_plane": "governance",
+        "followthrough": [],
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1",
+        "notes": "High-risk governance freeze; no companion deployment/runtime follow-through because no active runtime exists.",
+    },
+    {
+        "path_key": "freeze_live_active_runtime",
+        "action_family": "freeze",
+        "trigger_source": "§7.5–§7.6: Severity-1, repeated Severity-2, rollback executed but problem persists, unresolved mismatch",
+        "reviewed_owner": "Governance Committee",
+        "approved_owner": "Governance Committee",
+        "cooldown_days": 14,
+        "observation_days": 14,
+        "execution_plane": "governance",
+        "followthrough": ["deployment.freeze_stage", "runtime.rollback"],
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1",
+        "notes": "Freeze is the governance decision. Companion operational path (frozen DeploymentPlan or rollback-followthrough) decided by reviewer/risk-owner based on incident severity.",
+    },
+    {
+        "path_key": "rollback_operational_followthrough",
+        "action_family": "rollback",
+        "trigger_source": "Approved EvolutionDecision with freeze action + active runtime; incident-driven or postmortem follow-up",
+        "reviewed_owner": "Parent review chain (no parallel approval chain created)",
+        "approved_owner": "Parent approval chain",
+        "cooldown_days": 0,
+        "observation_days": 0,
+        "execution_plane": "runtime",
+        "followthrough": ["runtime.rollback → Runtime Manager creates replacement RuntimeBinding"],
+        "policy_source": "ROLLBACK_AND_POSITION_SEMANTICS.md §10; EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1",
+        "notes": "Rollback does not open a new evolution cooldown. Uses parent decision cooldown/observation. Action types: replace | pause_then_replace | liquidate_then_replace.",
+    },
+    {
+        "path_key": "research_retrain",
+        "action_family": "retrain",
+        "trigger_source": "§7.1–§7.4: Sharpe < 50% baseline, drawdown > 1.25x, 3 underperforming windows, PSI breach, label drift, human correction",
+        "reviewed_owner": "Reviewer on Duty",
+        "approved_owner": "Reviewer on Duty (or automated gate if policy allows)",
+        "cooldown_days": 3,
+        "observation_days": 7,
+        "execution_plane": "research",
+        "followthrough": [],
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1; EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2",
+        "notes": "Executed means a governed research work item or job was accepted — not that the artifact is redeployed. Redeploy requires a separate deployment follow-through.",
+    },
+    {
+        "path_key": "research_revalidate",
+        "action_family": "retrain",
+        "trigger_source": "§7.1–§7.4: Model drift or PSI breach requiring revalidation without full retrain",
+        "reviewed_owner": "Reviewer on Duty",
+        "approved_owner": "Reviewer on Duty (or automated gate if policy allows)",
+        "cooldown_days": 3,
+        "observation_days": 7,
+        "execution_plane": "research",
+        "followthrough": [],
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1; EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2",
+        "notes": "Revalidation: validates artifact fitness without retraining; same research-plane execution as retrain.",
+    },
+    {
+        "path_key": "redeploy_followthrough",
+        "action_family": "redeploy",
+        "trigger_source": "Executed retrain/revalidate/revive/freeze-lift; new artifact already passed approval and stage gate",
+        "reviewed_owner": "paper: reviewer_on_duty or automated_gate; canary/live: reviewer + risk_owner + operator",
+        "approved_owner": "paper: reviewer_on_duty; canary/live: reviewer + risk_owner + operator",
+        "cooldown_days": 0,
+        "observation_days": 0,
+        "execution_plane": "deployment",
+        "followthrough": ["deployment: new ApprovalDecision + DeploymentPlan created by Governance/Promotion plane"],
+        "policy_source": "PAPER_CANARY_LIVE_POLICY.md §5–§8; EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1",
+        "notes": "Redeploy is not an independent EvolutionDecision. It must occur within the parent executed decision's observation window and still pass the stage deployment gate.",
+    },
+]
+
+
+@app.get("/api/evolution/action-paths", response_model=ActionPathsResponse)
+def list_action_paths():
+    """
+    Return the canonical operational evolution routing matrix.
+
+    Each entry documents the trigger source, review/approval owner, cooldown,
+    observation window, and execution plane for one action path.  This is the
+    machine-readable form of ``EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1``.
+
+    Action paths
+    ------------
+    - ``freeze_non_live``: medium-risk governance quarantine on paper/canary stage.
+    - ``freeze_live_no_active_runtime``: high-risk freeze without an active runtime.
+    - ``freeze_live_active_runtime``: high-risk freeze + companion operational path.
+    - ``rollback_operational_followthrough``: runtime mitigation via Rollback Controller.
+    - ``research_retrain``: low-risk retrain research work item creation.
+    - ``research_revalidate``: low-risk revalidation research work item creation.
+    - ``redeploy_followthrough``: deployment follow-through after research/revive completes.
+    """
+    return ActionPathsResponse(
+        policy_document="EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1",
+        paths=[ActionPathEntry(**p) for p in _ACTION_PATHS],
     )
 
 
