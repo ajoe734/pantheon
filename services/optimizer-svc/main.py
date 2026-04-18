@@ -1,26 +1,79 @@
 """
-services/optimizer-svc — minimal HTTP service.
-
-Exposes the portfolio synthesis library as a deployable service.
+services/optimizer-svc — portfolio synthesis HTTP service.
 
 Routes
 ------
-  GET  /__health__                       liveness probe
-  POST /api/optimizer/synthesize         run a portfolio synthesis from proposals
-  GET  /api/optimizer/policies/{policy_id}  read a produced AllocationPolicyArtifact
+  GET  /__health__                           liveness probe
+  POST /api/optimizer/synthesize             run multi-persona portfolio synthesis
+  GET  /api/optimizer/policies/{policy_id}   read a produced AllocationPolicyArtifact
+  GET  /api/optimizer/logs/{log_id}          read a ConflictResolutionLog
 """
 from __future__ import annotations
 
 import os
-import uuid
-from typing import Any, Dict
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-app = FastAPI(title="Pantheon Optimizer Service", version="0.1.0")
+# Ensure the service directory is on the path when run via uvicorn from repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-_policies: Dict[str, Any] = {}
+from portfolio_synthesis import (  # noqa: E402
+    AllocationPolicyArtifact,
+    CommitteeReferral,
+    ConflictResolutionLog,
+    PersonaAllocationProposal,
+    PoolRiskPolicy,
+    PortfolioSynthesizer,
+    SynthesisError,
+)
 
+app = FastAPI(title="Pantheon Optimizer Service", version="0.2.0")
+
+# In-memory stores (v1: no persistence layer).
+_policies: Dict[str, Union[AllocationPolicyArtifact, CommitteeReferral]] = {}
+_logs: Dict[str, ConflictResolutionLog] = {}
+
+
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
+
+class ProposalIn(BaseModel):
+    proposal_id: str
+    persona_id: str
+    capital_pool_id: str
+    scope_ref: str
+    target_type: str = "pool"
+    directions: List[str] = []
+    target_weights: Dict[str, float] = {}
+    conviction: float = 0.5
+    uncertainty: float = 0.0
+    rationale_ref: Optional[str] = None
+    regime_ref: Optional[str] = None
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
+    reliability_score: float = 1.0
+    regime_fit_score: float = 1.0
+    governance_multiplier: float = 1.0
+    metadata: Dict[str, Any] = {}
+
+
+class SynthesizeRequest(BaseModel):
+    proposals: List[ProposalIn]
+    capital_pool_id: str
+    scope_ref: str
+    constraints_bundle: Optional[Dict[str, Any]] = None
+    risk_budget: Optional[float] = None
+    pool_risk_policy: Optional[Dict[str, Any]] = None
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @app.get("/__health__")
 async def health():
@@ -28,10 +81,63 @@ async def health():
 
 
 @app.post("/api/optimizer/synthesize", status_code=201)
-async def synthesize(payload: Dict[str, Any]):
-    policy_id = f"policy-{uuid.uuid4().hex[:12]}"
-    _policies[policy_id] = {"policy_id": policy_id, "input": payload, "status": "pending"}
-    return {"policy_id": policy_id, "status": "pending"}
+async def synthesize(req: SynthesizeRequest):
+    """
+    Aggregate multi-persona proposals into a single AllocationPolicyArtifact.
+
+    Returns the artifact on success, or a CommitteeReferral when escalation
+    is required.  A ConflictResolutionLog is always recorded.
+    """
+    try:
+        proposals = [PersonaAllocationProposal(**p.model_dump()) for p in req.proposals]
+    except (SynthesisError, Exception) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    policy = None
+    if req.pool_risk_policy:
+        policy = PoolRiskPolicy(
+            forbidden_asset_classes=set(req.pool_risk_policy.get("forbidden_asset_classes", [])),
+            forbidden_strategy_families=set(req.pool_risk_policy.get("forbidden_strategy_families", [])),
+            max_single_weight=req.pool_risk_policy.get("max_single_weight", 1.0),
+        )
+
+    synthesizer = PortfolioSynthesizer(pool_risk_policy=policy)
+
+    try:
+        result, log = synthesizer.synthesize_with_log(
+            proposals=proposals,
+            capital_pool_id=req.capital_pool_id,
+            scope_ref=req.scope_ref,
+            constraints_bundle=req.constraints_bundle,
+            risk_budget=req.risk_budget,
+        )
+    except SynthesisError as exc:
+        log = synthesizer.last_conflict_resolution_log
+        if log is not None:
+            _logs[log.log_id] = log
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    _logs[log.log_id] = log
+
+    if isinstance(result, CommitteeReferral):
+        _policies[result.referral_id] = result
+        return {
+            "outcome": "committee_referral",
+            "referral_id": result.referral_id,
+            "trigger_reason": result.trigger_reason,
+            "proposal_ids": result.proposal_ids,
+            "conflict_resolution_log_id": log.log_id,
+        }
+
+    _policies[result.artifact_id] = result
+    return {
+        "outcome": "artifact",
+        "artifact_id": result.artifact_id,
+        "sponsor_persona_id": result.sponsor_persona_id,
+        "synthesis_method": result.synthesis_method,
+        "target_weights": result.target_weights,
+        "conflict_resolution_log_id": log.log_id,
+    }
 
 
 @app.get("/api/optimizer/policies/{policy_id}")
@@ -39,7 +145,20 @@ async def get_policy(policy_id: str):
     entry = _policies.get(policy_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="policy not found")
-    return entry
+    if isinstance(entry, AllocationPolicyArtifact):
+        import dataclasses
+        return dataclasses.asdict(entry)
+    import dataclasses
+    return dataclasses.asdict(entry)
+
+
+@app.get("/api/optimizer/logs/{log_id}")
+async def get_log(log_id: str):
+    entry = _logs.get(log_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="conflict resolution log not found")
+    import dataclasses
+    return dataclasses.asdict(entry)
 
 
 if __name__ == "__main__":
