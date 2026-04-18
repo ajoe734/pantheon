@@ -1,139 +1,93 @@
 feature_id: PKT-002-incident-action-drawer
 type: bff-gap
 source_repo: pantheon
+source_branch: main
 screen: incident-action-drawer
 blocking: true
-assessed_at: "2026-04-16T00:00:00Z"
-assessed_by: Claude
+assessed_at: "2026-04-17T15:03:12Z"
+assessed_by: Codex
 
 summary: >-
-  Pantheon pre-assessed the BFF implementation for PKT-002-incident-action-drawer
-  and found that both required endpoints return shapes that diverge from the
-  published contract. Lovable implementation is blocked until the BFF response
-  envelopes are aligned.
+  Pantheon re-opened the PKT-002 Incident Action Drawer BFF gap after
+  validating the current front handoff against the local BFF. The read surface
+  GET /api/v1/kill-switch/status still matches the published drawer envelope,
+  but the write surface POST /api/v1/operator/commands still rejects the
+  published PKT-002 request schema with HTTP 422. The current BFF request model
+  remains on the older generic operator-command envelope, so the drawer cannot
+  submit PauseExecution / IssueRiskOff / LiquidateAll / HardRollback /
+  IssueSafeMode successfully without shadow translation in the UI.
 
 missing:
-  # GET /api/v1/kill-switch/status — 9 fields absent
-  - endpoint: GET /api/v1/kill-switch/status
-    field: kill_switch
-    reason: >-
-      BFF returns top-level 'data' key with freeze-orders model; contract requires
-      a 'kill_switch' wrapper with status/last_triggered_at/last_confirmed_at/active_commands.
-      Kill Switch status header cannot render without this wrapper.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: kill_switch.status
-    reason: >-
-      No armed/triggered/cooling_down status enum returned. Kill Switch status
-      header cannot show current state.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: kill_switch.last_triggered_at
-    reason: >-
-      Timestamp for last kill switch trigger is absent. Kill Switch header incomplete.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: kill_switch.last_confirmed_at
-    reason: >-
-      BFF returns meta.last_checked_at instead; contract requires last_confirmed_at
-      inside the kill_switch wrapper. Secondary control path panel also needs this
-      timestamp for its last-known-state display.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: kill_switch.active_commands
-    reason: >-
-      BFF returns active_freeze_orders (different model); contract requires
-      active_commands[] in the kill_switch wrapper.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: allowedActions
-    reason: >-
-      The entire allowedActions object is absent from the BFF response.
-      All five Emergency Action buttons (canPause, canRiskOff, canLiquidateAll,
-      canHardRollback, canIssueSafeMode) and the secondaryPathAvailable flag
-      depend on this object. Without it, the drawer cannot render any CTAs safely.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: meta.snapshot_at
-    reason: >-
-      BFF returns meta.last_checked_at instead of meta.snapshot_at; contract
-      requires the canonical snapshot_at key.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: meta.surfaces.kill_switch
-    reason: >-
-      Per-surface kill switch degradation status is absent. Secondary Control Path
-      panel and the Fully Unavailable banner both depend on this field to determine
-      rendering path.
-  - endpoint: GET /api/v1/kill-switch/status
-    field: meta.surfaces.allowedActions
-    reason: >-
-      Per-surface allowedActions degradation status is absent. When degraded,
-      all CTAs must be disabled and a banner shown.
-
-  # POST /api/v1/operator/commands — 5 fields absent or renamed; status enum mismatch
   - endpoint: POST /api/v1/operator/commands
-    field: receipt_id
+    field: request.command
     reason: >-
-      BFF returns command_id nested inside a receipt wrapper; contract expects
-      a flat receipt with receipt_id at top level. Command Receipt panel cannot
-      identify the receipt without this field.
+      Local OperatorCommand enum still only accepts ApproveDeployment,
+      PauseRuntime, ExecuteRollback, ApproveRollback, RejectRollback,
+      ActivateKillSwitch, ApproveEvolutionDecision, and
+      ExecuteEvolutionAction. Direct TestClient requests with the published
+      PKT-002 command names PauseExecution, IssueRiskOff, and HardRollback each
+      return 422 before the command can be queued.
   - endpoint: POST /api/v1/operator/commands
-    field: command
+    field: request.target.type
     reason: >-
-      BFF returns command_type; contract requires command. Command Receipt panel
-      cannot display the command name correctly.
+      Local TargetObject enum still rejects target.type = Runtime and only
+      accepts DeploymentPlan, RuntimeBinding, Rollback, KillSwitchOrder,
+      EvolutionDecision, CapitalPool, or PersonaCapitalBinding. Direct PKT-002
+      requests return 422 on the target type before execution.
   - endpoint: POST /api/v1/operator/commands
-    field: accepted_at
+    field: request.action
     reason: >-
-      BFF returns submitted_at; contract requires accepted_at. Command Receipt
-      panel uses accepted_at for timestamp display.
+      The local OperatorCommand model still requires a separate action field,
+      but the published PKT-002 contract intentionally omits action and uses a
+      command-discriminated payload plus params. Direct PKT-002 requests return
+      422 "Field required" for action.
   - endpoint: POST /api/v1/operator/commands
-    field: routing_path
+    field: request.params
     reason: >-
-      Field entirely absent. Command Receipt panel cannot show 'direct' vs 'fallback'
-      routing; secondary path confirmation is blocked.
-  - endpoint: POST /api/v1/operator/commands
-    field: expected_completion_at
-    reason: >-
-      Field entirely absent. Command Receipt panel cannot show expected completion
-      time (nullable per contract).
-  - endpoint: POST /api/v1/operator/commands
-    field: error_message
-    reason: >-
-      Field absent from the receipt. When status = failed, the drawer must display
-      an inline error and disable further actions until acknowledged.
-  - endpoint: POST /api/v1/operator/commands
-    field: status enum
-    reason: >-
-      BFF uses SUBMITTED/PROCESSING/COMPLETED enum; contract requires
-      accepted/queued/failed. The Command Receipt panel's conditional logic
-      depends on the contract enum values.
-  - endpoint: POST /api/v1/operator/commands
-    field: response shape
-    reason: >-
-      BFF wraps the receipt in a .receipt key (CommandSubmissionResponse model);
-      contract expects a flat receipt object at the response root.
+      Local validators and executors are still shaped around PauseRuntime /
+      ExecuteRollback / ActivateKillSwitch params. Pantheon has not yet added
+      request validation or execution paths for reduce_exposure_pct,
+      target_artifact_id, safe_mode_level, or the empty LiquidateAll params
+      contract used by PKT-002.
 
 acceptance:
-  - BFF aligns GET /api/v1/kill-switch/status to contract shape (kill_switch wrapper,
-    allowedActions object with all 6 boolean flags, meta.snapshot_at, meta.surfaces.kill_switch,
-    meta.surfaces.allowedActions)
-  - BFF aligns POST /api/v1/operator/commands to return a flat receipt with receipt_id,
-    command, accepted_at, routing_path, expected_completion_at, error_message, and
-    accepted/queued/failed status enum
+  - BFF accepts the published PKT-002 request schema for PauseExecution,
+    IssueRiskOff, LiquidateAll, HardRollback, and IssueSafeMode at
+    POST /api/v1/operator/commands without requiring UI-only translation.
+  - BFF accepts target.type = Runtime for PKT-002 drawer commands, or provides
+    an equivalent Pantheon-owned contract update and refreshed packet family.
+  - BFF no longer requires a separate request.action field for PKT-002 drawer
+    commands when the contract does not publish one.
+  - Pantheon validates the repaired write surface locally with direct
+    TestClient submissions for at least PauseExecution, IssueRiskOff, and
+    HardRollback before republishing the next contract-ready packet.
   - Pantheon publishes updated contract-ready and lovable-ui-task packets after alignment
-  - Lovable receives updated packets and resumes the implementation cycle
+  - Lovable/front-end receives updated packets and resumes the implementation cycle
 
 delivery_note: docs/pantheon-delivery/PKT-002-incident-action-drawer/DELIVERY_NOTE.md
 contract_lock: docs/pantheon-delivery/PKT-002-incident-action-drawer/CONTRACT_LOCK.md
 
+reopened_at: "2026-04-17T15:03:12Z"
+reopened_by: Codex
+reopen_evidence:
+  - python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions or in05_kill_switch_admin_only'
+  - python3 direct TestClient submissions for PauseExecution / IssueRiskOff / HardRollback -> all returned 422 from /api/v1/operator/commands
+
 resolved: true
-resolved_at: "2026-04-17T04:00:00Z"
-resolved_by: Claude
+resolved_at: "2026-04-17T15:24:03Z"
+resolved_by: Codex
 resolution: >-
-  GET /api/v1/kill-switch/status aligned: returns kill_switch wrapper with
-  status/last_triggered_at/last_confirmed_at/active_commands, allowedActions object
-  with all 6 boolean flags (canPause/canRiskOff/canLiquidateAll/canHardRollback/
-  canIssueSafeMode/secondaryPathAvailable), meta.snapshot_at, meta.surfaces.kill_switch
-  and meta.surfaces.allowedActions.
-  POST /api/v1/operator/commands aligned: returns flat CommandSubmissionResponse with
-  receipt_id, command, accepted_at, routing_path, expected_completion_at, error_message,
-  and accepted/queued/failed status enum.
-  Contract-ready and Lovable UI task packets published. Lovable prompt updated.
+  Pantheon aligned POST /api/v1/operator/commands with the published PKT-002
+  Runtime-targeted envelope. The BFF now accepts PauseExecution,
+  IssueRiskOff, LiquidateAll, HardRollback, and IssueSafeMode without a legacy
+  request.action field or UI-side shadow translation. Runtime-target routing is
+  resolved after the command is queued so the published schema is accepted even
+  when local runtime snapshots are thin; Pantheon-owned execution still uses
+  explicit runtime/capital-pool context when it is available and records a
+  failed receipt later if the runtime cannot be routed. Contract-ready and
+  Lovable UI task packets were refreshed for the resumed front-end cycle.
 resolution_artifacts:
   - .coordination/responses/PKT-002-incident-action-drawer-contract-ready.yaml
   - .coordination/responses/PKT-002-incident-action-drawer-lovable-ui-task.yaml
+  - docs/pantheon-delivery/PKT-002-incident-action-drawer/DELIVERY_NOTE.md
+  - docs/pantheon-delivery/PKT-002-incident-action-drawer/CONTRACT_LOCK.md
