@@ -5,6 +5,7 @@
 **Owner:** Claude  
 **Reviewer:** Codex  
 **Generated:** 2026-04-18  
+**Finalized:** 2026-04-18 (review_approved → done)  
 **Kind:** sidecar / acceptance_packet  
 **Mutates canonical:** false
 
