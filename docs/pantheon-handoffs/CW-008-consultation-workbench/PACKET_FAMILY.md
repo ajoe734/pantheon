@@ -5,7 +5,7 @@
 - Packet family ID: `CW-008`
 - Workbench: Consultation Workbench
 - Phase origin: `BP5-WB-008`
-- Lovable readiness: **partially opened** — `CW-01` is contract-published and pending BFF implementation; `CW-02` is contract-published and pending BFF implementation; `CW-03` remains blocked on BFF implementation; `CW-04` is contract-published and pending BFF implementation
+- Lovable readiness: **partially opened** — `CW-01` is contract-published and pending BFF implementation; `CW-02` is contract-published and pending BFF implementation; `CW-03` is contract-published and pending BFF implementation; `CW-04` is contract-published and pending BFF implementation
 - Overview packet status: `PKT-consultation-workbench` remains the truthful landing surface; `CW-01-FOUNDATION-001` adds the first module-level contract bundle without claiming the routes are live
 - Recommended wave: Wave 4 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
@@ -40,7 +40,7 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 |---|---|---|---|---|
 | `CW-01` | Consult Request | request composer, request detail, target selector, lifecycle state, request-to-session status | contract-published; pending-bff | Wave 4 — 1st |
 | `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | contract-published; pending-bff | Wave 4 — 2nd |
-| `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | not ready | Wave 4 — 3rd |
+| `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | contract-published; pending-bff | Wave 4 — 3rd |
 | `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | contract-published; pending-bff | Wave 4 — 4th |
 
 ---
@@ -147,9 +147,14 @@ The append-only `TranscriptEvent` schema, actor labeling contract, event orderin
 
 The committee lifecycle states, participant and referral semantics, `committee_ref` identity, sponsor-selection flow, synthesis summary shape, and the evidence linkage contract must all be promoted from `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md` policy into canonical BFF-facing truth before a committee board screen can be packet-defined. Depends on `CW-01` request identity and `CW-02` transcript event ordering.
 
+### Published contract bundle
+
+- BFF contract: `docs/bff/CW-03-committee-board.md`
+- Example payload: `docs/examples/CW-03-committee-board.json`
+
 ### Lovable readiness gate
 
-`false` — the committee board routes, board projection, sponsor decision write path, and synthesis summary shape must all be implemented and field shapes locked before a screen spec can be opened.
+`pending-bff` — the committee board list/detail routes, board projection, `RecordSponsorDecision` command, and synthesis summary shape are now contract-defined. The remaining gate is Pantheon BFF implementation of the two published routes and the operator command.
 
 ---
 
@@ -205,11 +210,11 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `TranscriptEvent` schema | CW-02 | contract published — BFF implementation pending | `event_id`, `sequence_number`, actor resolution, `event_type`, `evidence_ref`; schema locked in `docs/bff/CW-02-debate-transcript.md` |
 | Actor labeling contract | CW-02 | contract published — BFF implementation pending | actor display labels and role badges; labeling rules locked in `docs/bff/CW-02-debate-transcript.md` |
 | Evidence attachment inline behavior | CW-02 | contract published — BFF implementation pending | pre-resolved `evidence_link` in event payload; resolution contract locked in `docs/bff/CW-02-debate-transcript.md` |
-| `GET /api/v1/committees` | CW-03 | missing read route | committee board list and filter surface |
-| `GET /api/v1/committees/:committee_id` | CW-03 | missing read route | committee board detail, participant roster, escalation reason, `allowedActions.canRecordSponsorDecision` |
-| Committee board projection | CW-03 | missing contract | `committee_ref` identity, quorum state, consensus state, and referral semantics must be promoted to BFF contract |
-| `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | CW-03 | missing write command | sponsor decision CTA; gated by `allowedActions.canRecordSponsorDecision` |
-| Synthesis summary shape | CW-03 | missing object contract | `outcome`, `rationale_ref`, `evidence_refs[]`, `dissent_refs[]`; client must not derive from participant signals |
+| `GET /api/v1/committees` | CW-03 | contract published — BFF implementation pending | committee board list and filter surface; route shape and query params defined in `docs/bff/CW-03-committee-board.md` |
+| `GET /api/v1/committees/:committee_id` | CW-03 | contract published — BFF implementation pending | committee board detail, participant roster, escalation reason, `allowedActions.canRecordSponsorDecision`; field shapes locked in `docs/bff/CW-03-committee-board.md` |
+| Committee board projection | CW-03 | contract published — BFF implementation pending | `committee_ref` identity, quorum state, consensus state, and referral semantics promoted to BFF contract in `docs/bff/CW-03-committee-board.md`; example payload in `docs/examples/CW-03-committee-board.json` |
+| `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | CW-03 | contract published — BFF implementation pending | sponsor decision command wired to canonical operator authority; command vocabulary and gating rules locked in `docs/bff/CW-03-committee-board.md` |
+| Synthesis summary shape | CW-03 | contract published — BFF implementation pending | `outcome`, `rationale_ref`, `evidence_refs[]`, `dissent_refs[]` shape locked in `docs/bff/CW-03-committee-board.md`; client must not derive from participant signals |
 | `GET /api/v1/consult/memos` | CW-04 | contract published — BFF implementation pending | red-team memo list and filter surface; route shape and query params defined in `docs/bff/CW-04-redteam-memo.md` |
 | `GET /api/v1/consult/memos/:memo_id` | CW-04 | contract published — BFF implementation pending | memo detail, recommendations, `allowedActions.canInitiateGovernanceReview`; field shapes locked in `docs/bff/CW-04-redteam-memo.md` |
 | `ConsultMemo` read model | CW-04 | contract published — BFF implementation pending | L3-anchored lifecycle `draft → published`, recommendation object, evidence-link contract, and `session_to_memo_mapping` shape locked in `docs/bff/CW-04-redteam-memo.md`; `archived` state and per-recommendation severity remain explicitly out of scope |
