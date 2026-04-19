@@ -5,7 +5,7 @@
 - Packet family ID: `EW-004`
 - Workbench: Evolution Workbench
 - Phase origin: `BP5-WB-004`
-- Lovable readiness: **partial** — `EW-01`, `EW-02`, and `EW-03` are already handoff-ready via `PKT-003`; `EW-04` contract is published via `EW-04-OPEN-001` (route spec, composed object, `meta.surfaces.inspiration`, and handoff bundle now exist) but the BFF route is not yet live — Lovable UI task activates once BFF confirms the route; `EW-05` remains not ready because the operator mutation-review projection and authority signals do not exist
+- Lovable readiness: **partial** — `EW-01`, `EW-02`, and `EW-03` are already handoff-ready via `PKT-003`; `EW-04` contract is published via `EW-04-OPEN-001` (route spec, composed object, `meta.surfaces.inspiration`, and handoff bundle now exist) but the BFF route is not yet live — Lovable UI task activates once BFF confirms the route; `EW-05` contract is published via `EW-05-OPEN-001` (route spec, composed `MutationReviewProjection`, `ApproveMutation`/`RejectMutation` command vocabulary, `allowedActions` authority signals, `meta.surfaces.mutation_review`, and handoff bundle now exist) but the BFF route and operator command extension are not yet live — Lovable UI task activates once BFF confirms both the route and command vocabulary
 - Recommended wave: Wave 2 read-only baseline, then Wave 3 mutation authority
 - Owner: Codex2
 - Reviewer: Claude
@@ -47,7 +47,7 @@ Historical note: older phase-3 packet text describes `EW-05 Mutation Review` as 
 | `EW-02` | Evolution Center | evolution decision list/detail, freeze-order index, rollback history, read-only review context | ready via `PKT-003` plus frontend handoff bundle | ready | Wave 2 - 1st |
 | `EW-03` | Lineage View | lineage list, edge detail, lineage graph, incident/evolution trace context | ready via `PKT-003` plus frontend handoff bundle; `LN-03 root_type` caveat documented | ready with caveat | Wave 2 - 2nd |
 | `EW-04` | Inspiration Graph | artifact-centered creative lineage graph, strategy tags, influence-weight display | contract published via `EW-04-OPEN-001`: route spec, composed object, example payload, and frontend handoff bundle now exist; BFF route not yet live | pending-bff | Wave 2 - 3rd |
-| `EW-05` | Mutation Review | composed mutation review with evolution decision context, incident/postmortem/rollback evidence, and approve/reject CTA | no dedicated screen or handoff artifact yet; canonical object anchors exist, but the operator mutation-review projection does not | not ready | Wave 3 - 1st |
+| `EW-05` | Mutation Review | composed mutation review with evolution decision context, incident/postmortem/rollback evidence, and approve/reject CTA | contract published via `EW-05-OPEN-001`: route spec, composed `MutationReviewProjection`, `ApproveMutation`/`RejectMutation` command vocabulary, `allowedActions` authority signals, `meta.surfaces.mutation_review`, and frontend handoff bundle now exist; BFF route and operator command extension not yet live | pending-bff | Wave 3 - 1st |
 
 ---
 
@@ -170,11 +170,12 @@ The blocked `PKT-003` draft may move to a real frontend handoff only when the BF
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/mutation-review/{decision_id}` | **missing** | primary BFF-composed mutation-review route; must project `EvolutionDecision`, approval context, incident/postmortem refs, rollback follow-through refs, `proposed_changes`, `risk_assessment`, `required_approvals`, `allowedActions`, and `meta.surfaces.mutation_review` |
-| `POST /api/v1/operator/commands` mutation-review vocabulary | **missing** | the operator command surface must accept review-level mutation actions such as `ApproveMutation` and `RejectMutation`; those commands may change governance-review state, but must not bypass deployment/runtime/research write owners |
-| Mutation-review composed object | **missing** | field shape for `proposed_changes`, `risk_assessment`, `required_approvals`, incident/postmortem evidence refs, rollback-followthrough refs, and `allowedActions` does not yet exist as a BFF contract |
-| `allowedActions.canApproveMutation` and `allowedActions.canRejectMutation` | **missing** | backend-shaped authority signals are required; the UI must not infer CTA visibility from `risk_level`, `decision_state`, or actor role alone |
-| `meta.surfaces.mutation_review` | **missing** | mutation evidence health signal that controls the shared degradation banner and CTA suppression |
+| `GET /api/v1/operator/mutation-review/{decision_id}` | **contract published** — BFF implementation pending | primary BFF-composed mutation-review route; field shape published in `docs/bff/EW-05-mutation-review.md`; example payload in `docs/examples/EW-05-mutation-review.json` |
+| `POST /api/v1/operator/commands` mutation-review vocabulary | **contract published** — BFF implementation pending | `ApproveMutation` and `RejectMutation` command vocabulary published in `docs/bff/EW-05-mutation-review.md`; commands may change governance-review state only and must not bypass deployment/runtime/research write owners |
+| Mutation-review composed object | **contract published** — BFF implementation pending | full field shape for `proposed_changes`, `risk_assessment`, `required_approvals`, incident/postmortem evidence refs, rollback-followthrough refs, and `allowedActions` defined in `docs/bff/EW-05-mutation-review.md` |
+| `allowedActions.canApproveMutation` and `allowedActions.canRejectMutation` | **contract published** — BFF implementation pending | authority signal rules and evaluation preconditions defined in `docs/bff/EW-05-mutation-review.md` |
+| `meta.surfaces.mutation_review` | **contract published** — BFF implementation pending | staleness signal semantics and UI behavior table defined in `docs/bff/EW-05-mutation-review.md` |
+| Frontend handoff bundle | **published** via `EW-05-OPEN-001` | `docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md` now exists; Lovable UI task activates once BFF confirms both the live route and live command vocabulary |
 
 ### Packetization prerequisite
 
@@ -191,7 +192,7 @@ The remaining command-path work is specifically the review-facing command vocabu
 
 ### Lovable readiness gate
 
-`false` — until the composed route, command vocabulary, `allowedActions`, and degraded-state contract exist, `EW-05` must remain a blocked packet family member rather than a frontend task.
+`pending-bff` — the route spec, field shape, command vocabulary, authority signals, staleness signal, and frontend handoff bundle now exist (published via `EW-05-OPEN-001`). The remaining gate is BFF confirming both the live read route and the live operator command extension. Once the BFF route is up and the commands are live, the Lovable UI task activates.
 
 ---
 
@@ -205,11 +206,12 @@ Each row is scoped to one or more blocked modules. A blocked module advances to 
 | Inspiration graph composed object | `EW-04` | contract published — BFF implementation pending | field shape in `docs/bff/PKT-003-inspiration-graph.md`; example in `docs/examples/PKT-003-inspiration-graph.json` |
 | `meta.surfaces.inspiration` | `EW-04` | contract published — BFF implementation pending | degradation banner and graph suppression rules; signal defined in route contract |
 | Frontend handoff bundle for Inspiration Graph | `EW-04` | **published** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` |
-| `GET /api/v1/operator/mutation-review/{decision_id}` | `EW-05` | missing read route | entire Mutation Review surface |
-| Mutation-review composed object | `EW-05` | missing BFF contract | decision header, incident/postmortem/rollback evidence rail, `proposed_changes`, and `risk_assessment` |
-| `ApproveMutation` / `RejectMutation` command vocabulary | `EW-05` | missing operator command extension | approve/reject CTA semantics |
-| `allowedActions.canApproveMutation` / `canRejectMutation` | `EW-05` | missing authority signals | truthful CTA gating |
-| `meta.surfaces.mutation_review` | `EW-05` | missing staleness signal | degradation banner wiring and CTA suppression |
+| `GET /api/v1/operator/mutation-review/{decision_id}` | `EW-05` | contract published — BFF implementation pending | entire Mutation Review surface; route spec in `docs/bff/EW-05-mutation-review.md` |
+| Mutation-review composed object | `EW-05` | contract published — BFF implementation pending | field shape in `docs/bff/EW-05-mutation-review.md`; example in `docs/examples/EW-05-mutation-review.json` |
+| `ApproveMutation` / `RejectMutation` command vocabulary | `EW-05` | contract published — BFF implementation pending | command vocabulary in `docs/bff/EW-05-mutation-review.md`; approve/reject CTA semantics |
+| `allowedActions.canApproveMutation` / `canRejectMutation` | `EW-05` | contract published — BFF implementation pending | authority signal rules defined in `docs/bff/EW-05-mutation-review.md` |
+| `meta.surfaces.mutation_review` | `EW-05` | contract published — BFF implementation pending | staleness signal semantics defined in `docs/bff/EW-05-mutation-review.md` |
+| Frontend handoff bundle for Mutation Review | `EW-05` | **published** via `EW-05-OPEN-001` | `docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md` |
 
 ---
 

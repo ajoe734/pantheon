@@ -53,8 +53,8 @@ canonical closeout bookkeeping only and is tracked separately in
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `EW-04 Inspiration Graph` | blocked draft only | missing `GET /api/v1/lineage/inspiration/{artifact_id}` and `meta.surfaces.inspiration` | land route, then publish handoff bundle |
-| `EW-05 Mutation Review` | not ready | missing `GET /api/v1/operator/mutation-review/{decision_id}`, composed mutation-review object, and `ApproveMutation` / `RejectMutation` command vocabulary | publish read route, authority signals, and operator command contract |
+| `EW-04 Inspiration Graph` | contract published — BFF route pending implementation | route spec, composed object, `meta.surfaces.inspiration`, and handoff bundle published via `EW-04-OPEN-001`; BFF must implement `GET /api/v1/lineage/inspiration/{artifact_id}` before UI work starts | BFF implements route → activate Lovable UI task |
+| `EW-05 Mutation Review` | contract published — BFF route and command vocabulary pending implementation | route spec, composed `MutationReviewProjection` object, `ApproveMutation` / `RejectMutation` command vocabulary, `allowedActions` authority signals (`canApproveMutation` / `canRejectMutation`), `meta.surfaces.mutation_review` staleness signal, and frontend handoff bundle published via `EW-05-OPEN-001`; BFF must implement `GET /api/v1/operator/mutation-review/{decision_id}` and the operator command extension before UI work starts | BFF implements route and command vocabulary → activate Lovable UI task |
 
 ### Research Workbench
 
@@ -72,7 +72,7 @@ Overview packet note: `PKT-knowledge-workbench` now publishes a truthful overvie
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `KW-01 Institutional Memory` | overview packet live; module not ready | missing list/detail browse projection and lifecycle contract | lock memory identity plus lifecycle semantics |
+| `KW-01 Institutional Memory` | contract-ready — BFF routes published | identity and browse projection published via `KW-01-FOUNDATION-001`; BFF must implement routes before UI work starts | BFF implements routes → activate Lovable UI task |
 | `KW-02 Research Notes` | overview packet live; module not ready | missing create/list/detail routes and attachment taxonomy | publish note ownership and attachment contract |
 | `KW-03 Evidence Refs` | overview packet live; module not ready | missing evidence browse/detail routes and linked-entity projection | publish typed evidence-link contract |
 | `KW-04 Insight Cards` | overview packet live; module not ready | missing insight-card list/detail projection and aggregation contract | publish card identity, filters, and linked-source drilldown |
@@ -84,7 +84,7 @@ Overview packet note: `PKT-consultation-workbench` now publishes a truthful over
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `CW-01 Consult Request` | overview packet live; module not ready | missing request create/list/detail/cancel routes and request lifecycle contract | publish request-to-session handoff truth |
+| `CW-01 Consult Request` | contract published; BFF implementation pending | bring create/list/detail/cancel routes live against the published request lifecycle and request-to-session contract | confirm the CW-01 routes return the published field shape |
 | `CW-02 Debate Transcript` | overview packet live; module not ready | missing transcript route, append-only event schema, and actor-label contract | lock `TranscriptEvent` ordering and evidence-link behavior |
 | `CW-03 Committee Board` | overview packet live; module not ready | missing committee queue/board projection and synthesis-state contract | publish committee decision and sponsor-synthesis semantics |
 | `CW-04 Red-team Memo` | overview packet live; module not ready | missing memo list/detail/publish flow and downstream handoff contract | publish memo lifecycle and evidence rail contract |

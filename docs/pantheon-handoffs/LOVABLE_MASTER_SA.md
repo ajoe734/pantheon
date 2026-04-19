@@ -336,12 +336,12 @@ Evolution Workbench bridges incident evidence, lineage, and governed follow-up.
 | `EW-02 Evolution Center` | evolution decision browse and detail | board or list-detail | ready via `PKT-003` |
 | `EW-03 Lineage View` | lineage graph and edge detail | graph plus inspector | ready via `PKT-003` |
 | `EW-04 Inspiration Graph` | artifact-centered inspiration graph | graph plus strategy-tag rail | pending-bff — contract published via `EW-04-OPEN-001`; activates once BFF route is live |
-| `EW-05 Mutation Review` | approve or reject mutation follow-up | high-focus evidence review page | blocked |
+| `EW-05 Mutation Review` | approve or reject mutation follow-up | high-focus evidence review page | pending-bff — contract published via `EW-05-OPEN-001`; activates once BFF route and command vocabulary are live |
 
 ### Design intent
 
 The first three modules are the read-only evidence baseline.
-The last two modules must not be implemented as production screens until Pantheon publishes their missing routes and authority signals.
+The last two modules must not be implemented as production screens until Pantheon confirms their BFF routes are live.
 
 ## 6.5 Research Workbench
 

@@ -275,16 +275,16 @@ Lovable 應先做以下 primitive，再做頁面：
 
 | Path | 頁面 | Workbench | 目前可做的程度 |
 |---|---|---|---|
-| `/evolution/inspiration/:artifact_id` | Inspiration Graph | Evolution | blocked shell only |
-| `/evolution/mutation/:decision_id` | Mutation Review | Evolution | blocked shell only |
+| `/evolution/inspiration/:artifact_id` | Inspiration Graph | Evolution | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route |
+| `/evolution/mutation/:decision_id` | Mutation Review | Evolution | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route and command vocabulary |
 | `/research/tickets` | Research Ticket List | Research | blocked shell only |
 | `/research/tickets/:ticket_id` | Research Ticket Detail | Research | blocked shell only |
 | `/research/search` | Search | Research | blocked shell only |
 | `/research/analyze` | Analyze | Research | blocked shell only |
 | `/research/experiments` | Experiment Launch / Run History | Research | blocked shell only |
 | `/research/compare` | Artifact Compare | Research | blocked shell only |
-| `/knowledge/memory` | Institutional Memory | Knowledge | blocked shell only |
-| `/knowledge/memory/:entry_id` | Memory Detail | Knowledge | blocked shell only |
+| `/knowledge/memory` | Institutional Memory | Knowledge | contract-ready |
+| `/knowledge/memory/:entry_id` | Memory Detail | Knowledge | contract-ready |
 | `/knowledge/notes` | Research Notes | Knowledge | blocked shell only |
 | `/knowledge/notes/:note_id` | Note Detail | Knowledge | blocked shell only |
 | `/knowledge/evidence` | Evidence Refs | Knowledge | blocked shell only |
@@ -455,8 +455,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | Post-Incident Review | `/operator/incidents/:incident_id/review` | `PKT-003` | ready | split-pane evidence review |
 | Evolution Center | `/evolution` | `PKT-003` | ready | board or list-detail |
 | Lineage View | `/evolution/lineage` | `PKT-003` | ready | graph + inspector |
-| Inspiration Graph | `/evolution/inspiration/:artifact_id` | `EW-04` | blocked | shell-only |
-| Mutation Review | `/evolution/mutation/:decision_id` | `EW-05` | blocked | shell-only |
+| Inspiration Graph | `/evolution/inspiration/:artifact_id` | `EW-04` | contract-published | placeholder until BFF route live |
+| Mutation Review | `/evolution/mutation/:decision_id` | `EW-05` | contract-published | placeholder until BFF route and command vocabulary live |
 
 ### 9.3 頁面定義
 
@@ -481,16 +481,16 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 9.3.4 Inspiration Graph
 
 - 目的：artifact-centered inspiration graph
-- 目前缺：`GET /api/v1/lineage/inspiration/{artifact_id}`、dedicated composed object、`meta.surfaces.inspiration`
-- 現在只可做：明確標記 `coming soon / blocked by Pantheon BFF`
-- 不可做：用 existing lineage routes 拼 inspiration graph
+- 契約狀態：route contract、composed object 與 `meta.surfaces.inspiration` 已透過 `EW-04-OPEN-001` 發布；BFF route `GET /api/v1/lineage/inspiration/{artifact_id}` 仍待實作
+- 現在可做：placeholder 標記 `coming soon / blocked by Pantheon BFF`；待 BFF 確認 route 上線後即可進入正式實作
+- 不可做：用 existing lineage routes 拼 inspiration graph；在 BFF route 上線前開 production page
 
 #### 9.3.5 Mutation Review
 
 - 目的：review mutation proposal 與 evidence
-- 目前缺：dedicated read route、mutation-review object、`ApproveMutation` / `RejectMutation` command、authority fields
-- 現在只可做：shell / IA wireframe
-- 不可做：把現有 evolution decision 詳頁包一層按鈕就當 mutation review
+- 契約狀態：read route contract (`GET /api/v1/operator/mutation-review/{decision_id}`)、composed `MutationReviewProjection` object、`ApproveMutation` / `RejectMutation` command vocabulary、`allowedActions` authority signals 與 `meta.surfaces.mutation_review` staleness signal 已透過 `EW-05-OPEN-001` 發布；BFF route 與 operator command extension 仍待實作
+- 現在可做：placeholder 標記 `coming soon / blocked by Pantheon BFF`；待 BFF 確認 route 與 command vocabulary 上線後即可進入正式實作
+- 不可做：把現有 evolution decision 詳頁包一層按鈕就當 mutation review；在 BFF route 上線前開 production page
 
 ---
 
@@ -649,8 +649,9 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：memory entry list + detail
 - 生產版呈現：library-like list-detail
-- 期待 BFF：list/detail projection + lifecycle semantics
-- shell 階段：可以畫 information architecture，不可 invent browse projection
+- 契約狀態：BFF routes (`GET /api/v1/knowledge/memory`, `GET /api/v1/knowledge/memory/{entry_id}`) 與 browse projection 已透過 `KW-01-FOUNDATION-001` 發布。
+- 現在可做：正式 production UI (需先確認 BFF 實作完成，或使用 `KW-01` example payload)。
+- 不可做：invent browse projection；在 BFF route 實作完成前交付正式版。
 
 #### 12.3.3 KW-02 Research Notes
 
@@ -689,8 +690,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Consultation Overview | `/consultation` | `PKT-consultation-workbench` | overview-only | 可正式做 |
-| Consult Request List / Composer | `/consultation/requests` | `CW-01` | blocked | shell-only |
-| Consult Request Detail | `/consultation/requests/:request_id` | `CW-01` | blocked | shell-only |
+| Consult Request List / Composer | `/consultation/requests` | `CW-01` | contract-published | pending-bff placeholder only |
+| Consult Request Detail | `/consultation/requests/:request_id` | `CW-01` | contract-published | pending-bff placeholder only |
 | Debate Transcript | `/consultation/transcripts/:session_id` | `CW-02` | blocked | shell-only |
 | Committee Board | `/consultation/committees` | `CW-03` | blocked | shell-only |
 | Committee Detail | `/consultation/committees/:committee_id` | `CW-03` | blocked | shell-only |
@@ -708,8 +709,9 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 13.3.2 CW-01 Consult Request
 
 - 目標頁面：request composer、request list、request detail、cancel path、request-to-session status
-- 期待 BFF：create/list/detail/cancel routes + lifecycle contract
-- shell 階段：可畫 composer 與 request journey，不可真的 invent request object
+- 已發布 contract：`docs/bff/CW-01-consult-request.md`、`docs/screens/CW-01-consult-request.md`、`docs/examples/CW-01-consult-request.json`
+- 前端 handoff：`docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md`
+- 目前 gate：BFF 必須先讓 create/list/detail/cancel routes 上線並回傳已發布 field shape
 
 #### 13.3.3 CW-02 Debate Transcript
 
