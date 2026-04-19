@@ -1,0 +1,164 @@
+{
+  "workbench_id": "knowledge-workbench",
+  "label": "Knowledge Workbench",
+  "route_href": "/knowledge",
+  "overall_status": "overview_ready",
+  "headline": "Overview route is live; knowledge delivery remains module-gated",
+  "summary": "This overview is a truthful landing surface for the Knowledge Workbench. It exposes the remaining browse, evidence, and versioning contracts without pretending that the full registry, notes, or evidence browser are already live.",
+  "packet_family": {
+    "family_id": "KW-006",
+    "path": "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+    "lovable_readiness": "partial",
+    "note": "KW-01 Institutional Memory browse module is ready. KW-02 to KW-05 remain blocked on net-new BFF routes or lifecycle contracts."
+  },
+  "module_counts": {
+    "total": 5,
+    "ready": 1,
+    "not_ready": 4
+  },
+  "modules": [
+    {
+      "module_id": "KW-01",
+      "label": "Institutional Memory",
+      "status": "ready",
+      "wave_order": 1,
+      "summary": "Browse/list/detail projection published. Identity, lifecycle state machine, filter rail, and degradation semantics are all locked via docs/bff/KW-01-institutional-memory.md.",
+      "missing_contracts": [],
+      "module_href": "/knowledge/memory",
+      "bff_contract": "docs/bff/KW-01-institutional-memory.md",
+      "example_payloads": [
+        "docs/examples/KW-01-institutional-memory-list.json",
+        "docs/examples/KW-01-institutional-memory.json"
+      ],
+      "next_gate": "KW-02 note ownership and attachment contract must be published before Research Notes UI can open.",
+      "upstream_dependencies": []
+    },
+    {
+      "module_id": "KW-02",
+      "label": "Research Notes",
+      "status": "not_ready",
+      "wave_order": 2,
+      "summary": "Note create/list/detail flows and the attachment taxonomy are still undefined at the BFF layer.",
+      "missing_contracts": [
+        "POST /api/v1/knowledge/notes",
+        "GET /api/v1/knowledge/notes",
+        "GET /api/v1/knowledge/notes/{note_id}",
+        "Research note ownership and attachment contract"
+      ],
+      "next_gate": "Publish note attachment and ownership truth after KW-01 identity settles.",
+      "upstream_dependencies": [
+        "KW-01"
+      ]
+    },
+    {
+      "module_id": "KW-03",
+      "label": "Evidence Refs",
+      "status": "not_ready",
+      "wave_order": 3,
+      "summary": "Evidence browse/detail projections and typed link resolution are not yet available as workbench routes.",
+      "missing_contracts": [
+        "GET /api/v1/knowledge/evidence",
+        "GET /api/v1/knowledge/evidence/{ref_id}",
+        "Evidence reference read model",
+        "Evidence link resolution contract"
+      ],
+      "next_gate": "Publish typed evidence-link truth after memory anchors and note source context are stable.",
+      "upstream_dependencies": [
+        "KW-01",
+        "KW-02"
+      ]
+    },
+    {
+      "module_id": "KW-04",
+      "label": "Insight Cards",
+      "status": "not_ready",
+      "wave_order": 4,
+      "summary": "Insight aggregation and filter semantics still live only in backlog language; no workbench packet exists yet.",
+      "missing_contracts": [
+        "Insight aggregation endpoint",
+        "Insight card detail endpoint",
+        "Card-surface read model",
+        "Filter taxonomy and aggregation contract"
+      ],
+      "next_gate": "Publish card identity and linked-source drilldown after memory and evidence routes are live.",
+      "upstream_dependencies": [
+        "KW-01",
+        "KW-03"
+      ]
+    },
+    {
+      "module_id": "KW-05",
+      "label": "Strategy Spec",
+      "status": "not_ready",
+      "wave_order": 5,
+      "summary": "Canonical StrategySpec objects exist, but there is still no browse/detail/version compare workbench projection.",
+      "missing_contracts": [
+        "Strategy-spec list route",
+        "Versioned strategy-spec detail route",
+        "Strategy-spec versioning and lifecycle contract",
+        "Strategy-spec diff or compare contract"
+      ],
+      "next_gate": "Publish versioned browse truth and diff semantics after lineage and evidence anchors are stable.",
+      "upstream_dependencies": [
+        "KW-01",
+        "KW-03"
+      ]
+    }
+  ],
+  "support_refs": [
+    {
+      "ref_id": "kw-01-bff-contract",
+      "label": "KW-01 Institutional Memory BFF Contract",
+      "ref_type": "document",
+      "value": "docs/bff/KW-01-institutional-memory.md",
+      "note": "Canonical list/detail routes, lifecycle state machine, filter rail, degradation semantics, and identity contract for the Institutional Memory browse module."
+    },
+    {
+      "ref_id": "memory-design-note",
+      "label": "Memory Layer Design Note",
+      "ref_type": "document",
+      "value": "services/memory/MEMORY_LAYER_DESIGN_NOTE.md",
+      "note": "Canonical Memory Plane split and retrieval-facade rules."
+    },
+    {
+      "ref_id": "institutional-memory-schema",
+      "label": "InstitutionalMemoryEntry schema",
+      "ref_type": "document",
+      "value": "services/memory/institutional_memory_entry.schema.json",
+      "note": "Canonical shared-memory object shape; not a workbench browse contract."
+    },
+    {
+      "ref_id": "strategy-spec-schema",
+      "label": "StrategySpec schema",
+      "ref_type": "document",
+      "value": "services/control-plane/specs/strategy_spec.schema.json",
+      "note": "Canonical StrategySpec object schema; version browsing and diff semantics are still missing."
+    },
+    {
+      "ref_id": "memory-retrieval-facade",
+      "label": "Memory retrieval facade",
+      "ref_type": "endpoint",
+      "value": "/memory/retrieve",
+      "note": "Session-facing retrieval API; not a substitute for workbench list/detail surfaces."
+    }
+  ],
+  "next_steps": [
+    "KW-01 Institutional Memory is ready — Lovable may open the browse/detail UI task against docs/bff/KW-01-institutional-memory.md.",
+    "KW-02 note ownership and attachment contract must be published before Research Notes UI work starts.",
+    "Keep the Knowledge Workbench payload-owned; do not synthesize registry joins from raw schemas in the browser.",
+    "Use this overview to track which module is next, not to imply that Insight Cards or Strategy Spec browse already exist."
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-19T18:00:00Z",
+    "surfaces": {
+      "overview": {
+        "status": "ok",
+        "source": "bff_static"
+      },
+      "packet_family": {
+        "status": "ok",
+        "source": "canonical"
+      }
+    }
+  }
+}
