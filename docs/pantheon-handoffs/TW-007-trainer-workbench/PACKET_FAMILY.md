@@ -5,7 +5,7 @@
 - Packet family ID: `TW-007`
 - Workbench: Trainer Workbench
 - Phase origin: `BP5-WB-007`
-- Lovable readiness: **not ready** — all four modules require net-new BFF routes and canonical session-mutation or compare contracts; Lovable handoff must not open until the BFF prerequisites listed below are satisfied
+- Lovable readiness: **partial** — `TW-01` Teaching Dialog contract is published via `TW-01-FOUNDATION-001`; `TW-02` to `TW-04` still require net-new BFF routes and canonical control, compare, and replay contracts
 - Recommended wave: Wave 3 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
 - Reviewer: Codex2
@@ -27,6 +27,7 @@ Before any Trainer Workbench module can be packetized, the following canonical a
 | `PERSONA_RUNTIME_MODEL.md` | L1 policy | Persona identity and session lifecycle; `session_type=trainer` must stay canonical; `SessionPersona.metadata.training.*` fields |
 | `Pantheon_API_Service_Contract_設計版.md` §5.x | L3 design docs | `POST /api/v1/trainer/sessions`, `GET /api/v1/trainer/sessions/:id`, `POST /api/v1/trainer/sessions/:id/message`, `POST /api/v1/trainer/sessions/:id/patch` — named as design intent only; not canonical BFF truth |
 | `Pantheon_資料表_Schema_設計版.md` | L3 design docs | `TrainingSession`, `TeachingEvent`, and control-state schema direction — not yet promoted to canonical BFF contract |
+| `TW-01 BFF Contract` | `docs/bff/TW-01-teaching-dialog.md` | Canonical trainer-session create/list/detail/message routes, read-side lifecycle semantics, dialog-grade `TeachingEvent` subset, and frontend handoff bundle |
 | Persona Management composed screen (`PKT-004`) and `PS-05` teaching-history surface | Persona Workbench packet family | Read-only teaching-session lists exist at `/api/v1/operator/persona-management/{persona_id}` and `/api/v1/personas/{persona_id}/teaching`; these are Persona drilldown evidence only — they do not constitute a Trainer-owned workflow |
 | Demo-grade Trainer shell | `front-ai-trading-system` | Preview and backtest-refresh scaffolding only; cannot be treated as authoritative until canonical packet families exist |
 
@@ -38,7 +39,7 @@ The existing teaching-history read surfaces are evidence inputs. They do **not**
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `TW-01` | Teaching Dialog | start session, show transcript, send coaching messages, display session status and actor context | not ready | Wave 3 — 1st |
+| `TW-01` | Teaching Dialog | start session, show transcript, send coaching messages, display session status and actor context | contract-published — pending BFF implementation | Wave 3 — 1st |
 | `TW-02` | Parameter Controls | inspect current control state, edit control patches, surface validation or warning feedback | not ready | Wave 3 — 2nd |
 | `TW-03` | Before/After Compare | preview metrics, warnings, control-state diff, and rapid-eval result summary | not ready | Wave 3 — 3rd |
 | `TW-04` | Teaching Replay | teaching-session history, ordered event replay, commit or discard evidence, and replay entrypoint | not ready | Wave 3 — 4th |
@@ -60,20 +61,20 @@ The existing teaching-history read surfaces are evidence inputs. They do **not**
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `POST /api/v1/trainer/sessions` | **missing** | create route; body: `persona_id`, `session_type=trainer`, `objective`, `context_refs[]`; must return `session_id`, `status: active`, `started_at` |
-| `GET /api/v1/trainer/sessions/:id` | **missing** | session detail and transcript read route; must return `session_id`, `persona_id`, `status`, `started_at`, `events[]` (ordered transcript), and `meta.surfaces.trainer_dialog` |
-| `GET /api/v1/trainer/sessions` | **missing** | session list route; must support `persona_id`, `status`, `page_token`, `page_size`; must include `meta.surfaces.trainer_dialog` |
-| `POST /api/v1/trainer/sessions/:id/message` | **missing** | coaching message submission; body: `message_body`; must be rejected when session `status != active`; BFF must echo the `TeachingEvent` back into the session transcript |
-| Trainer session lifecycle contract | **missing** | `active → paused → completed | abandoned` states; transition semantics (who may pause, complete, or abandon a session); `persona_id` binding constraints; must be promoted from L3 design intent to canonical BFF truth |
-| `TeachingEvent` schema (TW-01 subset) | **missing** | for the dialog surface: `event_id`, `session_id`, `actor` (`operator | persona`), `message_body`, `emitted_at`, `sequence_number`, optional `outcome_signal`; append-only ordering guarantee via `sequence_number` |
+| `POST /api/v1/trainer/sessions` | **contract published — pending BFF implementation** | create route spec published via `TW-01-FOUNDATION-001` in `docs/bff/TW-01-teaching-dialog.md`; BFF must implement the published `persona_id` / `session_type` / `objective` / `context_refs[]` body schema |
+| `GET /api/v1/trainer/sessions/:id` | **contract published — pending BFF implementation** | session detail and transcript field shape, actor context, ordered `events[]`, and `meta.surfaces.trainer_dialog` are published via `TW-01-FOUNDATION-001` |
+| `GET /api/v1/trainer/sessions` | **contract published — pending BFF implementation** | session list route, filters, pagination, summary fields, and `meta.surfaces.trainer_dialog` are published via `TW-01-FOUNDATION-001` |
+| `POST /api/v1/trainer/sessions/:id/message` | **contract published — pending BFF implementation** | coaching message route, `message_body` request shape, rejection when `status != active`, and backend-echoed `TeachingEvent` response are published via `TW-01-FOUNDATION-001` |
+| Trainer session lifecycle contract | **contract published — pending BFF implementation** | read-side lifecycle semantics (`active`, `paused`, `completed`, `abandoned`), immutable `persona_id`, and dialog write gating are published via `TW-01-FOUNDATION-001`; this slice does not yet publish dedicated pause, complete, or abandon write routes |
+| `TeachingEvent` schema (TW-01 subset) | **contract published — pending BFF implementation** | dialog transcript subset (`event_id`, `session_id`, `actor`, `message_body`, `emitted_at`, `sequence_number`, optional `outcome_signal`) and append-only ordering guarantee are published via `TW-01-FOUNDATION-001` |
 
 ### Packetization prerequisite
 
-The trainer-session lifecycle (`active → paused → completed | abandoned`), the `TeachingEvent` schema (at minimum the dialog event fields), and the transcript read contract must be promoted from L3 design intent to canonical BFF truth before a dialog shell can be packet-defined. Depends on persona identity (`PERSONA_RUNTIME_MODEL.md`) and `session_type=trainer` remaining canonical.
+The trainer-session lifecycle, dialog-grade `TeachingEvent` schema subset, example payload, and frontend handoff bundle are now published as canonical BFF truth via `TW-01-FOUNDATION-001`. `TW-01` remains the foundational entity for `TW-02` through `TW-04`, and the live BFF routes still need to honor that published field shape.
 
 ### Lovable readiness gate
 
-`false` — all six rows above must be resolved and field shapes locked before a screen spec or example payload can be created.
+`pending-bff` — the route specs, screen spec, example payload, and frontend handoff bundle already exist, but the four TW-01 routes still need live BFF implementation before UI work can begin.
 
 ---
 

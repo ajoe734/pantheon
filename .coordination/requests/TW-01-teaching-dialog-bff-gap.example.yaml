@@ -1,0 +1,21 @@
+feature_id: TW-01-teaching-dialog
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: teaching-dialog
+blocking: true
+
+summary: Teaching Dialog UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: events[]
+    reason: The transcript must render backend-supplied TeachingEvent rows and cannot be reconstructed from local message state
+  - field: allowedActions.canSendMessage
+    reason: Message composer visibility is backend authority and cannot be inferred from status alone
+  - field: meta.surfaces.trainer_dialog
+    reason: Dialog degradation handling cannot be rendered safely without the published surface state
+
+acceptance:
+  - Pantheon publishes a refreshed TW-01 contract-ready packet
+  - Lovable receives the next response packet through GitHub sync
