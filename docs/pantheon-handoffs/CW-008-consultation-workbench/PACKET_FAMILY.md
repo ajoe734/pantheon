@@ -5,7 +5,7 @@
 - Packet family ID: `CW-008`
 - Workbench: Consultation Workbench
 - Phase origin: `BP5-WB-008`
-- Lovable readiness: **partially opened** — `CW-01` is contract-published and pending BFF implementation; `CW-02` is contract-published and pending BFF implementation; `CW-03` and `CW-04` remain blocked on net-new BFF routes and canonical contracts
+- Lovable readiness: **partially opened** — `CW-01` is contract-published and pending BFF implementation; `CW-02` is contract-published and pending BFF implementation; `CW-03` remains blocked on BFF implementation; `CW-04` is contract-published and pending BFF implementation
 - Overview packet status: `PKT-consultation-workbench` remains the truthful landing surface; `CW-01-FOUNDATION-001` adds the first module-level contract bundle without claiming the routes are live
 - Recommended wave: Wave 4 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
@@ -41,7 +41,7 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 | `CW-01` | Consult Request | request composer, request detail, target selector, lifecycle state, request-to-session status | contract-published; pending-bff | Wave 4 — 1st |
 | `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | contract-published; pending-bff | Wave 4 — 2nd |
 | `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | not ready | Wave 4 — 3rd |
-| `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | not ready | Wave 4 — 4th |
+| `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | contract-published; pending-bff | Wave 4 — 4th |
 
 ---
 
@@ -101,7 +101,7 @@ The `ConsultRequest` lifecycle (`created → running → completed | canceled`),
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/consultations/:session_id/transcript` | **missing** | ordered event-stream read route; must return events sorted by `emitted_at`; must expose `meta.surfaces.transcript` with `ok | partial | degraded | unavailable` states; must include `last_event_at` for degraded-partial copy |
+| `GET /api/v1/consultations/:session_id/transcript` | **missing** | ordered event-stream read route; must return events sorted by `sequence_number`; must expose `meta.surfaces.transcript` with `ok | partial | degraded | unavailable` states; must include `last_event_at` for degraded-partial copy |
 | Append-only transcript schema | **missing** | the `TranscriptEvent` object must be canonically defined: `event_id`, `session_id`, `actor_id`, `actor_role`, `event_type`, `body`, `evidence_ref` (nullable), `emitted_at`, `sequence_number`; the schema must guarantee strict append-only ordering via `sequence_number` |
 | Actor labeling contract | **missing** | the BFF must resolve `actor_id` to a display label and role badge before serving the transcript; do not push this resolution to the client |
 | Evidence attachment inline behavior | **missing** | when `event_type = evidence_attachment`, the BFF must provide a pre-resolved `evidence_link` in the event payload pointing to the canonical evidence surface (not a raw ref that the client must resolve) |
@@ -179,9 +179,14 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 
 The `ConsultMemo` read model (published memo lifecycle, recommendation shape, and evidence-link contract), the red-team session-to-memo mapping, and the `allowedActions.canInitiateGovernanceReview` authority signal must all be defined as canonical BFF truth before a red-team memo screen can be packet-defined. Per-recommendation severity taxonomy is a future contract extension and is not a prerequisite for the current CW-04 packetization. Depends on `CW-01` request identity and `CW-02` transcript or session evidence semantics.
 
+### Published contract bundle
+
+- BFF contract: `docs/bff/CW-04-redteam-memo.md`
+- Example payload: `docs/examples/CW-04-redteam-memo.json`
+
 ### Lovable readiness gate
 
-`false` — the memo list and detail routes, `ConsultMemo` read model, session-to-memo mapping, and `allowedActions` signal must all be implemented and field shapes locked before a screen spec can be opened.
+`pending-bff` — the memo list and detail routes, `ConsultMemo` read model, session-to-memo mapping, and `allowedActions.canInitiateGovernanceReview` signal are now contract-defined. The remaining gate is Pantheon BFF implementation of the two published routes.
 
 ---
 
@@ -205,11 +210,11 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | Committee board projection | CW-03 | missing contract | `committee_ref` identity, quorum state, consensus state, and referral semantics must be promoted to BFF contract |
 | `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | CW-03 | missing write command | sponsor decision CTA; gated by `allowedActions.canRecordSponsorDecision` |
 | Synthesis summary shape | CW-03 | missing object contract | `outcome`, `rationale_ref`, `evidence_refs[]`, `dissent_refs[]`; client must not derive from participant signals |
-| `GET /api/v1/consult/memos` | CW-04 | missing read route | red-team memo list and filter surface |
-| `GET /api/v1/consult/memos/:memo_id` | CW-04 | missing read route | memo detail, recommendations, `allowedActions.canInitiateGovernanceReview` |
-| `ConsultMemo` read model | CW-04 | missing object contract | L3-anchored lifecycle: `draft → published` (per L3 schema §6.10); `archived` state is **not** in the current L3 design intent — if introduced it must be an explicit net-new contract decision, not assumed as promoted L3 truth; recommendation shape (plain list per L3 `recommendations_json`) and evidence-link contract must be promoted from L3 design intent to canonical BFF truth |
-| Red-team session-to-memo mapping | CW-04 | missing contract | explicit relationship between `red_team` session, originating `ConsultRequest`, and published `ConsultMemo` |
-| `allowedActions.canInitiateGovernanceReview` | CW-04 | missing authority signal | downstream review handoff CTA must be hidden unless this backend-shaped signal is present and truthy |
+| `GET /api/v1/consult/memos` | CW-04 | contract published — BFF implementation pending | red-team memo list and filter surface; route shape and query params defined in `docs/bff/CW-04-redteam-memo.md` |
+| `GET /api/v1/consult/memos/:memo_id` | CW-04 | contract published — BFF implementation pending | memo detail, recommendations, `allowedActions.canInitiateGovernanceReview`; field shapes locked in `docs/bff/CW-04-redteam-memo.md` |
+| `ConsultMemo` read model | CW-04 | contract published — BFF implementation pending | L3-anchored lifecycle `draft → published`, recommendation object, evidence-link contract, and `session_to_memo_mapping` shape locked in `docs/bff/CW-04-redteam-memo.md`; `archived` state and per-recommendation severity remain explicitly out of scope |
+| Red-team session-to-memo mapping | CW-04 | contract published — BFF implementation pending | `session_to_memo_mapping` object with `session_id`, `request_id`, `session_type`, `mapped_at` locked in `docs/bff/CW-04-redteam-memo.md` |
+| `allowedActions.canInitiateGovernanceReview` | CW-04 | contract published — BFF implementation pending | authority rules and falsy conditions locked in `docs/bff/CW-04-redteam-memo.md`; example payloads in `docs/examples/CW-04-redteam-memo.json` |
 
 ---
 
