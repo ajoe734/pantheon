@@ -1,0 +1,48 @@
+feature_id: RW-02-search
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: research-search
+status: published
+published_at: "2026-04-19T20:20:00Z"
+task: RW-02-SEARCH-001
+description: >-
+  RW-02 Search contract published as part of RW-02-SEARCH-001. The primary
+  route (GET /api/v1/research/search), SearchResult row shape, backend-owned
+  filter and pagination semantics, search-index adapter metadata, and frontend
+  handoff bundle are now defined. This packet publishes the contract and handoff
+  shape only. The Pantheon BFF search route and adapter implementation are still
+  pending, so the frontend implementation gate remains blocked until Pantheon
+  explicitly confirms the live endpoint returns the published field shape.
+artifacts:
+  bff_contract: docs/bff/RW-02-search.md
+  screen_spec: docs/screens/RW-02-search.md
+  example_payload: docs/examples/RW-02-search.json
+  lovable_ui_task: .coordination/responses/RW-02-search-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md
+endpoints:
+  - GET /api/v1/research/search
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+readiness_gate: >-
+  Frontend must stay on the blocked placeholder until Pantheon confirms the
+  search route is live, returns the published SearchResult field shape, and
+  exposes the search-index adapter metadata through meta.index_adapter.*. This
+  handoff is contract-published only and does not clear production UI work yet.
+front_actions_required:
+  - keep the route on a blocked placeholder until Pantheon confirms the search route and adapter are live
+  - fetch search results from GET /api/v1/research/search only
+  - send q, match_type, status, date_range, page_token, and page_size exactly as published
+  - render result rows from the published SearchResult object only
+  - preserve backend ordering and relevance_score; do not re-rank client-side
+  - navigate drilldowns through links.result_detail and links.linked_ticket_detail only
+  - render degradation and corpus-freshness copy from meta.surfaces.search_results and meta.index_adapter.*
+  - emit a bff-gap handoff if any required field is absent
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: false
+  search_index_adapter_live: false
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true

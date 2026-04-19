@@ -1,0 +1,21 @@
+feature_id: RW-02-search
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: research-search
+blocking: true
+
+summary: Research Search UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - endpoint: GET /api/v1/research/search
+    field: data[].links.result_detail
+    reason: Result drilldown must use the backend-provided detail target and cannot be synthesized client-side.
+  - endpoint: GET /api/v1/research/search
+    field: meta.index_adapter.adapter_state
+    reason: Corpus freshness and partial coverage must come from the backend-owned search adapter state.
+
+acceptance:
+  - Pantheon publishes a refreshed RW-02 contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

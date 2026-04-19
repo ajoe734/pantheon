@@ -1,0 +1,54 @@
+feature_id: RW-02-search
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: pending-bff
+pantheon_pr: null
+base_url: null
+workbench: research-workbench
+screen: research-search
+screen_id: screen-research-search
+ui_spec_path: docs/screens/RW-02-search.md
+frontend_change_spec_path: docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md
+readiness_note: >-
+  This task is pending BFF confirmation. Do not build the production screen
+  until Pantheon confirms GET /api/v1/research/search is live, returns the
+  published SearchResult field shape, and exposes meta.index_adapter.*. The
+  shell placeholder ("coming soon / blocked by Pantheon BFF") may be added now.
+allowed_endpoints:
+- GET /api/v1/research/search
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- do not build a client-side search corpus
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- keep the route on a blocked placeholder until Pantheon confirms the search route
+  and adapter are live
+- fetch search results from GET /api/v1/research/search only
+- send q, match_type, status, date_range, page_token, and page_size exactly as published
+- render result rows from the published SearchResult object only
+- preserve backend ordering and relevance_score; do not re-rank client-side
+- navigate drilldowns through links.result_detail and links.linked_ticket_detail only
+- render degradation and corpus-freshness copy from meta.surfaces.search_results and
+  meta.index_adapter.*
+- emit a bff-gap handoff if any required field is absent
+required_feedback:
+- docs/pantheon-feedback/RW-02-search/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/RW-02-search/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/RW-02-search/UI_DECISIONS.md
+- docs/pantheon-feedback/RW-02-search/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/RW-02-search-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/RW-02-search.md
+  ui_spec_path: docs/screens/RW-02-search.md
+  frontend_change_spec_path: docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/RW-02-search.json
+  handoff_bundle_dir: docs/pantheon-handoffs/RW-02-search
+gap_handoff_path: .coordination/requests/RW-02-search-bff-gap.yaml
+gap_handoff_template: .coordination/requests/RW-02-search-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/RW-02-search-ui-done.yaml
+completion_handoff_template: .coordination/requests/RW-02-search-ui-done.example.yaml

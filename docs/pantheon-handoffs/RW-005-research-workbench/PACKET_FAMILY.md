@@ -5,7 +5,7 @@
 - Packet family ID: `RW-005`
 - Workbench: Research Workbench
 - Phase origin: `BP5-WB-005`
-- Lovable readiness: **not ready** — all five modules lack canonical BFF routes; Lovable handoff must not open until BFF prerequisites below are satisfied
+- Lovable readiness: **partial** — RW-01 Research Ticket contract published via `RW-01-FOUNDATION-001`, RW-02 Search contract published via `RW-02-SEARCH-001`; remaining three modules still lack canonical BFF routes; Lovable handoff must not open for any module until its own BFF prerequisites are satisfied
 - Recommended wave: Wave 3 — after Operator Console (Wave 1–2) and Persona Workbench (Wave 1–2) packetization are settled
 - Reviewer: Codex
 
@@ -21,8 +21,8 @@ Give researchers one coherent workbench for creating and tracking research ticke
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `RW-01` | Research Ticket | ticket list, ticket detail, lifecycle state machine | not ready | Wave 3 — 1st |
-| `RW-02` | Search | query input, result list, filter rail, result drilldown | not ready | Wave 3 — 2nd |
+| `RW-01` | Research Ticket | ticket list, ticket detail, lifecycle state machine | contract-published — pending BFF implementation | Wave 3 — 1st |
+| `RW-02` | Search | query input, result list, filter rail, result drilldown | contract-published — pending BFF implementation | Wave 3 — 2nd |
 | `RW-03` | Analyze | analysis result view, metric aggregation, comparative summary | not ready | Wave 3 — 3rd |
 | `RW-04` | Experiment Launch | launch form, parameter inputs, async run status, run history | not ready | Wave 3 — 4th |
 | `RW-05` | Artifact Compare | artifact selector, version diff view, side-by-side compare | not ready | Wave 3 — 5th |
@@ -43,18 +43,18 @@ Give researchers one coherent workbench for creating and tracking research ticke
 
 | Route | Status | Notes |
 |---|---|---|
-| `POST /api/v1/research/tickets` | **missing** | create route; must define ticket body schema (title, description, priority, owner) |
-| `GET /api/v1/research/tickets` | **missing** | list route; must support `status`, `owner`, `page_token`, `page_size` query params |
-| `GET /api/v1/research/tickets/{ticket_id}` | **missing** | detail route; must expose `allowedActions` for edit, close, archive |
-| `PATCH /api/v1/research/tickets/{ticket_id}` | **missing** | lifecycle transition route; must accept `status` transition and reject invalid state hops |
+| `POST /api/v1/research/tickets` | **contract published — pending BFF implementation** | create route spec published via `RW-01-FOUNDATION-001` in `docs/bff/RW-01-research-ticket.md`; BFF must implement the published title / description / priority / owner body schema |
+| `GET /api/v1/research/tickets` | **contract published — pending BFF implementation** | list route field shape, pagination, and `meta.surfaces.ticket_list` published via `RW-01-FOUNDATION-001` |
+| `GET /api/v1/research/tickets/{ticket_id}` | **contract published — pending BFF implementation** | detail route, lifecycle history, linked refs, and `allowedActions` published via `RW-01-FOUNDATION-001` |
+| `PATCH /api/v1/research/tickets/{ticket_id}` | **contract published — pending BFF implementation** | lifecycle transition and editable field semantics published via `RW-01-FOUNDATION-001` |
 
 ### Packetization prerequisite
 
-The ticket lifecycle states (`open`, `in-progress`, `closed`, `archived`) and the `allowedActions` shape must be defined as canonical BFF truth before the list and detail screen specs can be opened. This is the foundational entity for Search, Analyze, and Experiment Launch.
+The ticket lifecycle states, `allowedActions` shape, example payload, and frontend handoff bundle are now published as canonical BFF truth via `RW-01-FOUNDATION-001`. This remains the foundational entity for Search, Analyze, and Experiment Launch, and the live BFF routes still need to honor that published field shape.
 
 ### Lovable readiness gate
 
-`false` — all four routes above must be implemented and the field shape locked before a screen spec or example payload can be created.
+`pending-bff` — the route specs, screen spec, example payload, and frontend handoff bundle already exist, but all four routes above still need live BFF implementation before UI work can begin.
 
 ---
 
@@ -72,16 +72,16 @@ The ticket lifecycle states (`open`, `in-progress`, `closed`, `archived`) and th
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/research/search` | **missing** | primary search route; must support `q`, `match_type`, `status`, `date_range`, `page_token`, `page_size`; response must include `result_id`, `match_type`, `title`, `excerpt`, `linked_ticket_id`, `relevance_score`, `meta.surfaces.search_results` |
-| Search index adapter | **missing** | BFF-side indexer or adapter that backs the search route; must maintain corpus currency without UI-side corpus construction |
+| `GET /api/v1/research/search` | **contract published — pending BFF implementation** | route spec published via `RW-02-SEARCH-001` in `docs/bff/RW-02-search.md`; must support `q`, `match_type`, `status`, `date_range`, `page_token`, `page_size`, return the published `SearchResult` row shape, and include `meta.surfaces.search_results` plus `meta.index_adapter.*` |
+| Search index adapter | **contract published — pending BFF implementation** | adapter semantics, corpus coverage metadata, and source watermark expectations are published via `RW-02-SEARCH-001`; BFF must implement backend-owned corpus indexing without UI-side corpus construction |
 
 ### Packetization prerequisite
 
-The query parameters, result shape, and filter semantics must be agreed as canonical BFF truth before Lovable can render a real search surface. Depends on the Research Ticket read model (`RW-01`) for corpus identity so that `linked_ticket_id` is resolvable.
+The query parameters, result shape, filter semantics, example payload, and frontend handoff bundle are now published as canonical BFF truth via `RW-02-SEARCH-001`. Search still depends on the Research Ticket read model (`RW-01`) for corpus identity so that `linked_ticket_id` is resolvable, and the live BFF route still needs to implement the published contract.
 
 ### Lovable readiness gate
 
-`false` — the search route and search index adapter must be implemented and the result field shape locked before a screen spec can be opened.
+`pending-bff` — the screen spec, example payload, and frontend handoff bundle already exist, but the search route and search index adapter still need live BFF implementation before UI work can begin.
 
 ---
 
@@ -179,12 +179,12 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 | Route | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `POST /api/v1/research/tickets` | RW-01 | missing write route | ticket creation form and lifecycle foundation |
-| `GET /api/v1/research/tickets` | RW-01, RW-02, RW-03, RW-04 | missing read route | ticket list surface and cross-module corpus identity |
-| `GET /api/v1/research/tickets/{ticket_id}` | RW-01 | missing read route | ticket detail and `allowedActions` gating |
-| `PATCH /api/v1/research/tickets/{ticket_id}` | RW-01 | missing write route | lifecycle transitions |
-| `GET /api/v1/research/search` | RW-02 | missing read route | entire Search module |
-| Search index adapter | RW-02 | missing infrastructure | BFF-side search corpus; blocks query execution |
+| `POST /api/v1/research/tickets` | RW-01 | contract published — BFF implementation pending | ticket creation form and lifecycle foundation |
+| `GET /api/v1/research/tickets` | RW-01, RW-02, RW-03, RW-04 | contract published — BFF implementation pending | ticket list surface and cross-module corpus identity |
+| `GET /api/v1/research/tickets/{ticket_id}` | RW-01 | contract published — BFF implementation pending | ticket detail and `allowedActions` gating |
+| `PATCH /api/v1/research/tickets/{ticket_id}` | RW-01 | contract published — BFF implementation pending | lifecycle transitions |
+| `GET /api/v1/research/search` | RW-02 | contract published — BFF implementation pending | entire Search module |
+| Search index adapter | RW-02 | contract published — BFF implementation pending | BFF-side search corpus; blocks query execution |
 | `GET /api/v1/research/analysis` | RW-03 | missing read route | analysis list and filter surface |
 | `GET /api/v1/research/analysis/{analysis_id}` | RW-03 | missing read route | analysis detail and metric aggregation |
 | Metric aggregation endpoint | RW-03 | missing computation layer | backend-owned metric grouping; blocks Analyze screen spec |

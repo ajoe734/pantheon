@@ -102,7 +102,7 @@ Pantheon
 | `Evolution` | post-incident, evolution decision, lineage, future mutation review | partial |
 | `Persona` | persona, sessions, teaching, capabilities, capital, bindings | ready |
 | `Research` | tickets, search, analysis, experiments, artifact compare | blocked |
-| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | overview-only + blocked modules |
+| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01 contract-ready; KW-02–05 blocked |
 | `Consultation` | request, transcript, committee board, red-team memo | overview-only + blocked modules |
 | `Trainer` | teaching dialog, controls, compare, replay | blocked |
 
@@ -276,10 +276,10 @@ Lovable 應先做以下 primitive，再做頁面：
 | Path | 頁面 | Workbench | 目前可做的程度 |
 |---|---|---|---|
 | `/evolution/inspiration/:artifact_id` | Inspiration Graph | Evolution | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route |
-| `/evolution/mutation/:decision_id` | Mutation Review | Evolution | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route and command vocabulary |
-| `/research/tickets` | Research Ticket List | Research | blocked shell only |
-| `/research/tickets/:ticket_id` | Research Ticket Detail | Research | blocked shell only |
-| `/research/search` | Search | Research | blocked shell only |
+| `/evolution/mutation-review/:decision_id` | Mutation Review | Evolution | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route and command vocabulary |
+| `/research/tickets` | Research Ticket List | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
+| `/research/tickets/:ticket_id` | Research Ticket Detail | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
+| `/research/search` | Search | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route and search index adapter |
 | `/research/analyze` | Analyze | Research | blocked shell only |
 | `/research/experiments` | Experiment Launch / Run History | Research | blocked shell only |
 | `/research/compare` | Artifact Compare | Research | blocked shell only |
@@ -456,7 +456,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | Evolution Center | `/evolution` | `PKT-003` | ready | board or list-detail |
 | Lineage View | `/evolution/lineage` | `PKT-003` | ready | graph + inspector |
 | Inspiration Graph | `/evolution/inspiration/:artifact_id` | `EW-04` | contract-published | placeholder until BFF route live |
-| Mutation Review | `/evolution/mutation/:decision_id` | `EW-05` | contract-published | placeholder until BFF route and command vocabulary live |
+| Mutation Review | `/evolution/mutation-review/:decision_id` | `EW-05` | contract-published | placeholder until BFF route and command vocabulary live |
 
 ### 9.3 頁面定義
 
@@ -567,9 +567,9 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Research Overview | `/research` | overview shell | blocked family overview | 可做 overview |
-| Research Ticket List | `/research/tickets` | `RW-01` | blocked | shell-only |
-| Research Ticket Detail | `/research/tickets/:ticket_id` | `RW-01` | blocked | shell-only |
-| Search | `/research/search` | `RW-02` | blocked | shell-only |
+| Research Ticket List | `/research/tickets` | `RW-01` | contract-published | pending-bff placeholder only |
+| Research Ticket Detail | `/research/tickets/:ticket_id` | `RW-01` | contract-published | pending-bff placeholder only |
+| Search | `/research/search` | `RW-02` | contract-published | pending-bff placeholder only |
 | Analyze | `/research/analyze` | `RW-03` | blocked | shell-only |
 | Experiment Launch / History | `/research/experiments` | `RW-04` | blocked | shell-only |
 | Artifact Compare | `/research/compare` | `RW-05` | blocked | shell-only |
@@ -587,13 +587,13 @@ Lovable 應先做以下 primitive，再做頁面：
 - 目標頁面：list、detail、create/edit、lifecycle transition
 - 期待 BFF：ticket list/detail/create/patch routes
 - 生產版呈現：list-detail + right detail panel
-- 在 route 未落地前：只能做 shell，不得發明 ticket data model
+- 契約已發佈，可先做明確 blocked placeholder；在 BFF routes 未落地前不得發明 ticket data model
 
 #### 11.3.3 RW-02 Search
 
 - 目標頁面：query bar、filter rail、result list、result drilldown
 - 期待 BFF：backend-owned search route 和 index adapter
-- 在 route 未落地前：不可做假 corpus、不可把別頁資料 client-side 搜尋
+- 契約已發佈，可先做明確 blocked placeholder；在 BFF route 與 search index adapter 未落地前，不可做假 corpus、不可把別頁資料 client-side 搜尋
 
 #### 11.3.4 RW-03 Analyze
 
@@ -626,8 +626,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Knowledge Overview | `/knowledge` | `PKT-knowledge-workbench` | overview-only | 可正式做 |
-| Institutional Memory List | `/knowledge/memory` | `KW-01` | blocked | shell-only |
-| Institutional Memory Detail | `/knowledge/memory/:entry_id` | `KW-01` | blocked | shell-only |
+| Institutional Memory List | `/knowledge/memory` | `KW-01` | contract-ready | 待 BFF 上線後可正式做 |
+| Institutional Memory Detail | `/knowledge/memory/:entry_id` | `KW-01` | contract-ready | 待 BFF 上線後可正式做 |
 | Research Notes List | `/knowledge/notes` | `KW-02` | blocked | shell-only |
 | Research Note Detail | `/knowledge/notes/:note_id` | `KW-02` | blocked | shell-only |
 | Evidence Refs List | `/knowledge/evidence` | `KW-03` | blocked | shell-only |
