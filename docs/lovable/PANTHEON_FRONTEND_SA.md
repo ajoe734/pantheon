@@ -104,7 +104,7 @@ Pantheon
 | `Research` | tickets, search, analysis, experiments, artifact compare | blocked |
 | `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01 contract-ready; KW-02–05 blocked |
 | `Consultation` | request, transcript, committee board, red-team memo | overview-only + blocked modules |
-| `Trainer` | teaching dialog, controls, compare, replay | blocked |
+| `Trainer` | teaching dialog, controls, compare, replay | TW-01 contract-published; TW-02–04 blocked |
 
 ---
 
@@ -280,7 +280,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/research/tickets` | Research Ticket List | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
 | `/research/tickets/:ticket_id` | Research Ticket Detail | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
 | `/research/search` | Search | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route and search index adapter |
-| `/research/analyze` | Analyze | Research | blocked shell only |
+| `/research/analyze` | Analyze | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
 | `/research/experiments` | Experiment Launch / Run History | Research | blocked shell only |
 | `/research/compare` | Artifact Compare | Research | blocked shell only |
 | `/knowledge/memory` | Institutional Memory | Knowledge | contract-ready |
@@ -302,8 +302,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/consultation/memos` | Red-team Memo List | Consultation | blocked shell only |
 | `/consultation/memos/:memo_id` | Red-team Memo Detail | Consultation | blocked shell only |
 | `/trainer` | Trainer Landing | Trainer | blocked shell only |
-| `/trainer/sessions` | Teaching Dialog / Session List | Trainer | blocked shell only |
-| `/trainer/sessions/:session_id` | Teaching Dialog Detail | Trainer | blocked shell only |
+| `/trainer/sessions` | Teaching Dialog / Session List | Trainer | pending-bff placeholder only |
+| `/trainer/sessions/:session_id` | Teaching Dialog Detail | Trainer | pending-bff placeholder only |
 | `/trainer/sessions/:session_id/controls` | Parameter Controls | Trainer | blocked shell only |
 | `/trainer/sessions/:session_id/compare` | Before/After Compare | Trainer | blocked shell only |
 | `/trainer/replay` | Teaching Replay List | Trainer | blocked shell only |
@@ -570,7 +570,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | Research Ticket List | `/research/tickets` | `RW-01` | contract-published | pending-bff placeholder only |
 | Research Ticket Detail | `/research/tickets/:ticket_id` | `RW-01` | contract-published | pending-bff placeholder only |
 | Search | `/research/search` | `RW-02` | contract-published | pending-bff placeholder only |
-| Analyze | `/research/analyze` | `RW-03` | blocked | shell-only |
+| Analyze | `/research/analyze` | `RW-03` | contract-published | pending-bff placeholder only |
 | Experiment Launch / History | `/research/experiments` | `RW-04` | blocked | shell-only |
 | Artifact Compare | `/research/compare` | `RW-05` | blocked | shell-only |
 
@@ -599,7 +599,9 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：analysis result view、metric groups、comparative summary
 - 期待 BFF：analysis list/detail、backend-owned metric aggregation contract
-- 在 route 未落地前：不可從 raw result 自己 grouping
+- 契約狀態：BFF routes (`GET /api/v1/research/analysis`, `GET /api/v1/research/analysis/{analysis_id}`) 與 metric aggregation / comparative summary payload 已透過 `RW-03-ANALYZE-001` 發布。
+- 現在可做：明確 pending-bff placeholder；等待 live BFF route 對齊 published contract。
+- 不可做：從 raw result 自己 grouping，或在前端自行比對多個 analysis payload 生成 compare summary。
 
 #### 11.3.5 RW-04 Experiment Launch
 
@@ -744,8 +746,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Trainer Landing | `/trainer` | workbench shell | blocked | shell-only |
-| Teaching Dialog / Session List | `/trainer/sessions` | `TW-01` | blocked | shell-only |
-| Teaching Dialog Detail | `/trainer/sessions/:session_id` | `TW-01` | blocked | shell-only |
+| Teaching Dialog / Session List | `/trainer/sessions` | `TW-01` | contract-published | pending-bff placeholder only |
+| Teaching Dialog Detail | `/trainer/sessions/:session_id` | `TW-01` | contract-published | pending-bff placeholder only |
 | Parameter Controls | `/trainer/sessions/:session_id/controls` | `TW-02` | blocked | shell-only |
 | Before/After Compare | `/trainer/sessions/:session_id/compare` | `TW-03` | blocked | shell-only |
 | Teaching Replay List | `/trainer/replay` | `TW-04` | blocked | shell-only |
@@ -765,8 +767,10 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 14.3.2 TW-01 Teaching Dialog
 
 - 目標頁面：session start、transcript panel、message composer、session list
-- 期待 BFF：session create/list/detail/message routes + trainer session lifecycle + `TeachingEvent` schema subset
-- shell 階段：不可用本地 message state 拼 transcript
+- 已發布 contract：`docs/bff/TW-01-teaching-dialog.md`、`docs/screens/TW-01-teaching-dialog.md`、`docs/examples/TW-01-teaching-dialog.json`
+- 前端 handoff：`docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md`
+- 目前 gate：BFF 必須先讓 create/list/detail/message routes 上線並回傳已發布 trainer-session 與 `TeachingEvent` field shape
+- pending-BFF 階段：可做明確 blocked placeholder；不可用本地 message state 拼 transcript，也不可把 Persona teaching history 當 Trainer workflow 替代品
 
 #### 14.3.3 TW-02 Parameter Controls
 

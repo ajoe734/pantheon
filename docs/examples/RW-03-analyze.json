@@ -1,0 +1,217 @@
+{
+  "_note": "Contract-published example payloads for RW-03 Analyze. Use as the implementation target for the BFF and frontend integration. Do not use as mock production state.",
+  "_packet_status": "contract-published",
+  "_task": "RW-03-ANALYZE-001",
+  "analysis_list_request": {
+    "ticket_id": "rt-20260419-007",
+    "experiment_id": null,
+    "status": "completed",
+    "date_range": "30d",
+    "page_token": null,
+    "page_size": 20
+  },
+  "analysis_list_response": {
+    "data": [
+      {
+        "analysis_id": "analysis-20260419-007-a",
+        "ticket_id": "rt-20260419-007",
+        "experiment_id": "exp-20260419-012",
+        "status": "completed",
+        "run_at": "2026-04-19T20:40:00Z",
+        "summary": {
+          "headline": "Volatility-cluster replay confirms faster momentum decay after the regime break.",
+          "verdict": "candidate_update"
+        },
+        "metric_group_refs": [
+          "performance",
+          "drawdown",
+          "signal_quality"
+        ],
+        "links": {
+          "self": "/api/v1/research/analysis/analysis-20260419-007-a",
+          "workbench_detail": "/research/analyze/analysis-20260419-007-a",
+          "linked_ticket_detail": "/research/tickets/rt-20260419-007"
+        }
+      },
+      {
+        "analysis_id": "analysis-20260418-004-b",
+        "ticket_id": "rt-20260419-007",
+        "experiment_id": "exp-20260418-009",
+        "status": "completed",
+        "run_at": "2026-04-18T16:15:00Z",
+        "summary": {
+          "headline": "Earlier replay showed decay pressure but with weaker drawdown improvement.",
+          "verdict": "observe"
+        },
+        "metric_group_refs": [
+          "performance",
+          "drawdown",
+          "signal_quality"
+        ],
+        "links": {
+          "self": "/api/v1/research/analysis/analysis-20260418-004-b",
+          "workbench_detail": "/research/analyze/analysis-20260418-004-b",
+          "linked_ticket_detail": "/research/tickets/rt-20260419-007"
+        }
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "total": 2
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:45:00Z",
+      "surfaces": {
+        "analysis_results": "fresh"
+      }
+    }
+  },
+  "analysis_detail_response": {
+    "analysis_id": "analysis-20260419-007-a",
+    "ticket_id": "rt-20260419-007",
+    "experiment_id": "exp-20260419-012",
+    "status": "completed",
+    "run_at": "2026-04-19T20:40:00Z",
+    "completed_at": "2026-04-19T20:43:00Z",
+    "summary": {
+      "headline": "Volatility-cluster replay confirms faster momentum decay after the regime break.",
+      "narrative": "The shorter half-life configuration recovered more quickly after the March volatility cluster while preserving enough signal selectivity to remain actionable.",
+      "verdict": "candidate_update",
+      "next_question": "Validate whether the shorter decay setting remains stable outside stress weeks before promoting it into launch defaults."
+    },
+    "metric_groups": [
+      {
+        "group_key": "performance",
+        "label": "Performance",
+        "description": "Return and efficiency metrics for the replay window.",
+        "metrics": [
+          {
+            "metric_key": "annualized_return",
+            "label": "Annualized return",
+            "value": 0.182,
+            "unit": "ratio",
+            "display_value": "18.2%",
+            "direction": "higher_is_better",
+            "baseline_value": 0.161,
+            "delta_value": 0.021,
+            "delta_display": "+2.1 pts"
+          },
+          {
+            "metric_key": "information_ratio",
+            "label": "Information ratio",
+            "value": 1.34,
+            "unit": "score",
+            "display_value": "1.34",
+            "direction": "higher_is_better",
+            "baseline_value": 1.19,
+            "delta_value": 0.15,
+            "delta_display": "+0.15"
+          }
+        ]
+      },
+      {
+        "group_key": "drawdown",
+        "label": "Drawdown",
+        "description": "Depth and recovery behavior during stressed windows.",
+        "metrics": [
+          {
+            "metric_key": "max_drawdown",
+            "label": "Max drawdown",
+            "value": 0.072,
+            "unit": "ratio",
+            "display_value": "7.2%",
+            "direction": "lower_is_better",
+            "baseline_value": 0.086,
+            "delta_value": -0.014,
+            "delta_display": "-1.4 pts"
+          },
+          {
+            "metric_key": "recovery_days",
+            "label": "Recovery days",
+            "value": 9,
+            "unit": "days",
+            "display_value": "9 days",
+            "direction": "lower_is_better",
+            "baseline_value": 12,
+            "delta_value": -3,
+            "delta_display": "-3 days"
+          }
+        ]
+      },
+      {
+        "group_key": "signal_quality",
+        "label": "Signal quality",
+        "description": "Stability and usefulness of the signal under the analyzed regime.",
+        "metrics": [
+          {
+            "metric_key": "signal_half_life_days",
+            "label": "Signal half-life",
+            "value": 3.8,
+            "unit": "days",
+            "display_value": "3.8 days",
+            "direction": "contextual",
+            "baseline_value": 5.2,
+            "delta_value": -1.4,
+            "delta_display": "-1.4 days"
+          },
+          {
+            "metric_key": "hit_rate",
+            "label": "Hit rate",
+            "value": 0.57,
+            "unit": "ratio",
+            "display_value": "57.0%",
+            "direction": "higher_is_better",
+            "baseline_value": 0.54,
+            "delta_value": 0.03,
+            "delta_display": "+3.0 pts"
+          }
+        ]
+      }
+    ],
+    "comparative_summary": {
+      "basis": "Most recent completed runs for the same ticket over the last 30 days.",
+      "baseline_analysis_id": "analysis-20260418-004-b",
+      "focus_metrics": [
+        "annualized_return",
+        "max_drawdown",
+        "signal_half_life_days"
+      ],
+      "comparisons": [
+        {
+          "analysis_id": "analysis-20260418-004-b",
+          "label": "Previous completed replay",
+          "status": "completed",
+          "run_at": "2026-04-18T16:15:00Z",
+          "delta_highlights": [
+            {
+              "metric_key": "annualized_return",
+              "change_label": "Higher return",
+              "direction": "improved",
+              "delta_display": "+2.1 pts",
+              "interpretation": "Return improved while holding risk lower than the previous replay."
+            },
+            {
+              "metric_key": "max_drawdown",
+              "change_label": "Lower drawdown",
+              "direction": "improved",
+              "delta_display": "-1.4 pts",
+              "interpretation": "The updated decay setting reduced the worst loss depth in the stress window."
+            }
+          ]
+        }
+      ]
+    },
+    "links": {
+      "self": "/api/v1/research/analysis/analysis-20260419-007-a",
+      "workbench_detail": "/research/analyze/analysis-20260419-007-a",
+      "linked_ticket_detail": "/research/tickets/rt-20260419-007",
+      "linked_experiment_detail": "/research/experiments/exp-20260419-012"
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:45:00Z",
+      "surfaces": {
+        "analysis_results": "fresh"
+      }
+    }
+  }
+}

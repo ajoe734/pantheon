@@ -23,7 +23,7 @@ Give researchers one coherent workbench for creating and tracking research ticke
 |---|---|---|---|---|
 | `RW-01` | Research Ticket | ticket list, ticket detail, lifecycle state machine | contract-published — pending BFF implementation | Wave 3 — 1st |
 | `RW-02` | Search | query input, result list, filter rail, result drilldown | contract-published — pending BFF implementation | Wave 3 — 2nd |
-| `RW-03` | Analyze | analysis result view, metric aggregation, comparative summary | not ready | Wave 3 — 3rd |
+| `RW-03` | Analyze | analysis result view, metric aggregation, comparative summary | contract-published — pending BFF implementation | Wave 3 — 3rd |
 | `RW-04` | Experiment Launch | launch form, parameter inputs, async run status, run history | not ready | Wave 3 — 4th |
 | `RW-05` | Artifact Compare | artifact selector, version diff view, side-by-side compare | not ready | Wave 3 — 5th |
 
@@ -99,17 +99,17 @@ The query parameters, result shape, filter semantics, example payload, and front
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/research/analysis` | **missing** | list route; must support `ticket_id`, `experiment_id`, `status`, `date_range`, `page_token`, `page_size` |
-| `GET /api/v1/research/analysis/{analysis_id}` | **missing** | detail route; must expose metric groups, summary, and `meta.surfaces.analysis_results` |
-| Analysis result / metric aggregation endpoint | **missing** | backend must own metric grouping logic; the analysis result payload must be pre-aggregated, not a raw data dump for client-side grouping |
+| `GET /api/v1/research/analysis` | **contract published — pending BFF implementation** | route spec published via `RW-03-ANALYZE-001` in `docs/bff/RW-03-analyze.md`; must support `ticket_id`, `experiment_id`, `status`, `date_range`, `page_token`, `page_size`, and return the published analysis summary projection |
+| `GET /api/v1/research/analysis/{analysis_id}` | **contract published — pending BFF implementation** | detail route, grouped metric panels, comparative summary, and `meta.surfaces.analysis_results` published via `RW-03-ANALYZE-001` |
+| Analysis result / metric aggregation endpoint | **contract published — pending BFF implementation** | backend owns metric grouping and comparison deltas; the analysis payload must stay pre-aggregated and must not regress into a raw metric dump |
 
 ### Packetization prerequisite
 
-The research result payload contract (metric keys, aggregation shape, and `meta.surfaces` staleness fields) must be agreed as canonical BFF truth before an analysis view can be packet-defined. Depends on the Research Ticket read model (`RW-01`) for ticket-scoped queries.
+The research result payload contract (metric keys, aggregation shape, comparison payload, and `meta.surfaces` staleness fields) is now published as canonical BFF truth via `RW-03-ANALYZE-001`. Analyze still depends on the Research Ticket read model (`RW-01`) for ticket-scoped queries, and the live BFF routes still need to honor the published field shape.
 
 ### Lovable readiness gate
 
-`false` — the analysis routes and metric aggregation payload must be implemented and the field shape locked before a screen spec can be opened.
+`pending-bff` — the route spec and example payload now exist, but the live BFF routes and aggregation layer still need implementation before UI work can begin.
 
 ---
 
@@ -185,9 +185,9 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `PATCH /api/v1/research/tickets/{ticket_id}` | RW-01 | contract published — BFF implementation pending | lifecycle transitions |
 | `GET /api/v1/research/search` | RW-02 | contract published — BFF implementation pending | entire Search module |
 | Search index adapter | RW-02 | contract published — BFF implementation pending | BFF-side search corpus; blocks query execution |
-| `GET /api/v1/research/analysis` | RW-03 | missing read route | analysis list and filter surface |
-| `GET /api/v1/research/analysis/{analysis_id}` | RW-03 | missing read route | analysis detail and metric aggregation |
-| Metric aggregation endpoint | RW-03 | missing computation layer | backend-owned metric grouping; blocks Analyze screen spec |
+| `GET /api/v1/research/analysis` | RW-03 | contract published — BFF implementation pending | analysis list and filter surface |
+| `GET /api/v1/research/analysis/{analysis_id}` | RW-03 | contract published — BFF implementation pending | analysis detail and metric aggregation |
+| Metric aggregation endpoint | RW-03 | contract published — BFF implementation pending | backend-owned metric grouping; blocks Analyze screen spec until live |
 | `POST /api/v1/experiments/launch` | RW-04 | missing write route | experiment creation and async run entry |
 | `GET /api/v1/experiments/{experiment_id}` | RW-04, RW-05 | missing read route | run status, `allowedActions.canCancel`, and artifact lineage |
 | `GET /api/v1/experiments` | RW-04 | missing read route | run history list |
