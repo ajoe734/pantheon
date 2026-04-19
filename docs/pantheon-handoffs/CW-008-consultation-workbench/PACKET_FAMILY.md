@@ -5,7 +5,8 @@
 - Packet family ID: `CW-008`
 - Workbench: Consultation Workbench
 - Phase origin: `BP5-WB-008`
-- Lovable readiness: **not ready** — all four modules require net-new BFF routes and canonical write-path contracts; Lovable handoff must not open until BFF prerequisites below are satisfied
+- Lovable readiness: **partially opened** — `CW-01` is contract-published and pending BFF implementation; `CW-02` is contract-published and pending BFF implementation; `CW-03` and `CW-04` remain blocked on net-new BFF routes and canonical contracts
+- Overview packet status: `PKT-consultation-workbench` remains the truthful landing surface; `CW-01-FOUNDATION-001` adds the first module-level contract bundle without claiming the routes are live
 - Recommended wave: Wave 4 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
 - Reviewer: Codex
@@ -37,8 +38,8 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `CW-01` | Consult Request | request composer, request detail, target selector, lifecycle state, request-to-session status | not ready | Wave 4 — 1st |
-| `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | not ready | Wave 4 — 2nd |
+| `CW-01` | Consult Request | request composer, request detail, target selector, lifecycle state, request-to-session status | contract-published; pending-bff | Wave 4 — 1st |
+| `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | contract-published; pending-bff | Wave 4 — 2nd |
 | `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | not ready | Wave 4 — 3rd |
 | `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | not ready | Wave 4 — 4th |
 
@@ -70,9 +71,18 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 
 The `ConsultRequest` lifecycle (`created → running → completed | canceled`), the target taxonomy (`persona`, `committee`, `red_team`), and the request-to-session handoff contract must be promoted beyond L3 design intent to canonical BFF truth before a request-composer or request-detail screen can be packet-defined. `ConsultPolicy` and persona session creation (from `PERSONA_RUNTIME_MODEL.md` §6 and §14) remain canonical prerequisites.
 
+### Published contract bundle
+
+- BFF contract: `docs/bff/CW-01-consult-request.md`
+- Screen spec: `docs/screens/CW-01-consult-request.md`
+- Example payload: `docs/examples/CW-01-consult-request.json`
+- Frontend change spec: `docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md`
+- Contract-ready response: `.coordination/responses/CW-01-consult-request-contract-ready.yaml`
+- Lovable UI task: `.coordination/responses/CW-01-consult-request-lovable-ui-task.yaml`
+
 ### Lovable readiness gate
 
-`false` — all five rows above must be resolved and field shapes locked before a screen spec or example payload can be created.
+`pending-bff` — the request lifecycle, request-to-session handoff semantics, screen spec, example payload, and frontend handoff bundle now exist. The remaining gate is Pantheon BFF implementation of the four published routes.
 
 ---
 
@@ -100,9 +110,14 @@ The `ConsultRequest` lifecycle (`created → running → completed | canceled`),
 
 The append-only `TranscriptEvent` schema, actor labeling contract, event ordering guarantee (`sequence_number`), and the degraded partial-transcript semantics must all be defined as canonical BFF truth before a transcript screen can be packet-defined. Depends on stable `ConsultRequest` and `SessionPersona` identity from `CW-01`.
 
+### Published contract bundle
+
+- BFF contract: `docs/bff/CW-02-debate-transcript.md`
+- Example payload: `docs/examples/CW-02-debate-transcript.json`
+
 ### Lovable readiness gate
 
-`false` — the transcript route, `TranscriptEvent` schema, actor labeling contract, and inline evidence behavior must all be implemented and field shapes locked before a screen spec can be opened.
+`pending-bff` — the transcript route, `TranscriptEvent` schema, actor labeling contract, and inline evidence behavior are now contract-defined. The remaining gate is Pantheon BFF implementation of the published route.
 
 ---
 
@@ -176,15 +191,15 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `POST /api/v1/consult/requests` | CW-01 | missing write route | request creation form and lifecycle foundation; body fields anchored to L3: `from_persona_id`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`; `consultation_type` is a net-new BFF contract extension |
-| `GET /api/v1/consult/requests` | CW-01, CW-02, CW-03, CW-04 | missing read route | request list and cross-module request identity |
-| `GET /api/v1/consult/requests/:request_id` | CW-01 | missing read route | request detail, `linked_session_id`, and `allowedActions.canCancel` |
-| `POST /api/v1/consult/requests/:request_id/cancel` | CW-01 | missing write route | cancel command; gated by `allowedActions.canCancel` |
-| `ConsultRequest` lifecycle contract | CW-01 | missing lifecycle contract | `created → running → completed | canceled` states; request-to-session handoff semantics; `linked_session_id` field definition |
-| `GET /api/v1/consultations/:session_id/transcript` | CW-02 | missing read route | entire Debate Transcript module |
-| `TranscriptEvent` schema | CW-02 | missing object contract | `event_id`, `sequence_number`, actor resolution, `event_type`, `evidence_ref`; blocks event ordering and replay |
-| Actor labeling contract | CW-02 | missing BFF-side resolution | actor display labels and role badges; client must not resolve actor identity from raw participant refs |
-| Evidence attachment inline behavior | CW-02 | missing BFF-side resolution | pre-resolved `evidence_link` in event payload; blocks inline evidence affordances |
+| `POST /api/v1/consult/requests` | CW-01 | contract published — BFF implementation pending | request creation form and lifecycle foundation; body and initial response shape defined in `docs/bff/CW-01-consult-request.md` |
+| `GET /api/v1/consult/requests` | CW-01, CW-02, CW-03, CW-04 | contract published for request identity — BFF implementation pending | request list and cross-module request identity |
+| `GET /api/v1/consult/requests/:request_id` | CW-01 | contract published — BFF implementation pending | request detail, `linked_session_id`, `request_to_session_status`, and `allowedActions.canCancel` |
+| `POST /api/v1/consult/requests/:request_id/cancel` | CW-01 | contract published — BFF implementation pending | cancel command; gated by `allowedActions.canCancel` |
+| `ConsultRequest` lifecycle contract | CW-01 | published lifecycle contract — runtime wiring pending | `created → running → completed | canceled` states; request-to-session handoff semantics; `linked_session_id` and `session_handoff` field definition |
+| `GET /api/v1/consultations/:session_id/transcript` | CW-02 | contract published — BFF implementation pending | entire Debate Transcript module; route shape defined in `docs/bff/CW-02-debate-transcript.md` |
+| `TranscriptEvent` schema | CW-02 | contract published — BFF implementation pending | `event_id`, `sequence_number`, actor resolution, `event_type`, `evidence_ref`; schema locked in `docs/bff/CW-02-debate-transcript.md` |
+| Actor labeling contract | CW-02 | contract published — BFF implementation pending | actor display labels and role badges; labeling rules locked in `docs/bff/CW-02-debate-transcript.md` |
+| Evidence attachment inline behavior | CW-02 | contract published — BFF implementation pending | pre-resolved `evidence_link` in event payload; resolution contract locked in `docs/bff/CW-02-debate-transcript.md` |
 | `GET /api/v1/committees` | CW-03 | missing read route | committee board list and filter surface |
 | `GET /api/v1/committees/:committee_id` | CW-03 | missing read route | committee board detail, participant roster, escalation reason, `allowedActions.canRecordSponsorDecision` |
 | Committee board projection | CW-03 | missing contract | `committee_ref` identity, quorum state, consensus state, and referral semantics must be promoted to BFF contract |
