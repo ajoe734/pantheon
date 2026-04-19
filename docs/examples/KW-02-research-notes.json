@@ -1,0 +1,144 @@
+{
+  "_comment": "KW-02 Research Notes — example payloads for list and detail surfaces",
+
+  "list_response": {
+    "notes": [
+      {
+        "note_id": "note-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "title": "Momentum regime — observed slippage above 2σ",
+        "excerpt": "During the April 14–16 high-volatility window, strategy MOM-v3 showed consistent bid-ask slippage above the 2σ threshold on ES futures. The effect was most pronounced in the 09:30–10:00 window.",
+        "owner_ref": {
+          "owner_type": "operator",
+          "owner_id": "op-001",
+          "display_name": "Alice Chen"
+        },
+        "attachment": {
+          "type": "research_ticket",
+          "ref": "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+          "display_label": "RW-Ticket: MOM-v3 slippage investigation (Apr 14)"
+        },
+        "tags": ["slippage", "momentum", "high-volatility"],
+        "created_at": "2026-04-16T14:22:00Z",
+        "updated_at": "2026-04-17T09:05:00Z",
+        "route_href": "/knowledge/notes/note-a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      },
+      {
+        "note_id": "note-b2c3d4e5-f6a7-8901-bcde-f01234567891",
+        "title": null,
+        "excerpt": "Free-standing note: tracking cross-persona alignment on risk tolerance thresholds following the 2026-04-10 governance review.",
+        "owner_ref": {
+          "owner_type": "persona",
+          "owner_id": "persona-HAWK-001",
+          "display_name": "HAWK (Persona)"
+        },
+        "attachment": {
+          "type": "free_standing",
+          "ref": null,
+          "display_label": null
+        },
+        "tags": ["governance", "risk-tolerance", "cross-persona"],
+        "created_at": "2026-04-11T08:00:00Z",
+        "updated_at": "2026-04-11T08:00:00Z",
+        "route_href": "/knowledge/notes/note-b2c3d4e5-f6a7-8901-bcde-f01234567891"
+      }
+    ],
+    "pagination": {
+      "page_size": 20,
+      "next_page_token": null,
+      "has_more": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T10:00:00Z",
+      "surfaces": {
+        "research_note_list": "ok"
+      }
+    }
+  },
+
+  "detail_response": {
+    "note_id": "note-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "title": "Momentum regime — observed slippage above 2σ",
+    "body": "## Observation\n\nDuring the April 14–16 high-volatility window, strategy **MOM-v3** showed consistent bid-ask slippage above the 2σ threshold on ES futures.\n\nThe effect was most pronounced in the 09:30–10:00 window. Slippage peaked at 3.1σ on April 15 at 09:47 ET.\n\n## Hypothesis\n\nThe fill-delay budget in the execution profile may be underestimating intraday opening-auction latency. Recommend adjusting `fill_delay_budget_ms` from 120ms to 160ms for the opening 30-minute window and re-running the backtest.\n\n## Next Steps\n\n- Link to slippage analysis artifact once RW experiment is complete.\n- Cross-reference against the momentum regime pattern in institutional memory.",
+    "owner_ref": {
+      "owner_type": "operator",
+      "owner_id": "op-001",
+      "display_name": "Alice Chen"
+    },
+    "attachment": {
+      "type": "research_ticket",
+      "ref": "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+      "display_label": "RW-Ticket: MOM-v3 slippage investigation (Apr 14)",
+      "route_href": "/research/tickets/tkt-7a8b9c0d-1234-5678-abcd-ef0123456789"
+    },
+    "tags": ["slippage", "momentum", "high-volatility"],
+    "linked_evidence_refs": [
+      {
+        "ref_id": "evref-c3d4e5f6-a7b8-9012-cdef-012345678901",
+        "resolution_state": "resolved",
+        "display_label": "ES Futures Slippage Distribution — Apr 14–16 Backtrace",
+        "route_href": "/knowledge/evidence/evref-c3d4e5f6-a7b8-9012-cdef-012345678901"
+      },
+      {
+        "ref_id": "evref-d4e5f6a7-b8c9-0123-defa-123456789012",
+        "resolution_state": "unresolved",
+        "display_label": null,
+        "route_href": null
+      }
+    ],
+    "linked_memory_anchors": [
+      {
+        "entry_id": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+        "headline": "High-volatility momentum slippage — pattern observed Q1 2026",
+        "knowledge_type": "regime_pattern",
+        "lifecycle_status": "active",
+        "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123"
+      }
+    ],
+    "created_at": "2026-04-16T14:22:00Z",
+    "updated_at": "2026-04-17T09:05:00Z",
+    "meta": {
+      "snapshot_at": "2026-04-19T10:00:00Z",
+      "surfaces": {
+        "research_note_detail": "ok",
+        "evidence_links": "ok",
+        "memory_anchors": "ok"
+      }
+    }
+  },
+
+  "create_request_body": {
+    "title": "Momentum regime — observed slippage above 2σ",
+    "body": "## Observation\n\nDuring the April 14–16 high-volatility window...",
+    "attachment_type": "research_ticket",
+    "attachment_ref": "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+    "tags": ["slippage", "momentum", "high-volatility"],
+    "linked_evidence_refs": [
+      "evref-c3d4e5f6-a7b8-9012-cdef-012345678901",
+      "evref-d4e5f6a7-b8c9-0123-defa-123456789012"
+    ],
+    "linked_memory_anchors": [
+      "mem-e5f6a7b8-c9d0-1234-efab-234567890123"
+    ]
+  },
+
+  "create_success_response": {
+    "note_id": "note-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "created_at": "2026-04-16T14:22:00Z",
+    "route_href": "/knowledge/notes/note-a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+  },
+
+  "degraded_list_response": {
+    "notes": [],
+    "pagination": {
+      "page_size": 20,
+      "next_page_token": null,
+      "has_more": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T09:45:00Z",
+      "surfaces": {
+        "research_note_list": "degraded"
+      }
+    }
+  }
+}

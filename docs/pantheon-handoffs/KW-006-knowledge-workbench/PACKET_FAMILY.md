@@ -5,7 +5,8 @@
 - Packet family ID: `KW-006`
 - Workbench: Knowledge Workbench
 - Phase origin: `BP5-WB-006`
-- Lovable readiness: **not ready** — Institutional Memory has a design note and schema, and Strategy Spec has a canonical object schema, but none of the five modules yet has a canonical BFF route or a workbench-ready packet contract
+- Lovable readiness: **partial** — KW-01 and KW-02 are ready; KW-03 to KW-05 are not ready pending their own contract landing and upstream dependencies
+- Overview packet status: `PKT-knowledge-workbench` is published as a truthful overview surface; `KW-01` now provides the first truthful browse module anchoring the family
 - Recommended wave: Wave 3 — after Operator Console (Waves 1-2) and Persona Workbench (Waves 1-2) packetization are settled
 - Owner: Claude
 - Reviewer: Codex2
@@ -26,6 +27,7 @@ Before any Knowledge Workbench module can be packetized, the following artifacts
 |---|---|---|
 | `Pantheon Memory Layer Design Note` | `services/memory/MEMORY_LAYER_DESIGN_NOTE.md` | Canonical Memory Plane object split (`PersonaMemory`, `InstitutionalMemoryEntry`), write authority, retrieval facade (`GET /memory/retrieve`), and the rule that institutional knowledge is written by owning services rather than sessions |
 | `InstitutionalMemoryEntry` schema | `services/memory/institutional_memory_entry.schema.json` | Canonical shared-memory object fields such as `entry_id`, `knowledge_type`, `content.headline`, `content.body`, `scope`, `scope_filter`, `source_event_type`, `source_event_id`, and `reuse_count` |
+| `KW-01 BFF Contract` | `docs/bff/KW-01-institutional-memory.md` | Canonical BFF routes for list and detail browse, paginated read models, and lifecycle/identity resolution |
 | `StrategySpec` schema | `services/control-plane/specs/strategy_spec.schema.json` | Canonical `StrategySpec` object fields (`strategy_id`, `spec_version`, `market_scope`, `data_dependencies`, `execution_profile`, `evaluation_plan`, `governance`, `provenance`) |
 | `RS-002 StrategySpec Normalization` | `services/research/strategy_spec/README.md` | Research-to-canonical normalization bridge proving that downstream consumers should read the governed `StrategySpec` object rather than a raw research-first note shape |
 | `Consultation Surface Contract` CS-05 | `services/control-plane/bff/CONSULTATION_SURFACE_CONTRACT.md` | A proven session-scoped evidence-link resolution pattern (`GET /api/v1/consultations/{session_id}/evidence`) showing that BFF-owned evidence links can be resolved and status-marked without client-side URL construction |
@@ -39,8 +41,8 @@ These artifacts define object- and storage-level truth. They do **not** define a
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `KW-01` | Institutional Memory | memory entry list, entry detail, lifecycle state machine, tag/type filters | not ready | Wave 3 — 1st |
-| `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | not ready | Wave 3 — 2nd |
+| `KW-01` | Institutional Memory | memory entry list, entry detail, lifecycle state machine, tag/type filters | ready | Wave 3 — 1st |
+| `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | ready | Wave 3 — 2nd |
 | `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | not ready | Wave 3 — 3rd |
 | `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | not ready | Wave 3 — 4th |
 | `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | not ready | Wave 3 — 5th |
@@ -53,26 +55,27 @@ These artifacts define object- and storage-level truth. They do **not** define a
 
 - **Memory entry list**: paginated list of institutional memory entries with `entry_id`, `knowledge_type`, `content.headline`, `scope`, `written_at`, `write_authority`, and retrieval tags. Filter by `knowledge_type`, `scope`, `scope_filter`, and tag. Querying is backend-side; the UI must not approximate retrieval ranking locally.
 - **Entry detail**: full entry view showing `content.headline`, `content.body`, optional `content.structured_payload`, `source_event_type`, `source_event_id`, `contributing_persona_ids`, `scope`, `scope_filter`, `reuse_count`, and `superseded_by` when present.
-- **Lifecycle state machine**: `draft → active → archived`. This lifecycle is required by the backlog but is **not** present in the current schema. The UI must not infer lifecycle from `superseded_by`, `written_at`, or missing fields.
+- **Lifecycle state machine**: `active → archived → superseded`. The UI displays the lifecycle status provided by the BFF. Superseded entries include a `superseded_by` reference.
 - **Filter rail**: filter by `knowledge_type`, tag, scope, and recency. Filter vocab must be backend-provided. Do not hardcode type labels beyond the canonical schema enums.
-- **Degradation**: when `meta.surfaces.institutional_memory_list` or `meta.surfaces.institutional_memory_detail` is `degraded` or `unavailable`, show the canonical non-dismissable degradation banner. Do not show "no entries" as authoritative when the read surface is stale.
+- **Degradation**: when `meta.surfaces.memory_list` or `meta.surfaces.entry_detail` is `degraded` or `unavailable`, show the canonical non-dismissable degradation banner. Do not show "no entries" as authoritative when the read surface is stale.
 
 ### Backend gaps
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/knowledge/memory` | **missing** | list route; must support `knowledge_type`, `scope`, `scope_filter`, `tag`, `query`, `page_token`, `page_size`; response must include `meta.surfaces.institutional_memory_list` |
-| `GET /api/v1/knowledge/memory/{entry_id}` | **missing** | detail route; must expose schema-backed fields plus the explicit workbench lifecycle state and any resolved linked-entity references once that contract exists; must include `meta.surfaces.institutional_memory_detail` |
-| Institutional memory projection | **missing** | the Memory Plane defines retrieval through `GET /memory/retrieve`, but there is no BFF-owned browse/list/detail projection with pagination and workbench-facing surface metadata |
-| Memory entry lifecycle and identity contract | **missing** | the backlog requires lifecycle (`draft | active | archived`) and an identity schema covering entry type, tags, and linked artifacts. The current schema provides `knowledge_type` and tags, but no lifecycle or linked-artifact contract. Those must be promoted to explicit BFF truth rather than invented client-side |
+| `GET /api/v1/knowledge/memory` | **implemented** | list route; supports `knowledge_type`, `scope`, `scope_filter`, `tag`, `page`, `page_size`; response includes `meta.surfaces.memory_list` |
+| `GET /api/v1/knowledge/memory/{entry_id}` | **implemented** | detail route; exposes schema-backed fields, lifecycle status, and source context; includes `meta.surfaces.entry_detail` |
+| Institutional memory projection | **implemented** | BFF-owned browse/list/detail projection defined in `docs/bff/KW-01-institutional-memory.md` |
+| Memory entry lifecycle and identity contract | **implemented** | lifecycle and identity resolution locked in `KW-01` BFF contract; entry types map directly to canonical `knowledge_type` enums |
 
 ### Packetization prerequisite
 
-The memory entry lifecycle and identity schema must be locked before any other Knowledge Workbench module can reference institutional knowledge. The open question is whether the backlog's "entry type" is the current canonical `knowledge_type` field or a distinct UI-facing alias. That mapping must be defined in the BFF, not inferred in Lovable.
+The memory entry lifecycle and identity schema are locked. Downstream modules (KW-02 to KW-05) must reference `entry_id` for anchoring and lineage.
 
 ### Lovable readiness gate
 
-`false` — the list route, detail route, institutional-memory projection, and lifecycle or identity contract must all be implemented and field shapes locked before a screen spec can be opened.
+`true` — the list route, detail route, institutional-memory projection, and lifecycle/identity contracts are published. Lovable may proceed with production UI for the Institutional Memory module.
+
 
 ---
 
@@ -90,18 +93,18 @@ The memory entry lifecycle and identity schema must be locked before any other K
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| `POST /api/v1/knowledge/notes` | **missing** | create route; must define the note body shape, attachment target fields, and initial ownership metadata |
-| `GET /api/v1/knowledge/notes` | **missing** | list route; must support `owner_ref`, `attachment_type`, `attachment_ref`, `page_token`, `page_size`; response must include `meta.surfaces.research_note_list` |
-| `GET /api/v1/knowledge/notes/{note_id}` | **missing** | detail route; must expose note content, attachment target, owner metadata, linked evidence refs, and `meta.surfaces.research_note_detail` |
-| Research note ownership and attachment contract | **missing** | no canonical Pantheon note object exists today. The attachment taxonomy, referential integrity rules, and the meaning of a free-standing note must all be defined before the list and detail shells can be packetized |
+| `POST /api/v1/knowledge/notes` | **implemented** | create route; note body shape, attachment target fields, and ownership metadata defined in `docs/bff/KW-02-research-notes.md` |
+| `GET /api/v1/knowledge/notes` | **implemented** | list route; supports `owner_ref`, `attachment_type`, `attachment_ref`, `page_token`, `page_size`; response includes `meta.surfaces.research_note_list` |
+| `GET /api/v1/knowledge/notes/{note_id}` | **implemented** | detail route; exposes note content, attachment target, owner metadata, linked evidence refs, and `meta.surfaces.research_note_detail` |
+| Research note ownership and attachment contract | **implemented** | canonical `owner_ref` shape, attachment taxonomy (`research_ticket`, `persona`, `strategy_spec`, `free_standing`), referential integrity rules, and `free_standing` semantics defined in `docs/bff/KW-02-research-notes.md` |
 
 ### Packetization prerequisite
 
-Note ownership and attachment semantics must be locked before the list and detail shells can be packet-defined. This depends on `KW-01` settling how institutional-memory identities are referenced so that a note can link to a stable knowledge anchor instead of a client-invented label.
+Note ownership and attachment semantics are now locked in `docs/bff/KW-02-research-notes.md`. The `linked_memory_anchors` contract references `KW-01` `entry_id` values as stable anchors.
 
 ### Lovable readiness gate
 
-`false` — the create route, list route, detail route, and ownership or attachment contract must all be implemented and field shapes locked before a screen spec can be opened.
+`true` — the create route, list route, detail route, ownership contract, attachment taxonomy, and example payloads (`docs/examples/KW-02-research-notes.json`) are all published. Lovable may proceed with production UI for the Research Notes module.
 
 ---
 
@@ -201,10 +204,10 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/knowledge/memory` | KW-01 | missing read route | institutional-memory list surface |
 | `GET /api/v1/knowledge/memory/{entry_id}` | KW-01, KW-02, KW-03, KW-04, KW-05 | missing read route | entry-detail anchor for downstream linked-memory resolution |
 | Memory entry lifecycle and identity contract | KW-01, KW-02, KW-03, KW-04, KW-05 | missing lifecycle or object contract | `draft | active | archived`, entry-type mapping, tags, and linked-artifact semantics |
-| `POST /api/v1/knowledge/notes` | KW-02 | missing write route | note creation and attachment capture |
-| `GET /api/v1/knowledge/notes` | KW-02, KW-03 | missing read route | note list surface and evidence source-context lookup |
-| `GET /api/v1/knowledge/notes/{note_id}` | KW-02, KW-03 | missing read route | note detail and source-context resolution for evidence refs |
-| Research note ownership and attachment contract | KW-02, KW-03 | missing object contract | owner semantics, attachment taxonomy, and referential integrity |
+| `POST /api/v1/knowledge/notes` | KW-02 | **resolved** — `docs/bff/KW-02-research-notes.md` | note creation and attachment capture |
+| `GET /api/v1/knowledge/notes` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | note list surface and evidence source-context lookup |
+| `GET /api/v1/knowledge/notes/{note_id}` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | note detail and source-context resolution for evidence refs |
+| Research note ownership and attachment contract | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | owner semantics, attachment taxonomy, and referential integrity |
 | `GET /api/v1/knowledge/evidence` | KW-03, KW-04, KW-05 | missing read route | evidence list surface and downstream card or citation browsing |
 | `GET /api/v1/knowledge/evidence/{ref_id}` | KW-03, KW-04, KW-05 | missing read route | evidence detail, card drilldown, and strategy-spec citation drilldown |
 | Evidence reference read model | KW-03, KW-04, KW-05 | missing object contract | source-document identity, link taxonomy, linked-object refs, and credibility metadata |

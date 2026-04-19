@@ -102,9 +102,9 @@ Pantheon
 | `Evolution` | post-incident, evolution decision, lineage, future mutation review | partial |
 | `Persona` | persona, sessions, teaching, capabilities, capital, bindings | ready |
 | `Research` | tickets, search, analysis, experiments, artifact compare | blocked |
-| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01 contract-ready; KW-02–05 blocked |
+| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01–02 contract-ready; KW-03–05 blocked |
 | `Consultation` | request, transcript, committee board, red-team memo | overview-only + blocked modules |
-| `Trainer` | teaching dialog, controls, compare, replay | TW-01 contract-published; TW-02–04 blocked |
+| `Trainer` | teaching dialog, controls, compare, replay | TW-01–02 contract-published; TW-03–04 blocked |
 
 ---
 
@@ -281,7 +281,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/research/tickets/:ticket_id` | Research Ticket Detail | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
 | `/research/search` | Search | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF route and search index adapter |
 | `/research/analyze` | Analyze | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
-| `/research/experiments` | Experiment Launch / Run History | Research | blocked shell only |
+| `/research/experiments` | Experiment Launch / Run History | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
 | `/research/compare` | Artifact Compare | Research | blocked shell only |
 | `/knowledge/memory` | Institutional Memory | Knowledge | contract-ready |
 | `/knowledge/memory/:entry_id` | Memory Detail | Knowledge | contract-ready |
@@ -304,7 +304,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/trainer` | Trainer Landing | Trainer | blocked shell only |
 | `/trainer/sessions` | Teaching Dialog / Session List | Trainer | pending-bff placeholder only |
 | `/trainer/sessions/:session_id` | Teaching Dialog Detail | Trainer | pending-bff placeholder only |
-| `/trainer/sessions/:session_id/controls` | Parameter Controls | Trainer | blocked shell only |
+| `/trainer/sessions/:session_id/controls` | Parameter Controls | Trainer | pending-bff placeholder only |
 | `/trainer/sessions/:session_id/compare` | Before/After Compare | Trainer | blocked shell only |
 | `/trainer/replay` | Teaching Replay List | Trainer | blocked shell only |
 | `/trainer/replay/:session_id` | Teaching Replay Detail | Trainer | blocked shell only |
@@ -571,7 +571,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | Research Ticket Detail | `/research/tickets/:ticket_id` | `RW-01` | contract-published | pending-bff placeholder only |
 | Search | `/research/search` | `RW-02` | contract-published | pending-bff placeholder only |
 | Analyze | `/research/analyze` | `RW-03` | contract-published | pending-bff placeholder only |
-| Experiment Launch / History | `/research/experiments` | `RW-04` | blocked | shell-only |
+| Experiment Launch / History | `/research/experiments` | `RW-04` | contract-published | pending-bff placeholder only |
 | Artifact Compare | `/research/compare` | `RW-05` | blocked | shell-only |
 
 ### 11.3 頁面定義
@@ -607,7 +607,9 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：launch form、async status、run history、run detail
 - 期待 BFF：launch route、experiment state machine、status route、cancel authority
-- 在 route 未落地前：不可做假進度條或假 async state machine
+- 契約狀態：`docs/bff/RW-04-experiment-launch.md` 已發布 `POST /api/v1/experiments/launch`、`GET /api/v1/experiments/{experiment_id}`、`GET /api/v1/experiments`、`POST /api/v1/experiments/{experiment_id}/cancel`、async state machine、durable history ledger、`allowedActions.canCancel`、degradation semantics。
+- 現在可做：明確 pending-bff placeholder；等待 live BFF routes 對齊 published contract。
+- 不可做：假進度條、假 async state machine、從 live worker/runtime 推斷 run history、或依 `status` 自己判定 cancel authority。
 
 #### 11.3.6 RW-05 Artifact Compare
 
@@ -630,8 +632,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | Knowledge Overview | `/knowledge` | `PKT-knowledge-workbench` | overview-only | 可正式做 |
 | Institutional Memory List | `/knowledge/memory` | `KW-01` | contract-ready | 待 BFF 上線後可正式做 |
 | Institutional Memory Detail | `/knowledge/memory/:entry_id` | `KW-01` | contract-ready | 待 BFF 上線後可正式做 |
-| Research Notes List | `/knowledge/notes` | `KW-02` | blocked | shell-only |
-| Research Note Detail | `/knowledge/notes/:note_id` | `KW-02` | blocked | shell-only |
+| Research Notes List | `/knowledge/notes` | `KW-02` | contract-ready | 待 BFF 上線後可正式做 |
+| Research Note Detail | `/knowledge/notes/:note_id` | `KW-02` | contract-ready | 待 BFF 上線後可正式做 |
 | Evidence Refs List | `/knowledge/evidence` | `KW-03` | blocked | shell-only |
 | Evidence Ref Detail | `/knowledge/evidence/:ref_id` | `KW-03` | blocked | shell-only |
 | Insight Cards | `/knowledge/insights` | `KW-04` | blocked | shell-only |
@@ -658,8 +660,9 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 12.3.3 KW-02 Research Notes
 
 - 目標頁面：notes list/detail、ownership、attachment target
-- 期待 BFF：note create/list/detail + ownership/attachment contract
-- shell 階段：不可自己定 attachment taxonomy
+- 契約狀態：`docs/bff/KW-02-research-notes.md` 已發布 `POST /api/v1/knowledge/notes`、`GET /api/v1/knowledge/notes`、`GET /api/v1/knowledge/notes/{note_id}`，並鎖定 `owner_ref`、attachment taxonomy、referential integrity、degradation semantics。
+- 現在可做：正式 production UI（需先確認 BFF 實作完成，或使用 `docs/examples/KW-02-research-notes.json` payload）。
+- 不可做：自行定義 attachment taxonomy、從 raw id 猜 owner/route、或把 degraded surface 當成 empty state。
 
 #### 12.3.4 KW-03 Evidence Refs
 
@@ -748,7 +751,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | Trainer Landing | `/trainer` | workbench shell | blocked | shell-only |
 | Teaching Dialog / Session List | `/trainer/sessions` | `TW-01` | contract-published | pending-bff placeholder only |
 | Teaching Dialog Detail | `/trainer/sessions/:session_id` | `TW-01` | contract-published | pending-bff placeholder only |
-| Parameter Controls | `/trainer/sessions/:session_id/controls` | `TW-02` | blocked | shell-only |
+| Parameter Controls | `/trainer/sessions/:session_id/controls` | `TW-02` | contract-published | pending-bff placeholder only |
 | Before/After Compare | `/trainer/sessions/:session_id/compare` | `TW-03` | blocked | shell-only |
 | Teaching Replay List | `/trainer/replay` | `TW-04` | blocked | shell-only |
 | Teaching Replay Detail | `/trainer/replay/:session_id` | `TW-04` | blocked | shell-only |
@@ -775,8 +778,9 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 14.3.3 TW-02 Parameter Controls
 
 - 目標頁面：control state panel、patch editor、validation warnings、inline diff
-- 期待 BFF：controls read route、patch route、control schema、validation contract
-- shell 階段：不可把 slider / form 直接接本地 state 當產品真相
+- 已發布 contract：`docs/bff/TW-02-parameter-controls.md`、`docs/screens/TW-02-parameter-controls.md`、`docs/examples/TW-02-parameter-controls.json`
+- 目前 gate：BFF 必須先讓 `GET /api/v1/trainer/sessions/{session_id}/controls` 與 `POST /api/v1/trainer/sessions/{session_id}/patch` 上線，並回傳已發布的 control schema、validation feedback、`updated_controls[]` diff shape
+- pending-BFF 階段：可做明確 blocked placeholder；不可把 slider / form 直接接本地 state、不可自行 clip 到 `allowed_range`、也不可從先前 fetch 結果推導 `previous_value`
 
 #### 14.3.4 TW-03 Before/After Compare
 
