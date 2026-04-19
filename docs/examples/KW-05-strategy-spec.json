@@ -1,0 +1,308 @@
+{
+  "_comment": "KW-05 Strategy Spec — example payloads for list, detail, version history, and compare routes",
+
+  "strategy_spec_list_response": {
+    "strategy_specs": [
+      {
+        "strategy_id": "strat-a3f1e2d0-0001-0001-0001-000000000001",
+        "current_version_id": "specver-b7c2f3a1-0002-0002-0002-000000000002",
+        "current_version_seq": 3,
+        "title": "Momentum Breakout v2 — US Equities",
+        "lifecycle_state": "approved",
+        "source_kind": "paper",
+        "hypothesis_excerpt": "Stocks exhibiting short-term price momentum above a rolling 20-day breakout threshold outperform the equal-weight market index on a 5-day horizon when volume exceeds the 90th percentile.",
+        "market_scope_summary": {
+          "symbol_count": 500,
+          "frequency": "daily",
+          "asset_class_labels": ["equity"]
+        },
+        "version_count": 3,
+        "last_modified_at": "2026-04-18T14:22:00Z",
+        "approved_at": "2026-04-18T15:00:00Z",
+        "deprecated_at": null,
+        "successor_strategy_id": null,
+        "route_href": "/knowledge/strategy-specs/strat-a3f1e2d0-0001-0001-0001-000000000001"
+      },
+      {
+        "strategy_id": "strat-c9d4e5f6-0003-0003-0003-000000000003",
+        "current_version_id": "specver-d1e2f3a4-0004-0004-0004-000000000004",
+        "current_version_seq": 1,
+        "title": "Mean Reversion — FX Pairs Draft",
+        "lifecycle_state": "draft",
+        "source_kind": "manual",
+        "hypothesis_excerpt": "Currency pairs showing short-term deviation beyond 1.5 standard deviations from a 10-day rolling mean revert within 3 sessions in low-volatility regimes.",
+        "market_scope_summary": {
+          "symbol_count": 12,
+          "frequency": "intraday",
+          "asset_class_labels": ["fx"]
+        },
+        "version_count": 1,
+        "last_modified_at": "2026-04-19T09:10:00Z",
+        "approved_at": null,
+        "deprecated_at": null,
+        "successor_strategy_id": null,
+        "route_href": "/knowledge/strategy-specs/strat-c9d4e5f6-0003-0003-0003-000000000003"
+      }
+    ],
+    "filter_metadata": {
+      "lifecycle_state_counts": {
+        "draft": 4,
+        "approved": 11,
+        "deprecated": 2
+      },
+      "source_kind_counts": {
+        "manual": 5,
+        "paper": 7,
+        "repo": 2,
+        "note": 2,
+        "workflow": 1
+      },
+      "total_count": 17
+    },
+    "pagination": {
+      "page_size": 20,
+      "next_page_token": null,
+      "has_more": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:00:00Z",
+      "surfaces": {
+        "strategy_spec_list": "ok"
+      }
+    }
+  },
+
+  "strategy_spec_detail_response": {
+    "strategy_id": "strat-a3f1e2d0-0001-0001-0001-000000000001",
+    "version_id": "specver-b7c2f3a1-0002-0002-0002-000000000002",
+    "version_seq": 3,
+    "title": "Momentum Breakout v2 — US Equities",
+    "lifecycle_state": "approved",
+    "approved_at": "2026-04-18T15:00:00Z",
+    "deprecated_at": null,
+    "successor_strategy_id": null,
+    "hypothesis": "Stocks exhibiting short-term price momentum above a rolling 20-day breakout threshold outperform the equal-weight market index on a 5-day horizon when volume exceeds the 90th percentile.",
+    "objective": "Capture systematic short-term return premium from breakout momentum in large-cap US equities while maintaining a daily rebalance cadence and exposure below 5% of portfolio per position.",
+    "market_scope": {
+      "symbols": ["SPY_CONSTITUENTS_500"],
+      "frequency": "daily",
+      "asset_classes": ["equity"],
+      "venues": ["NYSE", "NASDAQ"]
+    },
+    "data_dependencies": [
+      {
+        "ref": "ds-us-equity-eod-v3",
+        "kind": "dataset"
+      },
+      {
+        "ref": "feat-momentum-breakout-v2",
+        "kind": "feature_set"
+      },
+      {
+        "ref": "paper-jegadeesh-titman-1993",
+        "kind": "paper"
+      }
+    ],
+    "execution_profile": {
+      "signal_schema_version": "2.1",
+      "quantity_type": "PERCENT_PORTFOLIO",
+      "rebalance_cadence": "daily",
+      "execution_mode_hint": "paper"
+    },
+    "evaluation_plan": {
+      "metrics": ["sharpe_ratio", "max_drawdown", "5d_return_vs_benchmark"],
+      "candidate_gate": "sharpe >= 0.8 over 90d backtest",
+      "paper_gate": "sharpe >= 1.0 over 30d paper run with drawdown < 8%",
+      "live_gate": "sharpe >= 1.2 over 60d paper run with max drawdown < 6%"
+    },
+    "governance": {
+      "approval_required": true,
+      "policy_id": "gov-policy-live-equity-001",
+      "risk_profile": "medium"
+    },
+    "provenance": {
+      "source_kind": "paper",
+      "created_at": "2026-04-10T08:30:00Z",
+      "created_by": "persona-research-lead-001",
+      "source_refs": ["paper-jegadeesh-titman-1993", "note-momentum-research-2026-q1"]
+    },
+    "version_ancestry": {
+      "parent_version_id": "specver-a5b6c7d8-0001-0001-0001-000000000001",
+      "parent_version_seq": 2,
+      "root_version_id": "specver-e9f0a1b2-0000-0000-0000-000000000001",
+      "version_count": 3,
+      "parent_route_href": "/knowledge/strategy-specs/strat-a3f1e2d0-0001-0001-0001-000000000001?version=specver-a5b6c7d8-0001-0001-0001-000000000001",
+      "version_history_href": "/knowledge/strategy-specs/strat-a3f1e2d0-0001-0001-0001-000000000001/versions"
+    },
+    "citation_bundle": {
+      "evidence_refs": [
+        {
+          "ref_id": "evref-1a2b3c4d-0001-0001-0001-000000000001",
+          "source_document_title": "Jegadeesh and Titman (1993) — Returns to Buying Winners and Selling Losers",
+          "link_type": "citation",
+          "credibility_tier": "primary",
+          "association": "provenance",
+          "resolved_link": {
+            "availability": "external",
+            "route_href": null,
+            "display_label": "Open source paper (external)",
+            "open_in_new_tab": true
+          }
+        },
+        {
+          "ref_id": "evref-2b3c4d5e-0002-0002-0002-000000000002",
+          "source_document_title": "Q1 2026 Momentum Backtest Results",
+          "link_type": "supporting_evidence",
+          "credibility_tier": "primary",
+          "association": "evaluation",
+          "resolved_link": {
+            "availability": "available",
+            "route_href": "/knowledge/evidence/evref-2b3c4d5e-0002-0002-0002-000000000002",
+            "display_label": "View backtest evidence",
+            "open_in_new_tab": false
+          }
+        },
+        {
+          "ref_id": "evref-3c4d5e6f-0003-0003-0003-000000000003",
+          "source_document_title": "Live Equity Governance Policy — Risk Profile Rationale",
+          "link_type": "provenance",
+          "credibility_tier": "secondary",
+          "association": "governance",
+          "resolved_link": {
+            "availability": "available",
+            "route_href": "/knowledge/evidence/evref-3c4d5e6f-0003-0003-0003-000000000003",
+            "display_label": "View governance rationale",
+            "open_in_new_tab": false
+          }
+        }
+      ],
+      "memory_anchors": [
+        {
+          "entry_id": "entry-4d5e6f7a-0004-0004-0004-000000000004",
+          "knowledge_type": "strategy_insight",
+          "content_headline": "US large-cap momentum premium is robust to venue and frequency variation",
+          "route_href": "/knowledge/memory/entry-4d5e6f7a-0004-0004-0004-000000000004"
+        }
+      ],
+      "insight_citations": [
+        {
+          "insight_id": "ins-5e6f7a8b-0005-0005-0005-000000000005",
+          "summary": "Breakout momentum signals in SPY constituents show consistent 5-day alpha at the 90th-percentile volume threshold across 2022–2025 backtests.",
+          "confidence_label": "high",
+          "route_href": "/knowledge/insights/ins-5e6f7a8b-0005-0005-0005-000000000005"
+        }
+      ]
+    },
+    "allowedActions": {
+      "canSubmitForApproval": false,
+      "canDeprecate": true,
+      "canCompare": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:00:00Z",
+      "surfaces": {
+        "strategy_spec_detail": "ok",
+        "citation_bundle": "ok",
+        "version_ancestry": "ok"
+      }
+    }
+  },
+
+  "version_history_response": {
+    "strategy_id": "strat-a3f1e2d0-0001-0001-0001-000000000001",
+    "versions": [
+      {
+        "version_id": "specver-b7c2f3a1-0002-0002-0002-000000000002",
+        "version_seq": 3,
+        "lifecycle_state": "approved",
+        "created_at": "2026-04-18T14:22:00Z",
+        "created_by": "persona-research-lead-001",
+        "change_summary": "Tightened paper gate threshold (drawdown < 8%), updated execution mode hint to paper, added governance policy reference.",
+        "parent_version_id": "specver-a5b6c7d8-0001-0001-0001-000000000001",
+        "route_href": "/knowledge/strategy-specs/strat-a3f1e2d0-0001-0001-0001-000000000001?version=specver-b7c2f3a1-0002-0002-0002-000000000002"
+      },
+      {
+        "version_id": "specver-a5b6c7d8-0001-0001-0001-000000000001",
+        "version_seq": 2,
+        "lifecycle_state": "deprecated",
+        "created_at": "2026-04-15T10:00:00Z",
+        "created_by": "persona-research-lead-001",
+        "change_summary": "Added volume threshold filter to breakout signal definition, expanded symbol universe to full S&P 500.",
+        "parent_version_id": "specver-e9f0a1b2-0000-0000-0000-000000000001",
+        "route_href": "/knowledge/strategy-specs/strat-a3f1e2d0-0001-0001-0001-000000000001?version=specver-a5b6c7d8-0001-0001-0001-000000000001"
+      },
+      {
+        "version_id": "specver-e9f0a1b2-0000-0000-0000-000000000001",
+        "version_seq": 1,
+        "lifecycle_state": "deprecated",
+        "created_at": "2026-04-10T08:30:00Z",
+        "created_by": "persona-research-lead-001",
+        "change_summary": null,
+        "parent_version_id": null,
+        "route_href": "/knowledge/strategy-specs/strat-a3f1e2d0-0001-0001-0001-000000000001?version=specver-e9f0a1b2-0000-0000-0000-000000000001"
+      }
+    ],
+    "meta": {
+      "snapshot_at": "2026-04-19T21:00:00Z",
+      "surfaces": {
+        "version_history": "ok"
+      }
+    }
+  },
+
+  "compare_response": {
+    "strategy_id": "strat-a3f1e2d0-0001-0001-0001-000000000001",
+    "base_version": {
+      "version_id": "specver-a5b6c7d8-0001-0001-0001-000000000001",
+      "version_seq": 2,
+      "lifecycle_state": "deprecated",
+      "created_at": "2026-04-15T10:00:00Z"
+    },
+    "target_version": {
+      "version_id": "specver-b7c2f3a1-0002-0002-0002-000000000002",
+      "version_seq": 3,
+      "lifecycle_state": "approved",
+      "created_at": "2026-04-18T14:22:00Z"
+    },
+    "field_diffs": [
+      {
+        "field_path": "evaluation_plan.paper_gate",
+        "display_label": "Paper Gate Criterion",
+        "change_type": "modified",
+        "base_value": "sharpe >= 1.0 over 30d paper run",
+        "target_value": "sharpe >= 1.0 over 30d paper run with drawdown < 8%",
+        "significance": "high",
+        "significance_reason": "Tightening the drawdown constraint directly changes the live-readiness bar for this strategy."
+      },
+      {
+        "field_path": "execution_profile.execution_mode_hint",
+        "display_label": "Execution Mode Hint",
+        "change_type": "modified",
+        "base_value": "research",
+        "target_value": "paper",
+        "significance": "high",
+        "significance_reason": "Mode hint change signals the strategy has cleared research-stage validation and is now targeted for paper trading."
+      },
+      {
+        "field_path": "governance.policy_id",
+        "display_label": "Governance Policy ID",
+        "change_type": "added",
+        "base_value": null,
+        "target_value": "gov-policy-live-equity-001",
+        "significance": "medium",
+        "significance_reason": null
+      }
+    ],
+    "summary": {
+      "total_fields_changed": 3,
+      "high_significance_changes": 2,
+      "change_areas": ["evaluation_plan", "execution_profile", "governance"]
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:00:00Z",
+      "surfaces": {
+        "spec_compare": "ok"
+      }
+    }
+  }
+}

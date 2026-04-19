@@ -5,7 +5,7 @@
 - Packet family ID: `KW-006`
 - Workbench: Knowledge Workbench
 - Phase origin: `BP5-WB-006`
-- Lovable readiness: **partial** — KW-01, KW-02, and KW-03 are ready; KW-04 and KW-05 are not ready pending their own contract landing and upstream dependencies
+- Lovable readiness: **complete** — KW-01, KW-02, KW-03, KW-04, and KW-05 are all ready
 - Overview packet status: `PKT-knowledge-workbench` is published as a truthful overview surface; `KW-01` now provides the first truthful browse module anchoring the family
 - Recommended wave: Wave 3 — after Operator Console (Waves 1-2) and Persona Workbench (Waves 1-2) packetization are settled
 - Owner: Claude
@@ -44,8 +44,8 @@ These artifacts define object- and storage-level truth. They do **not** define a
 | `KW-01` | Institutional Memory | memory entry list, entry detail, lifecycle state machine, tag/type filters | ready | Wave 3 — 1st |
 | `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | ready | Wave 3 — 2nd |
 | `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | ready | Wave 3 — 3rd |
-| `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | not ready | Wave 3 — 4th |
-| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | not ready | Wave 3 — 5th |
+| `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | ready | Wave 3 — 4th |
+| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | ready | Wave 3 — 5th |
 
 ---
 
@@ -151,10 +151,10 @@ All contracts are now locked in `docs/bff/KW-03-evidence-refs.md` and example pa
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| Insight aggregation endpoint | **missing** | primary card-grid route; must return backend-shaped card rows, filter metadata, and `meta.surfaces.insight_cards` |
-| Insight card detail endpoint | **missing** | per-card detail route; must expose `source_ref`, `scope`, `confidence`, `evidence_refs`, resolved linked sources, and `meta.surfaces.insight_card_detail` |
-| Card-surface read model | **missing** | L3 storage design lists `registry.insight_cards` fields such as `source_ref`, `scope`, `summary`, `confidence`, and `evidence_refs_json`, but there is no canonical read model for workbench filters, linked-entity drilldown, or aggregation provenance |
-| Filter taxonomy and aggregation contract | **missing** | tag, linked-entity, and recency filters must be defined as backend truth. Card production depends on `KW-01` institutional-memory anchors and `KW-03` evidence refs as stable aggregation inputs |
+| Insight aggregation endpoint | **implemented** | `GET /api/v1/knowledge/insights` — defined in `docs/bff/KW-04-insight-cards.md`; returns backend-shaped card rows, `filter_metadata`, and `meta.surfaces.insight_cards` |
+| Insight card detail endpoint | **implemented** | `GET /api/v1/knowledge/insights/{insight_id}` — defined in `docs/bff/KW-04-insight-cards.md`; exposes `source_ref`, `scope_context`, `confidence`, `supporting_evidence_refs`, `linked_sources`, and `meta.surfaces.insight_card_detail` |
+| Card-surface read model | **implemented** | canonical `ins-{UUID}` identity, card lifecycle (`active | superseded | archived`), confidence scale, aggregation provenance, and linked-source drilldown contract defined in `docs/bff/KW-04-insight-cards.md` |
+| Filter taxonomy and aggregation contract | **implemented** | tag, linked-entity, and recency filters defined as backend truth in `docs/bff/KW-04-insight-cards.md`; `filter_metadata` returned in list response; all filter vocab is backend-shaped |
 
 ### Packetization prerequisite
 
@@ -162,7 +162,7 @@ Insight-card identity, display contract, and filter semantics must be locked bef
 
 ### Lovable readiness gate
 
-`false` — the aggregation endpoint, detail endpoint, card-surface read model, and filter or aggregation contract must all be implemented and field shapes locked before a screen spec can be opened.
+`true` — the aggregation endpoint (`GET /api/v1/knowledge/insights`), detail endpoint (`GET /api/v1/knowledge/insights/{insight_id}`), card-surface read model, filter taxonomy and aggregation contract, and example payloads (`docs/examples/KW-04-insight-cards.json`) are all published. Lovable may proceed with production UI for the Insight Cards module.
 
 ---
 
@@ -180,18 +180,19 @@ Insight-card identity, display contract, and filter semantics must be locked bef
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| Strategy-spec list route | **missing** | no BFF list surface exists over canonical `StrategySpec` objects; the route must support `lifecycle_state`, `source_kind`, `page_token`, `page_size`, and return `meta.surfaces.strategy_spec_list` |
-| Versioned strategy-spec detail route | **missing** | no BFF viewer route exists; it must support version selection, expose the canonical `StrategySpec` payload, include lifecycle state and citation bundle, and return `meta.surfaces.strategy_spec_detail` |
-| Strategy-spec versioning and lifecycle contract | **missing** | the backlog requires `draft | approved | deprecated` and version semantics. The current schema has `spec_version`, but no lifecycle, ancestry, or version-selection contract |
-| Strategy-spec diff or compare contract | **missing** | the backend must compose field-level diffs and version ancestry; the UI must not compare raw spec JSON locally |
+| Strategy-spec list route | **implemented** | `GET /api/v1/knowledge/strategy-specs` — defined in `docs/bff/KW-05-strategy-spec.md`; supports `lifecycle_state`, `source_kind`, `persona_id`, `include_deprecated`, `page_token`, `page_size`; returns `meta.surfaces.strategy_spec_list` |
+| Versioned strategy-spec detail route | **implemented** | `GET /api/v1/knowledge/strategy-specs/{strategy_id}` — defined in `docs/bff/KW-05-strategy-spec.md`; supports `version` selector (`current`, `specver-{UUID}`, or integer `version_seq`); exposes full `StrategySpec` payload, lifecycle state, version ancestry, citation bundle, `allowedActions`, and `meta.surfaces.strategy_spec_detail` |
+| Version history route | **implemented** | `GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions` — defined in `docs/bff/KW-05-strategy-spec.md`; returns ordered version list with ancestry and BFF-authored change summaries |
+| Strategy-spec versioning and lifecycle contract | **implemented** | `draft \| approved \| deprecated` lifecycle, `strat-{UUID}` / `specver-{UUID}` identity, `version_seq` ordering, ancestry fields (`parent_version_id`, `root_version_id`), and version-selector semantics defined in `docs/bff/KW-05-strategy-spec.md` |
+| Strategy-spec diff or compare contract | **implemented** | `GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare` — defined in `docs/bff/KW-05-strategy-spec.md`; returns `field_diffs[]` with `field_path`, `display_label`, `change_type`, `base_value`, `target_value`, `significance`, and `significance_reason`; the UI must not compute diffs from raw spec JSON |
 
 ### Packetization prerequisite
 
-Spec lifecycle states and versioning semantics must be established before a viewer or comparison surface can be packet-defined. The canonical `StrategySpec` object already exists, but it is an object schema, not a workbench read model. `KW-05` depends on `KW-01` for lineage anchors and `KW-03` for backing citations.
+All contracts are now locked in `docs/bff/KW-05-strategy-spec.md` and example payloads are published in `docs/examples/KW-05-strategy-spec.json`. Upstream prerequisites `KW-01`, `KW-02`, `KW-03`, and `KW-04` are all Lovable-ready.
 
 ### Lovable readiness gate
 
-`false` — the list route, detail route, versioning or lifecycle contract, and diff or compare contract must all be implemented and field shapes locked before a screen spec can be opened.
+`true` — the list route, versioned detail route, version history route, versioning and lifecycle contract, diff or compare contract, and example payloads are all published. Lovable may proceed with production UI for the Strategy Spec module.
 
 ---
 
@@ -212,14 +213,14 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/knowledge/evidence/{ref_id}` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | evidence detail, card drilldown, and strategy-spec citation drilldown |
 | Evidence reference read model | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | source-document identity, link taxonomy, linked-object refs, and credibility metadata |
 | Evidence link resolution contract | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | canonical evidence links with availability state; no client-side URL construction |
-| Insight aggregation endpoint | KW-04 | missing read route | entire Insight Cards module |
-| Insight card detail endpoint | KW-04 | missing read route | card detail and linked-source drilldown |
-| Card-surface read model | KW-04 | missing object contract | card identity, scope, summary, confidence, and aggregation provenance |
-| Filter taxonomy and aggregation contract | KW-04 | missing filter or computation contract | tag, linked-entity, and recency filters; blocks card grid and detail semantics |
-| Strategy-spec list route | KW-05 | missing read route | strategy-spec index surface |
-| Versioned strategy-spec detail route | KW-05 | missing read route | strategy-spec viewer and citation panel |
-| Strategy-spec versioning and lifecycle contract | KW-05 | missing lifecycle contract | version ancestry and `draft | approved | deprecated` state |
-| Strategy-spec diff or compare contract | KW-05 | missing comparison contract | compare surface; backend must own the diff |
+| Insight aggregation endpoint | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | entire Insight Cards module |
+| Insight card detail endpoint | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | card detail and linked-source drilldown |
+| Card-surface read model | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | card identity, scope, summary, confidence, and aggregation provenance |
+| Filter taxonomy and aggregation contract | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | tag, linked-entity, and recency filters; card grid and detail semantics |
+| Strategy-spec list route | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | strategy-spec index surface |
+| Versioned strategy-spec detail route | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | strategy-spec viewer and citation panel |
+| Strategy-spec versioning and lifecycle contract | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | version ancestry and `draft \| approved \| deprecated` state |
+| Strategy-spec diff or compare contract | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | compare surface; backend owns the diff via `field_diffs[]` |
 
 ---
 
