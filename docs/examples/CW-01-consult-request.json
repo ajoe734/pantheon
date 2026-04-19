@@ -1,0 +1,133 @@
+{
+  "_note": "Contract-published example payloads for CW-01 Consult Request. Use as the implementation target for the BFF and frontend integration. Do not use as mock production state.",
+  "_packet_status": "contract-published",
+  "_task": "CW-01-FOUNDATION-001",
+  "create_request": {
+    "from_persona_id": "persona-risk-chief",
+    "target_type": "committee",
+    "target_ref": "committee-regime-risk",
+    "task": "Assess whether the pending deployment should pause because regime volatility has diverged from the training window.",
+    "context_refs": [
+      {
+        "type": "deployment_plan",
+        "id": "dp-20260419-014"
+      },
+      {
+        "type": "telemetry_ref",
+        "id": "telemetry-vol-spike-20260419"
+      }
+    ],
+    "priority": "high",
+    "consultation_type": "risk_review"
+  },
+  "create_response": {
+    "request_id": "cr-20260419-014",
+    "status": "created",
+    "created_at": "2026-04-19T17:05:00Z",
+    "linked_session_id": null,
+    "request_to_session_status": "pending_session",
+    "allowedActions": {
+      "canCancel": true
+    }
+  },
+  "list_response": {
+    "data": [
+      {
+        "request_id": "cr-20260419-014",
+        "status": "running",
+        "from_persona_id": "persona-risk-chief",
+        "target_type": "committee",
+        "target_ref": "committee-regime-risk",
+        "task_summary": "Assess whether the pending deployment should pause because regime volatility diverged from the training window.",
+        "priority": "high",
+        "consultation_type": "risk_review",
+        "created_at": "2026-04-19T17:05:00Z",
+        "linked_session_id": "cs-20260419-081",
+        "request_to_session_status": "session_running",
+        "allowedActions": {
+          "canCancel": false
+        }
+      },
+      {
+        "request_id": "cr-20260419-010",
+        "status": "created",
+        "from_persona_id": "persona-execution-sponsor",
+        "target_type": "persona",
+        "target_ref": "persona-macro-observer",
+        "task_summary": "Review whether the deployment timing should wait for the CPI window.",
+        "priority": "normal",
+        "consultation_type": "pre_deployment",
+        "created_at": "2026-04-19T16:10:00Z",
+        "linked_session_id": null,
+        "request_to_session_status": "pending_session",
+        "allowedActions": {
+          "canCancel": true
+        }
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "total": 2
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T17:20:00Z",
+      "surfaces": {
+        "consult_request_list": "fresh"
+      }
+    }
+  },
+  "detail_response": {
+    "request_id": "cr-20260419-014",
+    "status": "running",
+    "from_persona_id": "persona-risk-chief",
+    "target_type": "committee",
+    "target_ref": "committee-regime-risk",
+    "task": "Assess whether the pending deployment should pause because regime volatility has diverged from the training window.",
+    "context_refs": [
+      {
+        "type": "deployment_plan",
+        "id": "dp-20260419-014"
+      },
+      {
+        "type": "telemetry_ref",
+        "id": "telemetry-vol-spike-20260419"
+      }
+    ],
+    "priority": "high",
+    "consultation_type": "risk_review",
+    "created_at": "2026-04-19T17:05:00Z",
+    "completed_at": null,
+    "canceled_at": null,
+    "linked_session_id": "cs-20260419-081",
+    "request_to_session_status": "session_running",
+    "session_handoff": {
+      "status": "session_running",
+      "linked_session_id": "cs-20260419-081",
+      "session_route_href": "/api/v1/consultations/cs-20260419-081",
+      "note": "Persona Plane materialized the consultation session and attached the canonical session identity."
+    },
+    "allowedActions": {
+      "canCancel": false
+    },
+    "links": {
+      "self": "/api/v1/consult/requests/cr-20260419-014",
+      "workbench_detail": "/consultation/requests/cr-20260419-014"
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T17:20:00Z",
+      "surfaces": {
+        "consult_request_detail": "fresh"
+      }
+    }
+  },
+  "cancel_response": {
+    "request_id": "cr-20260419-010",
+    "status": "canceled",
+    "canceled_at": "2026-04-19T17:21:00Z",
+    "linked_session_id": null,
+    "request_to_session_status": "canceled_before_session",
+    "allowedActions": {
+      "canCancel": false
+    }
+  }
+}

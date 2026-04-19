@@ -1,0 +1,17 @@
+feature_id: CW-01-consult-request
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: consult-request
+blocking: true
+
+summary: Consult Request UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: session_handoff.note
+    reason: The request-to-session rail must render the backend-owned handoff note and cannot invent it client-side
+
+acceptance:
+  - Pantheon publishes a refreshed CW-01 contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

@@ -1,0 +1,37 @@
+{
+  "feature_id": "PKT-consultation-workbench",
+  "status": "front-followup-required",
+  "backend_commit": "3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "bff_contract_version": "pantheon-bff@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035+working-tree",
+  "source_payload": ".coordination/requests/PKT-consultation-workbench-ui-done.yaml",
+  "source_commit": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "verified_front_workspace_head": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "review_file": ".coordination/reviews/PKT-consultation-workbench-review.md",
+  "feedback_request": ".coordination/requests/PKT-consultation-workbench-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/workbench/consultation"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-consultation-workbench.md",
+    "docs/examples/PKT-consultation-workbench.json",
+    "docs/screens/PKT-consultation-workbench.md",
+    "docs/pantheon-handoffs/PKT-consultation-workbench/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Sibling front production build passed: npm run build",
+    "Targeted changed-file eslint passed: npx eslint src/pages/workbench/ConsultationWorkbench.tsx src/pages/workbench/types.ts src/lib/bffClient.ts src/components/AppSidebar.tsx",
+    "Targeted Pantheon PKT-015 contract test passed: python3 -m pytest services/control-plane/bff/test_pkt015_consultation_workbench_contract.py -q",
+    "Direct local TestClient read of GET /api/v1/workbench/consultation returned 200 OK with workbench_id=consultation-workbench, overall_status=overview_ready, packet_family.family_id=CW-008, module_counts={total:4,ready:0,not_ready:4}, and ok status for meta.surfaces.overview plus meta.surfaces.packet_family in the current workspace",
+    "The mirrored ui-done and frontend-feedback requests both advertise source_commit=37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+    "Commit 37a622bca69a95e2aae46aa8c6b0432ad72082a8 still contains the old ComingSoon Consultation page and does not contain the consultation ui-done request, frontend-feedback request, or feedback bundle"
+  ],
+  "followup_scope": [
+    "Publish the canonical PKT-consultation-workbench frontend-feedback request and feedback bundle from the front repo",
+    "Republish the PKT-consultation-workbench ui-done request from the same truthful immutable front commit instead of source_commit=37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+    "Keep the frontend on the published read-only overview route and continue rendering backend-owned module order, support refs, and next steps exactly as supplied",
+    "Treat any future missing required field as a fresh bff-gap handoff instead of local state invention"
+  ]
+}

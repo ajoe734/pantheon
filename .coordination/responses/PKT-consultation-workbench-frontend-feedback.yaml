@@ -1,0 +1,171 @@
+feature_id: PKT-consultation-workbench
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-18T13:53:02Z'
+reviewed_commit: 3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035
+ui_done_source_commit: 37a622bca69a95e2aae46aa8c6b0432ad72082a8
+frontend_feedback_source_commit: 37a622bca69a95e2aae46aa8c6b0432ad72082a8
+verified_front_workspace_head: 37a622bca69a95e2aae46aa8c6b0432ad72082a8
+screen: consultation-workbench-overview
+workbench: consultation-workbench
+screen_id: surface-consultation-workbench-overview
+
+disposition: follow-up-required
+review_result: contract-aligned-read-path-front-publication-replay-required
+can_close: false
+
+summary: >-
+  Pantheon re-reviewed the mirrored PKT-consultation-workbench ui-done and
+  frontend-feedback packets against the published overview contract, example
+  payload, sibling front implementation, and current Pantheon BFF workspace.
+  The reviewed UI remains statically aligned on the backend-owned read model:
+  it reads only through workbenchApi.getConsultationOverview(), validates the
+  full consultation overview envelope before rendering, preserves backend-owned
+  module order via wave_order, renders support_refs[] and next_steps[] from
+  the payload, and keeps the route explicitly read-only without introducing
+  consult request forms, committee boards, or red-team memo UI. Pantheon's
+  current workspace serves GET /api/v1/workbench/consultation, targeted
+  PKT-015 contract verification passes, and the sibling front changed-file
+  build plus targeted ESLint slice are clean. The loop still cannot close
+  because both returned request bodies advertise source_commit
+  37a622bca69a95e2aae46aa8c6b0432ad72082a8 even though that Git-visible commit
+  still contains the old ComingSoon Consultation page and does not contain the
+  consultation request pair or feedback bundle.
+
+acceptance_verified:
+  - criterion: build the Consultation Workbench landing page from the single overview route
+    status: pass
+    note: >-
+      ConsultationWorkbench loads only GET /api/v1/workbench/consultation and
+      renders the header, support refs, module pipeline, and next steps from
+      one backend-owned packet.
+  - criterion: use only the existing BFF client
+    status: pass
+    note: >-
+      The reviewed page reads through workbenchApi.getConsultationOverview()
+      and does not introduce a screen-local API helper or raw fetch path.
+  - criterion: keep module ordering, support refs, and next steps backend-owned
+    status: pass
+    note: >-
+      The UI sorts modules by wave_order and renders missing_contracts[],
+      support_refs[], and next_steps[] directly from the payload without
+      inventing local readiness or alternate ref semantics.
+  - criterion: keep the route read-only and do not introduce consult request forms, committee boards, or red-team memo UI
+    status: pass
+    note: >-
+      The reviewed page includes an explicit overview-only alert and keeps the
+      surface limited to overview data from the published packet.
+  - criterion: surface contract mismatch as a bff-gap instead of synthesizing local workbench state
+    status: pass
+    note: >-
+      Missing required fields route the operator to the canonical
+      PKT-consultation-workbench bff-gap handoff rather than a client-side
+      fallback view.
+  - criterion: validate the published consultation overview route against Pantheon verification
+    status: pass
+    note: >-
+      Targeted PKT-015 contract verification passed, and a direct local
+      TestClient read returned 200 OK with workbench_id consultation-workbench,
+      overall_status overview_ready, packet_family family_id CW-008, and
+      both required meta.surfaces entries set to ok.
+  - criterion: publish ui-done and frontend-feedback from one truthful Git-visible front commit that contains the consultation handoff set
+    status: fail
+    note: >-
+      Both returned request bodies point at source_commit
+      37a622bca69a95e2aae46aa8c6b0432ad72082a8, but that commit still contains
+      the old ComingSoon Consultation page and does not contain the consultation
+      ui-done request, frontend-feedback request, or feedback bundle, so the
+      reviewed cycle is not transport-replayable.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify PKT-015 contract tests
+    path: services/control-plane/bff/test_pkt015_consultation_workbench_contract.py
+    note: >-
+      Targeted PKT-015 verification passed in the current Pantheon workspace:
+      1 passed.
+  - action: verify live consultation overview route in the current workspace
+    path: services/control-plane/bff/main.py
+    note: >-
+      Direct FastAPI TestClient probing returned 200 OK for
+      GET /api/v1/workbench/consultation with the published overview shape,
+      including CW-008 packet_family truth and ok status for the overview and
+      packet_family surfaces.
+  - action: publish backend delivery record
+    path: .coordination/responses/PKT-consultation-workbench-backend-delivery.yaml
+    note: >-
+      Pantheon recorded the backend-delivery response and reduced the next
+      PKT-consultation-workbench cycle to front publication replay only.
+
+follow_up_items:
+  - type: publication_replay
+    status: blocking
+    note: >-
+      Front repo must publish
+      .coordination/requests/PKT-consultation-workbench-frontend-feedback.yaml,
+      .coordination/requests/PKT-consultation-workbench-ui-done.yaml, and
+      docs/pantheon-feedback/PKT-consultation-workbench/ from one Git-visible
+      commit together with the reviewed consultation UI files, and both request
+      bodies must set source_commit to that exact immutable publication commit.
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Live browser verification against a running Pantheon environment remains
+      outstanding after the truthful republish lands.
+
+required_front_repo_updates:
+  - file: .coordination/requests/PKT-consultation-workbench-frontend-feedback.yaml
+    action: >-
+      Publish the canonical frontend-feedback request from the same final front
+      commit as the ui-done payload, reviewed UI files, and feedback bundle,
+      and point source_commit at that same immutable publication commit SHA.
+  - file: .coordination/requests/PKT-consultation-workbench-ui-done.yaml
+    action: >-
+      Republish the ui-done request from the same final front-repo commit as
+      the feedback bundle and reviewed consultation UI files, and replace
+      source_commit=37a622bca69a95e2aae46aa8c6b0432ad72082a8 with that exact
+      Git-visible publication commit.
+  - file: docs/pantheon-feedback/PKT-consultation-workbench
+    action: >-
+      Commit LOVABLE_CHANGE_FEEDBACK.md, API_GAP_REQUESTS.json,
+      UI_DECISIONS.md, and QA_STATUS.md in the same final publication commit so
+      the reviewed bundle is Git-replayable.
+  - file: src/pages/workbench/ConsultationWorkbench.tsx
+    action: >-
+      Keep the reviewed overview screen in the same publication commit as the
+      request pair and feedback bundle.
+  - file: src/pages/workbench/types.ts
+    action: >-
+      Keep the consultation overview response types in the same publication
+      commit as the request pair and feedback bundle.
+  - file: src/lib/bffClient.ts
+    action: >-
+      Keep workbenchApi.getConsultationOverview() in the same publication
+      commit as the request pair and feedback bundle.
+  - file: src/components/AppSidebar.tsx
+    action: >-
+      Keep the Consultation navigation entry in the same publication commit as
+      the request pair and feedback bundle.
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  The loop can close once one Git-visible front commit contains the
+  PKT-consultation-workbench implementation files, the canonical ui-done
+  request, the canonical frontend-feedback request, and
+  docs/pantheon-feedback/PKT-consultation-workbench/*, and both request bodies
+  point source_commit at that same immutable publication commit SHA.
+
+risk_note: >-
+  The remaining blocker is coordination transport truth, not primary read-route
+  availability or screen contract shape. GET /api/v1/workbench/consultation is
+  live in the current Pantheon workspace, targeted verification passes, and the
+  reviewed UI behavior remains aligned to the published single-route read-only
+  model.
+
+lovable_ui_task_status: followup-required
+next_action: front-publish-feedback-bundle-and-replay-clean-ui-done
+delivery_artifact_ref: .coordination/responses/PKT-consultation-workbench-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/PKT-consultation-workbench-review.md

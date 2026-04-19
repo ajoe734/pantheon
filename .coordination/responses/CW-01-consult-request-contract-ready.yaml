@@ -1,0 +1,44 @@
+feature_id: CW-01-consult-request
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: consult-request
+status: published
+published_at: "2026-04-19T17:25:00Z"
+task: CW-01-FOUNDATION-001
+description: >-
+  CW-01 Consult Request contract published as part of CW-01-FOUNDATION-001. The
+  create/list/detail/cancel route specs, ConsultRequest lifecycle, and
+  request-to-session handoff semantics are now defined. BFF implementation is the
+  remaining gate before UI work starts. The module is promoted from blocked-shell
+  to contract-published.
+artifacts:
+  bff_contract: docs/bff/CW-01-consult-request.md
+  screen_spec: docs/screens/CW-01-consult-request.md
+  example_payload: docs/examples/CW-01-consult-request.json
+  lovable_ui_task: .coordination/responses/CW-01-consult-request-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md
+endpoints:
+  - POST /api/v1/consult/requests
+  - GET /api/v1/consult/requests
+  - GET /api/v1/consult/requests/{request_id}
+  - POST /api/v1/consult/requests/{request_id}/cancel
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+readiness_gate: >-
+  Pantheon must confirm the CW-01 request routes are live and returning the
+  published field shape before the Lovable UI task activates.
+front_actions_required:
+  - do not start production UI until Pantheon confirms the CW-01 request routes are live
+  - build the request composer from the published create contract only
+  - build the request list and detail pages from the CW-01 BFF routes only
+  - render request-to-session status from linked_session_id plus request_to_session_status exactly as supplied
+  - render the cancel CTA only when allowedActions.canCancel is true
+  - emit a bff-gap handoff if any required field is absent
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: false
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true

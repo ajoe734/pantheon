@@ -1,0 +1,140 @@
+{
+  "workbench_id": "consultation-workbench",
+  "label": "Consultation Workbench",
+  "route_href": "/consultation",
+  "overall_status": "overview_ready",
+  "headline": "Overview route is live; consultation delivery remains module-gated",
+  "summary": "This overview is a truthful landing surface for the Consultation Workbench. It exposes existing support surfaces and the remaining module-level BFF gaps without claiming that consult requests, committee boards, or red-team memo flows are already live.",
+  "packet_family": {
+    "family_id": "CW-008",
+    "path": "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
+    "lovable_readiness": "not_ready",
+    "note": "All four Consultation Workbench modules remain blocked on net-new BFF routes or lifecycle contracts."
+  },
+  "module_counts": {
+    "total": 4,
+    "ready": 0,
+    "not_ready": 4
+  },
+  "modules": [
+    {
+      "module_id": "CW-01",
+      "label": "Consult Request",
+      "status": "not_ready",
+      "wave_order": 1,
+      "summary": "Request create/list/detail/cancel flows and the request-to-session lifecycle are still missing.",
+      "missing_contracts": [
+        "POST /api/v1/consult/requests",
+        "GET /api/v1/consult/requests",
+        "GET /api/v1/consult/requests/{request_id}",
+        "POST /api/v1/consult/requests/{request_id}/cancel",
+        "ConsultRequest lifecycle and linked_session_id contract"
+      ],
+      "next_gate": "Publish request identity, lifecycle, and request-to-session handoff truth.",
+      "upstream_dependencies": []
+    },
+    {
+      "module_id": "CW-02",
+      "label": "Debate Transcript",
+      "status": "not_ready",
+      "wave_order": 2,
+      "summary": "The ordered transcript route, actor resolution, and evidence-link semantics are not yet packetized.",
+      "missing_contracts": [
+        "GET /api/v1/consultations/{session_id}/transcript",
+        "TranscriptEvent schema",
+        "Actor labeling contract",
+        "Evidence attachment inline behavior"
+      ],
+      "next_gate": "Lock transcript ordering and actor-label truth after CW-01 is live.",
+      "upstream_dependencies": [
+        "CW-01"
+      ]
+    },
+    {
+      "module_id": "CW-03",
+      "label": "Committee Board",
+      "status": "not_ready",
+      "wave_order": 3,
+      "summary": "Committee queue/detail projections, sponsor decisions, and synthesis semantics are still missing.",
+      "missing_contracts": [
+        "GET /api/v1/committees",
+        "GET /api/v1/committees/{committee_id}",
+        "Committee board projection",
+        "POST /api/v1/operator/commands RecordSponsorDecision",
+        "Synthesis summary shape"
+      ],
+      "next_gate": "Publish committee state and sponsor decision authority after CW-01 and CW-02 settle.",
+      "upstream_dependencies": [
+        "CW-01",
+        "CW-02"
+      ]
+    },
+    {
+      "module_id": "CW-04",
+      "label": "Red-team Memo",
+      "status": "not_ready",
+      "wave_order": 4,
+      "summary": "Memo browse/detail routes and the downstream governance handoff authority signal are still absent.",
+      "missing_contracts": [
+        "GET /api/v1/consult/memos",
+        "GET /api/v1/consult/memos/{memo_id}",
+        "ConsultMemo read model",
+        "Red-team session-to-memo mapping",
+        "allowedActions.canInitiateGovernanceReview"
+      ],
+      "next_gate": "Publish memo lifecycle and evidence rail truth after request identity and session evidence semantics are stable.",
+      "upstream_dependencies": [
+        "CW-01",
+        "CW-02"
+      ]
+    }
+  ],
+  "support_refs": [
+    {
+      "ref_id": "consultation-surface-contract",
+      "label": "Consultation Surface Contract",
+      "ref_type": "document",
+      "value": "services/control-plane/bff/CONSULTATION_SURFACE_CONTRACT.md",
+      "note": "Existing CS-01 to CS-06 persona-side read surfaces; not a workbench IA."
+    },
+    {
+      "ref_id": "persona-consultations",
+      "label": "Persona consultation list",
+      "ref_type": "endpoint",
+      "value": "/api/v1/personas/{persona_id}/consultations",
+      "note": "Existing persona-scoped consultation list and detail support."
+    },
+    {
+      "ref_id": "persona-consult-policy",
+      "label": "Persona consult policy",
+      "ref_type": "endpoint",
+      "value": "/api/v1/personas/{persona_id}/consult-policy",
+      "note": "Existing consult-policy read surface used by persona-side consultation flows."
+    },
+    {
+      "ref_id": "persona-runtime-model",
+      "label": "Persona Runtime Model",
+      "ref_type": "document",
+      "value": "PERSONA_RUNTIME_MODEL.md",
+      "note": "Canonical source for consultation roles, session metadata, and ConsultPolicy fields."
+    }
+  ],
+  "next_steps": [
+    "Land CW-01 request create/list/detail/cancel routes and lifecycle truth.",
+    "Publish the ordered transcript event contract before opening Committee Board or Red-team Memo UI packets.",
+    "Keep this overview read-only; do not invent request forms or memo state in the browser."
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-18T12:00:00Z",
+    "surfaces": {
+      "overview": {
+        "status": "ok",
+        "source": "bff_static"
+      },
+      "packet_family": {
+        "status": "ok",
+        "source": "canonical"
+      }
+    }
+  }
+}
