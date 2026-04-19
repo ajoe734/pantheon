@@ -22,7 +22,7 @@ Provide the first real browse module for the Knowledge Workbench. This contract 
 {
   "entries": [
     {
-      "entry_id": "string (UUID)",
+      "entry_id": "string (format: mem-{UUID})",
       "knowledge_type": "string (enum)",
       "headline": "string",
       "scope": "string (enum)",
@@ -56,7 +56,7 @@ Provide the first real browse module for the Knowledge Workbench. This contract 
 **Response Shape:**
 ```json
 {
-  "entry_id": "string (UUID)",
+  "entry_id": "string (format: mem-{UUID})",
   "knowledge_type": "string (enum)",
   "content": {
     "headline": "string",
@@ -96,7 +96,7 @@ Provide the first real browse module for the Knowledge Workbench. This contract 
 
 ## Design Rules
 
-- **Identity First**: The `entry_id` is the anchor for all downstream Knowledge Workbench modules (Notes, Evidence, Insights).
+- **Identity First**: The `entry_id` is the anchor for all downstream Knowledge Workbench modules (Notes, Evidence, Insights). The canonical format is `mem-{UUID}` — the `mem-` prefix makes IDs self-describing in a multi-entity context. Bare UUID values are not valid `entry_id` values.
 - **Backend-Owned Ranking**: The list order is determined by the BFF/Memory Plane (e.g., by `written_at` or `reuse_count`). The UI must not sort locally.
 - **Surface Health**: Use `meta.surfaces` to signal if the memory store or source event resolution is degraded.
 - **Read-Only**: This module is currently read-only for the Knowledge Workbench. Writing is performed by authority services (Incident, Evolution, etc.).

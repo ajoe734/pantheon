@@ -16,7 +16,8 @@
   "properties": {
     "entry_id": {
       "type": "string",
-      "description": "Immutable unique identifier for this institutional memory entry (UUID)."
+      "pattern": "^mem-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Immutable unique identifier for this institutional memory entry. Format: mem-{UUID} (e.g. mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c). The mem- prefix makes the ID self-describing in a multi-entity system."
     },
     "knowledge_type": {
       "type": "string",
