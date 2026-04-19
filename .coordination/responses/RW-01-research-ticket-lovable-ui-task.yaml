@@ -1,0 +1,49 @@
+feature_id: RW-01-research-ticket
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: research-workbench
+screen: research-ticket
+screen_id: screen-research-ticket
+ui_spec_path: docs/screens/RW-01-research-ticket.md
+frontend_change_spec_path: docs/pantheon-handoffs/RW-01-research-ticket/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- POST /api/v1/research/tickets
+- GET /api/v1/research/tickets
+- GET /api/v1/research/tickets/{ticket_id}
+- PATCH /api/v1/research/tickets/{ticket_id}
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- do not start production UI until Pantheon confirms the RW-01 ticket routes are live
+- build the ticket composer from the published create contract only
+- build the ticket list and detail pages from the RW-01 BFF routes only
+- render lifecycle history from lifecycle_history[] as supplied by the BFF
+- render edit/close/archive CTAs only when the respective allowedActions signal is
+  true
+- render linked experiments and artifacts as BFF-supplied read-only refs
+- emit a bff-gap handoff if any required field is absent
+required_feedback:
+- docs/pantheon-feedback/RW-01-research-ticket/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/RW-01-research-ticket/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/RW-01-research-ticket/UI_DECISIONS.md
+- docs/pantheon-feedback/RW-01-research-ticket/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/RW-01-research-ticket-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/RW-01-research-ticket.md
+  ui_spec_path: docs/screens/RW-01-research-ticket.md
+  frontend_change_spec_path: docs/pantheon-handoffs/RW-01-research-ticket/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/RW-01-research-ticket.json
+  handoff_bundle_dir: docs/pantheon-handoffs/RW-01-research-ticket
+gap_handoff_path: .coordination/requests/RW-01-research-ticket-bff-gap.yaml
+gap_handoff_template: .coordination/requests/RW-01-research-ticket-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/RW-01-research-ticket-ui-done.yaml
+completion_handoff_template: .coordination/requests/RW-01-research-ticket-ui-done.example.yaml

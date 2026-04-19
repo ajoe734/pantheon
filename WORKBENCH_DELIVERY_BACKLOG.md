@@ -60,7 +60,7 @@ canonical closeout bookkeeping only and is tracked separately in
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `RW-01 Research Ticket` | not ready | missing create/list/detail/patch routes and ticket lifecycle contract | publish ticket identity and lifecycle truth |
+| `RW-01 Research Ticket` | contract published — BFF routes pending implementation | create/list/detail/patch route specs, lifecycle state machine (`open → in_progress → closed → archived`), `allowedActions` authority signals, and handoff bundle published via `RW-01-FOUNDATION-001`; BFF must implement all four routes before UI work starts | BFF implements routes → activate Lovable UI task |
 | `RW-02 Search` | not ready | missing search route and search-index adapter | publish backend-owned search corpus contract |
 | `RW-03 Analyze` | not ready | missing analysis list/detail routes and metric aggregation contract | lock aggregated metric payload shape |
 | `RW-04 Experiment Launch` | not ready | missing launch, run status, history, cancel, and experiment state machine | publish async status contract and `canCancel` gating |
