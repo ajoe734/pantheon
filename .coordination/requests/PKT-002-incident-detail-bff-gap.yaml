@@ -1,8 +1,9 @@
 feature_id: PKT-002-incident-detail
 type: bff-gap
+status: resolved
 source_repo: pantheon
 screen: incident-detail
-blocking: true
+blocking: false
 assessed_at: "2026-04-16T00:00:00Z"
 assessed_by: Claude
 
