@@ -102,7 +102,7 @@ Pantheon
 | `Evolution` | post-incident, evolution decision, lineage, future mutation review | partial |
 | `Persona` | persona, sessions, teaching, capabilities, capital, bindings | ready |
 | `Research` | tickets, search, analysis, experiments, artifact compare | blocked |
-| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01–02 contract-ready; KW-03–05 blocked |
+| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01–03 contract-ready; KW-04–05 blocked |
 | `Consultation` | request, transcript, committee board, red-team memo | overview-only + blocked modules |
 | `Trainer` | teaching dialog, controls, compare, replay | TW-01–02 contract-published; TW-03–04 blocked |
 
@@ -287,8 +287,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/knowledge/memory/:entry_id` | Memory Detail | Knowledge | contract-ready |
 | `/knowledge/notes` | Research Notes | Knowledge | blocked shell only |
 | `/knowledge/notes/:note_id` | Note Detail | Knowledge | blocked shell only |
-| `/knowledge/evidence` | Evidence Refs | Knowledge | blocked shell only |
-| `/knowledge/evidence/:ref_id` | Evidence Ref Detail | Knowledge | blocked shell only |
+| `/knowledge/evidence` | Evidence Refs | Knowledge | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
+| `/knowledge/evidence/:ref_id` | Evidence Ref Detail | Knowledge | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
 | `/knowledge/insights` | Insight Cards | Knowledge | blocked shell only |
 | `/knowledge/insights/:insight_id` | Insight Card Detail | Knowledge | blocked shell only |
 | `/knowledge/strategy-specs` | Strategy Spec List | Knowledge | blocked shell only |
@@ -634,8 +634,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | Institutional Memory Detail | `/knowledge/memory/:entry_id` | `KW-01` | contract-ready | 待 BFF 上線後可正式做 |
 | Research Notes List | `/knowledge/notes` | `KW-02` | contract-ready | 待 BFF 上線後可正式做 |
 | Research Note Detail | `/knowledge/notes/:note_id` | `KW-02` | contract-ready | 待 BFF 上線後可正式做 |
-| Evidence Refs List | `/knowledge/evidence` | `KW-03` | blocked | shell-only |
-| Evidence Ref Detail | `/knowledge/evidence/:ref_id` | `KW-03` | blocked | shell-only |
+| Evidence Refs List | `/knowledge/evidence` | `KW-03` | contract-ready | 待 BFF 上線後可正式做 |
+| Evidence Ref Detail | `/knowledge/evidence/:ref_id` | `KW-03` | contract-ready | 待 BFF 上線後可正式做 |
 | Insight Cards | `/knowledge/insights` | `KW-04` | blocked | shell-only |
 | Insight Card Detail | `/knowledge/insights/:insight_id` | `KW-04` | blocked | shell-only |
 | Strategy Spec List | `/knowledge/strategy-specs` | `KW-05` | blocked | shell-only |
@@ -667,8 +667,9 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 12.3.4 KW-03 Evidence Refs
 
 - 目標頁面：evidence registry + detail + linked decision panel
-- 期待 BFF：evidence list/detail + resolved links
-- shell 階段：不可從 raw id 猜 URL
+- 契約狀態：`docs/bff/KW-03-evidence-refs.md` 已發布 `GET /api/v1/knowledge/evidence`、`GET /api/v1/knowledge/evidence/{ref_id}`，並鎖定 link-type taxonomy、credibility metadata、BFF-owned `resolved_link`、linked decisions panel、degradation semantics。
+- 現在可做：正式 production UI（需先確認 BFF 實作完成，或使用 `docs/examples/KW-03-evidence-refs.json` payload）。
+- 不可做：從 raw id 猜 URL；client-side 解析 target type；把 degraded surface 當成 empty state。
 
 #### 12.3.5 KW-04 Insight Cards
 

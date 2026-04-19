@@ -5,7 +5,7 @@
 - Packet family ID: `KW-006`
 - Workbench: Knowledge Workbench
 - Phase origin: `BP5-WB-006`
-- Lovable readiness: **partial** — KW-01 and KW-02 are ready; KW-03 to KW-05 are not ready pending their own contract landing and upstream dependencies
+- Lovable readiness: **partial** — KW-01, KW-02, and KW-03 are ready; KW-04 and KW-05 are not ready pending their own contract landing and upstream dependencies
 - Overview packet status: `PKT-knowledge-workbench` is published as a truthful overview surface; `KW-01` now provides the first truthful browse module anchoring the family
 - Recommended wave: Wave 3 — after Operator Console (Waves 1-2) and Persona Workbench (Waves 1-2) packetization are settled
 - Owner: Claude
@@ -43,7 +43,7 @@ These artifacts define object- and storage-level truth. They do **not** define a
 |---|---|---|---|---|
 | `KW-01` | Institutional Memory | memory entry list, entry detail, lifecycle state machine, tag/type filters | ready | Wave 3 — 1st |
 | `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | ready | Wave 3 — 2nd |
-| `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | not ready | Wave 3 — 3rd |
+| `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | ready | Wave 3 — 3rd |
 | `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | not ready | Wave 3 — 4th |
 | `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | not ready | Wave 3 — 5th |
 
@@ -122,18 +122,18 @@ Note ownership and attachment semantics are now locked in `docs/bff/KW-02-resear
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/knowledge/evidence` | **missing** | list route; must support `linked_entity_type`, `linked_entity_ref`, `link_type`, `credibility`, `page_token`, `page_size`; response must include `meta.surfaces.evidence_refs_list` |
-| `GET /api/v1/knowledge/evidence/{ref_id}` | **missing** | detail route; must expose source-document identity, link-type taxonomy, linked target refs, credibility metadata, and `meta.surfaces.evidence_ref_detail` |
-| Evidence reference read model | **missing** | there is no canonical reusable evidence-ref object or BFF projection for the Knowledge Workbench. CS-05 proves session-scoped evidence links can be resolved, but it does not provide a cross-workbench evidence registry or detail model |
-| Evidence link resolution contract | **missing** | each knowledge evidence ref must carry a BFF-resolved target link and availability state. The UI must not construct evidence URLs from raw ids, raw storage refs, or heuristic object names |
+| `GET /api/v1/knowledge/evidence` | **implemented** | list route; supports `linked_entity_type`, `linked_entity_ref`, `link_type`, `credibility_tier`, `verified`, `page_token`, `page_size`; response includes `meta.surfaces.evidence_refs_list` — defined in `docs/bff/KW-03-evidence-refs.md` |
+| `GET /api/v1/knowledge/evidence/{ref_id}` | **implemented** | detail route; exposes source-document identity, link-type taxonomy, linked target refs, credibility metadata, `linked_decisions` panel, and `meta.surfaces.evidence_ref_detail` — defined in `docs/bff/KW-03-evidence-refs.md` |
+| Evidence reference read model | **implemented** | canonical `evref-{UUID}` identity, `link_type` taxonomy, `credibility` metadata, `resolved_link` shape, `source_note_context`, and `source_memory_context` published in `docs/bff/KW-03-evidence-refs.md` |
+| Evidence link resolution contract | **implemented** | BFF-owned `resolved_link` object with `availability` state (`available | unavailable | external`) and `route_href`; follows CS-05 precedent; no client-side URL construction permitted — defined in `docs/bff/KW-03-evidence-refs.md` |
 
 ### Packetization prerequisite
 
-The evidence reference shape, link-type taxonomy, linked-object contract, and credibility metadata must be agreed before a browse or detail view can be packet-defined. This depends on `KW-01` for anchor identity and `KW-02` for source-document or note context.
+All contracts are now locked in `docs/bff/KW-03-evidence-refs.md` and example payloads are published in `docs/examples/KW-03-evidence-refs.json`. Upstream prerequisites `KW-01` and `KW-02` are both Lovable-ready.
 
 ### Lovable readiness gate
 
-`false` — the list route, detail route, evidence-reference read model, and evidence-link resolution contract must all be implemented and field shapes locked before a screen spec can be opened.
+`true` — the list route, detail route, evidence-reference read model, evidence-link resolution contract, and example payloads are all published. Lovable may proceed with production UI for the Evidence Refs module.
 
 ---
 
@@ -201,17 +201,17 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `GET /api/v1/knowledge/memory` | KW-01 | missing read route | institutional-memory list surface |
-| `GET /api/v1/knowledge/memory/{entry_id}` | KW-01, KW-02, KW-03, KW-04, KW-05 | missing read route | entry-detail anchor for downstream linked-memory resolution |
-| Memory entry lifecycle and identity contract | KW-01, KW-02, KW-03, KW-04, KW-05 | missing lifecycle or object contract | `draft | active | archived`, entry-type mapping, tags, and linked-artifact semantics |
+| `GET /api/v1/knowledge/memory` | KW-01 | **resolved** — `docs/bff/KW-01-institutional-memory.md` | institutional-memory list surface |
+| `GET /api/v1/knowledge/memory/{entry_id}` | KW-01, KW-02, KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-01-institutional-memory.md` | entry-detail anchor for downstream linked-memory resolution |
+| Memory entry lifecycle and identity contract | KW-01, KW-02, KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-01-institutional-memory.md` | lifecycle and identity resolution locked; entry types map to canonical `knowledge_type` enums |
 | `POST /api/v1/knowledge/notes` | KW-02 | **resolved** — `docs/bff/KW-02-research-notes.md` | note creation and attachment capture |
 | `GET /api/v1/knowledge/notes` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | note list surface and evidence source-context lookup |
 | `GET /api/v1/knowledge/notes/{note_id}` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | note detail and source-context resolution for evidence refs |
 | Research note ownership and attachment contract | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | owner semantics, attachment taxonomy, and referential integrity |
-| `GET /api/v1/knowledge/evidence` | KW-03, KW-04, KW-05 | missing read route | evidence list surface and downstream card or citation browsing |
-| `GET /api/v1/knowledge/evidence/{ref_id}` | KW-03, KW-04, KW-05 | missing read route | evidence detail, card drilldown, and strategy-spec citation drilldown |
-| Evidence reference read model | KW-03, KW-04, KW-05 | missing object contract | source-document identity, link taxonomy, linked-object refs, and credibility metadata |
-| Evidence link resolution contract | KW-03, KW-04, KW-05 | missing BFF-side resolution | canonical evidence links with availability state; no client-side URL construction |
+| `GET /api/v1/knowledge/evidence` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | evidence list surface and downstream card or citation browsing |
+| `GET /api/v1/knowledge/evidence/{ref_id}` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | evidence detail, card drilldown, and strategy-spec citation drilldown |
+| Evidence reference read model | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | source-document identity, link taxonomy, linked-object refs, and credibility metadata |
+| Evidence link resolution contract | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | canonical evidence links with availability state; no client-side URL construction |
 | Insight aggregation endpoint | KW-04 | missing read route | entire Insight Cards module |
 | Insight card detail endpoint | KW-04 | missing read route | card detail and linked-source drilldown |
 | Card-surface read model | KW-04 | missing object contract | card identity, scope, summary, confidence, and aggregation provenance |
