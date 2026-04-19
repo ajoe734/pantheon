@@ -2,7 +2,9 @@
 
 ## Status
 
-**Blocked** — this route does not yet exist. This contract defines the required field shape that the BFF must implement before `PKT-003-inspiration-graph` can be unblocked for Lovable handoff.
+**Contract published** — the route and field shape are the definitive spec for BFF implementation. The BFF route does not yet exist; this document is the implementation target. UI work must not start until the BFF confirms the route is live and returning this field shape.
+
+Task: `EW-04-OPEN-001`
 
 ## Purpose
 
