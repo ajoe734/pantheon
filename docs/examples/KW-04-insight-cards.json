@@ -1,0 +1,284 @@
+{
+  "_comment": "KW-04 Insight Cards — example payloads for BFF contract defined in docs/bff/KW-04-insight-cards.md",
+
+  "list_response": {
+    "insight_cards": [
+      {
+        "insight_id": "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+        "summary": "Momentum strategies consistently underperform during high-volatility regimes when rebalancing frequency exceeds weekly cadence. Evidence from four primary sources across three independent experiments.",
+        "scope": "strategy",
+        "scope_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+        "status": "active",
+        "superseded_by_id": null,
+        "confidence": {
+          "score": 0.82,
+          "label": "high"
+        },
+        "tags": ["momentum", "volatility-regime", "rebalancing-frequency"],
+        "evidence_count": 7,
+        "primary_evidence_count": 4,
+        "aggregated_at": "2026-04-19T14:32:10Z",
+        "route_href": "/knowledge/insights/ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567"
+      },
+      {
+        "insight_id": "ins-b5d8e3f2-1a7c-4e09-8d56-f2c3a4b5d6e7",
+        "summary": "Mean-reversion signals derived from order-book imbalance show reduced predictive power during the first 30 minutes of each trading session. Corroborated by institutional memory entries from Q1 and Q2 2026.",
+        "scope": "global",
+        "scope_ref": null,
+        "status": "active",
+        "superseded_by_id": null,
+        "confidence": {
+          "score": 0.67,
+          "label": "medium"
+        },
+        "tags": ["mean-reversion", "order-book", "session-open"],
+        "evidence_count": 5,
+        "primary_evidence_count": 2,
+        "aggregated_at": "2026-04-18T22:11:45Z",
+        "route_href": "/knowledge/insights/ins-b5d8e3f2-1a7c-4e09-8d56-f2c3a4b5d6e7"
+      },
+      {
+        "insight_id": "ins-c9e0f1a2-3b4c-5d6e-7f80-91a2b3c4d5e6",
+        "summary": "Legacy momentum parameter set v1 is superseded. See replacement card for updated high-volatility findings.",
+        "scope": "strategy",
+        "scope_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+        "status": "superseded",
+        "superseded_by_id": "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+        "confidence": {
+          "score": 0.55,
+          "label": "medium"
+        },
+        "tags": ["momentum", "volatility-regime"],
+        "evidence_count": 3,
+        "primary_evidence_count": 1,
+        "aggregated_at": "2026-03-15T09:00:00Z",
+        "route_href": "/knowledge/insights/ins-c9e0f1a2-3b4c-5d6e-7f80-91a2b3c4d5e6"
+      }
+    ],
+    "filter_metadata": {
+      "tags": [
+        { "value": "momentum", "display_label": "Momentum", "count": 12 },
+        { "value": "volatility-regime", "display_label": "Volatility Regime", "count": 8 },
+        { "value": "mean-reversion", "display_label": "Mean Reversion", "count": 7 },
+        { "value": "rebalancing-frequency", "display_label": "Rebalancing Frequency", "count": 5 },
+        { "value": "order-book", "display_label": "Order Book", "count": 4 },
+        { "value": "session-open", "display_label": "Session Open", "count": 3 }
+      ],
+      "linked_entity_types": [
+        { "value": "memory_entry", "display_label": "Institutional Memory", "count": 31 },
+        { "value": "evidence_ref", "display_label": "Evidence Reference", "count": 24 },
+        { "value": "research_note", "display_label": "Research Note", "count": 18 },
+        { "value": "experiment", "display_label": "Experiment", "count": 9 },
+        { "value": "strategy_spec", "display_label": "Strategy Spec", "count": 6 }
+      ],
+      "recency_options": [
+        { "value": "7d", "display_label": "Last 7 days" },
+        { "value": "30d", "display_label": "Last 30 days" },
+        { "value": "90d", "display_label": "Last 90 days" },
+        { "value": "all", "display_label": "All time" }
+      ],
+      "total_active_count": 47
+    },
+    "pagination": {
+      "page_size": 20,
+      "next_page_token": "eyJpbnNpZ2h0X2lkIjoiaW5zLWM5ZTBmMWEyIn0",
+      "has_more": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:22:00Z",
+      "surfaces": {
+        "insight_cards": "ok"
+      }
+    }
+  },
+
+  "detail_response": {
+    "insight_id": "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+    "summary": "Momentum strategies consistently underperform during high-volatility regimes when rebalancing frequency exceeds weekly cadence. Evidence from four primary sources across three independent experiments.",
+    "scope": "strategy",
+    "scope_context": {
+      "scope_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+      "display_label": "Momentum Alpha v3 — Strategy Spec",
+      "route_href": "/knowledge/strategy-specs/strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a"
+    },
+    "status": "active",
+    "superseded_by": {
+      "insight_id": null,
+      "summary": null,
+      "route_href": null
+    },
+    "confidence": {
+      "score": 0.82,
+      "label": "high",
+      "basis": "Supported by 4 primary evidence refs from 3 independent experiments (EXP-441, EXP-456, EXP-472), corroborated by 2 institutional memory entries from Q1–Q2 2026 postmortem reviews."
+    },
+    "tags": ["momentum", "volatility-regime", "rebalancing-frequency"],
+    "source_ref": "agg-ref:ins-7a3f2c91-v2026041914",
+    "supporting_evidence_refs": [
+      {
+        "ref_id": "evref-11a2b3c4-d5e6-f7a8-b9c0-d1e2f3a4b5c6",
+        "source_document_title": "EXP-441 Result Analysis: Momentum drawdown during VIX spike regimes",
+        "link_type": "supporting_evidence",
+        "credibility_tier": "primary",
+        "resolved_link": {
+          "availability": "available",
+          "route_href": "/knowledge/evidence/evref-11a2b3c4-d5e6-f7a8-b9c0-d1e2f3a4b5c6",
+          "display_label": "View evidence reference",
+          "open_in_new_tab": false
+        }
+      },
+      {
+        "ref_id": "evref-22b3c4d5-e6f7-a8b9-c0d1-e2f3a4b5c6d7",
+        "source_document_title": "EXP-456 Postmortem: Weekly vs daily rebalancing under elevated implied vol",
+        "link_type": "supporting_evidence",
+        "credibility_tier": "primary",
+        "resolved_link": {
+          "availability": "available",
+          "route_href": "/knowledge/evidence/evref-22b3c4d5-e6f7-a8b9-c0d1-e2f3a4b5c6d7",
+          "display_label": "View evidence reference",
+          "open_in_new_tab": false
+        }
+      },
+      {
+        "ref_id": "evref-33c4d5e6-f7a8-b9c0-d1e2-f3a4b5c6d7e8",
+        "source_document_title": "Institutional memory: Q1 2026 postmortem finding on momentum decay",
+        "link_type": "corroboration",
+        "credibility_tier": "secondary",
+        "resolved_link": {
+          "availability": "available",
+          "route_href": "/knowledge/evidence/evref-33c4d5e6-f7a8-b9c0-d1e2-f3a4b5c6d7e8",
+          "display_label": "View evidence reference",
+          "open_in_new_tab": false
+        }
+      },
+      {
+        "ref_id": "evref-44d5e6f7-a8b9-c0d1-e2f3-a4b5c6d7e8f9",
+        "source_document_title": "External: Jegadeesh & Titman (2001) — Profitability of Momentum Strategies",
+        "link_type": "citation",
+        "credibility_tier": "primary",
+        "resolved_link": {
+          "availability": "external",
+          "route_href": "https://doi.org/10.1111/0022-1082.00342",
+          "display_label": "Open external source",
+          "open_in_new_tab": true
+        }
+      }
+    ],
+    "linked_sources": [
+      {
+        "entity_type": "experiment",
+        "entity_ref": "exp-441",
+        "display_label": "EXP-441: Momentum Decay Under High VIX",
+        "route_href": "/research/experiments/exp-441",
+        "relationship_note": "Primary aggregation input; full result set included in evidence refs"
+      },
+      {
+        "entity_type": "experiment",
+        "entity_ref": "exp-456",
+        "display_label": "EXP-456: Rebalancing Frequency Study",
+        "route_href": "/research/experiments/exp-456",
+        "relationship_note": "Primary aggregation input; weekly vs daily comparison"
+      },
+      {
+        "entity_type": "memory_entry",
+        "entity_ref": "mem-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "display_label": "Q1 2026 Postmortem — Momentum underperformance root cause",
+        "route_href": "/knowledge/memory/mem-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "relationship_note": "Institutional memory anchor; corroborating finding"
+      },
+      {
+        "entity_type": "strategy_spec",
+        "entity_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+        "display_label": "Momentum Alpha v3",
+        "route_href": "/knowledge/strategy-specs/strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+        "relationship_note": "Insight scoped to this strategy spec"
+      }
+    ],
+    "aggregation_provenance": {
+      "memory_entry_count": 2,
+      "note_count": 1,
+      "evidence_ref_count": 4,
+      "primary_evidence_count": 4,
+      "aggregated_at": "2026-04-19T14:32:10Z",
+      "aggregation_version": "v2.3.1"
+    },
+    "created_at": "2026-04-15T10:00:00Z",
+    "updated_at": "2026-04-19T14:32:10Z",
+    "meta": {
+      "snapshot_at": "2026-04-19T20:22:00Z",
+      "surfaces": {
+        "insight_card_detail": "ok",
+        "supporting_evidence_refs": "ok",
+        "linked_sources": "ok"
+      }
+    }
+  },
+
+  "degraded_list_response": {
+    "_comment": "Example: insight_cards surface is degraded — aggregation inputs are stale. Show PKT-005 non-dismissable banner.",
+    "insight_cards": [],
+    "filter_metadata": {
+      "tags": [],
+      "linked_entity_types": [],
+      "recency_options": [
+        { "value": "7d", "display_label": "Last 7 days" },
+        { "value": "30d", "display_label": "Last 30 days" },
+        { "value": "90d", "display_label": "Last 90 days" },
+        { "value": "all", "display_label": "All time" }
+      ],
+      "total_active_count": 0
+    },
+    "pagination": {
+      "page_size": 20,
+      "next_page_token": null,
+      "has_more": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:10:00Z",
+      "surfaces": {
+        "insight_cards": "degraded"
+      }
+    }
+  },
+
+  "detail_partial_degraded_response": {
+    "_comment": "Example: card detail ok, but linked_sources panel is degraded — show inline partial-data indicator in linked-sources panel, not a full degradation banner.",
+    "insight_id": "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+    "summary": "Momentum strategies consistently underperform during high-volatility regimes...",
+    "scope": "strategy",
+    "scope_context": {
+      "scope_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+      "display_label": "Momentum Alpha v3 — Strategy Spec",
+      "route_href": "/knowledge/strategy-specs/strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a"
+    },
+    "status": "active",
+    "superseded_by": { "insight_id": null, "summary": null, "route_href": null },
+    "confidence": {
+      "score": 0.82,
+      "label": "high",
+      "basis": "Supported by 4 primary evidence refs from 3 independent experiments."
+    },
+    "tags": ["momentum", "volatility-regime"],
+    "source_ref": "agg-ref:ins-7a3f2c91-v2026041914",
+    "supporting_evidence_refs": [],
+    "linked_sources": [],
+    "aggregation_provenance": {
+      "memory_entry_count": 2,
+      "note_count": 1,
+      "evidence_ref_count": 4,
+      "primary_evidence_count": 4,
+      "aggregated_at": "2026-04-19T14:32:10Z",
+      "aggregation_version": "v2.3.1"
+    },
+    "created_at": "2026-04-15T10:00:00Z",
+    "updated_at": "2026-04-19T14:32:10Z",
+    "meta": {
+      "snapshot_at": "2026-04-19T20:22:00Z",
+      "surfaces": {
+        "insight_card_detail": "ok",
+        "supporting_evidence_refs": "degraded",
+        "linked_sources": "degraded"
+      }
+    }
+  }
+}
