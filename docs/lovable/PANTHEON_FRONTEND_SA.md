@@ -102,9 +102,9 @@ Pantheon
 | `Evolution` | post-incident, evolution decision, lineage, future mutation review | partial |
 | `Persona` | persona, sessions, teaching, capabilities, capital, bindings | ready |
 | `Research` | tickets, search, analysis, experiments, artifact compare | blocked |
-| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01–03 contract-ready; KW-04–05 blocked |
+| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01–04 contract-ready; KW-05 blocked |
 | `Consultation` | request, transcript, committee board, red-team memo | overview-only + blocked modules |
-| `Trainer` | teaching dialog, controls, compare, replay | TW-01–02 contract-published; TW-03–04 blocked |
+| `Trainer` | teaching dialog, controls, compare, replay | TW-01–03 contract-published; TW-04 blocked |
 
 ---
 
@@ -289,8 +289,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/knowledge/notes/:note_id` | Note Detail | Knowledge | blocked shell only |
 | `/knowledge/evidence` | Evidence Refs | Knowledge | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
 | `/knowledge/evidence/:ref_id` | Evidence Ref Detail | Knowledge | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
-| `/knowledge/insights` | Insight Cards | Knowledge | blocked shell only |
-| `/knowledge/insights/:insight_id` | Insight Card Detail | Knowledge | blocked shell only |
+| `/knowledge/insights` | Insight Cards | Knowledge | contract-ready |
+| `/knowledge/insights/:insight_id` | Insight Card Detail | Knowledge | contract-ready |
 | `/knowledge/strategy-specs` | Strategy Spec List | Knowledge | blocked shell only |
 | `/knowledge/strategy-specs/:strategy_id` | Strategy Spec Detail | Knowledge | blocked shell only |
 | `/knowledge/strategy-specs/:strategy_id/compare` | Strategy Spec Compare | Knowledge | blocked shell only |
@@ -305,7 +305,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/trainer/sessions` | Teaching Dialog / Session List | Trainer | pending-bff placeholder only |
 | `/trainer/sessions/:session_id` | Teaching Dialog Detail | Trainer | pending-bff placeholder only |
 | `/trainer/sessions/:session_id/controls` | Parameter Controls | Trainer | pending-bff placeholder only |
-| `/trainer/sessions/:session_id/compare` | Before/After Compare | Trainer | blocked shell only |
+| `/trainer/sessions/:session_id/compare` | Before/After Compare | Trainer | pending-bff placeholder only |
 | `/trainer/replay` | Teaching Replay List | Trainer | blocked shell only |
 | `/trainer/replay/:session_id` | Teaching Replay Detail | Trainer | blocked shell only |
 
@@ -636,8 +636,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | Research Note Detail | `/knowledge/notes/:note_id` | `KW-02` | contract-ready | 待 BFF 上線後可正式做 |
 | Evidence Refs List | `/knowledge/evidence` | `KW-03` | contract-ready | 待 BFF 上線後可正式做 |
 | Evidence Ref Detail | `/knowledge/evidence/:ref_id` | `KW-03` | contract-ready | 待 BFF 上線後可正式做 |
-| Insight Cards | `/knowledge/insights` | `KW-04` | blocked | shell-only |
-| Insight Card Detail | `/knowledge/insights/:insight_id` | `KW-04` | blocked | shell-only |
+| Insight Cards | `/knowledge/insights` | `KW-04` | contract-ready | 可依 `docs/bff/KW-04-insight-cards.md` 與 example payload 進行 production UI |
+| Insight Card Detail | `/knowledge/insights/:insight_id` | `KW-04` | contract-ready | 可依 detail route、filter rail 與 linked-source drilldown contract 進行 production UI |
 | Strategy Spec List | `/knowledge/strategy-specs` | `KW-05` | blocked | shell-only |
 | Strategy Spec Detail / Compare | `/knowledge/strategy-specs/:strategy_id`, `/compare` | `KW-05` | blocked | shell-only |
 
@@ -675,7 +675,7 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：card grid、card detail、filter rail、linked-source drilldown
 - 期待 BFF：aggregation endpoint、card detail endpoint、filter taxonomy
-- shell 階段：不可 client-side 聚合 notes + evidence + memory
+- 正式實作規則：不可 client-side 聚合 notes + evidence + memory；必須完全依賴 KW-04 aggregation/detail contract
 
 #### 12.3.6 KW-05 Strategy Spec
 
@@ -753,7 +753,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | Teaching Dialog / Session List | `/trainer/sessions` | `TW-01` | contract-published | pending-bff placeholder only |
 | Teaching Dialog Detail | `/trainer/sessions/:session_id` | `TW-01` | contract-published | pending-bff placeholder only |
 | Parameter Controls | `/trainer/sessions/:session_id/controls` | `TW-02` | contract-published | pending-bff placeholder only |
-| Before/After Compare | `/trainer/sessions/:session_id/compare` | `TW-03` | blocked | shell-only |
+| Before/After Compare | `/trainer/sessions/:session_id/compare` | `TW-03` | contract-published | pending-bff placeholder only |
 | Teaching Replay List | `/trainer/replay` | `TW-04` | blocked | shell-only |
 | Teaching Replay Detail | `/trainer/replay/:session_id` | `TW-04` | blocked | shell-only |
 
@@ -786,8 +786,9 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 14.3.4 TW-03 Before/After Compare
 
 - 目標頁面：metric panels、warning hierarchy、control diff、rapid-eval summary
-- 期待 BFF：preview route、preview contract、`preview_unavailable` degraded contract
-- shell 階段：不可用 mock performance chart 假裝是正式 preview
+- 已發布 contract：`docs/bff/TW-03-before-after-compare.md`、`docs/screens/TW-03-before-after-compare.md`、`docs/examples/TW-03-before-after-compare.json`
+- 目前 gate：BFF 必須先讓 `GET /api/v1/trainer/sessions/{session_id}/preview` 與 `POST /api/v1/trainer/sessions/{session_id}/preview` 上線，並回傳已發布的 compare payload、warning hierarchy、`preview_unavailable` degraded branch 與 polling contract
+- pending-BFF 階段：可做明確 blocked placeholder；不可用 mock performance chart、不可從 TW-02 diff 自己推 performance preview，也不可把 `preview_unavailable` 假裝成 loading
 
 #### 14.3.5 TW-04 Teaching Replay
 

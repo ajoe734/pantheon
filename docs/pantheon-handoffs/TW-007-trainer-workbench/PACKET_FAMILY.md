@@ -5,7 +5,7 @@
 - Packet family ID: `TW-007`
 - Workbench: Trainer Workbench
 - Phase origin: `BP5-WB-007`
-- Lovable readiness: **partial** — `TW-01` Teaching Dialog contract is published via `TW-01-FOUNDATION-001`; `TW-02` to `TW-04` still require net-new BFF routes and canonical control, compare, and replay contracts
+- Lovable readiness: **partial** — `TW-01` Teaching Dialog, `TW-02` Parameter Controls, and `TW-03` Before/After Compare contracts are published via `TW-01-FOUNDATION-001`, `TW-02-CONTROLS-001`, and `TW-03-COMPARE-001`; `TW-04` still requires a net-new replay contract
 - Recommended wave: Wave 3 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
 - Reviewer: Codex2
@@ -40,8 +40,8 @@ The existing teaching-history read surfaces are evidence inputs. They do **not**
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
 | `TW-01` | Teaching Dialog | start session, show transcript, send coaching messages, display session status and actor context | contract-published — pending BFF implementation | Wave 3 — 1st |
-| `TW-02` | Parameter Controls | inspect current control state, edit control patches, surface validation or warning feedback | not ready | Wave 3 — 2nd |
-| `TW-03` | Before/After Compare | preview metrics, warnings, control-state diff, and rapid-eval result summary | not ready | Wave 3 — 3rd |
+| `TW-02` | Parameter Controls | inspect current control state, edit control patches, surface validation or warning feedback | contract-published — pending BFF implementation | Wave 3 — 2nd |
+| `TW-03` | Before/After Compare | preview metrics, warnings, control-state diff, and rapid-eval result summary | contract-published — pending BFF implementation | Wave 3 — 3rd |
 | `TW-04` | Teaching Replay | teaching-session history, ordered event replay, commit or discard evidence, and replay entrypoint | not ready | Wave 3 — 4th |
 
 ---
@@ -84,7 +84,7 @@ The trainer-session lifecycle, dialog-grade `TeachingEvent` schema subset, examp
 
 - **Control state panel**: displays the current mutable control parameters for an active training session. The control-state object is BFF-provided and includes at minimum: `control_id`, `parameter_key`, `current_value`, `allowed_range` (min/max or allowed set), `unit`, and a `last_modified_at` timestamp. Do not construct the control state from any client-side session cache.
 - **Patch editor**: an edit form that allows the operator to adjust one or more control parameters within their `allowed_range`. The patch payload targets `POST /api/v1/trainer/sessions/:id/patch`. Each patch is a structured delta: `[{parameter_key, proposed_value}]`. The patch CTA must be disabled when session `status != active`.
-- **Validation and warning feedback**: the BFF must return a synchronous validation response before applying the patch. The response must include `valid: bool`, `warnings: [{parameter_key, warning_code, message}]`, and `applied: bool`. If `valid = false`, the editor highlights the offending parameter without applying changes. If `valid = true` but warnings are present, a warning banner is shown before a confirmation CTA appears.
+- **Validation and warning feedback**: the BFF must return a synchronous validation response on every patch submission. The response must include `valid: bool`, `warnings: [{parameter_key, warning_code, message}]`, and `applied: bool`. If `valid = false`, the editor highlights the offending parameter without applying changes. If `valid = true` and the patch is accepted with warnings, the UI renders the warning banner alongside the backend-authored inline diff from `updated_controls[]`.
 - **Control-state diff preview**: after a successful patch, the panel shows the before/after delta inline — `previous_value` vs. `new_value` — for each changed parameter. This diff is rendered from the BFF patch response, not derived client-side.
 - **Degradation**: when `meta.surfaces.trainer_controls` is `degraded`, show the last-known control state with a staleness banner. When `unavailable`, show the canonical unavailable banner. The patch CTA must be hidden whenever the surface is `degraded` or `unavailable` — do not allow mutations against a stale control state.
 
@@ -92,19 +92,19 @@ The trainer-session lifecycle, dialog-grade `TeachingEvent` schema subset, examp
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/trainer/sessions/:id/controls` | **missing** | control-state read route; must return the full mutable control-state object with `allowed_range` per parameter; must include `meta.surfaces.trainer_controls` |
-| `POST /api/v1/trainer/sessions/:id/patch` | **missing** | control patch route; body: `patches: [{parameter_key, proposed_value}]`; must return `valid`, `warnings[]`, `applied`, `updated_controls[]` (full updated state); must be rejected when session `status != active` |
-| Control-state schema | **missing** | canonical definition of `ControlParameter` object: `control_id`, `parameter_key`, `current_value`, `allowed_range`, `unit`, `last_modified_at`; must be promoted from L3 design intent to BFF contract |
-| Patch validation contract | **missing** | synchronous validation semantics before application; `warning_code` taxonomy; `applied: false` path when `valid = false`; must not silently clip values to `allowed_range` — rejection must be explicit |
-| Patch diff response shape | **missing** | `updated_controls[]` in the patch response must include `previous_value` so the UI can render an inline before/after diff without a separate read call |
+| `GET /api/v1/trainer/sessions/:id/controls` | **contract published — pending BFF implementation** | published via `TW-02-CONTROLS-001`; route must return the full mutable control-state object, `allowedActions.canPatchControls`, and `meta.surfaces.trainer_controls` |
+| `POST /api/v1/trainer/sessions/:id/patch` | **contract published — pending BFF implementation** | published via `TW-02-CONTROLS-001`; body remains `patches: [{parameter_key, proposed_value}]`; route must reject when session `status != active` or patch authority is false |
+| Control-state schema | **contract published — pending BFF implementation** | `ControlParameter` is now canonically defined in `docs/bff/TW-02-parameter-controls.md` with backend-owned `allowed_range`, `display_label`, and control typing |
+| Patch validation contract | **contract published — pending BFF implementation** | synchronous validation, warning taxonomy, explicit `rejected_patches[]`, and `applied: false` semantics are now published as canonical BFF truth |
+| Patch diff response shape | **contract published — pending BFF implementation** | `updated_controls[]` now requires `previous_value` and `new_value`; this is the backend-owned diff source for `TW-02` and `TW-03` |
 
 ### Packetization prerequisite
 
-The control-patch payload, the `ControlParameter` schema, the validation and warning contract, and the control-state diff semantics must be defined as canonical BFF truth before a parameter panel can be packet-defined. Depends on `TW-01` establishing the active session context and `session_id` identity.
+The control-patch payload, the `ControlParameter` schema, the validation and warning contract, and the control-state diff semantics are now published as canonical BFF truth via `TW-02-CONTROLS-001`. Live BFF routes still need to honor that field shape before Lovable can build the production page. `TW-02` remains downstream of `TW-01` session identity and lifecycle semantics.
 
 ### Lovable readiness gate
 
-`false` — all five rows above must be resolved and field shapes locked before a screen spec can be opened.
+`pending-bff` — the route specs, screen spec, and example payload now exist, but the controls read route and patch route still need live BFF implementation before UI work can begin.
 
 ---
 
@@ -114,8 +114,8 @@ The control-patch payload, the `ControlParameter` schema, the validation and war
 
 - **Metric panels**: side-by-side or before/after display of the key performance metrics produced by a rapid-eval of the current session state. The compare surface reads from a dedicated preview or rapid-eval route — it must not derive metric values from raw control-state diffs or client-side simulations.
 - **Warning hierarchy**: tiered warning display drawn from the BFF preview response. Warning levels must be BFF-defined (at minimum `critical`, `high`, `medium`, `informational`). Do not derive warning severity client-side.
-- **Control-state diff view**: a structured display of which parameters changed between the baseline session state and the patched candidate state. The diff is the `patches[]` applied so far in the session, rendered using the `previous_value` / `new_value` shape from the `TW-02` patch response.
-- **Rapid-eval result summary**: a top-level summary card drawn from the preview response: `eval_id`, `status` (`complete | pending | failed`), `baseline_snapshot_at`, `candidate_snapshot_at`, `metric_delta[]`, `warning_count_by_level`, and a `preview_quality` indicator.
+- **Control-state diff view**: a structured display of which parameters changed between the baseline session state and the patched candidate state. The diff comes from backend-authored `control_diff[]` in the preview response and preserves the `previous_value` / `new_value` semantics published by `TW-02`.
+- **Rapid-eval result summary**: a top-level summary card drawn from the preview response: `eval_id`, `status` (`complete | pending | failed | preview_unavailable`), `baseline_snapshot_at`, `candidate_snapshot_at`, `metric_delta[]`, `warning_count_by_level`, and a `preview_quality` indicator.
 - **`preview_unavailable` degraded state**: when the BFF returns `preview_unavailable` or `meta.surfaces.trainer_preview` is `unavailable`, the compare panel must display a canonical degraded-preview message (not a blank panel). The degraded copy must name the surface and explain that the rapid-eval is temporarily unavailable, without surfacing internal error codes.
 - **Refresh**: a manual refresh CTA that re-triggers the rapid-eval via the preview route. Refresh must be disabled while a previous eval `status = pending`. The CTA is absent when `preview_unavailable`.
 
@@ -123,19 +123,19 @@ The control-patch payload, the `ControlParameter` schema, the validation and war
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| Preview / rapid-eval route | **missing** | `POST /api/v1/trainer/sessions/:id/preview` or `GET /api/v1/trainer/sessions/:id/preview`; must return `eval_id`, `status`, `baseline_snapshot_at`, `candidate_snapshot_at`, `metric_delta[]`, `warnings[]` (with `level`), `preview_quality`, and `meta.surfaces.trainer_preview` |
-| Preview response contract | **missing** | `metric_delta[]` shape: `{metric_key, baseline_value, candidate_value, delta, delta_pct, unit}`; `warnings[]` shape: `{warning_id, level, parameter_key, message}`; `preview_unavailable` semantics must be an explicit contract state, not a missing route response |
-| `preview_unavailable` degraded contract | **missing** | when the rapid-eval infrastructure is unavailable, the BFF must return a structured `preview_unavailable` payload (not a 5xx); the UI may not mask this as a loading state |
-| Async eval status polling (if applicable) | **missing** | if `status = pending` on the preview response, the polling interval, max wait, and timeout semantics must be defined before the UI implements a polling loop; the BFF must not leave eval status permanently `pending` |
-| `meta.surfaces.trainer_preview` | **missing** | staleness signal for the compare surface; must be included in every preview response; controls the canonical degradation banner via `PKT-005` |
+| Preview / rapid-eval route | **contract published — pending BFF implementation** | published via `TW-03-COMPARE-001` in `docs/bff/TW-03-before-after-compare.md`; `GET /api/v1/trainer/sessions/:id/preview` reads compare state and `POST /api/v1/trainer/sessions/:id/preview` performs manual refresh with `refresh_mode = manual` |
+| Preview response contract | **contract published — pending BFF implementation** | `control_diff[]`, `metric_delta[]`, `warnings[]`, `warning_count_by_level`, `preview_quality`, `degraded_copy`, and `allowedActions.canRefreshPreview` are now canonical BFF truth via `TW-03-COMPARE-001` |
+| `preview_unavailable` degraded contract | **contract published — pending BFF implementation** | `status = preview_unavailable` must return a structured payload with backend-authored degraded copy instead of a `5xx` or blank panel |
+| Async eval status polling (if applicable) | **contract published — pending BFF implementation** | pending responses now publish `poll_interval_ms = 3000`, `max_wait_ms = 45000`, and `deadline_at`; BFF must not leave preview status permanently `pending` |
+| `meta.surfaces.trainer_preview` | **contract published — pending BFF implementation** | every preview response now includes `meta.surfaces.trainer_preview` for PKT-005 degradation banner wiring |
 
 ### Packetization prerequisite
 
-The preview or rapid-eval response contract (metric taxonomy, warning shape, `preview_unavailable` semantics), and the `meta.surfaces.trainer_preview` staleness signal must be locked as canonical BFF truth before a compare surface can be packet-defined. Depends on `TW-02` producing a patchable candidate state (the preview evaluates the session after patches are applied).
+The preview route family, compare response contract, warning hierarchy, `preview_unavailable` degraded branch, polling semantics, and `meta.surfaces.trainer_preview` staleness signal are now published as canonical BFF truth via `TW-03-COMPARE-001`. Live BFF routes still need to honor that field shape before Lovable can build the production page. `TW-03` remains downstream of `TW-01` session identity and `TW-02` control diff semantics.
 
 ### Lovable readiness gate
 
-`false` — all five rows above must be resolved and field shapes locked before a screen spec can be opened.
+`pending-bff` — the compare route specs, screen spec, and example payload now exist, but the preview read route and manual refresh route still need live BFF implementation before UI work can begin.
 
 ---
 
@@ -183,16 +183,16 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `POST /api/v1/trainer/sessions/:id/message` | TW-01 | missing write route | coaching message composer; blocked when `status != active` |
 | Trainer session lifecycle contract | TW-01, TW-02, TW-03, TW-04 | missing lifecycle contract | `active → paused → completed | abandoned` state machine; blocks all four modules because session `status` governs all write-path CTAs |
 | `TeachingEvent` schema (TW-01 subset) | TW-01 | missing object contract | dialog transcript ordering, append-only guarantee, `sequence_number` |
-| `GET /api/v1/trainer/sessions/:id/controls` | TW-02 | missing read route | entire Parameter Controls module |
-| `POST /api/v1/trainer/sessions/:id/patch` | TW-02 | missing write route | control patch CTA; gated by `status = active`; blocks TW-03 (compare evaluates patched candidate) |
-| Control-state schema | TW-02 | missing object contract | `ControlParameter` object; `allowed_range`; blocks patch editor and validation display |
-| Patch validation contract | TW-02 | missing contract | synchronous `valid / warnings[]` response; blocks warning feedback in editor and TW-03 compare |
-| Patch diff response shape | TW-02, TW-03 | missing contract | `previous_value` in `updated_controls[]`; blocks inline control-state diff in TW-03 compare panel |
-| Preview / rapid-eval route | TW-03 | missing route | entire Before/After Compare module |
-| Preview response contract | TW-03 | missing object contract | `metric_delta[]`, `warnings[]` with severity levels, `preview_quality`; blocks metric panels and warning hierarchy |
-| `preview_unavailable` degraded contract | TW-03 | missing contract | degraded-state copy for compare panel; must be explicit BFF contract state, not a 5xx |
-| Async eval status polling semantics | TW-03 | missing contract | polling interval, max wait, timeout; blocks UI from implementing a safe polling loop |
-| `meta.surfaces.trainer_preview` | TW-03 | missing staleness signal | degradation banner wiring for compare surface |
+| `GET /api/v1/trainer/sessions/:id/controls` | TW-02 | contract published — pending BFF implementation | entire Parameter Controls module |
+| `POST /api/v1/trainer/sessions/:id/patch` | TW-02 | contract published — pending BFF implementation | control patch CTA; gated by `status = active`; blocks TW-03 (compare evaluates patched candidate) |
+| Control-state schema | TW-02 | contract published — pending BFF implementation | `ControlParameter` object; `allowed_range`; blocks patch editor and validation display until the BFF serves it live |
+| Patch validation contract | TW-02 | contract published — pending BFF implementation | synchronous `valid / warnings[] / rejected_patches[]` response; blocks warning feedback in editor and TW-03 compare until live |
+| Patch diff response shape | TW-02, TW-03 | contract published — pending BFF implementation | `previous_value` and `new_value` in `updated_controls[]`; blocks inline control-state diff in TW-03 compare until live |
+| Preview / rapid-eval route | TW-03 | contract published — pending BFF implementation | compare read and refresh route family are published; live BFF must implement both endpoints |
+| Preview response contract | TW-03 | contract published — pending BFF implementation | `control_diff[]`, `metric_delta[]`, `warnings[]`, `warning_count_by_level`, and `preview_quality` are now locked for metric panels and warning hierarchy |
+| `preview_unavailable` degraded contract | TW-03 | contract published — pending BFF implementation | degraded-state copy is now explicit canonical payload, not a `5xx` fallback |
+| Async eval status polling semantics | TW-03 | contract published — pending BFF implementation | polling interval, max wait, and deadline behavior are published for a safe UI polling loop |
+| `meta.surfaces.trainer_preview` | TW-03 | contract published — pending BFF implementation | degradation banner wiring for the compare surface is now canonical |
 | Standalone Trainer replay read route | TW-04 | missing read route | entire Teaching Replay module; distinct from Persona Management teaching-history |
 | `TeachingEvent` schema (full) | TW-04 | missing object contract | all event types including `control_patch`, `preview_trigger`, `commit`, `discard`; `evidence_ref` inclusion; blocks event timeline and evidence drawer |
 | BFF-resolved evidence links | TW-04 | missing BFF-side resolution | evidence drawer per event; client must not resolve evidence from raw refs |

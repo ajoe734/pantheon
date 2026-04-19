@@ -61,9 +61,9 @@ canonical closeout bookkeeping only and is tracked separately in
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
 | `RW-01 Research Ticket` | contract published — BFF routes pending implementation | create/list/detail/patch route specs, lifecycle state machine (`open → in_progress → closed → archived`), `allowedActions` authority signals, and handoff bundle published via `RW-01-FOUNDATION-001`; BFF must implement all four routes before UI work starts | BFF implements routes → activate Lovable UI task |
-| `RW-02 Search` | not ready | missing search route and search-index adapter | publish backend-owned search corpus contract |
+| `RW-02 Search` | contract published — BFF route and index adapter pending implementation | search route, SearchResult projection, backend-owned filter and pagination semantics, search-index adapter metadata, and handoff bundle published via `RW-02-SEARCH-001`; BFF must implement the route and adapter before UI work starts | BFF implements route and index adapter → activate Lovable UI task |
 | `RW-03 Analyze` | not ready | missing analysis list/detail routes and metric aggregation contract | lock aggregated metric payload shape |
-| `RW-04 Experiment Launch` | not ready | missing launch, run status, history, cancel, and experiment state machine | publish async status contract and `canCancel` gating |
+| `RW-04 Experiment Launch` | contract published — BFF implementation pending | launch, run status, history, cancel, and experiment state machine published via `RW-04-EXPERIMENT-001`; live BFF routes still pending | implement the published launch/detail/history/cancel routes against the canonical state machine |
 | `RW-05 Artifact Compare` | not ready | missing artifact registry/detail/compare routes and versioning semantics | publish backend-owned diff and artifact identity rules |
 
 ### Knowledge Workbench
@@ -93,9 +93,9 @@ Overview packet note: `PKT-consultation-workbench` now publishes a truthful over
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `TW-01 Teaching Dialog` | not ready | missing trainer session create/list/detail/message routes and `TeachingEvent` dialog schema | publish trainer session lifecycle contract |
+| `TW-01 Teaching Dialog` | contract published — BFF implementation pending | trainer session create/list/detail/message route specs, read-side lifecycle contract, `TeachingEvent` dialog schema subset, and handoff bundle published via `TW-01-FOUNDATION-001`; BFF must implement the four routes before UI work starts | BFF implements routes → activate Lovable UI task |
 | `TW-02 Parameter Controls` | not ready | missing controls read route, patch route, validation contract, and diff response shape | publish `ControlParameter` contract and patch semantics |
-| `TW-03 Before/After Compare` | not ready | missing preview or rapid-eval route, warning taxonomy, and `preview_unavailable` contract | publish compare response contract and polling semantics |
+| `TW-03 Before/After Compare` | contract published — BFF implementation pending | preview read/refresh routes, warning hierarchy, `preview_unavailable` degraded branch, and polling semantics published via `TW-03-COMPARE-001`; BFF must implement the route family before UI work starts | BFF implements preview routes → activate Lovable UI task |
 | `TW-04 Teaching Replay` | not ready | missing replay route, full `TeachingEvent` schema, commit/discard commands, and before/after artifact refs | publish replay-grade event contract and write gating |
 
 ## 4. Cross-Family Order
