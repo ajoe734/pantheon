@@ -1,0 +1,131 @@
+import unittest
+import uuid
+
+from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
+from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+
+
+class _FakeRuntimeManagerClient:
+    def __init__(self, bindings):
+        self._bindings = bindings
+
+    def list_all(self):
+        return list(self._bindings)
+
+
+class _FakeTelemetryEmitter:
+    def __init__(self):
+        self.enabled = True
+        self.events = []
+
+    def emit(self, event_type, metrics, metadata=None):
+        self.events.append(
+            {
+                "event_type": event_type,
+                "metrics": metrics,
+                "metadata": metadata or {},
+            }
+        )
+        return True
+
+    def snapshot(self):
+        return {
+            "enabled": True,
+            "url": "memory://telemetry",
+            "sent": len(self.events),
+            "failed": 0,
+            "last_error": None,
+        }
+
+
+class PaperRuntimeServiceTest(unittest.TestCase):
+    def _identity(self) -> RuntimeIdentity:
+        return RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "paper-runtime-001",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+                "PANTHEON_WORKSPACE_REF": "workspace-paper",
+                "PANTHEON_AUTH_PROFILE_REF": "auth-profile-paper",
+                "PANTHEON_PERSONA_ID": "persona-paper-ops",
+                "PANTHEON_SESSION_ID": "session-paper-runtime",
+                "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+                "PANTHEON_REQUEST_ID": "request-paper-runtime",
+            }
+        )
+
+    def _binding(self):
+        return {
+            "binding_id": str(uuid.uuid4()),
+            "runtime_id": "paper-runtime-001",
+            "capital_pool_id": "pool-paper",
+            "artifact_id": "artifact-paper",
+            "artifact_version": "1.2.3",
+            "deployment_mode": "paper",
+            "plan_id": "plan-paper",
+            "persona_capital_binding_id": "pcb-paper",
+            "status": "active",
+        }
+
+    def _signal(self):
+        return {
+            "signal_id": "signal-001",
+            "version": "1.0",
+            "strategy_id": "strategy-paper",
+            "timestamp": "2026-04-18T12:00:00Z",
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 10,
+            "quantity_type": "SHARES",
+        }
+
+    def test_drain_once_executes_signal_and_updates_runtime_state(self):
+        store = InMemoryPendingSignalStore([self._signal()])
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(snapshot["runtime_package"], "paper_execution_runtime")
+        self.assertFalse(snapshot["stub_mode"])
+        self.assertTrue(snapshot["binding_lookup"]["resolved"])
+        self.assertEqual(snapshot["signal_store"]["queue_depth"], 0)
+        self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
+        self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
+        self.assertEqual(snapshot["paper_state"]["positions"][0]["symbol"], "AAPL")
+        self.assertEqual(len(telemetry.events), 2)
+        self.assertEqual(telemetry.events[0]["event_type"], "fill_observation")
+        self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
+
+    def test_snapshot_without_drain_reports_truthful_ready_state(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+        )
+
+        snapshot = service.snapshot()
+
+        self.assertTrue(snapshot["paper_execution_ready"])
+        self.assertTrue(snapshot["signal_consumer_ready"])
+        self.assertEqual(snapshot["binding_lookup"]["resolved"], False)
+        self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 0)
+        self.assertEqual(snapshot["paper_state"]["execution_event_count"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

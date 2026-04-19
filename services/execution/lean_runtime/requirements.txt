@@ -1,4 +1,5 @@
 jsonschema>=4.21.0
+redis>=5.0.4
 
 # LEAN runtime dependency — not a PyPI package.
 # QuantConnect is injected into the Python environment by the LEAN engine at runtime.

@@ -7,13 +7,13 @@
 #   VM-1 telemetry ingest     : /__health__ + /api/telemetry/*
 #   VM-2 runtime-manager      : /__health__ + /api/runtimes/* + /api/rollback +
 #                               /api/kill-switch/*
-#   VM-2 paper/bootstrap      : /__health__
+#   VM-2 paper runtime        : /__health__ + /api/runtime/*
 #
 # Important:
-# - The VM-2 paper runtime is currently a bootstrap stub (`runtime_bootstrap.py`),
-#   not the final per-pool LEAN order loop. This smoke therefore proves runtime
-#   adjacency, health, binding creation, telemetry linkage, kill-switch, and
-#   rollback semantics without claiming full order execution coverage.
+# - The VM-2 paper runtime now exposes the truthful paper execution package,
+#   not the old bootstrap-only stub. This smoke still stops short of a full
+#   governed order-loop packet; it proves runtime package readiness, health,
+#   binding creation, telemetry linkage, kill-switch, and rollback semantics.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,6 +28,11 @@ RUNTIME_MANAGER_TOKEN="${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-interna
 ACTOR_ID="${ACTOR_ID:-deploy-009-smoke}"
 SOURCE_TASK_ID="${SOURCE_TASK_ID:-DEPLOY-009}"
 PAPER_RUNTIME_ID="${PANTHEON_PAPER_RUNTIME_ID:-paper-runtime-001}"
+WORKSPACE_REF="${PANTHEON_WORKSPACE_REF:-workspace-paper}"
+AUTH_PROFILE_REF="${PANTHEON_AUTH_PROFILE_REF:-auth-profile-paper}"
+PERSONA_ID="${PANTHEON_PERSONA_ID:-persona-paper-ops}"
+SESSION_ID="${PANTHEON_SESSION_ID:-session-paper-runtime}"
+REQUEST_ID="${PANTHEON_REQUEST_ID:-request-paper-runtime}"
 PERSONA_SCOPE="${PERSONA_SCOPE:-paper}"
 KEEP_OUTPUT=true
 OUTPUT_DIR=""
@@ -42,11 +47,13 @@ Options:
   --control-deployment-url <url>   VM-1 deployment service base URL
   --control-telemetry-url <url>    VM-1 telemetry service base URL
   --exec-runtime-manager-url <url> VM-2 runtime-manager base URL
-  --exec-paper-runtime-url <url>   VM-2 paper/bootstrap runtime URL
+  --exec-paper-runtime-url <url>   VM-2 paper runtime URL
   --exec-broker-url <url>          VM-2 broker adapter URL
   --exec-exchange-url <url>        VM-2 exchange adapter URL
   --runtime-manager-token <token>  Bearer token for runtime-manager + telemetry lookup
   --paper-runtime-id <id>          Runtime ID to assign to the initial binding
+  --workspace-ref <ref>            Persona-scoped workspace ref for execution runtime
+  --auth-profile-ref <ref>         Persona-scoped auth profile ref for execution runtime
   --persona-scope <scope>          allowed_deployment_scope for the smoke binding
   --actor-id <id>                  Actor/operator identifier used in control actions
   --output-dir <dir>               Persist JSON request/response artifacts here
@@ -57,8 +64,10 @@ Options:
 Environment variable equivalents:
   CONTROL_DEPLOYMENT_URL, CONTROL_TELEMETRY_URL, EXEC_RUNTIME_MANAGER_URL,
   EXEC_PAPER_RUNTIME_URL, EXEC_BROKER_ADAPTER_URL, EXEC_EXCHANGE_ADAPTER_URL,
-  PANTHEON_RUNTIME_MANAGER_TOKEN, PANTHEON_PAPER_RUNTIME_ID, PERSONA_SCOPE,
-  ACTOR_ID, SOURCE_TASK_ID
+  PANTHEON_RUNTIME_MANAGER_TOKEN, PANTHEON_PAPER_RUNTIME_ID,
+  PANTHEON_WORKSPACE_REF, PANTHEON_AUTH_PROFILE_REF, PANTHEON_PERSONA_ID,
+  PANTHEON_SESSION_ID, PANTHEON_REQUEST_ID, PERSONA_SCOPE, ACTOR_ID,
+  SOURCE_TASK_ID
 EOF
 }
 
@@ -72,6 +81,8 @@ while [[ $# -gt 0 ]]; do
     --exec-exchange-url) EXEC_EXCHANGE_ADAPTER_URL="$2"; shift 2 ;;
     --runtime-manager-token) RUNTIME_MANAGER_TOKEN="$2"; shift 2 ;;
     --paper-runtime-id) PAPER_RUNTIME_ID="$2"; shift 2 ;;
+    --workspace-ref) WORKSPACE_REF="$2"; shift 2 ;;
+    --auth-profile-ref) AUTH_PROFILE_REF="$2"; shift 2 ;;
     --persona-scope) PERSONA_SCOPE="$2"; shift 2 ;;
     --actor-id) ACTOR_ID="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
@@ -251,6 +262,30 @@ health_check "vm1 deployment" "${CONTROL_DEPLOYMENT_URL%/}/health" "pantheon-dep
 health_check "vm1 telemetry" "${CONTROL_TELEMETRY_URL%/}/__health__" "telemetry-ingest"
 health_check "vm2 runtime-manager" "${EXEC_RUNTIME_MANAGER_URL%/}/__health__" "runtime-manager"
 health_check "vm2 paper-runtime" "${EXEC_PAPER_RUNTIME_URL%/}/__health__" ""
+expect_eq "paper runtime runtime_id" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "runtime_id")" \
+  "$PAPER_RUNTIME_ID"
+expect_eq "paper runtime workspace_ref" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "workspace_ref")" \
+  "$WORKSPACE_REF"
+expect_eq "paper runtime auth_profile_ref" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "auth_profile_ref")" \
+  "$AUTH_PROFILE_REF"
+expect_eq "paper runtime isolation_ready" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "isolation_ready")" \
+  "true"
+expect_eq "paper runtime auth configured" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "runtime_manager_auth.configured")" \
+  "true"
+expect_eq "paper runtime package" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "runtime_package")" \
+  "paper_execution_runtime"
+expect_eq "paper runtime stub retired" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "stub_mode")" \
+  "false"
+expect_eq "paper runtime signal consumer ready" \
+  "$(json_query "$OUTPUT_DIR/vm2_paper-runtime.json" "signal_consumer_ready")" \
+  "true"
 
 if [[ "$SKIP_ADAPTER_HEALTH" != true ]]; then
   health_check "vm2 broker-adapter" "${EXEC_BROKER_ADAPTER_URL%/}/__health__" ""
@@ -300,6 +335,18 @@ cat >"$OUTPUT_DIR/plan-create.json" <<JSON
   "metadata": {
     "source_task_id": "$SOURCE_TASK_ID",
     "acceptance_mode": "dual_vm_smoke"
+  },
+  "authority_refs": {
+    "write_owner": "runtime-manager",
+    "authority_source": "runtime_binding",
+    "runtime_role": "pantheon-paper-execution-runtime",
+    "runtime_mode": "paper",
+    "workspace_ref": "$WORKSPACE_REF",
+    "auth_profile_ref": "$AUTH_PROFILE_REF",
+    "persona_id": "$PERSONA_ID",
+    "session_id": "$SESSION_ID",
+    "trace_id": "$TRACE_ID",
+    "request_id": "$REQUEST_ID"
   }
 }
 JSON
@@ -417,7 +464,7 @@ cat >"$OUTPUT_DIR/saga-runtime-active.json" <<JSON
 {
   "binding_id": "$BINDING_ID",
   "runtime_id": "$RUNTIME_ID",
-  "note": "paper runtime bootstrap on VM-2 is healthy"
+  "note": "paper execution runtime package on VM-2 is healthy"
 }
 JSON
 
@@ -475,6 +522,18 @@ cat >"$OUTPUT_DIR/telemetry-deploy.json" <<JSON
   "metadata": {
     "source_task_id": "$SOURCE_TASK_ID",
     "acceptance_mode": "dual_vm_smoke"
+  },
+  "authority_refs": {
+    "write_owner": "runtime-manager",
+    "authority_source": "runtime_binding",
+    "runtime_role": "pantheon-paper-execution-runtime",
+    "runtime_mode": "paper",
+    "workspace_ref": "$WORKSPACE_REF",
+    "auth_profile_ref": "$AUTH_PROFILE_REF",
+    "persona_id": "$PERSONA_ID",
+    "session_id": "$SESSION_ID",
+    "trace_id": "$TRACE_ID",
+    "request_id": "$REQUEST_ID"
   }
 }
 JSON
@@ -646,12 +705,13 @@ cat >"$OUTPUT_DIR/summary.json" <<JSON
   "telemetry_total_ingested_before": $TOTAL_INGESTED_BEFORE,
   "telemetry_total_ingested_after_deploy": $TOTAL_INGESTED_AFTER_DEPLOY,
   "telemetry_total_ingested_after_rollback": $TOTAL_INGESTED_AFTER_ROLLBACK,
-  "paper_runtime_bootstrap_stub": true,
+  "paper_runtime_bootstrap_stub": false,
   "notes": [
     "Validated DeploymentPlan -> RuntimeBinding across VM-1 deployment service and VM-2 runtime-manager.",
+    "Validated the VM-2 paper execution package exposes a real signal-consumer/runtime health surface instead of the old bootstrap-only stub.",
     "Validated telemetry ingest on VM-1 using VM-2 binding identity lookup.",
     "Validated VM-1 initiated kill-switch and rollback commands executed by VM-2 runtime-manager.",
-    "Paper runtime remains a bootstrap stub; this smoke does not prove the final LEAN order loop."
+    "This smoke still does not prove one integrated governed paper order loop; OSS-004C remains the acceptance packet for that."
   ]
 }
 JSON
@@ -664,4 +724,4 @@ echo "    replacement_binding  : $NEW_BINDING_ID"
 echo "    telemetry counts     : ${TOTAL_INGESTED_BEFORE} -> ${TOTAL_INGESTED_AFTER_DEPLOY} -> ${TOTAL_INGESTED_AFTER_ROLLBACK}"
 echo "    summary artifact     : $OUTPUT_DIR/summary.json"
 echo ""
-echo "Note: VM-2 paper runtime is a bootstrap stub; order-loop acceptance remains out of scope for DEPLOY-009 until the final LEAN runtime package exists."
+echo "Note: this smoke proves the VM-2 paper execution package is live, but OSS-004C still owns the first integrated governed paper execution packet."

@@ -2,7 +2,7 @@
 
 Acceptance record for `DEPLOY-009`.
 
-This artifact is paired with [`scripts/smoke_test_dual_vm.sh`](/home/edna/code/pantheon/scripts/smoke_test_dual_vm.sh:1) and captures what that smoke proves, what must be recorded after a real VM run, and the current boundary of the execution-plane bootstrap.
+This artifact is paired with [`scripts/smoke_test_dual_vm.sh`](/home/edna/code/pantheon/scripts/smoke_test_dual_vm.sh:1) and captures what that smoke proves, what must be recorded after a real VM run, and the current boundary of the execution-plane paper runtime package.
 
 ## Scope
 
@@ -14,15 +14,16 @@ The dual-VM acceptance bar for this repo baseline is:
 4. VM-1 telemetry ingest accepts events whose binding identity is resolved from VM-2
 5. VM-1 can trigger kill-switch and rollback actions that VM-2 executes
 
-This repo does **not** yet ship the final per-pool LEAN runtime packaging on VM-2.
-The `pantheon-lean-paper` container is still the bootstrap harness from `DEPLOY-008`
-and currently proves:
+This repo now ships a dedicated VM-2 paper execution runtime package on top of
+the original DEPLOY-008 split. The `pantheon-paper-runtime` container proves:
 
 - paper-runtime process health
-- Pantheon ↔ LEAN bridge imports
+- a concrete signal-consumer/runtime service surface, not only import checks
+- Pantheon ↔ LEAN bridge availability for downstream packaging
 - adjacency to `runtime-manager`, broker adapter, and exchange adapter
 
-It does **not** prove the final live order loop or a real execution-side signal consumer.
+It still does **not** by itself prove the first integrated governed paper
+execution packet; that remains `OSS-004C`.
 
 ## Preconditions
 
@@ -43,7 +44,7 @@ export PANTHEON_RUNTIME_MANAGER_TOKEN="runtime-control-internal"
 ```
 
 - VM-2 execution stack is healthy from `docker-compose.exec.yml`
-- VM-2 published ports for `runtime-manager`, `pantheon-lean-paper`, and optionally the mock broker/exchange sidecars are reachable from the acceptance runner
+- VM-2 published ports for `runtime-manager`, `pantheon-paper-runtime`, and optionally the mock broker/exchange sidecars are reachable from the acceptance runner
 
 ## Canonical Command
 
@@ -113,7 +114,10 @@ The smoke intentionally stops short of claiming:
 - broker-side order acknowledgement
 - end-to-end signal delivery from production `SignalStore`
 
-Those require the execution bootstrap wrapper to be replaced by the final runtime package. Until then, `DEPLOY-009` should be treated as a **cross-plane acceptance harness** rather than the final execution proof.
+Those require a governed end-to-end paper execution run that includes real
+signal injection and archived evidence. `DEPLOY-009` therefore remains a
+**cross-plane acceptance harness**, while `OSS-004C` owns the first integrated
+EP4 proof packet.
 
 ## This Session
 
