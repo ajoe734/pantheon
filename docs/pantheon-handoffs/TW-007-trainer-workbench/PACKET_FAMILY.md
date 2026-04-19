@@ -5,7 +5,7 @@
 - Packet family ID: `TW-007`
 - Workbench: Trainer Workbench
 - Phase origin: `BP5-WB-007`
-- Lovable readiness: **partial** — `TW-01` Teaching Dialog, `TW-02` Parameter Controls, and `TW-03` Before/After Compare contracts are published via `TW-01-FOUNDATION-001`, `TW-02-CONTROLS-001`, and `TW-03-COMPARE-001`; `TW-04` still requires a net-new replay contract
+- Lovable readiness: **partial** — `TW-01` Teaching Dialog, `TW-02` Parameter Controls, `TW-03` Before/After Compare, and `TW-04` Teaching Replay contracts are published via `TW-01-FOUNDATION-001`, `TW-02-CONTROLS-001`, `TW-03-COMPARE-001`, and `TW-04-REPLAY-001`; all four modules still require live BFF implementation before UI work can begin
 - Recommended wave: Wave 3 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
 - Reviewer: Codex2
@@ -42,7 +42,7 @@ The existing teaching-history read surfaces are evidence inputs. They do **not**
 | `TW-01` | Teaching Dialog | start session, show transcript, send coaching messages, display session status and actor context | contract-published — pending BFF implementation | Wave 3 — 1st |
 | `TW-02` | Parameter Controls | inspect current control state, edit control patches, surface validation or warning feedback | contract-published — pending BFF implementation | Wave 3 — 2nd |
 | `TW-03` | Before/After Compare | preview metrics, warnings, control-state diff, and rapid-eval result summary | contract-published — pending BFF implementation | Wave 3 — 3rd |
-| `TW-04` | Teaching Replay | teaching-session history, ordered event replay, commit or discard evidence, and replay entrypoint | not ready | Wave 3 — 4th |
+| `TW-04` | Teaching Replay | teaching-session history, ordered event replay, commit or discard evidence, and replay entrypoint | contract-published — pending BFF implementation | Wave 3 — 4th |
 
 ---
 
@@ -143,7 +143,7 @@ The preview route family, compare response contract, warning hierarchy, `preview
 
 ### Surface scope
 
-- **Session history list**: paginated list of completed training sessions for a given persona. Each row shows `session_id`, `status` (`completed | abandoned`), `persona_id`, `started_at`, `ended_at`, and an event count. Source: `GET /api/v1/trainer/sessions?persona_id={id}&status=completed`. This list is distinct from the Persona Management teaching-history surface — it is Trainer-owned and must expose the full `TeachingEvent` schema for replay navigation.
+- **Session history list**: paginated list of completed training sessions for a given persona. Each row shows `session_id`, `status` (`completed | abandoned`), `persona_id`, `started_at`, `ended_at`, and an event count. Source: `GET /api/v1/trainer/replay?persona_id={id}`. This list is distinct from the Persona Management teaching-history surface — it is Trainer-owned and must expose the full `TeachingEvent` schema for replay navigation.
 - **Ordered event timeline**: chronological replay display of all `TeachingEvent` records for a selected completed session. Each event shows `event_id`, `actor`, `event_type` (`message`, `control_patch`, `preview_trigger`, `outcome_signal`, `commit`, `discard`), `body` or summary, `emitted_at`, and any `evidence_ref`. Events must be ordered by `sequence_number` — do not sort client-side.
 - **Evidence drawer**: expandable per-event panel for events that carry an `evidence_ref`. The evidence link is BFF-resolved (not a raw ref that the client must look up). Evidence types include telemetry snapshots, lineage edges, compare results, and persona capability records.
 - **Replay action copy**: explicit commit or discard controls for sessions that produced a confirmed candidate state and are eligible for promotion. `commit` confirms the patched state as the new baseline. `discard` abandons the candidate and resets to the prior baseline. Both commands target `POST /api/v1/trainer/sessions/:id/commit` and `POST /api/v1/trainer/sessions/:id/discard`. Each CTA is visible only when `allowedActions.canCommit` or `allowedActions.canDiscard` is present and truthy in the session response.
@@ -154,20 +154,24 @@ The preview route family, compare response contract, warning hierarchy, `preview
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| Standalone Trainer replay read route | **missing** | `GET /api/v1/trainer/sessions/:id/events` or equivalent; must return all `TeachingEvent` records ordered by `sequence_number`; must include `meta.surfaces.trainer_replay` and `allowedActions.canCommit`, `allowedActions.canDiscard` |
-| `TeachingEvent` schema (full) | **missing** | extends the TW-01 dialog-event subset to include: `event_type` (`message | control_patch | preview_trigger | outcome_signal | commit | discard`), `evidence_ref` (nullable, BFF-pre-resolved link), `patch_delta` (for `control_patch` events: `{parameter_key, previous_value, new_value}`), `eval_ref` (for `preview_trigger` events: `eval_id`); append-only guarantee must be enforced by `sequence_number` |
-| BFF-resolved evidence links | **missing** | when a `TeachingEvent` carries an `evidence_ref`, the BFF must resolve it to a typed canonical link (`{type, id, display_label, url_pattern}`) before serving the event — the client must not construct evidence navigation from raw ref identifiers |
-| Commit contract | **missing** | `POST /api/v1/trainer/sessions/:id/commit`; must be gated by `allowedActions.canCommit`; must not be invocable when session `status != completed`; must return the updated `status` and a `committed_at` timestamp |
-| Discard contract | **missing** | `POST /api/v1/trainer/sessions/:id/discard`; must be gated by `allowedActions.canDiscard`; must not be invocable when session `status != completed`; must return the updated `status` and a `discarded_at` timestamp |
-| Before/after artifact refs | **missing** | the commit response (or a separate `GET /api/v1/trainer/sessions/:id/artifacts`) must expose `before_artifact_ref` (baseline snapshot before the session) and `after_artifact_ref` (committed candidate snapshot) so downstream review surfaces can compare them without re-querying the event log |
+| Standalone Trainer replay read route | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `GET /api/v1/trainer/replay` and `GET /api/v1/trainer/replay/{session_id}` now define the replay list/detail projections, ordered `TeachingEvent` playback, `meta.surfaces.trainer_replay`, and `allowedActions.canCommit` / `allowedActions.canDiscard` |
+| `TeachingEvent` schema (full) | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; extends the TW-01 dialog-event subset to include `event_type`, resolved `evidence_ref`, `patch_delta`, `eval_ref`, and event-level artifact refs while preserving append-only `sequence_number` ordering |
+| BFF-resolved evidence links | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `TeachingEvent.evidence_ref` is now a typed canonical link object (`{type, id, display_label, url_pattern}`) and must be fully resolved by the BFF before it reaches the client |
+| Commit contract | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `POST /api/v1/trainer/sessions/{session_id}/commit` is now gated by `allowedActions.canCommit`, requires `expected_candidate_snapshot_at`, appends a `commit` event, and returns replay-resolution plus artifact refs |
+| Discard contract | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `POST /api/v1/trainer/sessions/{session_id}/discard` is now gated by `allowedActions.canDiscard`, requires `expected_candidate_snapshot_at`, appends a `discard` event, and returns replay-resolution plus artifact refs |
+| Before/after artifact refs | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; replay detail and commit/discard responses now expose backend-owned `before_artifact_ref`, `candidate_artifact_ref`, and `after_artifact_ref` semantics so downstream review surfaces do not need to reconstruct artifact lineage from event history |
 
 ### Packetization prerequisite
 
-The full `TeachingEvent` schema (including `control_patch`, `preview_trigger`, `commit`, and `discard` event types), the BFF-resolved evidence link contract, the commit and discard write paths with `allowedActions` gating, and the before/after artifact refs must all be defined as canonical BFF truth before a replay surface can be packet-defined. Depends on `TW-01` transcript events and `TW-03` Before/After Compare evidence being stable and addressable.
+The replay route family, the full `TeachingEvent` schema (including `control_patch`, `preview_trigger`, `commit`, and `discard` event types), the BFF-resolved evidence link contract, the commit and discard write paths with `allowedActions` gating, and the before/candidate/after artifact refs are now published as canonical BFF truth via `TW-04-REPLAY-001`. Live BFF routes still need to honor that field shape before Lovable can build the production page. `TW-04` remains downstream of `TW-01` transcript events and `TW-03` compare evidence identity.
 
 ### Lovable readiness gate
 
-`false` — all six rows above must be resolved and field shapes locked before a screen spec can be opened.
+`pending-bff` — the replay route family, screen spec, and example payload now exist, but the replay read routes and commit/discard write routes still need live BFF implementation before UI work can begin.
+
+- BFF contract: `docs/bff/TW-04-teaching-replay.md`
+- Screen spec: `docs/screens/TW-04-teaching-replay.md`
+- Example payload: `docs/examples/TW-04-teaching-replay.json`
 
 ---
 
@@ -178,8 +182,8 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
 | `POST /api/v1/trainer/sessions` | TW-01 | missing write route | session creation; entire TW-01 dialog shell and all downstream module identity |
-| `GET /api/v1/trainer/sessions/:id` | TW-01, TW-04 | missing read route | session detail, transcript panel, and replay history identity |
-| `GET /api/v1/trainer/sessions` | TW-01, TW-04 | missing read route | session list in dialog and replay history |
+| `GET /api/v1/trainer/sessions/:id` | TW-01 | missing read route | session detail and transcript panel |
+| `GET /api/v1/trainer/sessions` | TW-01 | missing read route | session list in dialog |
 | `POST /api/v1/trainer/sessions/:id/message` | TW-01 | missing write route | coaching message composer; blocked when `status != active` |
 | Trainer session lifecycle contract | TW-01, TW-02, TW-03, TW-04 | missing lifecycle contract | `active → paused → completed | abandoned` state machine; blocks all four modules because session `status` governs all write-path CTAs |
 | `TeachingEvent` schema (TW-01 subset) | TW-01 | missing object contract | dialog transcript ordering, append-only guarantee, `sequence_number` |
@@ -193,12 +197,12 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `preview_unavailable` degraded contract | TW-03 | contract published — pending BFF implementation | degraded-state copy is now explicit canonical payload, not a `5xx` fallback |
 | Async eval status polling semantics | TW-03 | contract published — pending BFF implementation | polling interval, max wait, and deadline behavior are published for a safe UI polling loop |
 | `meta.surfaces.trainer_preview` | TW-03 | contract published — pending BFF implementation | degradation banner wiring for the compare surface is now canonical |
-| Standalone Trainer replay read route | TW-04 | missing read route | entire Teaching Replay module; distinct from Persona Management teaching-history |
-| `TeachingEvent` schema (full) | TW-04 | missing object contract | all event types including `control_patch`, `preview_trigger`, `commit`, `discard`; `evidence_ref` inclusion; blocks event timeline and evidence drawer |
-| BFF-resolved evidence links | TW-04 | missing BFF-side resolution | evidence drawer per event; client must not resolve evidence from raw refs |
-| Commit contract | TW-04 | missing write route | commit CTA; gated by `allowedActions.canCommit`; `status = completed` precondition |
-| Discard contract | TW-04 | missing write route | discard CTA; gated by `allowedActions.canDiscard`; `status = completed` precondition |
-| Before/after artifact refs | TW-04 | missing contract | downstream artifact comparison after commit; must not require replaying the full event log |
+| Standalone Trainer replay read route | TW-04 | contract published — pending BFF implementation | replay list/detail route family is published in `docs/bff/TW-04-teaching-replay.md`; BFF must implement the routes against the canonical field shape |
+| `TeachingEvent` schema (full) | TW-04 | contract published — pending BFF implementation | replay-grade event schema is now locked in `docs/bff/TW-04-teaching-replay.md`; client must not derive evidence or event ordering locally |
+| BFF-resolved evidence links | TW-04 | contract published — pending BFF implementation | typed `evidence_ref` link objects are now canonical in `docs/bff/TW-04-teaching-replay.md`; BFF must resolve them before serving replay events |
+| Commit contract | TW-04 | contract published — pending BFF implementation | commit route, request guard, authority gating, and appended `commit` event are now canonical in `docs/bff/TW-04-teaching-replay.md` |
+| Discard contract | TW-04 | contract published — pending BFF implementation | discard route, request guard, authority gating, and appended `discard` event are now canonical in `docs/bff/TW-04-teaching-replay.md` |
+| Before/after artifact refs | TW-04 | contract published — pending BFF implementation | replay detail and decision responses now expose backend-owned artifact refs for before/candidate/after comparison |
 
 ---
 

@@ -104,7 +104,7 @@ Pantheon
 | `Research` | tickets, search, analysis, experiments, artifact compare | blocked |
 | `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01–04 contract-ready; KW-05 blocked |
 | `Consultation` | request, transcript, committee board, red-team memo | overview-only + blocked modules |
-| `Trainer` | teaching dialog, controls, compare, replay | TW-01–03 contract-published; TW-04 blocked |
+| `Trainer` | teaching dialog, controls, compare, replay | TW-01–04 contract-published |
 
 ---
 
@@ -306,8 +306,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/trainer/sessions/:session_id` | Teaching Dialog Detail | Trainer | pending-bff placeholder only |
 | `/trainer/sessions/:session_id/controls` | Parameter Controls | Trainer | pending-bff placeholder only |
 | `/trainer/sessions/:session_id/compare` | Before/After Compare | Trainer | pending-bff placeholder only |
-| `/trainer/replay` | Teaching Replay List | Trainer | blocked shell only |
-| `/trainer/replay/:session_id` | Teaching Replay Detail | Trainer | blocked shell only |
+| `/trainer/replay` | Teaching Replay List | Trainer | pending-bff placeholder only |
+| `/trainer/replay/:session_id` | Teaching Replay Detail | Trainer | pending-bff placeholder only |
 
 ---
 
@@ -754,8 +754,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | Teaching Dialog Detail | `/trainer/sessions/:session_id` | `TW-01` | contract-published | pending-bff placeholder only |
 | Parameter Controls | `/trainer/sessions/:session_id/controls` | `TW-02` | contract-published | pending-bff placeholder only |
 | Before/After Compare | `/trainer/sessions/:session_id/compare` | `TW-03` | contract-published | pending-bff placeholder only |
-| Teaching Replay List | `/trainer/replay` | `TW-04` | blocked | shell-only |
-| Teaching Replay Detail | `/trainer/replay/:session_id` | `TW-04` | blocked | shell-only |
+| Teaching Replay List | `/trainer/replay` | `TW-04` | contract-published | pending-bff placeholder only |
+| Teaching Replay Detail | `/trainer/replay/:session_id` | `TW-04` | contract-published | pending-bff placeholder only |
 
 ### 14.3 頁面定義
 
@@ -793,8 +793,9 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 14.3.5 TW-04 Teaching Replay
 
 - 目標頁面：session history、ordered event timeline、evidence drawer、commit/discard authority、replay cursor
-- 期待 BFF：full `TeachingEvent` schema、commit/discard routes、before/after artifact refs
-- shell 階段：不可把 Persona teaching history 誤當 Trainer replay
+- 已發布 contract：`docs/bff/TW-04-teaching-replay.md`、`docs/screens/TW-04-teaching-replay.md`、`docs/examples/TW-04-teaching-replay.json`
+- 目前 gate：BFF 必須先讓 `GET /api/v1/trainer/replay`、`GET /api/v1/trainer/replay/{session_id}`、`POST /api/v1/trainer/sessions/{session_id}/commit` 與 `POST /api/v1/trainer/sessions/{session_id}/discard` 上線，並回傳已發布的 replay payload、full `TeachingEvent` schema、resolved evidence links 與 artifact refs
+- pending-BFF 階段：可做明確 blocked placeholder；不可把 Persona teaching history 誤當 Trainer replay、不可自行拼 evidence drawer link，也不可用本地狀態推 commit/discard CTA
 
 ---
 

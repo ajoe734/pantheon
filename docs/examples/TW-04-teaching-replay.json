@@ -1,0 +1,364 @@
+{
+  "_note": "Contract-published example payloads for TW-04 Teaching Replay. Use as the implementation target for the BFF and frontend integration. Do not use as mock production state.",
+  "_packet_status": "contract-published",
+  "_task": "TW-04-REPLAY-001",
+  "replay_list_request": {
+    "persona_id": "p-breakout-trainer",
+    "status": "completed"
+  },
+  "replay_list_response": {
+    "data": [
+      {
+        "session_id": "trn-20260419-004",
+        "persona_id": "p-breakout-trainer",
+        "objective": "Tighten reversal controls around post-FOMC false-break windows.",
+        "status": "completed",
+        "started_at": "2026-04-19T19:40:00Z",
+        "ended_at": "2026-04-19T20:02:00Z",
+        "event_count": 6,
+        "latest_event_type": "preview_trigger",
+        "latest_outcome_signal": "Directional improvement with recovery risk",
+        "replay_resolution": {
+          "state": "pending_decision",
+          "decision_at": null,
+          "decision_by": null,
+          "note": null
+        },
+        "allowedActions": {
+          "canReplay": true,
+          "canCommit": true,
+          "canDiscard": true
+        },
+        "links": {
+          "replay_detail": "/trainer/replay/trn-20260419-004"
+        }
+      },
+      {
+        "session_id": "trn-20260419-002",
+        "persona_id": "p-breakout-trainer",
+        "objective": "Reduce false-break churn during macro volatility spikes.",
+        "status": "completed",
+        "started_at": "2026-04-19T18:05:00Z",
+        "ended_at": "2026-04-19T18:24:00Z",
+        "event_count": 7,
+        "latest_event_type": "commit",
+        "latest_outcome_signal": "Committed after preview review",
+        "replay_resolution": {
+          "state": "committed",
+          "decision_at": "2026-04-19T18:29:18Z",
+          "decision_by": "operator:desk-chief",
+          "note": "Adopted for the next governed paper run."
+        },
+        "allowedActions": {
+          "canReplay": true,
+          "canCommit": false,
+          "canDiscard": false
+        },
+        "links": {
+          "replay_detail": "/trainer/replay/trn-20260419-002"
+        }
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "total": 2
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:05:11Z",
+      "surfaces": {
+        "trainer_replay": "ok"
+      }
+    }
+  },
+  "replay_detail_response": {
+    "session_id": "trn-20260419-004",
+    "persona_id": "p-breakout-trainer",
+    "objective": "Tighten reversal controls around post-FOMC false-break windows.",
+    "status": "completed",
+    "started_at": "2026-04-19T19:40:00Z",
+    "ended_at": "2026-04-19T20:02:00Z",
+    "replay_resolution": {
+      "state": "pending_decision",
+      "decision_at": null,
+      "decision_by": null,
+      "note": null
+    },
+    "artifacts": {
+      "before_artifact_ref": "artifact://trainer/baseline/trn-20260419-004",
+      "candidate_artifact_ref": "artifact://trainer/candidate/trn-20260419-004",
+      "after_artifact_ref": null
+    },
+    "event_summary": {
+      "event_count": 6,
+      "first_sequence_number": 1,
+      "last_sequence_number": 6,
+      "latest_outcome_signal": "Directional improvement with recovery risk"
+    },
+    "events": [
+      {
+        "event_id": "tevt-20260419-004-001",
+        "session_id": "trn-20260419-004",
+        "actor": "operator",
+        "actor_label": "Desk Chief",
+        "event_type": "message",
+        "message_body": "Raise reversal sensitivity only if recovery latency stays inside the current paper guardrail.",
+        "summary": null,
+        "emitted_at": "2026-04-19T19:40:22Z",
+        "sequence_number": 1,
+        "outcome_signal": null,
+        "evidence_ref": null,
+        "patch_delta": null,
+        "eval_ref": null,
+        "artifact_refs": null
+      },
+      {
+        "event_id": "tevt-20260419-004-002",
+        "session_id": "trn-20260419-004",
+        "actor": "persona",
+        "actor_label": "Breakout Trainer",
+        "event_type": "outcome_signal",
+        "message_body": null,
+        "summary": "Persona acknowledged the constraint and proposed a narrower reversal band.",
+        "emitted_at": "2026-04-19T19:41:05Z",
+        "sequence_number": 2,
+        "outcome_signal": "Constraint acknowledged",
+        "evidence_ref": null,
+        "patch_delta": null,
+        "eval_ref": null,
+        "artifact_refs": null
+      },
+      {
+        "event_id": "tevt-20260419-004-003",
+        "session_id": "trn-20260419-004",
+        "actor": "operator",
+        "actor_label": "Desk Chief",
+        "event_type": "control_patch",
+        "message_body": null,
+        "summary": "Adjusted reversal threshold and minimum hold bars for the candidate configuration.",
+        "emitted_at": "2026-04-19T19:45:12Z",
+        "sequence_number": 3,
+        "outcome_signal": null,
+        "evidence_ref": null,
+        "patch_delta": [
+          {
+            "parameter_key": "reversal_threshold",
+            "previous_value": 0.65,
+            "new_value": 0.9
+          },
+          {
+            "parameter_key": "minimum_hold_bars",
+            "previous_value": 3,
+            "new_value": 4
+          }
+        ],
+        "eval_ref": null,
+        "artifact_refs": null
+      },
+      {
+        "event_id": "tevt-20260419-004-004",
+        "session_id": "trn-20260419-004",
+        "actor": "system",
+        "actor_label": "Pantheon Preview",
+        "event_type": "preview_trigger",
+        "message_body": null,
+        "summary": "Rapid-eval preview completed for the current candidate snapshot.",
+        "emitted_at": "2026-04-19T19:48:04Z",
+        "sequence_number": 4,
+        "outcome_signal": null,
+        "evidence_ref": {
+          "type": "compare_result",
+          "id": "teval-20260419-014",
+          "display_label": "Trainer compare teval-20260419-014",
+          "url_pattern": "/trainer/sessions/trn-20260419-004/compare?eval_id=teval-20260419-014"
+        },
+        "patch_delta": null,
+        "eval_ref": {
+          "eval_id": "teval-20260419-014",
+          "baseline_snapshot_at": "2026-04-19T19:43:30Z",
+          "candidate_snapshot_at": "2026-04-19T19:48:00Z"
+        },
+        "artifact_refs": {
+          "before_artifact_ref": "artifact://trainer/baseline/trn-20260419-004",
+          "candidate_artifact_ref": "artifact://trainer/candidate/trn-20260419-004",
+          "after_artifact_ref": null
+        }
+      },
+      {
+        "event_id": "tevt-20260419-004-005",
+        "session_id": "trn-20260419-004",
+        "actor": "system",
+        "actor_label": "Pantheon Replay",
+        "event_type": "outcome_signal",
+        "message_body": null,
+        "summary": "Replay captured the preview verdict for operator review.",
+        "emitted_at": "2026-04-19T19:48:05Z",
+        "sequence_number": 5,
+        "outcome_signal": "Directional improvement with recovery risk",
+        "evidence_ref": {
+          "type": "telemetry",
+          "id": "telemetry-fomc-false-break-20260419",
+          "display_label": "FOMC false-break telemetry snapshot",
+          "url_pattern": "/knowledge/evidence/telemetry-fomc-false-break-20260419"
+        },
+        "patch_delta": null,
+        "eval_ref": null,
+        "artifact_refs": null
+      },
+      {
+        "event_id": "tevt-20260419-004-006",
+        "session_id": "trn-20260419-004",
+        "actor": "system",
+        "actor_label": "Pantheon Replay",
+        "event_type": "message",
+        "message_body": "Candidate state is complete and waiting for operator commit or discard.",
+        "summary": null,
+        "emitted_at": "2026-04-19T20:02:00Z",
+        "sequence_number": 6,
+        "outcome_signal": null,
+        "evidence_ref": {
+          "type": "persona_capability",
+          "id": "capability-breakout-trainer-reversal-v3",
+          "display_label": "Breakout Trainer capability snapshot",
+          "url_pattern": "/personas/p-breakout-trainer/capabilities"
+        },
+        "patch_delta": null,
+        "eval_ref": null,
+        "artifact_refs": null
+      }
+    ],
+    "allowedActions": {
+      "canCommit": true,
+      "canDiscard": true
+    },
+    "links": {
+      "self": "/trainer/replay/trn-20260419-004",
+      "session_detail": "/trainer/sessions/trn-20260419-004"
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:05:11Z",
+      "surfaces": {
+        "trainer_replay": "ok"
+      }
+    }
+  },
+  "commit_request": {
+    "expected_candidate_snapshot_at": "2026-04-19T19:48:00Z",
+    "note": "Adopt for the next governed paper run."
+  },
+  "commit_response": {
+    "session_id": "trn-20260419-004",
+    "status": "completed",
+    "replay_resolution": {
+      "state": "committed",
+      "decision_at": "2026-04-19T20:07:42Z",
+      "decision_by": "operator:desk-chief",
+      "note": "Adopt for the next governed paper run."
+    },
+    "artifacts": {
+      "before_artifact_ref": "artifact://trainer/baseline/trn-20260419-004",
+      "candidate_artifact_ref": "artifact://trainer/candidate/trn-20260419-004",
+      "after_artifact_ref": "artifact://trainer/committed/trn-20260419-004"
+    },
+    "committed_at": "2026-04-19T20:07:42Z",
+    "committed_by": "operator:desk-chief",
+    "event": {
+      "event_id": "tevt-20260419-004-007",
+      "session_id": "trn-20260419-004",
+      "actor": "operator",
+      "actor_label": "Desk Chief",
+      "event_type": "commit",
+      "message_body": null,
+      "summary": "Operator committed the replayed candidate as the new baseline.",
+      "emitted_at": "2026-04-19T20:07:42Z",
+      "sequence_number": 7,
+      "outcome_signal": "Committed after replay review",
+      "evidence_ref": {
+        "type": "lineage_edge",
+        "id": "lineage-edge-trainer-20260419-004",
+        "display_label": "Replay commit lineage edge",
+        "url_pattern": "/evolution/lineage?artifact_id=artifact://trainer/committed/trn-20260419-004"
+      },
+      "patch_delta": null,
+      "eval_ref": {
+        "eval_id": "teval-20260419-014",
+        "baseline_snapshot_at": "2026-04-19T19:43:30Z",
+        "candidate_snapshot_at": "2026-04-19T19:48:00Z"
+      },
+      "artifact_refs": {
+        "before_artifact_ref": "artifact://trainer/baseline/trn-20260419-004",
+        "candidate_artifact_ref": "artifact://trainer/candidate/trn-20260419-004",
+        "after_artifact_ref": "artifact://trainer/committed/trn-20260419-004"
+      }
+    },
+    "allowedActions": {
+      "canCommit": false,
+      "canDiscard": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:07:42Z",
+      "surfaces": {
+        "trainer_replay": "ok"
+      }
+    }
+  },
+  "discard_request": {
+    "expected_candidate_snapshot_at": "2026-04-19T18:12:10Z",
+    "note": "Discard because the recovery latency regression breaches the paper guardrail."
+  },
+  "discard_response": {
+    "session_id": "trn-20260419-005",
+    "status": "completed",
+    "replay_resolution": {
+      "state": "discarded",
+      "decision_at": "2026-04-19T18:16:24Z",
+      "decision_by": "operator:desk-chief",
+      "note": "Discard because the recovery latency regression breaches the paper guardrail."
+    },
+    "artifacts": {
+      "before_artifact_ref": "artifact://trainer/baseline/trn-20260419-005",
+      "candidate_artifact_ref": "artifact://trainer/candidate/trn-20260419-005",
+      "after_artifact_ref": null
+    },
+    "discarded_at": "2026-04-19T18:16:24Z",
+    "discarded_by": "operator:desk-chief",
+    "event": {
+      "event_id": "tevt-20260419-005-006",
+      "session_id": "trn-20260419-005",
+      "actor": "operator",
+      "actor_label": "Desk Chief",
+      "event_type": "discard",
+      "message_body": null,
+      "summary": "Operator discarded the replayed candidate and kept the prior baseline.",
+      "emitted_at": "2026-04-19T18:16:24Z",
+      "sequence_number": 6,
+      "outcome_signal": "Discarded after replay review",
+      "evidence_ref": {
+        "type": "compare_result",
+        "id": "teval-20260419-009",
+        "display_label": "Trainer compare teval-20260419-009",
+        "url_pattern": "/trainer/sessions/trn-20260419-005/compare?eval_id=teval-20260419-009"
+      },
+      "patch_delta": null,
+      "eval_ref": {
+        "eval_id": "teval-20260419-009",
+        "baseline_snapshot_at": "2026-04-19T18:07:00Z",
+        "candidate_snapshot_at": "2026-04-19T18:12:10Z"
+      },
+      "artifact_refs": {
+        "before_artifact_ref": "artifact://trainer/baseline/trn-20260419-005",
+        "candidate_artifact_ref": "artifact://trainer/candidate/trn-20260419-005",
+        "after_artifact_ref": null
+      }
+    },
+    "allowedActions": {
+      "canCommit": false,
+      "canDiscard": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T18:16:24Z",
+      "surfaces": {
+        "trainer_replay": "ok"
+      }
+    }
+  }
+}

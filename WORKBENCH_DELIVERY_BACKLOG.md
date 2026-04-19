@@ -96,7 +96,7 @@ Overview packet note: `PKT-consultation-workbench` now publishes a truthful over
 | `TW-01 Teaching Dialog` | contract published — BFF implementation pending | trainer session create/list/detail/message route specs, read-side lifecycle contract, `TeachingEvent` dialog schema subset, and handoff bundle published via `TW-01-FOUNDATION-001`; BFF must implement the four routes before UI work starts | BFF implements routes → activate Lovable UI task |
 | `TW-02 Parameter Controls` | not ready | missing controls read route, patch route, validation contract, and diff response shape | publish `ControlParameter` contract and patch semantics |
 | `TW-03 Before/After Compare` | contract published — BFF implementation pending | preview read/refresh routes, warning hierarchy, `preview_unavailable` degraded branch, and polling semantics published via `TW-03-COMPARE-001`; BFF must implement the route family before UI work starts | BFF implements preview routes → activate Lovable UI task |
-| `TW-04 Teaching Replay` | not ready | missing replay route, full `TeachingEvent` schema, commit/discard commands, and before/after artifact refs | publish replay-grade event contract and write gating |
+| `TW-04 Teaching Replay` | contract published — BFF implementation pending | replay list/detail routes, replay-grade `TeachingEvent` schema, BFF-resolved evidence links, commit/discard authority, and before/candidate/after artifact refs published via `TW-04-REPLAY-001`; live BFF routes still pending | BFF implements replay routes and commit/discard paths → activate Lovable UI task |
 
 ## 4. Cross-Family Order
 
