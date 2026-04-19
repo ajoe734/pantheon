@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-19T00:49:58Z",
+  "updated_at": "2026-04-19T15:51:40Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,15 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
+      "status": "waiting",
       "current_task_ids": [
-        "OSS-004C-SIDECAR-REVIEW"
+        "APP-003-CLOSEOUT-001",
+        "EW-05-OPEN-001",
+        "KW-01-FOUNDATION-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor resumed OSS-004C-SIDECAR-REVIEW for finalize after successful dispatch.",
-      "last_update": "2026-04-19T00:49:51Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-19T15:49:33Z"
     },
     {
       "name": "Gemini",
@@ -109,11 +111,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "STATE-REBASE-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started OSS-004C after successful dispatch.",
-      "last_update": "2026-04-19T00:09:36Z"
+      "next": "Supervisor auto-started STATE-REBASE-001-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-04-19T15:51:16Z"
     },
     {
       "name": "Codex",
@@ -123,11 +127,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "STATE-REBASE-001"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-04-18T15:40:37Z"
+      "next": "Supervisor resumed STATE-REBASE-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-19T15:51:40Z"
     },
     {
       "name": "Codex2",
@@ -140,7 +146,7 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor resumed OSS-004B-SIDECAR-ACCEPTANCE for finalize after successful dispatch.",
+      "next": "",
       "last_update": "2026-04-19T00:08:40Z"
     },
     {
@@ -151,13 +157,13 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
+      "status": "waiting",
       "current_task_ids": [
-        "OSS-004D"
+        "RW-01-FOUNDATION-001"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Auto-reassigned ownership from Claude to Copilot after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1776567600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Copilot starts a fresh run.",
-      "last_update": "2026-04-19T00:49:58Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-19T00:51:00Z"
     },
     {
       "name": "Qwen",
@@ -170,8 +176,8 @@
       "status": "idle",
       "current_task_ids": [],
       "branch": "feat/qwen-code-agent",
-      "next": "Supervisor re-dispatched OSS-004C-SIDECAR-REVIEW; task remains in progress.",
-      "last_update": "2026-04-19T00:44:05Z"
+      "next": "",
+      "last_update": "2026-04-19T15:49:22Z"
     }
   ],
   "tasks": [
@@ -223,73 +229,406 @@
       "review_file": ".coordination/reviews/PKT-009-governance-audit-rail-review.md"
     },
     {
-      "id": "OSS-004D",
-      "title": "Publish EP4 evidence packet and reconcile status truth",
-      "summary_zh": "發布 EP4 evidence packet，並把 status/tracking layers 對齊，讓 repo 可 truthfully claim stable EP4穩定而非更高。",
-      "phase": "Phase 7: EP4 Evidence Publication",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "depends_on": [
-        "OSS-004C"
+      "id": "STATE-REBASE-001",
+      "title": "Rebaseline canonical state trackers to one truthful execution picture",
+      "summary_zh": "對齊 ai-status.json、current-work.md、WORKBENCH_DELIVERY_BACKLOG.md 與 orchestrator summary，消除 operator/governance loop closeout 與 active backlog 的 tracking drift。",
+      "phase": "Execution / Wave 1 - State Rebaseline",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "ai-status.json",
+        "current-work.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        ".orchestrator/state.json",
+        "docs/reviews/2026-04-18-current-state-reconciliation.md"
       ],
-      "artifacts": [],
       "acceptance": [
-        "EP4 evidence packet published||status layers do not overclaim beyond EP4"
+        "current-work backlog and ai-status describe the same remaining backlog",
+        "execution mode summary no longer conflicts with loop closeout truth",
+        "state rebaseline is recorded with explicit drift findings and resolutions"
       ],
-      "source_plane": "planning",
+      "next": "Supervisor resumed STATE-REBASE-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-19T15:51:40Z",
+      "source_plane": "gap_reconciliation",
       "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
-        "phase": "phase7",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
-        "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
       },
-      "materialization_ref": {
-        "materialized_at": "2026-04-19T00:49:35Z",
-        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md",
-        "initial_materialization_task_ids": "OSS-004A,OSS-004B,OSS-004C,OSS-004D"
-      },
-      "status": "todo",
-      "next": "Auto-reassigned ownership from Claude to Copilot after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1776567600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Copilot starts a fresh run.",
-      "last_update": "2026-04-19T00:49:58Z"
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "三項 drift findings 已確認：idle-agent stale next text 已清除（ai_status.py:1057），reviewed operator/governance loops 已移至 landed baselines（PKT-001–014），closeout bookkeeping 已分離至 APP-003-CLOSEOUT-001",
+        "四項 resolutions 均已落地並可追蹤",
+        "WORKBENCH_DELIVERY_BACKLOG.md remaining backlog 現在只含真正未完成模組",
+        "ai_status.py idle branch 確實清除 stale text",
+        "接受此次 rebaseline 為 canonical truth"
+      ],
+      "review_file": "docs/reviews/2026-04-19-state-rebaseline-001.md"
     },
     {
-      "id": "OSS-004C-SIDECAR-REVIEW",
-      "title": "Prepare OSS-004C review packet and evidence summary",
-      "summary_zh": "平行支援 OSS-004C，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
-      "phase": "Phase 7: EP4 Proof Run",
+      "id": "APP-003-CLOSEOUT-001",
+      "title": "Close out APP-003 delivery truth for already-reviewed workbench surfaces",
+      "summary_zh": "把 Operator、Governance、Persona、Evolution baseline 已完成的 packet loop closeout truth 寫回 canonical backlog 與 closure records，避免 backlog 仍顯示未開始。",
+      "phase": "Execution / Wave 1 - State Rebaseline",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "review_approved",
+      "status": "todo",
       "depends_on": [
-        "OSS-004A",
-        "OSS-004B"
+        "STATE-REBASE-001"
       ],
       "artifacts": [
-        "support/sidecars/OSS-004C/OSS-004C-SIDECAR-REVIEW.md"
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "current-work.md",
+        "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md"
+      ],
+      "acceptance": [
+        "operator governance persona and evolution baseline rows stop claiming loop-not-started when feedback already returned",
+        "closure state matches current-work truth",
+        "no stale bff-gap claims remain for already-closed packets"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-19T15:43:24Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "DEPTH-REBASE-001",
+      "title": "Reconcile canonical deep-task backlog against repo reality",
+      "summary_zh": "重新核對 DEP-002、CAP-002、TEL-002、LIN-002、EVO-004、EVO-005、APP-003、OSS-004 等深水區任務，區分已做未結案與真的未做。",
+      "phase": "Execution / Wave 1 - State Rebaseline",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "STATE-REBASE-001"
+      ],
+      "artifacts": [
+        "DEVELOPMENT_WORKBREAKDOWN.md",
+        "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "docs/reviews/2026-04-18-current-state-reconciliation.md"
+      ],
+      "acceptance": [
+        "each deep task is classified as closed rebaseline or active gap",
+        "canonical backlog stops implying missing work that the repo already completed",
+        "remaining deep work is explicitly materialized or deferred"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-19T15:43:57Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EW-04-OPEN-001",
+      "title": "Open Evolution Inspiration Graph as the next blocked module",
+      "summary_zh": "為 EW-04 補齊 route、composed object、screen contract 與 handoff bundle，從 blocked shell 推進到可 truthful 實作的 module。",
+      "phase": "Execution / Wave 2 - Blocked Module Activation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "APP-003-CLOSEOUT-001",
+        "DEPTH-REBASE-001"
+      ],
+      "artifacts": [
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md"
+      ],
+      "acceptance": [
+        "inspiration route and surface contract are published",
+        "lovable receives a truthful screen and bff handoff",
+        "workbench backlog upgrades from blocked shell only to a concrete delivery slice"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-19T15:44:20Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EW-05-OPEN-001",
+      "title": "Open Mutation Review contract and command vocabulary",
+      "summary_zh": "為 EW-05 補齊 mutation-review read model、ApproveMutation/RejectMutation command vocabulary、authority signals 與 screen handoff。",
+      "phase": "Execution / Wave 2 - Blocked Module Activation",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "APP-003-CLOSEOUT-001",
+        "DEPTH-REBASE-001"
+      ],
+      "artifacts": [
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
+      ],
+      "acceptance": [
+        "mutation review route and command vocabulary are published",
+        "authority fields are explicit",
+        "lovable is no longer limited to shell-only IA for mutation review"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-04-19T15:45:24Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "RW-01-FOUNDATION-001",
+      "title": "Publish Research Ticket identity and lifecycle foundation",
+      "summary_zh": "為 Research Workbench 建立第一個真實 module：ticket identity、list/detail/create/patch contract、lifecycle semantics 與 overview-to-detail handoff。",
+      "phase": "Execution / Wave 2 - Blocked Module Activation",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "STATE-REBASE-001",
+        "DEPTH-REBASE-001"
+      ],
+      "artifacts": [
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "ROADMAP.md"
+      ],
+      "acceptance": [
+        "research ticket identity and lifecycle contract are published",
+        "overview can hand off to a truthful list and detail flow",
+        "future RW-02 to RW-05 have a stable upstream anchor"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-19T15:45:35Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "KW-01-FOUNDATION-001",
+      "title": "Publish Institutional Memory browse foundation",
+      "summary_zh": "為 Knowledge Workbench 建立第一個真實 browse module：memory list/detail projection、identity、lifecycle semantics 與 overview handoff。",
+      "phase": "Execution / Wave 2 - Blocked Module Activation",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "STATE-REBASE-001",
+        "DEPTH-REBASE-001"
+      ],
+      "artifacts": [
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "docs/bff/PKT-knowledge-workbench.md"
+      ],
+      "acceptance": [
+        "memory browse contract is published",
+        "overview links to a truthful module entry",
+        "knowledge workbench is no longer only overview without an anchor module"
+      ],
+      "next": "Auto-reassigned KW-01-FOUNDATION-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-04-19T15:46:04Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "CW-01-FOUNDATION-001",
+      "title": "Publish Consult Request identity and request-to-session contract",
+      "summary_zh": "為 Consultation Workbench 建立第一個真實 module：consult request create/list/detail/cancel truth 與 request-to-session handoff semantics。",
+      "phase": "Execution / Wave 2 - Blocked Module Activation",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "STATE-REBASE-001",
+        "DEPTH-REBASE-001"
+      ],
+      "artifacts": [
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "docs/bff/PKT-consultation-workbench.md"
+      ],
+      "acceptance": [
+        "consult request create list detail and cancel truth are published",
+        "request-to-session handoff semantics are explicit",
+        "overview can anchor to one truthful module"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-19T15:45:51Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "TW-01-FOUNDATION-001",
+      "title": "Publish Trainer session lifecycle and Teaching Dialog contract",
+      "summary_zh": "為 Trainer Workbench 建立第一個真實 production slice：session create/list/detail/message contract 與 TeachingEvent dialog schema。",
+      "phase": "Execution / Wave 2 - Blocked Module Activation",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "STATE-REBASE-001",
+        "DEPTH-REBASE-001"
+      ],
+      "artifacts": [
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "ROADMAP.md"
+      ],
+      "acceptance": [
+        "trainer session create list detail and message contract are published",
+        "TeachingEvent dialog schema is seeded",
+        "trainer workbench has a truthful first production slice"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-19T15:45:59Z",
+      "source_plane": "gap_reconciliation",
+      "source_ref": {
+        "type": "gap_reconciliation",
+        "recorded_at": "2026-04-19T00:00:00Z",
+        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+        "canonical_refs": [
+          "current-work.md",
+          "WORKBENCH_DELIVERY_BACKLOG.md",
+          "DEVELOPMENT_WORKBREAKDOWN.md",
+          "docs/lovable/PANTHEON_FRONTEND_SA.md"
+        ]
+      },
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-19-system-completion-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare STATE-REBASE-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 STATE-REBASE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Execution / Wave 1 - State Rebaseline",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor resumed OSS-004C-SIDECAR-REVIEW for finalize after successful dispatch.",
-      "last_update": "2026-04-19T00:49:51Z",
+      "next": "Supervisor auto-started STATE-REBASE-001-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-04-19T15:51:16Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "OSS-004C",
-      "helper_kind": "review_packet",
+      "helper_parent": "STATE-REBASE-001",
+      "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "已核對 sidecar review packet、canonical review 與 evidence bundle 索引；支援材料完整，且未越界修改 canonical truth。"
-      ]
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -348,39 +687,47 @@
       "resolved_at": "2026-04-17T14:40:25Z"
     },
     {
-      "task_id": "OSS-004C-SIDECAR-REVIEW",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Review packet complete at support/sidecars/OSS-004C/OSS-004C-SIDECAR-REVIEW.md. All eight EP4 planes summarized; canonical review decision at .coordination/reviews/OSS-004C-review.md. OSS-004C is review_approved and ready for Codex to finalize to done. OSS-004D is unblocked.",
-      "status": "done",
-      "created_at": "2026-04-19T00:46:37Z",
-      "resolved_at": "2026-04-19T00:46:52Z"
-    },
-    {
-      "task_id": "OSS-004C-SIDECAR-REVIEW",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Review packet complete at support/sidecars/OSS-004C/OSS-004C-SIDECAR-REVIEW.md. All eight EP4 planes summarized; canonical review decision at .coordination/reviews/OSS-004C-review.md. OSS-004C is review_approved and ready for Codex to finalize to done. OSS-004D is unblocked.",
-      "status": "done",
-      "created_at": "2026-04-19T00:46:52Z",
-      "resolved_at": "2026-04-19T00:49:09Z"
-    },
-    {
-      "task_id": "OSS-004D",
-      "from": "Codex",
+      "task_id": "KW-01-FOUNDATION-001",
+      "from": "Qwen",
       "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-19T00:47:34Z",
-      "resolved_at": "2026-04-19T00:48:38Z"
-    },
-    {
-      "task_id": "OSS-004C-SIDECAR-REVIEW",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Approved sidecar review packet. Support artifact is complete, evidence bundle is accessible, and Claude may finalize the sidecar task. Parent OSS-004C finalization is ready once its task entry is present in durable state.",
+      "message": "Auto-reassigned KW-01-FOUNDATION-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
       "status": "pending",
-      "created_at": "2026-04-19T00:49:09Z"
+      "created_at": "2026-04-19T15:46:04Z"
+    },
+    {
+      "task_id": "STATE-REBASE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rebaseline is ready for review. Verified  clears stale idle-agent next text,  now removes reviewed operator/governance loops from remaining backlog, and drift findings/resolutions are recorded in docs/reviews/2026-04-19-state-rebaseline-001.md.",
+      "status": "done",
+      "created_at": "2026-04-19T15:49:10Z",
+      "resolved_at": "2026-04-19T15:49:21Z"
+    },
+    {
+      "task_id": "STATE-REBASE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rebaseline is ready for review. Verified scripts/ai_status.py clears stale idle-agent next text, WORKBENCH_DELIVERY_BACKLOG.md now removes reviewed operator/governance loops from remaining backlog, and drift findings/resolutions are recorded in docs/reviews/2026-04-19-state-rebaseline-001.md.",
+      "status": "done",
+      "created_at": "2026-04-19T15:49:21Z",
+      "resolved_at": "2026-04-19T15:51:21Z"
+    },
+    {
+      "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T15:50:19Z",
+      "resolved_at": "2026-04-19T15:51:16Z"
+    },
+    {
+      "task_id": "STATE-REBASE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three acceptance criteria verified. Idle-agent stale-next fix confirmed at ai_status.py:1057. Reviewed loops correctly removed from remaining backlog. Drift record is complete. Returning to Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-04-19T15:51:21Z"
     }
   ],
   "blockers": [],
@@ -394,31 +741,31 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
+      "total": 4,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 4
+    },
+    "Gemini": {
+      "total": 3,
+      "active": 1,
+      "blocked": 0,
+      "done": 1,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 2
+    },
+    "Codex": {
+      "total": 3,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 1,
-      "todo": 0
-    },
-    "Gemini": {
-      "total": 1,
-      "active": 0,
-      "blocked": 0,
-      "done": 1,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
-    },
-    "Codex": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Codex2": {
       "total": 0,

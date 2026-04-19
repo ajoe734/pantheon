@@ -61,6 +61,11 @@ KNOWN_AGENTS = {
         "default_branch": "feat/codex-collab-system",
         "target_workload": 30,
     },
+    "Codex2": {
+        "capability_lane": ["integration", "status-system", "schema", "acceptance"],
+        "default_branch": "feat/codex-collab-system",
+        "target_workload": 30,
+    },
     "Qwen": {
         "capability_lane": ["integration", "schema", "acceptance", "code-agent"],
         "default_branch": "feat/qwen-code-agent",
@@ -74,6 +79,8 @@ KNOWN_AGENTS = {
 }
 
 AGENT_ALIASES = {
+    "codex2": "Codex2",
+    "codex (2)": "Codex2",
     "qwen": "Qwen",
     "qwen coder": "Qwen",
     "qwen2.5-coder": "Qwen",
@@ -114,10 +121,17 @@ FIRST_PROMPT_PRIORITY = [
     "CANONICAL_DOCUMENT_MAP.md",
     "ROADMAP.md",
     "DEVELOPMENT_WORKBREAKDOWN.md",
+    "WORKBENCH_DELIVERY_BACKLOG.md",
+    "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
+    "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
 ]
 OPTIONAL_CURRENT_WORK_REFERENCES = (
     ("CANONICAL_DOCUMENT_MAP.md", "Canonical map"),
+    ("DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md", "Document boundary"),
     ("DEVELOPMENT_WORKBREAKDOWN.md", "Full backlog"),
+    ("WORKBENCH_DELIVERY_BACKLOG.md", "Workbench backlog"),
+    ("DELIVERY_CLOSURE_AND_LOOP_STATES.md", "Loop closure"),
+    ("EXECUTION_PROOF_AND_MATURITY_LEVELS.md", "Execution proof"),
 )
 DISPLAY_TIMEZONE = ZoneInfo("Asia/Taipei")
 DISPLAY_TIMEZONE_LABEL = "台灣時間 (UTC+8)"
@@ -154,11 +168,13 @@ def default_canonical_document_layers() -> dict[str, list[str]]:
             "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
         ],
         "L2 Planning & Execution": [
-            DEFAULT_PLANNING_README,
-            DEFAULT_PLANNING_SESSION_FILE,
             "CANONICAL_DOCUMENT_MAP.md",
+            "DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md",
             "ROADMAP.md",
             "DEVELOPMENT_WORKBREAKDOWN.md",
+            "WORKBENCH_DELIVERY_BACKLOG.md",
+            "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
+            "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
             "OSS_INTEGRATION_CHECKLIST.md",
         ],
         "L3 Supporting Design & Migration": [
@@ -181,16 +197,25 @@ def flatten_canonical_document_layers(layers: dict[str, list[str]]) -> list[str]
 
 
 def sync_canonical_document_metadata(state: dict[str, Any]) -> None:
+    default_layers = default_canonical_document_layers()
     layers = state.get("canonical_document_layers")
     if not isinstance(layers, dict) or not layers:
-        layers = default_canonical_document_layers()
+        layers = default_layers
     else:
         normalized_layers: dict[str, list[str]] = {}
         for key, value in layers.items():
             if isinstance(value, list):
                 normalized_layers[str(key)] = [str(item) for item in value]
         if not normalized_layers:
-            normalized_layers = default_canonical_document_layers()
+            normalized_layers = default_layers
+        else:
+            for key, default_documents in default_layers.items():
+                existing_documents = normalized_layers.get(key, [])
+                merged_documents = list(existing_documents)
+                for document in default_documents:
+                    if document not in merged_documents:
+                        merged_documents.append(document)
+                normalized_layers[key] = merged_documents
         layers = normalized_layers
     current_work = "current-work.md"
     derived_layer = "L0.5 Derived Narrative"
@@ -205,19 +230,27 @@ def sync_canonical_document_metadata(state: dict[str, Any]) -> None:
     derived_documents = [str(item) for item in layers.get(derived_layer, []) if str(item).strip()]
     if current_work in derived_documents:
         derived_documents = [document for document in derived_documents if document != current_work]
-    if removed_current_work or derived_documents:
-        layers[derived_layer] = [current_work, *derived_documents]
-    elif derived_layer not in layers:
-        insertion: dict[str, list[str]] = {}
-        inserted = False
-        for key, documents in layers.items():
-            insertion[key] = documents
-            if key == "L0 Collaboration & State":
-                insertion[derived_layer] = [current_work]
-                inserted = True
-        if not inserted:
-            insertion[derived_layer] = [current_work]
-        layers = insertion
+    derived_payload = [current_work, *derived_documents] if (removed_current_work or derived_documents) else None
+    if derived_payload is None and derived_layer in layers:
+        derived_payload = [current_work]
+
+    reordered_layers: dict[str, list[str]] = {}
+    inserted = False
+    for key, documents in layers.items():
+        if key == derived_layer:
+            continue
+        reordered_layers[key] = documents
+        if key == "L0 Collaboration & State" and derived_payload is not None:
+            reordered_layers[derived_layer] = derived_payload
+            inserted = True
+
+    if derived_payload is not None and not inserted:
+        reordered_layers[derived_layer] = derived_payload
+
+    if not reordered_layers and derived_payload is not None:
+        reordered_layers[derived_layer] = derived_payload
+
+    layers = reordered_layers
     state["canonical_document_layers"] = layers
     state["canonical_files"] = flatten_canonical_document_layers(layers)
 
@@ -1019,8 +1052,11 @@ def recompute_agents(state: dict[str, Any]) -> None:
                 agent["last_update"] = waiting[0].get("last_update")
         elif queued:
             agent["next"] = queued[0].get("next", "")
-        elif not agent.get("last_update"):
-            agent["last_update"] = None
+        else:
+            # Idle agents should not keep stale dispatch text from long-closed tasks.
+            agent["next"] = ""
+            if not agent.get("last_update"):
+                agent["last_update"] = None
 
 
 def recompute_workload(state: dict[str, Any]) -> None:
@@ -1458,8 +1494,18 @@ def detect_truth_mismatches(
     queue_events: list[dict[str, Any]],
     approval_state: dict[str, Any],
     resolver: TaskResolver,
+    orchestrator_state: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     task_map = {task["id"]: task for task in state.get("tasks", [])}
+    orchestrator = orchestrator_state or {}
+    provider_guardrails = orchestrator.get("provider_guardrails") if isinstance(orchestrator.get("provider_guardrails"), dict) else {}
+    dispatch_pauses = (
+        provider_guardrails.get("dispatch_pauses")
+        if isinstance(provider_guardrails.get("dispatch_pauses"), dict)
+        else orchestrator.get("dispatch_pauses")
+        if isinstance(orchestrator.get("dispatch_pauses"), dict)
+        else {}
+    )
     live_workers = [
         worker
         for worker in workers
@@ -1483,6 +1529,29 @@ def detect_truth_mismatches(
         for worker in workers
         if str(worker.get("run_id") or "").strip()
     }
+
+    def related_live_worker_covers_task(task: dict[str, Any]) -> bool:
+        expected_actor = expected_task_actor(task)
+        if not expected_actor:
+            return False
+        task_id = str(task.get("id") or "").strip()
+        if not task_id:
+            return False
+
+        parent_id = str(task.get("helper_parent") or "").strip()
+        if parent_id:
+            for worker in live_workers_by_task.get(parent_id, []):
+                if canonical_agent_name(worker.get("actor")) == expected_actor:
+                    return True
+
+        for related_id, related_task in task_map.items():
+            if str(related_task.get("helper_parent") or "").strip() != task_id:
+                continue
+            for worker in live_workers_by_task.get(related_id, []):
+                if canonical_agent_name(worker.get("actor")) == expected_actor:
+                    return True
+
+        return False
 
     def push(payload: dict[str, Any]) -> None:
         key = str(payload.get("id") or f"{payload.get('type')}:{payload.get('task_id')}:{payload.get('worker_run_id')}:{payload.get('queue_event_id')}")
@@ -1579,9 +1648,14 @@ def detect_truth_mismatches(
 
     for task in state.get("tasks", []):
         task_status = str(task.get("status") or "").lower()
-        if task_status not in {"in_progress", "review"}:
+        if task_status != "in_progress":
+            continue
+        expected_actor = expected_task_actor(task)
+        if str(task.get("id") or "").strip() in pending_approval_task_ids:
             continue
         if live_workers_by_task.get(task["id"]):
+            continue
+        if related_live_worker_covers_task(task):
             continue
         push(
             {
@@ -1591,7 +1665,7 @@ def detect_truth_mismatches(
                 "title": "Active task 沒有 live worker",
                 "summary": f"{task['id']} 在 task board 上是 {task_status}，但目前沒有對應的 live worker。",
                 "task_id": task["id"],
-                "expected_actor": expected_task_actor(task),
+                "expected_actor": expected_actor,
                 "detected_at": task.get("last_update"),
             }
         )
@@ -1813,16 +1887,70 @@ def coordination_payload_entry(feature: dict[str, Any], bucket: str, payload_typ
     return None
 
 
+def coordination_review_snapshot(feature_id: str | None) -> dict[str, str] | None:
+    candidate = str(feature_id or "").strip()
+    if not candidate:
+        return None
+    review_path = ROOT / ".coordination" / "reviews" / f"{candidate}-review.md"
+    if not review_path.exists():
+        return None
+    try:
+        text = review_path.read_text(encoding="utf-8")
+    except OSError:
+        return {"path": str(review_path.relative_to(ROOT)), "disposition": "reviewed"}
+
+    lowered = text.lower()
+    disposition = "reviewed"
+    decision_sections = re.findall(
+        r"(?ims)^##\s+(?:final\s+decision|decision)\s*\n+(.*?)(?=^##\s|\Z)",
+        text,
+    )
+    scoped_text = decision_sections[-1].lower() if decision_sections else lowered
+    if (
+        "follow-up required" in scoped_text
+        or "not loop-complete" in scoped_text
+        or "required follow-up" in scoped_text
+        or "changes requested" in scoped_text
+        or "blocked" in scoped_text
+    ):
+        disposition = "follow_up_required"
+    elif (
+        "approved" in scoped_text
+        or "loop is complete" in scoped_text
+        or "loop-complete" in scoped_text
+        or "loop complete" in scoped_text
+        or "loop can close" in scoped_text
+    ):
+        disposition = "approved"
+    return {
+        "path": str(review_path.relative_to(ROOT)),
+        "disposition": disposition,
+    }
+
+
 def coordination_stage(feature: dict[str, Any]) -> tuple[str, str]:
     frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
     ui_done = coordination_payload_entry(feature, "requests", "ui-done")
     bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
     contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
     lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
+    review = coordination_review_snapshot(feature.get("feature_id"))
 
     if frontend_feedback:
+        if review:
+            if review.get("disposition") == "approved":
+                return "frontend_feedback_reviewed", "Pantheon review packet approves loop closeout; finalize the closure record."
+            if review.get("disposition") == "follow_up_required":
+                return "frontend_feedback_reviewed_followup", "Pantheon review is complete; follow-up remains per the review packet."
+            return "frontend_feedback_reviewed", "Pantheon review packet exists; inspect the recorded disposition."
         return "frontend_feedback_received", "Pantheon should review the frontend feedback bundle and decide follow-up work."
     if ui_done:
+        if review:
+            if review.get("disposition") == "approved":
+                return "ui_done_reviewed", "Pantheon reviewed the ui-done handoff; finalize the next closure or publish step."
+            if review.get("disposition") == "follow_up_required":
+                return "ui_done_reviewed_followup", "Pantheon reviewed the ui-done handoff; follow-up remains per the review packet."
+            return "ui_done_reviewed", "Pantheon review packet exists for the ui-done handoff; inspect the recorded disposition."
         return "ui_done_received", "Pantheon should pick up review and integration from the returned ui-done handoff."
     if bff_gap and not coordination_payload_resolved(bff_gap):
         return "bff_gap_open", "Pantheon must resolve the open BFF gap before the front-end lane can continue."
@@ -1860,10 +1988,11 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
         ui_done = coordination_payload_entry(feature, "requests", "ui-done")
         frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
         bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
+        review = coordination_review_snapshot(feature_id)
         stage, next_action = coordination_stage(feature)
         mirrored = bool(feature.get("mirrored_to_target_repo"))
         lovable_ready = bool(lovable_task or feature.get("lovable_task_path"))
-        open_bff_gap = bool(bff_gap and not coordination_payload_resolved(bff_gap))
+        open_bff_gap = bool(stage == "bff_gap_open" and bff_gap and not coordination_payload_resolved(bff_gap))
 
         feature_summary = {
             "feature_id": feature_id,
@@ -1887,6 +2016,8 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
             "has_frontend_feedback": bool(frontend_feedback),
             "has_bff_gap": bool(bff_gap),
             "bff_gap_open": open_bff_gap,
+            "review_path": review.get("path") if isinstance(review, dict) else None,
+            "review_disposition": review.get("disposition") if isinstance(review, dict) else None,
             "paths": {
                 "contract_ready": contract_ready.get("path") if isinstance(contract_ready, dict) else None,
                 "lovable_task": lovable_task.get("path") if isinstance(lovable_task, dict) else feature.get("lovable_task_path"),
@@ -1894,6 +2025,7 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
                 "ui_done": ui_done.get("path") if isinstance(ui_done, dict) else None,
                 "frontend_feedback": frontend_feedback.get("path") if isinstance(frontend_feedback, dict) else None,
                 "bff_gap": bff_gap.get("path") if isinstance(bff_gap, dict) else None,
+                "review": review.get("path") if isinstance(review, dict) else None,
             },
         }
         features.append(feature_summary)
@@ -1936,7 +2068,14 @@ def build_dashboard_bundle(
         if str(event.get("status") or "").lower() not in {"completed", "failed"}
         and resolver.dependency_status(str(event.get("task_id") or "")) not in {"done", TASK_TERMINAL_SUPERSEDED}
     ]
-    live_workers, mismatches = detect_truth_mismatches(state, workers, queue_events, approvals, resolver)
+    live_workers, mismatches = detect_truth_mismatches(
+        state,
+        workers,
+        queue_events,
+        approvals,
+        resolver,
+        orchestrator,
+    )
     bridge_summary = build_bridge_summary(state, planning)
     coordination_summary = build_coordination_summary(orchestrator)
     supervisor_state = orchestrator.get("supervisor") if isinstance(orchestrator.get("supervisor"), dict) else {}
@@ -1947,7 +2086,24 @@ def build_dashboard_bundle(
         if task_id:
             live_workers_by_task.setdefault(task_id, []).append(worker)
 
+    dispatch_pauses = (
+        orchestrator.get("provider_guardrails", {}).get("dispatch_pauses")
+        if isinstance(orchestrator.get("provider_guardrails"), dict)
+        and isinstance(orchestrator.get("provider_guardrails", {}).get("dispatch_pauses"), dict)
+        else orchestrator.get("dispatch_pauses")
+        if isinstance(orchestrator.get("dispatch_pauses"), dict)
+        else {}
+    )
+    paused_actors = {str(actor or "").strip().lower() for actor in dispatch_pauses.keys() if str(actor or "").strip()}
+    occupied_actors = {
+        str(worker.get("actor") or worker.get("provider") or "").strip().lower()
+        for worker in live_workers
+        if str(worker.get("bucket") or "").lower() in {"running", "pending"}
+        and str(worker.get("actor") or worker.get("provider") or "").strip()
+    }
+
     ready_now = 0
+    dependency_ready = 0
     in_progress = 0
     in_review = 0
     blocked = 0
@@ -1957,6 +2113,16 @@ def build_dashboard_bundle(
     for task in state.get("tasks", []):
         status = str(task.get("status") or "").lower()
         if status == "todo" and all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", [])):
+            dependency_ready += 1
+            owner_key = str(task.get("owner") or "").strip().lower()
+            if not owner_key:
+                continue
+            if owner_key in paused_actors:
+                continue
+            if owner_key in occupied_actors:
+                continue
+            if any(worker.get("bucket") in {"running", "pending"} for worker in live_workers_by_task.get(str(task.get("id") or ""), [])):
+                continue
             ready_now += 1
         elif status == "in_progress":
             in_progress += 1
@@ -2093,6 +2259,7 @@ def build_dashboard_bundle(
         },
         "execution_summary": {
             "ready_now": ready_now,
+            "dependency_ready": dependency_ready,
             "in_progress": in_progress,
             "in_review": in_review,
             "blocked": blocked,
