@@ -129,8 +129,8 @@ Do not expose `root_type` as a working filter until the registry metadata prereq
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/lineage/inspiration/{artifact_id}` | **missing** | primary BFF-composed inspiration route; must own graph assembly and return `artifact_id`, `inspiration_edges[]`, `strategy_tags[]`, `meta.snapshot_at`, and `meta.surfaces.inspiration` |
-| Inspiration graph composed object | **missing** | the route field shape is drafted in `docs/bff/PKT-003-inspiration-graph.md`, but no live implementation backs it yet |
+| `GET /api/v1/lineage/inspiration/{artifact_id}` | **contract published — pending BFF implementation** | route spec published via `EW-04-OPEN-001` in `docs/bff/PKT-003-inspiration-graph.md`; must own graph assembly and return `artifact_id`, `inspiration_edges[]`, `strategy_tags[]`, `meta.snapshot_at`, and `meta.surfaces.inspiration`; live implementation not yet confirmed |
+| Inspiration graph composed object | **contract published — pending BFF implementation** | field shape published via `EW-04-OPEN-001` in `docs/bff/PKT-003-inspiration-graph.md`; no live implementation backs it yet |
 | Lineage root-type registry prerequisite | **partial** | `LN-03` exists, but the creative-edge addressability prerequisite for typed inspiration traversal is not yet locked; do not treat raw lineage primitives as a substitute for the dedicated route |
 | Frontend handoff bundle | **published** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` now exists; Lovable UI task activates once BFF confirms the live route |
 
