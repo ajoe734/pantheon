@@ -5,7 +5,7 @@
 - Packet family ID: `EW-004`
 - Workbench: Evolution Workbench
 - Phase origin: `BP5-WB-004`
-- Lovable readiness: **partial** — `EW-01`, `EW-02`, and `EW-03` are already handoff-ready via `PKT-003`; `EW-04` has blocked draft packet artifacts but no live BFF route or frontend handoff; `EW-05` remains not ready because the operator mutation-review projection and authority signals do not exist
+- Lovable readiness: **partial** — `EW-01`, `EW-02`, and `EW-03` are already handoff-ready via `PKT-003`; `EW-04` contract is published via `EW-04-OPEN-001` (route spec, composed object, `meta.surfaces.inspiration`, and handoff bundle now exist) but the BFF route is not yet live — Lovable UI task activates once BFF confirms the route; `EW-05` remains not ready because the operator mutation-review projection and authority signals do not exist
 - Recommended wave: Wave 2 read-only baseline, then Wave 3 mutation authority
 - Owner: Codex2
 - Reviewer: Claude
@@ -26,7 +26,7 @@ No Evolution Workbench screen may invent graph structure, mutation authority, or
 |---|---|---|
 | `PKT-003` packet family | `docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/PKT-003-post-incident-evolution-packet-family.md` | Existing ready baseline for `EW-01 Post-Incident Review`, `EW-02 Evolution Center`, and `EW-03 Lineage View`; also records blocked draft expectations for `EW-04 Inspiration Graph` and `EW-05 Mutation Review` |
 | `PKT-003` ready handoffs | `docs/pantheon-handoffs/PKT-003-post-incident-review/`, `docs/pantheon-handoffs/PKT-003-evolution-center/`, `docs/pantheon-handoffs/PKT-003-lineage-view/` | Contract-ready frontend handoff bundles for the three read-only baseline surfaces |
-| `EW-04` blocked draft artifacts | `docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, `docs/examples/PKT-003-inspiration-graph.json` | Draft packet language already exists for Inspiration Graph, but it is explicitly blocked; no `FRONTEND_CHANGE_SPEC.md` exists because the BFF route is still missing |
+| `EW-04` contract artifacts | `docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, `docs/examples/PKT-003-inspiration-graph.json`, `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` | Contract published via `EW-04-OPEN-001`: route spec, composed object, example payload, and frontend handoff bundle now exist; BFF route implementation is pending |
 | Evolution policy and object contract | `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `services/control-plane/governance/evolution_decision.contract.md`, `services/control-plane/governance/evolution_decision.schema.json` | Canonical `EvolutionDecision` lifecycle, normalized action families, review and approval chain, execution-result semantics, cooldown rules, and object field names |
 | Approval authority contract | `services/control-plane/governance/contract.md` | Canonical `ApprovalDecision` lifecycle and the rule that evolution approvals must flow through `ApprovalDecision`, not shadow approval semantics |
 | Incident backbone | `services/incident/contract.md`, `services/incident/incident_case.schema.json`, `services/incident/postmortem.schema.json` | Canonical `IncidentCase` and `Postmortem` objects, lineage links into evolution, and the incident/postmortem evidence chain used by post-incident and mutation review surfaces |
@@ -46,7 +46,7 @@ Historical note: older phase-3 packet text describes `EW-05 Mutation Review` as 
 | `EW-01` | Post-Incident Review | resolved incident index, composed post-incident review, postmortem refs, linked evolution evidence | ready via `PKT-003` plus frontend handoff bundle | ready | Wave 1 baseline |
 | `EW-02` | Evolution Center | evolution decision list/detail, freeze-order index, rollback history, read-only review context | ready via `PKT-003` plus frontend handoff bundle | ready | Wave 2 - 1st |
 | `EW-03` | Lineage View | lineage list, edge detail, lineage graph, incident/evolution trace context | ready via `PKT-003` plus frontend handoff bundle; `LN-03 root_type` caveat documented | ready with caveat | Wave 2 - 2nd |
-| `EW-04` | Inspiration Graph | artifact-centered creative lineage graph, strategy tags, influence-weight display | blocked draft packet artifacts exist (`screen`, `bff`, `example`), but no live BFF route and no frontend handoff bundle | not ready | Wave 2 - 3rd |
+| `EW-04` | Inspiration Graph | artifact-centered creative lineage graph, strategy tags, influence-weight display | contract published via `EW-04-OPEN-001`: route spec, composed object, example payload, and frontend handoff bundle now exist; BFF route not yet live | pending-bff | Wave 2 - 3rd |
 | `EW-05` | Mutation Review | composed mutation review with evolution decision context, incident/postmortem/rollback evidence, and approve/reject CTA | no dedicated screen or handoff artifact yet; canonical object anchors exist, but the operator mutation-review projection does not | not ready | Wave 3 - 1st |
 
 ---
@@ -123,7 +123,7 @@ Do not expose `root_type` as a working filter until the registry metadata prereq
 
 ### Existing packet state
 
-`docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, and `docs/examples/PKT-003-inspiration-graph.json` already provide blocked packet language and the required field shape. That draft is still useful and should be absorbed rather than rewritten, but it is not yet frontend-hand-offable because the live BFF route and handoff bundle do not exist.
+`docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, and `docs/examples/PKT-003-inspiration-graph.json` provide the blocked packet language and required field shape, now published as a contract via `EW-04-OPEN-001`. The frontend handoff bundle exists at `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md`. The remaining gate is BFF route implementation going live.
 
 ### Backend gaps
 
@@ -132,7 +132,7 @@ Do not expose `root_type` as a working filter until the registry metadata prereq
 | `GET /api/v1/lineage/inspiration/{artifact_id}` | **missing** | primary BFF-composed inspiration route; must own graph assembly and return `artifact_id`, `inspiration_edges[]`, `strategy_tags[]`, `meta.snapshot_at`, and `meta.surfaces.inspiration` |
 | Inspiration graph composed object | **missing** | the route field shape is drafted in `docs/bff/PKT-003-inspiration-graph.md`, but no live implementation backs it yet |
 | Lineage root-type registry prerequisite | **partial** | `LN-03` exists, but the creative-edge addressability prerequisite for typed inspiration traversal is not yet locked; do not treat raw lineage primitives as a substitute for the dedicated route |
-| Frontend handoff bundle | **missing** | no `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` exists; this must not be opened until the route and degraded-state shape are live |
+| Frontend handoff bundle | **published** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` now exists; Lovable UI task activates once BFF confirms the live route |
 
 ### Packetization prerequisite
 
@@ -140,7 +140,7 @@ The blocked `PKT-003` draft may move to a real frontend handoff only when the BF
 
 ### Lovable readiness gate
 
-`false` — the route, field shape, staleness signal, and frontend handoff bundle must all exist before `EW-04` is promotable.
+`pending-bff` — the route spec, field shape, staleness signal, and frontend handoff bundle now exist (published via `EW-04-OPEN-001`). The remaining gate is BFF confirming the live route. Once the BFF route is up and returning the published field shape, the Lovable UI task activates.
 
 ---
 
@@ -201,10 +201,10 @@ Each row is scoped to one or more blocked modules. A blocked module advances to 
 
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `GET /api/v1/lineage/inspiration/{artifact_id}` | `EW-04` | missing read route | entire Inspiration Graph surface |
-| Inspiration graph composed object | `EW-04` | missing BFF contract | graph panel, strategy tags rail, edge-detail drawer, and `meta.snapshot_at` rendering |
-| `meta.surfaces.inspiration` | `EW-04` | missing staleness signal | degradation banner and graph suppression rules |
-| Frontend handoff bundle for Inspiration Graph | `EW-04` | missing handoff artifact | no honest Lovable task can open yet |
+| `GET /api/v1/lineage/inspiration/{artifact_id}` | `EW-04` | contract published — BFF implementation pending | entire Inspiration Graph surface; route spec in `docs/bff/PKT-003-inspiration-graph.md` |
+| Inspiration graph composed object | `EW-04` | contract published — BFF implementation pending | field shape in `docs/bff/PKT-003-inspiration-graph.md`; example in `docs/examples/PKT-003-inspiration-graph.json` |
+| `meta.surfaces.inspiration` | `EW-04` | contract published — BFF implementation pending | degradation banner and graph suppression rules; signal defined in route contract |
+| Frontend handoff bundle for Inspiration Graph | `EW-04` | **published** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` |
 | `GET /api/v1/operator/mutation-review/{decision_id}` | `EW-05` | missing read route | entire Mutation Review surface |
 | Mutation-review composed object | `EW-05` | missing BFF contract | decision header, incident/postmortem/rollback evidence rail, `proposed_changes`, and `risk_assessment` |
 | `ApproveMutation` / `RejectMutation` command vocabulary | `EW-05` | missing operator command extension | approve/reject CTA semantics |
