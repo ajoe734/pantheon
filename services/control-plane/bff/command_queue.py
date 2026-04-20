@@ -50,7 +50,7 @@ class CommandStore:
         record = {
             "command_id": command_id,
             "type": command_type.value,
-            "target": target.dict(),
+            "target": target.model_dump(),
             "submitted_at": submitted_at,
             "status": CommandStatus.SUBMITTED.value,
             "params": params,
