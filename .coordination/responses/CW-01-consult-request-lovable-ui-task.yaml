@@ -20,8 +20,6 @@ constraints:
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
 acceptance:
-- do not start production UI until Pantheon confirms the CW-01 request routes are
-  live
 - build the request composer from the published create contract only
 - build the request list and detail pages from the CW-01 BFF routes only
 - render request-to-session status from linked_session_id plus request_to_session_status
