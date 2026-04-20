@@ -3535,6 +3535,141 @@ def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
     return refresh_mode
 
 
+_CW01_TARGET_TYPES = {"persona", "committee", "red_team"}
+_CW01_PRIORITIES = {"low", "normal", "high", "critical"}
+_CW01_CONSULTATION_TYPES = {
+    "pre_deployment",
+    "risk_review",
+    "macro_regime_shift",
+    "incident_response",
+    "policy_change",
+    "general",
+}
+_CW01_CONTEXT_REF_TYPES = {
+    "artifact",
+    "deployment_plan",
+    "incident",
+    "lineage_edge",
+    "telemetry_ref",
+    "note",
+}
+
+
+def _cw01_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
+
+
+def _cw01_validate_target_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _CW01_TARGET_TYPES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid target_type",
+            f"target_type must be one of {sorted(_CW01_TARGET_TYPES)}",
+            precondition_failed="target_type",
+        )
+    return normalized
+
+
+def _cw01_validate_priority(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _CW01_PRIORITIES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid priority",
+            f"priority must be one of {sorted(_CW01_PRIORITIES)}",
+            precondition_failed="priority",
+        )
+    return normalized
+
+
+def _cw01_validate_consultation_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _CW01_CONSULTATION_TYPES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid consultation_type",
+            f"consultation_type must be one of {sorted(_CW01_CONSULTATION_TYPES)}",
+            precondition_failed="consultation_type",
+        )
+    return normalized
+
+
+def _cw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid context_refs",
+            "context_refs must be an array of { type, id } objects",
+            precondition_failed="context_refs",
+        )
+    refs: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid context_refs entry",
+                "Each context_refs entry must be an object with type and id",
+                precondition_failed="context_refs",
+            )
+        ref_type = str(item.get("type") or "").strip().lower()
+        if ref_type not in _CW01_CONTEXT_REF_TYPES:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid context_refs entry type",
+                f"context_refs[].type must be one of {sorted(_CW01_CONTEXT_REF_TYPES)}",
+                precondition_failed="context_refs",
+            )
+        ref_id = str(item.get("id") or "").strip()
+        if not ref_id:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Missing context_refs entry id",
+                "context_refs[].id must be a non-empty string",
+                precondition_failed="context_refs",
+            )
+        refs.append({"type": ref_type, "id": ref_id})
+    return refs
+
+
+def _cw01_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "stale"
+    return "fresh"
+
+
 def _rw01_validate_priority(priority: Any) -> str:
     normalized = str(priority or "").strip().lower()
     if normalized not in _RW01_ALLOWED_PRIORITIES:
@@ -3777,17 +3912,16 @@ def _build_consultation_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
         {
             "module_id": "CW-01",
             "label": "Consult Request",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 1,
-            "summary": "Request create/list/detail/cancel flows and the request-to-session lifecycle are still missing.",
-            "missing_contracts": [
+            "summary": "Request create/list/detail/cancel routes are live. Request-to-session lifecycle and linked_session_id contract are implemented.",
+            "live_routes": [
                 "POST /api/v1/consult/requests",
                 "GET /api/v1/consult/requests",
                 "GET /api/v1/consult/requests/{request_id}",
                 "POST /api/v1/consult/requests/{request_id}/cancel",
-                "ConsultRequest lifecycle and linked_session_id contract",
             ],
-            "next_gate": "Publish request identity, lifecycle, and request-to-session handoff truth.",
+            "next_gate": "CW-01 is live. CW-02 (Debate Transcript) may proceed.",
             "upstream_dependencies": [],
         },
         {
@@ -3839,23 +3973,22 @@ def _build_consultation_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
         "workbench_id": "consultation-workbench",
         "label": "Consultation Workbench",
         "route_href": _CONSULTATION_WORKBENCH_ROUTE,
-        "overall_status": "overview_ready",
-        "headline": "Overview route is live; consultation delivery remains module-gated",
+        "overall_status": "partial_ready",
+        "headline": "CW-01 consult request routes are live; remaining modules are gated on CW-01 and CW-02",
         "summary": (
-            "This overview is a truthful landing surface for the Consultation Workbench. "
-            "It does not claim consult requests, committee rooms, or red-team memo flows are implemented. "
-            "Instead it exposes the module order, existing support surfaces, and the remaining BFF contracts."
+            "CW-01 request create/list/detail/cancel routes are live and implement the published ConsultRequest lifecycle. "
+            "CW-02 (Debate Transcript), CW-03 (Committee Board), and CW-04 (Red-team Memo) remain gated."
         ),
         "packet_family": {
             "family_id": "CW-008",
             "path": "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
-            "lovable_readiness": "not_ready",
-            "note": "All four Consultation Workbench modules remain blocked on net-new BFF routes or lifecycle contracts.",
+            "lovable_readiness": "partial_ready",
+            "note": "CW-01 is live. Remaining modules still blocked on upstream BFF routes.",
         },
         "module_counts": {
             "total": len(modules),
-            "ready": 0,
-            "not_ready": len(modules),
+            "ready": sum(1 for m in modules if m.get("status") == "ready"),
+            "not_ready": sum(1 for m in modules if m.get("status") != "ready"),
         },
         "modules": modules,
         "support_refs": [
@@ -5418,6 +5551,180 @@ async def get_consultation_workbench_overview(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     return _build_consultation_workbench_overview(utc_now())
+
+
+@app.post("/api/v1/consult/requests")
+async def create_consult_request(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: Create a consult request."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    from_persona_id = _cw01_required_text(payload, "from_persona_id")
+    target_type = _cw01_validate_target_type(payload.get("target_type"))
+    target_ref = _cw01_required_text(payload, "target_ref")
+    task = _cw01_required_text(payload, "task")
+    context_refs = _cw01_validate_context_refs(payload.get("context_refs"))
+    priority = _cw01_validate_priority(payload.get("priority"))
+    consultation_type = _cw01_validate_consultation_type(payload.get("consultation_type"))
+
+    req = read_store.create_consult_request(
+        from_persona_id=from_persona_id,
+        target_type=target_type,
+        target_ref=target_ref,
+        task=task,
+        context_refs=context_refs,
+        priority=priority,
+        consultation_type=consultation_type,
+        actor_id=identity.operator_id,
+        created_at=utc_now(),
+    )
+    return {
+        "request_id": req["request_id"],
+        "status": req["status"],
+        "created_at": req["created_at"],
+        "linked_session_id": req["linked_session_id"],
+        "request_to_session_status": req["request_to_session_status"],
+        "allowedActions": req["allowedActions"],
+    }
+
+
+@app.get("/api/v1/consult/requests")
+async def list_consult_requests(
+    status: Optional[str] = None,
+    target_type: Optional[str] = None,
+    consultation_type: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: List consult requests."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    statuses = _split_csv_query(status)
+    items = read_store.list_consult_requests(
+        statuses=statuses or None,
+        target_type=target_type or None,
+        consultation_type=consultation_type or None,
+    )
+    total = len(items)
+    surface_state = _cw01_surface_state("consult_requests", snapshot_at=snapshot_at)
+    if surface_state == "unavailable":
+        page_items: List[Dict[str, Any]] = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"consult_request_list": surface_state}
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/consult/requests/{request_id}")
+async def get_consult_request(
+    request_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: Get consult request detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    req = read_store.get_consult_request(request_id)
+    if not req:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consult request not found",
+            f"Consult request {request_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    payload = dict(req)
+    payload["links"] = {
+        "self": f"/api/v1/consult/requests/{request_id}",
+        "workbench_detail": f"/consultation/requests/{request_id}",
+    }
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "consult_request_detail": _cw01_surface_state(
+                "consult_requests",
+                snapshot_at=snapshot_at,
+                has_data=True,
+            ),
+        },
+    }
+    return payload
+
+
+@app.post("/api/v1/consult/requests/{request_id}/cancel")
+async def cancel_consult_request(
+    request_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: Cancel a consult request."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    req = read_store.get_consult_request(request_id)
+    if not req:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consult request not found",
+            f"Consult request {request_id} does not exist",
+        )
+
+    if not req.get("allowedActions", {}).get("canCancel"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Consult request cannot be canceled",
+            f"allowedActions.canCancel is false for request {request_id}",
+            precondition_failed="allowedActions.canCancel",
+        )
+
+    canceled = read_store.cancel_consult_request(
+        request_id,
+        actor_id=identity.operator_id,
+        canceled_at=utc_now(),
+    )
+    if canceled is None:
+        refreshed = read_store.get_consult_request(request_id)
+        if refreshed and not refreshed.get("allowedActions", {}).get("canCancel"):
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_NOT_MET,
+                "Consult request cannot be canceled",
+                f"allowedActions.canCancel is false for request {request_id}",
+                precondition_failed="allowedActions.canCancel",
+            )
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Consult request store unavailable",
+            "Cancel operation could not be persisted.",
+        )
+    return {
+        "request_id": canceled["request_id"],
+        "status": canceled["status"],
+        "canceled_at": canceled["canceled_at"],
+        "linked_session_id": canceled["linked_session_id"],
+        "request_to_session_status": canceled["request_to_session_status"],
+        "allowedActions": canceled["allowedActions"],
+    }
 
 
 @app.get("/api/v1/committees")
