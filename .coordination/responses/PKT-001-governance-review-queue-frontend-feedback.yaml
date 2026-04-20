@@ -1,0 +1,75 @@
+feature_id: PKT-001-governance-review-queue
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex2
+reviewed_at: '2026-04-17T10:57:15Z'
+reviewed_commit: 56ecdd48bb2fd422a6b1618b65906f02640c938a
+screen: governance-review-queue
+workbench: governance-workbench
+screen_id: screen-governance-review-queue
+
+disposition: follow-up-required
+
+summary: >-
+  Pantheon re-review confirms that the returned Governance Review Queue UI is
+  statically aligned with the published PKT-001 contract on list rendering,
+  embedded drawer data, server-backed filters, backend-authoritative CTAs, and
+  degradation gating. The loop still cannot close because Pantheon does not yet
+  serve `GET /api/v1/operator/governance/review-queue`, and the GitHub-visible
+  front commit `56ecdd48bb2fd422a6b1618b65906f02640c938a` still publishes
+  `ui-done` and `frontend-feedback` payload bodies whose `source_commit`
+  incorrectly points at `faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7`.
+
+acceptance_verified:
+  - criterion: build the Governance Review Queue list and item detail drawer
+    status: pass
+    note: GovernanceReviewQueue.tsx and ReviewItemDetail.tsx implement list + drawer
+  - criterion: use only the existing BFF client
+    status: pass
+    note: operatorApi.listGovernanceReviewQueue() and operatorApi.sendCommand() used exclusively
+  - criterion: do not add raw fetch calls in component files
+    status: pass
+    note: QA confirms no raw fetch() in governance queue or drawer components
+  - criterion: do not invent fields beyond this handoff packet
+    status: pass
+    note: evidence refs rendered as canonical object shape from contract example payload
+  - criterion: render all routing CTAs from backend-shaped allowedActions only
+    status: pass
+    note: drawer forms gate on allowedActions.* flags from BFF response
+  - criterion: pass filters to the BFF as query parameters; do not filter client-side
+    status: pass
+    note: item_type, risk_level, status params forwarded to BFF; no client-side filtering
+  - criterion: display the degradation banner when any meta.surfaces entry is degraded or unavailable
+    status: pass
+    note: degraded/unavailable surfaces render banner and disable all routing submissions
+
+api_gaps: []
+
+follow_up_items:
+  - type: runtime_acceptance
+    status: blocking
+    note: >-
+      Pantheon BFF still returns `404 Not Found` for
+      `GET /api/v1/operator/governance/review-queue` in direct FastAPI
+      TestClient verification, so the published read contract is not yet live.
+  - type: publication_replay
+    status: blocking
+    note: >-
+      GitHub-visible front commit `56ecdd48bb2fd422a6b1618b65906f02640c938a`
+      contains the queue implementation files, but its canonical
+      `.coordination/requests/PKT-001-governance-review-queue-ui-done.yaml`
+      and `.coordination/requests/PKT-001-governance-review-queue-frontend-feedback.yaml`
+      payload bodies still advertise `source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7`,
+      so the handoff is not replay-clean.
+
+risk_note: >-
+  There is no new front-end contract-shape gap in the reviewed UI code, but the
+  coordination loop remains blocked until Pantheon publishes the missing read
+  route and the front repo republishes truthful `ui-done` plus
+  `frontend-feedback` payloads from a single Git-visible implementation commit.
+
+lovable_ui_task_status: closed
+coordination_stage: blocked
+next_action: runtime-and-front-followup
+needs_runtime_ref: .coordination/requests/PKT-001-governance-review-queue-needs-runtime.yaml
+review_findings_ref: .coordination/reviews/PKT-001-governance-review-queue-review.md

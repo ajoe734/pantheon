@@ -1,0 +1,213 @@
+feature_id: PKT-013-operator-home
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-18T09:39:09Z'
+reviewed_commit: 3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035
+ui_done_source_commit: 37a622bca69a95e2aae46aa8c6b0432ad72082a8
+frontend_feedback_source_commit: null
+verified_front_workspace_head: 37a622bca69a95e2aae46aa8c6b0432ad72082a8
+screen: operator-home-dashboard
+workbench: operator-console
+screen_id: screen-operator-home-dashboard
+
+disposition: follow-up-required
+review_result: contract-aligned-read-path-and-owner-link-hrefs-published-front-publication-still-required
+can_close: false
+
+summary: >-
+  Pantheon re-reviewed the mirrored PKT-013 ui-done packet against the
+  published operator-home contract, example payload, sibling front
+  implementation, and current Pantheon BFF workspace. The reviewed UI remains
+  statically aligned on the backend-owned read model: it reads through
+  operatorApi.getOperatorHome(), validates the full operator-home envelope
+  before rendering, preserves backend-owned cards[] and escalation_shortcuts[]
+  order, renders safe_mode_state directly from GET /api/v1/operator/home, and
+  keeps degraded or unavailable treatment explicit without rebuilding the
+  dashboard from alerts, incidents, governance, runtime, telemetry, or
+  kill-switch primitives in the browser. Pantheon's current workspace serves
+  the PKT-013 route, targeted PKT-011 plus PKT-013 contract tests pass, and a
+  direct local TestClient read now returns browser-ready owner-link hrefs for
+  all card targets and escalation shortcuts. The loop still cannot close
+  because the required frontend-feedback request was not published, the
+  advertised ui-done source_commit does not contain the PKT-013 handoff set,
+  and the changed-file ESLint slice still fails on src/components/AppSidebar.tsx.
+
+acceptance_verified:
+  - criterion: build the Operator Home Dashboard from the single operator-home route
+    status: pass
+    note: >-
+      OperatorHomeDashboard reads only through operatorApi.getOperatorHome()
+      and renders the summary header, safe-mode state, card stack, and
+      escalation shortcuts from one PKT-013 payload.
+  - criterion: use only the existing BFF client
+    status: pass
+    note: >-
+      The reviewed screen adds no component-level raw fetch path and keeps
+      network reads inside src/lib/bffClient.ts.
+  - criterion: preserve backend-owned card order, escalation shortcut order, and safe-mode state
+    status: pass
+    note: >-
+      The reviewed UI maps response.cards and
+      response.escalation_shortcuts directly, and renders safe_mode_state
+      values without client-side reordering or recomposition.
+  - criterion: validate degraded and unavailable operator-home behavior against Pantheon verification
+    status: pass
+    note: >-
+      `python3 -m pytest services/control-plane/bff/test_pkt013_operator_home_contract.py -q`
+      passed with 2 tests, and the combined PKT-011 plus PKT-013 slice passed
+      with 5 tests after the owner-link follow-up. Direct FastAPI TestClient
+      probing of GET /api/v1/operator/home returned 200 OK with
+      overall_status=degraded, operator_home degraded, and the published
+      backend-owned card and shortcut order. The unavailable branch is covered
+      by the targeted contract test slice.
+  - criterion: render backend-supplied target refs and shortcut hrefs without synthesizing alternate destinations
+    status: pass
+    note: >-
+      The reviewed screen renders cards[].target_refs[].href and
+      escalation_shortcuts[].href verbatim and does not synthesize alternate
+      browser routes.
+  - criterion: publish ui-done and frontend-feedback from one truthful Git-visible front commit that contains the PKT-013 handoff set
+    status: fail
+    note: >-
+      The required frontend-feedback request is absent, and
+      ui-done.source_commit=37a622bca69a95e2aae46aa8c6b0432ad72082a8 does not
+      contain OperatorHomeDashboard.tsx, the PKT-013 ui-done request, or the
+      PKT-013 feedback bundle, so the reviewed cycle is not transport-replayable.
+  - criterion: keep payload href semantics truthful for owner-link destinations
+    status: pass
+    note: >-
+      Pantheon now emits browser-ready owner-link href values for PKT-013 card
+      targets and escalation shortcuts:
+      /alerts, /operator/incidents, /governance-review-queue,
+      /governance-approval-queue, /operator/runtime-state, and
+      /operator/health-status.
+  - criterion: keep the reviewed changed-file ESLint slice clean
+    status: fail
+    note: >-
+      `npx eslint src/App.tsx src/components/AppSidebar.tsx
+      src/components/WorkbenchBreadcrumb.tsx src/lib/bffClient.ts
+      src/pages/operator/OperatorHomeDashboard.tsx src/pages/operator/types.ts`
+      fails on src/components/AppSidebar.tsx:37 due to
+      @typescript-eslint/no-explicit-any.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify PKT-013 contract tests
+    path: services/control-plane/bff/test_pkt013_operator_home_contract.py
+    note: >-
+      Targeted PKT-013 verification passed in the current Pantheon workspace:
+      2 passed.
+  - action: verify live operator-home route in the current workspace
+    path: services/control-plane/bff/main.py
+    note: >-
+      Direct FastAPI TestClient probing returned 200 OK for
+      GET /api/v1/operator/home with truthful degraded-state metadata,
+      backend-owned card order, backend-owned shortcut order, and browser-ready
+      owner-link hrefs.
+  - action: publish browser-ready owner-link hrefs
+    path: services/control-plane/bff/main.py
+    note: >-
+      Pantheon now publishes /alerts, /operator/incidents,
+      /governance-review-queue, /governance-approval-queue,
+      /operator/runtime-state, and /operator/health-status for the PKT-013
+      card targets and escalation shortcuts.
+  - action: lock href semantics in contract examples and regression coverage
+    path: docs/examples/PKT-013-operator-home.json
+    note: >-
+      Pantheon updated the PKT-011 and PKT-013 example payloads and extended
+      the PKT-011 plus PKT-013 contract tests so the published owner-link
+      semantics stay replayable in this workspace.
+  - action: publish backend delivery record
+    path: .coordination/responses/PKT-013-operator-home-backend-delivery.yaml
+    note: >-
+      Pantheon recorded the backend-delivery response and reduced the next
+      PKT-013 cycle to front publication replay plus optional changed-file lint
+      cleanup.
+
+follow_up_items:
+  - type: publication_replay
+    status: blocking
+    note: >-
+      Front repo must publish
+      .coordination/requests/PKT-013-operator-home-frontend-feedback.yaml,
+      .coordination/requests/PKT-013-operator-home-ui-done.yaml, and
+      docs/pantheon-feedback/PKT-013-operator-home/ from one Git-visible commit
+      together with the reviewed PKT-013 UI files, and both request bodies
+      must set source_commit to that exact immutable publication commit.
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Live browser verification against a running Pantheon environment remains
+      outstanding after the truthful republish lands.
+  - type: lint
+    status: deferred_non_blocking
+    note: >-
+      The reviewed changed-file ESLint slice still fails on
+      src/components/AppSidebar.tsx due to no-explicit-any, but this remains a
+      front-owned cleanup rather than a PKT-013 contract blocker.
+
+required_front_repo_updates:
+  - file: .coordination/requests/PKT-013-operator-home-frontend-feedback.yaml
+    action: >-
+      Publish the canonical frontend-feedback request from the same final front
+      commit as the ui-done payload and feedback bundle, and point source_commit
+      at that same immutable publication commit SHA.
+  - file: .coordination/requests/PKT-013-operator-home-ui-done.yaml
+    action: >-
+      Republish the ui-done request from the same final front-repo commit as
+      the feedback bundle and reviewed PKT-013 UI files, and replace
+      source_commit=37a622bca69a95e2aae46aa8c6b0432ad72082a8 with that exact
+      Git-visible publication commit.
+  - file: docs/pantheon-feedback/PKT-013-operator-home
+    action: >-
+      Commit LOVABLE_CHANGE_FEEDBACK.md, API_GAP_REQUESTS.json,
+      UI_DECISIONS.md, and QA_STATUS.md in the same final publication commit so
+      the reviewed bundle is Git-replayable.
+  - file: src/App.tsx
+    action: >-
+      Keep the /operator/home route wiring in the same publication commit as
+      the request pair and feedback bundle.
+  - file: src/components/AppSidebar.tsx
+    action: >-
+      Keep the operator-home navigation entry in the same publication commit as
+      the request pair and feedback bundle, and replace the current any icon
+      type if changed-file ESLint cleanliness is required for the next return.
+  - file: src/components/WorkbenchBreadcrumb.tsx
+    action: >-
+      Keep the operator-home breadcrumb wiring in the same publication commit
+      as the request pair and feedback bundle.
+  - file: src/lib/bffClient.ts
+    action: >-
+      Keep the PKT-013 operator-home helper in the same publication commit as
+      the request pair and feedback bundle.
+  - file: src/pages/operator/OperatorHomeDashboard.tsx
+    action: >-
+      Keep the reviewed operator-home screen in the same publication commit as
+      the request pair and feedback bundle.
+  - file: src/pages/operator/types.ts
+    action: >-
+      Keep the PKT-013 response types in the same publication commit as the
+      request pair and feedback bundle.
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  The loop can close once one Git-visible front commit contains the PKT-013
+  implementation files, the canonical ui-done request, the canonical
+  frontend-feedback request, and docs/pantheon-feedback/PKT-013-operator-home/*,
+  and both request payloads point source_commit at that same immutable
+  publication commit SHA.
+
+risk_note: >-
+  The remaining blocker is coordination transport truth, not primary
+  read-route availability or owner-link semantics. GET /api/v1/operator/home
+  is live in the current workspace, targeted verification passes, and the
+  reviewed UI behavior remains aligned to the published single-route read
+  model.
+
+lovable_ui_task_status: followup-required
+next_action: front-publish-feedback-bundle-and-replay-clean-ui-done
+delivery_artifact_ref: .coordination/responses/PKT-013-operator-home-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/PKT-013-operator-home-review.md

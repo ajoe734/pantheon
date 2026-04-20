@@ -1,0 +1,104 @@
+feature_id: PKT-001-deployment-review
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7
+reviewed_at: "2026-04-17T11:10:00Z"
+reviewed_by: Claude
+
+disposition: follow_up
+disposition_summary: >-
+  PKT-001 core acceptance criteria are met, but the feedback bundle in the
+  front repo inaccurately documents the implementation. DeploymentReviewConsole.tsx
+  opens a direct SSE stream via SseClient at
+  /api/v1/runtime/{runtimeBindingId}/events/stream — this endpoint is NOT in the
+  PKT-001 allowed endpoints list and is outside the shared BFF client. The
+  LOVABLE_CHANGE_FEEDBACK.md statement "No raw fetch() calls were added" omits this
+  direct SSE connection. API_GAP_REQUESTS.json must be updated before the loop can
+  close truthfully.
+
+acceptance_criteria_results:
+  - criterion: "Build the Deployment Review Console list and detail panels"
+    result: pass
+    notes: >-
+      DeploymentReviewConsole.tsx renders list panel with status filter, row
+      selection, and load-more. DeploymentPlanDetail.tsx renders full detail
+      with governance review, bindings, latest run, and surface status.
+  - criterion: "Use only the existing BFF client"
+    result: fail
+    notes: >-
+      DeploymentReviewConsole.tsx imports SseClient and opens
+      /api/v1/runtime/{runtimeBindingId}/events/stream directly (lines 279-313,
+      tagged PKT-005 SSE substrate). This endpoint is outside the PKT-001
+      allowed endpoints and outside the operatorApi BFF client boundary.
+  - criterion: "Do not add raw fetch calls in component files"
+    result: partial
+    notes: >-
+      No raw fetch() or XMLHttpRequest calls were added. However SseClient is a
+      direct network connection that bypasses the BFF client — it is effectively
+      a raw network call for an endpoint not in the PKT-001 contract.
+  - criterion: "Do not invent fields beyond this handoff packet"
+    result: pass
+    notes: >-
+      No synthesized fields found. Both list and detail panels surface explicit
+      contract-gap states when required fields are absent.
+  - criterion: "Render all CTAs from backend-shaped allowedActions only"
+    result: pass
+    notes: >-
+      Approve, Reject, and Promote-to-paper CTAs are gated exclusively on
+      allowedActions.canApprove, canReject, canPromoteToPaper. No client-side
+      CTA inference.
+  - criterion: "Display the degradation banner when any meta.surfaces entry is degraded or unavailable"
+    result: pass
+    notes: >-
+      GlobalDegradationBanner is rendered for both list and detail states.
+      All CTAs are disabled when any surface is degraded.
+
+sse_boundary_deviation:
+  file: src/pages/operator/DeploymentReviewConsole.tsx
+  lines: "279-313"
+  endpoint: "/api/v1/runtime/{runtimeBindingId}/events/stream"
+  not_in_pkt001_allowed_endpoints: true
+  usage: >-
+    Opened conditionally when runtime_binding.id is present in the detail
+    response. Informational only in list view — no state mutations applied.
+    Uses the PKT-005 SseClient + SseReconciler substrate.
+  blocking: false
+  required_action: >-
+    Update docs/pantheon-feedback/PKT-001-deployment-review/LOVABLE_CHANGE_FEEDBACK.md
+    to document this deviation. Update API_GAP_REQUESTS.json to either request
+    formal PKT-001 inclusion of the SSE endpoint or acknowledge it as a
+    PKT-005 substrate cross-cut. Front-repo feedback bundle must be truthful
+    before loop close.
+
+non_blocking_follow_ups:
+  - id: DR-FOLLOWUP-001
+    description: >-
+      Full npm run build completion. Currently blocked by unrelated missing
+      imports for ./pages/persona/BindingDetail and ./pages/persona/BindingList
+      in src/App.tsx. Not introduced by PKT-001 work.
+  - id: DR-FOLLOWUP-002
+    description: >-
+      Live browser QA against a running Pantheon BFF. TypeScript and targeted
+      ESLint passed; runtime verification still needed.
+  - id: DR-FOLLOWUP-003
+    description: >-
+      Pantheon decision on SSE endpoint: formally add
+      /api/v1/runtime/{runtimeId}/events/stream to PKT-001 contract, or accept
+      as approved PKT-005 substrate cross-cut and document accordingly.
+
+required_front_repo_updates:
+  - file: docs/pantheon-feedback/PKT-001-deployment-review/LOVABLE_CHANGE_FEEDBACK.md
+    action: >-
+      Add SSE Boundary Deviation section documenting the SseClient usage in
+      DeploymentReviewConsole.tsx. Correct the "No raw fetch() calls" claim to
+      acknowledge the direct SSE connection.
+  - file: docs/pantheon-feedback/PKT-001-deployment-review/API_GAP_REQUESTS.json
+    action: >-
+      Update status from no_open_gaps to reflect the SSE endpoint acknowledgement
+      request, or document the PKT-005 cross-cut acceptance. Status must not
+      remain no_open_gaps while an uncontracted endpoint is in use.
+
+loop_close_condition: >-
+  Loop can close once the front-repo feedback bundle is updated to accurately
+  document the SSE deviation and Pantheon makes a disposition decision on
+  the SSE endpoint (contract inclusion or PKT-005 cross-cut acceptance).

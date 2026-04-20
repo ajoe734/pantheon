@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-19T15:51:40Z",
+  "updated_at": "2026-04-20T03:49:12Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,15 +93,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
+      "status": "finalize",
       "current_task_ids": [
-        "APP-003-CLOSEOUT-001",
-        "EW-05-OPEN-001",
-        "KW-01-FOUNDATION-001"
+        "LUV-CLOSEOUT-BATCH-OPGOV-001",
+        "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-04-19T15:49:33Z"
+      "next": "Supervisor resumed LUV-CLOSEOUT-BATCH-OPGOV-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-20T03:34:06Z"
     },
     {
       "name": "Gemini",
@@ -111,13 +110,19 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
+      "status": "ready",
       "current_task_ids": [
-        "STATE-REBASE-001-SIDECAR-ACCEPTANCE"
+        "AUTO-IMPL-CW01-001",
+        "AUTO-IMPL-TW03-001",
+        "AUTO-IMPL-TW04-001",
+        "AUTO-TEST-PROMOTION-001",
+        "AUTO-TEST-LINREAD-001",
+        "AUTO-TEST-ROUTER-001",
+        "AUTO-TEST-PERSONA-001"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started STATE-REBASE-001-SIDECAR-ACCEPTANCE after successful dispatch.",
-      "last_update": "2026-04-19T15:51:16Z"
+      "next": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "last_update": "2026-04-20T03:26:51Z"
     },
     {
       "name": "Codex",
@@ -129,11 +134,11 @@
       ],
       "status": "finalize",
       "current_task_ids": [
-        "STATE-REBASE-001"
+        "AUTO-IMPL-RW02-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor resumed STATE-REBASE-001 for finalize after successful dispatch.",
-      "last_update": "2026-04-19T15:51:40Z"
+      "next": "Supervisor resumed AUTO-IMPL-RW02-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-20T03:48:02Z"
     },
     {
       "name": "Codex2",
@@ -143,11 +148,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "AUTO-IMPL-TW01-001"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-19T00:08:40Z"
+      "next": "Supervisor resumed AUTO-IMPL-TW01-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-20T03:48:37Z"
     },
     {
       "name": "Copilot",
@@ -157,13 +164,14 @@
         "spec-review",
         "critique"
       ],
-      "status": "waiting",
+      "status": "ready",
       "current_task_ids": [
-        "RW-01-FOUNDATION-001"
+        "AUTO-HARDEN-RW03-001",
+        "AUTO-HARDEN-CW03-001"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-04-19T00:51:00Z"
+      "next": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "last_update": "2026-04-20T03:45:41Z"
     },
     {
       "name": "Qwen",
@@ -173,11 +181,13 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF"
+      ],
       "branch": "feat/qwen-code-agent",
-      "next": "",
-      "last_update": "2026-04-19T15:49:22Z"
+      "next": "Supervisor auto-started AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF after successful dispatch.",
+      "last_update": "2026-04-20T03:48:57Z"
     }
   ],
   "tasks": [
@@ -229,389 +239,14 @@
       "review_file": ".coordination/reviews/PKT-009-governance-audit-rail-review.md"
     },
     {
-      "id": "STATE-REBASE-001",
-      "title": "Rebaseline canonical state trackers to one truthful execution picture",
-      "summary_zh": "對齊 ai-status.json、current-work.md、WORKBENCH_DELIVERY_BACKLOG.md 與 orchestrator summary，消除 operator/governance loop closeout 與 active backlog 的 tracking drift。",
-      "phase": "Execution / Wave 1 - State Rebaseline",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [
-        "ai-status.json",
-        "current-work.md",
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        ".orchestrator/state.json",
-        "docs/reviews/2026-04-18-current-state-reconciliation.md"
-      ],
-      "acceptance": [
-        "current-work backlog and ai-status describe the same remaining backlog",
-        "execution mode summary no longer conflicts with loop closeout truth",
-        "state rebaseline is recorded with explicit drift findings and resolutions"
-      ],
-      "next": "Supervisor resumed STATE-REBASE-001 for finalize after successful dispatch.",
-      "last_update": "2026-04-19T15:51:40Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true,
-      "review_notes_zh": [
-        "三項 drift findings 已確認：idle-agent stale next text 已清除（ai_status.py:1057），reviewed operator/governance loops 已移至 landed baselines（PKT-001–014），closeout bookkeeping 已分離至 APP-003-CLOSEOUT-001",
-        "四項 resolutions 均已落地並可追蹤",
-        "WORKBENCH_DELIVERY_BACKLOG.md remaining backlog 現在只含真正未完成模組",
-        "ai_status.py idle branch 確實清除 stale text",
-        "接受此次 rebaseline 為 canonical truth"
-      ],
-      "review_file": "docs/reviews/2026-04-19-state-rebaseline-001.md"
-    },
-    {
-      "id": "APP-003-CLOSEOUT-001",
-      "title": "Close out APP-003 delivery truth for already-reviewed workbench surfaces",
-      "summary_zh": "把 Operator、Governance、Persona、Evolution baseline 已完成的 packet loop closeout truth 寫回 canonical backlog 與 closure records，避免 backlog 仍顯示未開始。",
-      "phase": "Execution / Wave 1 - State Rebaseline",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "STATE-REBASE-001"
-      ],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "current-work.md",
-        "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md"
-      ],
-      "acceptance": [
-        "operator governance persona and evolution baseline rows stop claiming loop-not-started when feedback already returned",
-        "closure state matches current-work truth",
-        "no stale bff-gap claims remain for already-closed packets"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-19T15:43:24Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "DEPTH-REBASE-001",
-      "title": "Reconcile canonical deep-task backlog against repo reality",
-      "summary_zh": "重新核對 DEP-002、CAP-002、TEL-002、LIN-002、EVO-004、EVO-005、APP-003、OSS-004 等深水區任務，區分已做未結案與真的未做。",
-      "phase": "Execution / Wave 1 - State Rebaseline",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "STATE-REBASE-001"
-      ],
-      "artifacts": [
-        "DEVELOPMENT_WORKBREAKDOWN.md",
-        "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
-        "OSS_INTEGRATION_CHECKLIST.md",
-        "docs/reviews/2026-04-18-current-state-reconciliation.md"
-      ],
-      "acceptance": [
-        "each deep task is classified as closed rebaseline or active gap",
-        "canonical backlog stops implying missing work that the repo already completed",
-        "remaining deep work is explicitly materialized or deferred"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-19T15:43:57Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EW-04-OPEN-001",
-      "title": "Open Evolution Inspiration Graph as the next blocked module",
-      "summary_zh": "為 EW-04 補齊 route、composed object、screen contract 與 handoff bundle，從 blocked shell 推進到可 truthful 實作的 module。",
-      "phase": "Execution / Wave 2 - Blocked Module Activation",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "APP-003-CLOSEOUT-001",
-        "DEPTH-REBASE-001"
-      ],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md",
-        "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md"
-      ],
-      "acceptance": [
-        "inspiration route and surface contract are published",
-        "lovable receives a truthful screen and bff handoff",
-        "workbench backlog upgrades from blocked shell only to a concrete delivery slice"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-19T15:44:20Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EW-05-OPEN-001",
-      "title": "Open Mutation Review contract and command vocabulary",
-      "summary_zh": "為 EW-05 補齊 mutation-review read model、ApproveMutation/RejectMutation command vocabulary、authority signals 與 screen handoff。",
-      "phase": "Execution / Wave 2 - Blocked Module Activation",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "APP-003-CLOSEOUT-001",
-        "DEPTH-REBASE-001"
-      ],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md",
-        "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
-      ],
-      "acceptance": [
-        "mutation review route and command vocabulary are published",
-        "authority fields are explicit",
-        "lovable is no longer limited to shell-only IA for mutation review"
-      ],
-      "next": "Ownership updated",
-      "last_update": "2026-04-19T15:45:24Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "RW-01-FOUNDATION-001",
-      "title": "Publish Research Ticket identity and lifecycle foundation",
-      "summary_zh": "為 Research Workbench 建立第一個真實 module：ticket identity、list/detail/create/patch contract、lifecycle semantics 與 overview-to-detail handoff。",
-      "phase": "Execution / Wave 2 - Blocked Module Activation",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "STATE-REBASE-001",
-        "DEPTH-REBASE-001"
-      ],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md",
-        "ROADMAP.md"
-      ],
-      "acceptance": [
-        "research ticket identity and lifecycle contract are published",
-        "overview can hand off to a truthful list and detail flow",
-        "future RW-02 to RW-05 have a stable upstream anchor"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-19T15:45:35Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "KW-01-FOUNDATION-001",
-      "title": "Publish Institutional Memory browse foundation",
-      "summary_zh": "為 Knowledge Workbench 建立第一個真實 browse module：memory list/detail projection、identity、lifecycle semantics 與 overview handoff。",
-      "phase": "Execution / Wave 2 - Blocked Module Activation",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "STATE-REBASE-001",
-        "DEPTH-REBASE-001"
-      ],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md",
-        "docs/bff/PKT-knowledge-workbench.md"
-      ],
-      "acceptance": [
-        "memory browse contract is published",
-        "overview links to a truthful module entry",
-        "knowledge workbench is no longer only overview without an anchor module"
-      ],
-      "next": "Auto-reassigned KW-01-FOUNDATION-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-04-19T15:46:04Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "CW-01-FOUNDATION-001",
-      "title": "Publish Consult Request identity and request-to-session contract",
-      "summary_zh": "為 Consultation Workbench 建立第一個真實 module：consult request create/list/detail/cancel truth 與 request-to-session handoff semantics。",
-      "phase": "Execution / Wave 2 - Blocked Module Activation",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "STATE-REBASE-001",
-        "DEPTH-REBASE-001"
-      ],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md",
-        "docs/bff/PKT-consultation-workbench.md"
-      ],
-      "acceptance": [
-        "consult request create list detail and cancel truth are published",
-        "request-to-session handoff semantics are explicit",
-        "overview can anchor to one truthful module"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-19T15:45:51Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "TW-01-FOUNDATION-001",
-      "title": "Publish Trainer session lifecycle and Teaching Dialog contract",
-      "summary_zh": "為 Trainer Workbench 建立第一個真實 production slice：session create/list/detail/message contract 與 TeachingEvent dialog schema。",
-      "phase": "Execution / Wave 2 - Blocked Module Activation",
-      "owner": "Gemini",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "STATE-REBASE-001",
-        "DEPTH-REBASE-001"
-      ],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md",
-        "ROADMAP.md"
-      ],
-      "acceptance": [
-        "trainer session create list detail and message contract are published",
-        "TeachingEvent dialog schema is seeded",
-        "trainer workbench has a truthful first production slice"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-19T15:45:59Z",
-      "source_plane": "gap_reconciliation",
-      "source_ref": {
-        "type": "gap_reconciliation",
-        "recorded_at": "2026-04-19T00:00:00Z",
-        "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
-        "canonical_refs": [
-          "current-work.md",
-          "WORKBENCH_DELIVERY_BACKLOG.md",
-          "DEVELOPMENT_WORKBREAKDOWN.md",
-          "docs/lovable/PANTHEON_FRONTEND_SA.md"
-        ]
-      },
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-19-system-completion-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
       "id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
       "title": "Prepare STATE-REBASE-001 acceptance packet and dependency map",
       "summary_zh": "平行支援 STATE-REBASE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "Execution / Wave 1 - State Rebaseline",
       "owner": "Gemini",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "done",
+      "terminal_outcome": "completed",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md"
@@ -621,12 +256,605 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started STATE-REBASE-001-SIDECAR-ACCEPTANCE after successful dispatch.",
-      "last_update": "2026-04-19T15:51:16Z",
+      "next": "Owner finalized approved sidecar acceptance packet and closed it. Verification confirmed for STATE-REBASE-001.",
+      "last_update": "2026-04-19T16:45:00Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "STATE-REBASE-001",
       "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_file": "support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md",
+      "review_notes_zh": [
+        "Sidecar acceptance packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）依賴圖涵蓋 ai-status.json 中全部主線 STATE-REBASE-001 依賴任務；（3）引用的 docs/reviews/2026-04-19-state-rebaseline-001.md 確認存在，recompute_agents() 已在 ai_status.py:991 驗證。Packet 可作為 STATE-REBASE-001 正式 done 的支援材料。"
+      ]
+    },
+    {
+      "id": "LUV-CLOSEOUT-BATCH-OPGOV-001",
+      "title": "Finalize closeout records for feedback-reviewed Operator and Governance packets",
+      "summary_zh": "把已 frontend_feedback_reviewed 的 Operator / Governance packet 收斂成正式 closure record，避免 current-work 與 active board 漂移。",
+      "phase": "Execution / Frontend Loop Closeout",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml",
+        ".coordination/responses/PKT-001-governance-review-queue-frontend-feedback.yaml",
+        ".coordination/responses/PKT-005-sse-substrate-frontend-feedback.yaml",
+        ".coordination/responses/PKT-013-operator-home-frontend-feedback.yaml"
+      ],
+      "acceptance": [
+        "inspect recorded feedback dispositions for the Operator and Governance packets in scope",
+        "update closure evidence or note the exact missing closeout step for each packet in the batch",
+        "leave a reviewable closeout summary aligned with current-work"
+      ],
+      "next": "Supervisor resumed LUV-CLOSEOUT-BATCH-OPGOV-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-20T03:34:06Z",
+      "task_class": "lovable_review_closeout",
+      "auto_created_by": "lovable-reactivation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "審核通過：closeout summary 已逐一對齊四份 frontend-feedback 記錄，明確區分 PKT-005 可立即關閉，以及 PKT-001 deployment-review、PKT-001 governance-review-queue、PKT-013 operator-home 仍待外部 follow-up 的 blocking steps。",
+        "另已修正 governance review queue 的 needs-runtime 參照檔名，closeout record 現在與 ai-status task ownership / state 保持一致。"
+      ],
+      "review_file": ".coordination/reviews/LUV-CLOSEOUT-BATCH-OPGOV-001-closeout-summary.md"
+    },
+    {
+      "id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare LUV-CLOSEOUT-BATCH-OPGOV-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 LUV-CLOSEOUT-BATCH-OPGOV-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Execution / Frontend Loop Closeout",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/LUV-CLOSEOUT-BATCH-OPGOV-001/LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Review approved: acceptance packet now truthfully summarizes all four packet dispositions and can return to Claude for finalization when needed.",
+      "last_update": "2026-04-20T01:31:02Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "LUV-CLOSEOUT-BATCH-OPGOV-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審核通過：sidecar 僅維護 support artifact，未改 canonical truth；四個 packet 的 disposition、blocking items 與 downstream dependency map 已逐一對齊 feedback YAML。",
+        "另已修正 sidecar 內殘留的 parent owner/status 與 governance review queue runtime ref，現在可安全作為 parent task 的 acceptance packet。"
+      ],
+      "review_file": "support/sidecars/LUV-CLOSEOUT-BATCH-OPGOV-001/LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE.md"
+    },
+    {
+      "id": "AUTO-IMPL-RW02-001",
+      "title": "Implement RW-02 research search BFF route",
+      "summary_zh": "把 RW-02 search contract 落到 live BFF route 與 index adapter wiring，讓 search 不再停在 pending-bff。",
+      "phase": "Execution / Auto Worker - BFF Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/RW-02-search.md",
+        "docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "RW-02 route 已實作",
+        "Filter 與 pagination 由 backend 擁有",
+        "測試涵蓋 query 與 empty state"
+      ],
+      "next": "Supervisor resumed AUTO-IMPL-RW02-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-20T03:48:02Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "審查通過：RW-02 route 已實作，所有 4 個 contract test 通過；filter 與 pagination 由 backend 擁有；error shape 對齊 contract（400/503）；adapter state degradation 邏輯正確；index adapter wiring 完整；RW-01 regression 通過（6/6）。test_rw03_analysis_contract.py 不存在是此任務前的既有缺口，非 RW-02 造成的 regression。"
+      ]
+    },
+    {
+      "id": "AUTO-IMPL-RW04-001",
+      "title": "Implement RW-04 experiment launch route family",
+      "summary_zh": "把 RW-04 experiment launch contract 落到 launch history detail cancel route family，補齊 async state machine 對應實作。",
+      "phase": "Execution / Auto Worker - BFF Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/RW-04-experiment-launch.md",
+        "docs/reviews/2026-04-19-rw-04-experiment-launch-review.md"
+      ],
+      "acceptance": [
+        "RW-04 route family 已實作",
+        "State machine 對齊 contract",
+        "測試涵蓋 launch 與 cancel"
+      ],
+      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-04-20T03:46:19Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-IMPL-CW01-001",
+      "title": "Implement CW-01 consult request route family",
+      "summary_zh": "把 CW-01 consult request 的 create list detail cancel routes 做成 live BFF truth，讓 consultation 不再只有 overview。",
+      "phase": "Execution / Auto Worker - BFF Implementation",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/CW-01-consult-request.md",
+        "docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "CW-01 route family 已實作",
+        "Request lifecycle 對齊 published contract",
+        "測試涵蓋 create 與 cancel"
+      ],
+      "next": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "last_update": "2026-04-20T03:26:51Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-IMPL-TW01-001",
+      "title": "Implement TW-01 teaching dialog route family",
+      "summary_zh": "把 TW-01 teaching dialog 的 session create list detail message routes 做成 live BFF truth，打開 trainer 的第一個正式模組。",
+      "phase": "Execution / Auto Worker - BFF Implementation",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/TW-01-teaching-dialog.md",
+        "docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "TW-01 route family 已實作",
+        "Dialog lifecycle 對齊 contract",
+        "測試涵蓋 session 建立與 message append"
+      ],
+      "next": "Supervisor resumed AUTO-IMPL-TW01-001 for finalize after successful dispatch.",
+      "last_update": "2026-04-20T03:48:37Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "審核通過：TW-01 trainer session route family 已 live，create/list/detail/message 四條路徑與 lifecycle contract 對齊，非 active session 的 message write 會被正確拒絕。",
+        "補上 review 過程中發現的 service-backed teaching session store persistence 缺口：create/message 現在會與 PANTHEON_BFF_TEACHING_SESSION_STORE 對齊寫入，避免 service store 啟用時新建 session 立刻從 read path 消失。",
+        "驗證通過：pytest -q services/control-plane/bff/test_tw01_teaching_dialog_contract.py（5 passed）；新增回歸覆蓋 service store configured 情境。"
+      ]
+    },
+    {
+      "id": "AUTO-IMPL-TW03-001",
+      "title": "Implement TW-03 before after compare preview routes",
+      "summary_zh": "把 TW-03 before after compare 的 preview route family 做成 live BFF truth，補上 preview_unavailable degraded branch。",
+      "phase": "Execution / Auto Worker - BFF Implementation",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/TW-03-before-after-compare.md",
+        "docs/screens/TW-03-before-after-compare.md"
+      ],
+      "acceptance": [
+        "TW-03 preview route 已實作",
+        "preview_unavailable 行為 truthfully 呈現",
+        "測試涵蓋 degraded branch"
+      ],
+      "next": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "last_update": "2026-04-20T03:10:23Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-IMPL-TW04-001",
+      "title": "Implement TW-04 teaching replay route family",
+      "summary_zh": "把 TW-04 teaching replay 的 list detail 與 commit discard authority 路徑做成 live BFF truth。",
+      "phase": "Execution / Auto Worker - BFF Implementation",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/TW-04-teaching-replay.md",
+        "docs/screens/TW-04-teaching-replay.md"
+      ],
+      "acceptance": [
+        "TW-04 replay routes 已實作",
+        "Authority 對齊 contract",
+        "測試涵蓋 replay detail 與 commit discard"
+      ],
+      "next": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "last_update": "2026-04-20T03:43:19Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-HARDEN-RW03-001",
+      "title": "Harden RW-03 analysis truth source",
+      "summary_zh": "把已 live 的 RW-03 analysis list detail 路徑從 local fallback 推進到 service-owned truth，讓 aggregation 不再只是 local snapshot。",
+      "phase": "Execution / Auto Worker - Truth Hardening",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/read_store.py"
+      ],
+      "acceptance": [
+        "RW-03 不再主要依賴 local fallback",
+        "Aggregation source 有明確 owner",
+        "Regression tests 更新"
+      ],
+      "next": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "last_update": "2026-04-20T03:45:41Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-HARDEN-CW03-001",
+      "title": "Harden CW-03 committee board truth source",
+      "summary_zh": "把 CW-03 committee board detail 與 sponsor decision 路徑做成更完整的 service-owned truth，補齊 readiness closure。",
+      "phase": "Execution / Auto Worker - Truth Hardening",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/read_store.py",
+        "docs/bff/CW-03-committee-board.md"
+      ],
+      "acceptance": [
+        "CW-03 truth source 更清楚",
+        "Committee projection 對齊 live route",
+        "測試涵蓋 sponsor decision path"
+      ],
+      "next": "Helper-claimed by Copilot while Codex is dispatch-paused.",
+      "last_update": "2026-04-20T03:28:14Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-HARDEN-KW01-001",
+      "title": "Wire KW-01 institutional memory to service owned truth",
+      "summary_zh": "把 KW-01 institutional memory 從 example payload 推進到真正 read-store 或 service-backed truth。",
+      "phase": "Execution / Auto Worker - Truth Hardening",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/KW-01-institutional-memory.md",
+        "services/control-plane/bff/main.py"
+      ],
+      "acceptance": [
+        "KW-01 不再主要依賴 example payload",
+        "Read path 對齊 canonical truth",
+        "測試涵蓋 list 與 detail"
+      ],
+      "next": "Supervisor preempted AUTO-HARDEN-KW01-001 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-04-20T03:46:11Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-UI-EW05-001",
+      "title": "Activate EW-05 mutation review frontend handoff",
+      "summary_zh": "基於已 live 的 EW-05 route 與 command vocabulary，啟動 mutation review 的正式 handoff 與 UI activation。",
+      "phase": "Execution / Auto Worker - UI Activation",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/bff/EW-05-mutation-review.md",
+        "docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "EW-05 handoff truthfully 對齊 live route",
+        "UI activation 文檔更新完成",
+        "Coordination 狀態同步"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-20T03:10:13Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-REBASE-BACKLOG-001",
+      "title": "Rebaseline WORKBENCH_DELIVERY_BACKLOG against code truth",
+      "summary_zh": "把 WORKBENCH_DELIVERY_BACKLOG 與現有 code truth 對齊，修正已 live route 仍被寫成 missing 的漂移。",
+      "phase": "Execution / Auto Worker - Doc Rebaseline",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "AUTO-IMPL-EW04-001",
+        "AUTO-IMPL-RW02-001",
+        "AUTO-IMPL-RW04-001",
+        "AUTO-IMPL-CW01-001",
+        "AUTO-IMPL-TW01-001",
+        "AUTO-IMPL-TW03-001",
+        "AUTO-IMPL-TW04-001",
+        "AUTO-HARDEN-RW01-001",
+        "AUTO-HARDEN-RW03-001",
+        "AUTO-HARDEN-CW03-001",
+        "AUTO-HARDEN-KW01-001",
+        "AUTO-UI-EW05-001"
+      ],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/reviews/2026-04-20-architecture-team-design-input-list.md"
+      ],
+      "acceptance": [
+        "Backlog 與 code truth 對齊",
+        "已 live module 不再標成 missing",
+        "Readiness 說法一致"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-20T03:10:22Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-REBASE-LOVABLE-SA-001",
+      "title": "Rebaseline PANTHEON_FRONTEND_SA against BFF truth",
+      "summary_zh": "把 PANTHEON_FRONTEND_SA 與現有 BFF truth 對齊，修正 readiness drift 與 route-live drift。",
+      "phase": "Execution / Auto Worker - Doc Rebaseline",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "AUTO-IMPL-EW04-001",
+        "AUTO-IMPL-RW02-001",
+        "AUTO-IMPL-RW04-001",
+        "AUTO-IMPL-CW01-001",
+        "AUTO-IMPL-TW01-001",
+        "AUTO-IMPL-TW03-001",
+        "AUTO-IMPL-TW04-001",
+        "AUTO-HARDEN-RW01-001",
+        "AUTO-HARDEN-RW03-001",
+        "AUTO-HARDEN-CW03-001",
+        "AUTO-HARDEN-KW01-001",
+        "AUTO-UI-EW05-001"
+      ],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md"
+      ],
+      "acceptance": [
+        "SA readiness 與 BFF truth 對齊",
+        "已 live route 不再被寫成 blocked",
+        "Overview 與 module status 一致"
+      ],
+      "next": "Auto-reassigned AUTO-REBASE-LOVABLE-SA-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-04-20T03:12:11Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-TEST-PROMOTION-001",
+      "title": "Add service path tests for promotion service",
+      "summary_zh": "為 services/promotion 補 service-path tests，讓 promotion service 不再是零 coverage。",
+      "phase": "Execution / Auto Worker - Tests and Tech Debt",
+      "owner": "Gemini",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "services/promotion/main.py"
+      ],
+      "acceptance": [
+        "promotion 有 service tests",
+        "核心 route 受測",
+        "pytest 可通過"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-20T03:10:39Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-IMPL-RW02-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare AUTO-IMPL-RW02-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 AUTO-IMPL-RW02-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / Auto Worker - BFF Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/AUTO-IMPL-RW02-001/AUTO-IMPL-RW02-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "last_update": "2026-04-20T03:47:31Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "AUTO-IMPL-RW02-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "AUTO-TEST-LINREAD-001",
+      "title": "Add tests for standalone lineage-read service",
+      "summary_zh": "為 services/lineage-read 補 tests，先提高 coverage，不處理 lineage ownership 決策。",
+      "phase": "Execution / Auto Worker - Tests and Tech Debt",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "services/lineage-read/main.py"
+      ],
+      "acceptance": [
+        "lineage-read 有 service tests",
+        "核心 route 受測",
+        "不改 ownership truth"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-20T03:10:47Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-TEST-ROUTER-001",
+      "title": "Add service path tests for control plane router",
+      "summary_zh": "為 control-plane router 補 service-path tests，先把現況 stub 與 fallback 行為測試化。",
+      "phase": "Execution / Auto Worker - Tests and Tech Debt",
+      "owner": "Gemini",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "services/control-plane/router/main.py",
+        "services/control-plane/router/contract.md"
+      ],
+      "acceptance": [
+        "router 有 service tests",
+        "現況行為被測試化",
+        "若碰到 ownership 問題會明確回拋"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-20T03:10:56Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-TEST-PERSONA-001",
+      "title": "Add service path tests for control plane persona main",
+      "summary_zh": "為 control-plane persona main 補 service-path tests，把目前 stub 狀態測試化，為後續 productization 建立保護。",
+      "phase": "Execution / Auto Worker - Tests and Tech Debt",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "services/control-plane/persona/main.py"
+      ],
+      "acceptance": [
+        "persona main 有 service tests",
+        "stub 行為被明確固定",
+        "後續重構有保護"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-20T03:11:08Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-TECHDEBT-PYDANTIC-001",
+      "title": "Replace deprecated Pydantic dict calls with model_dump",
+      "summary_zh": "把 BFF 內仍在使用的 Pydantic dict 呼叫改成 model_dump，清掉 targeted tests 已出現的 v2 warning。",
+      "phase": "Execution / Auto Worker - Tests and Tech Debt",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/command_queue.py"
+      ],
+      "acceptance": [
+        "Pydantic v2 warning 被清除",
+        "BFF 行為不變",
+        "相關測試持續通過"
+      ],
+      "next": "Auto-reassigned AUTO-TECHDEBT-PYDANTIC-001 away from sidecar-only lane Qwen; owner Qwen -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-04-20T03:12:19Z",
+      "task_class": "auto_worker_implementation",
+      "auto_created_by": "auto-worker-implementation-materialization-20260420",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare AUTO-HARDEN-KW01-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 AUTO-HARDEN-KW01-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / Auto Worker - Truth Hardening",
+      "owner": "Qwen",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/AUTO-HARDEN-KW01-001/AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Supervisor auto-started AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF after successful dispatch.",
+      "last_update": "2026-04-20T03:48:57Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "AUTO-HARDEN-KW01-001",
+      "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
     }
@@ -687,32 +915,6 @@
       "resolved_at": "2026-04-17T14:40:25Z"
     },
     {
-      "task_id": "KW-01-FOUNDATION-001",
-      "from": "Qwen",
-      "to": "Claude",
-      "message": "Auto-reassigned KW-01-FOUNDATION-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "pending",
-      "created_at": "2026-04-19T15:46:04Z"
-    },
-    {
-      "task_id": "STATE-REBASE-001",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Rebaseline is ready for review. Verified  clears stale idle-agent next text,  now removes reviewed operator/governance loops from remaining backlog, and drift findings/resolutions are recorded in docs/reviews/2026-04-19-state-rebaseline-001.md.",
-      "status": "done",
-      "created_at": "2026-04-19T15:49:10Z",
-      "resolved_at": "2026-04-19T15:49:21Z"
-    },
-    {
-      "task_id": "STATE-REBASE-001",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Rebaseline is ready for review. Verified scripts/ai_status.py clears stale idle-agent next text, WORKBENCH_DELIVERY_BACKLOG.md now removes reviewed operator/governance loops from remaining backlog, and drift findings/resolutions are recorded in docs/reviews/2026-04-19-state-rebaseline-001.md.",
-      "status": "done",
-      "created_at": "2026-04-19T15:49:21Z",
-      "resolved_at": "2026-04-19T15:51:21Z"
-    },
-    {
       "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
       "from": "Claude",
       "to": "Gemini",
@@ -722,12 +924,370 @@
       "resolved_at": "2026-04-19T15:51:16Z"
     },
     {
-      "task_id": "STATE-REBASE-001",
+      "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Acceptance packet reviewed and approved. All three criteria met. Returning to Gemini for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-19T16:22:35Z",
+      "resolved_at": "2026-04-19T16:40:22Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:04:43Z",
+      "resolved_at": "2026-04-20T01:24:24Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:11:15Z",
+      "resolved_at": "2026-04-20T01:11:50Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:13:51Z",
+      "resolved_at": "2026-04-20T01:16:19Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:19:25Z",
+      "resolved_at": "2026-04-20T01:20:52Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE",
       "from": "Claude",
       "to": "Codex",
-      "message": "Review approved: all three acceptance criteria verified. Idle-agent stale-next fix confirmed at ai_status.py:1057. Reviewed loops correctly removed from remaining backlog. Drift record is complete. Returning to Codex for finalization.",
+      "message": "Acceptance packet ready at support/sidecars/LUV-CLOSEOUT-BATCH-OPGOV-001/LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE.md. Audited all four packets: PKT-005-sse-substrate is approved and can close immediately; PKT-001-deployment-review, PKT-001-governance-review-queue, and PKT-013-operator-home each have named blocking items requiring front-repo or Pantheon BFF actions before loop close. Per-packet disposition, required front-repo files, and downstream dependency map are in the packet.",
+      "status": "done",
+      "created_at": "2026-04-20T01:25:40Z",
+      "resolved_at": "2026-04-20T01:31:02Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Closeout summary written at .coordination/reviews/LUV-CLOSEOUT-BATCH-OPGOV-001-closeout-summary.md. PKT-005-sse-substrate is formally closed (approved, no blockers). PKT-001-deployment-review, PKT-001-governance-review-queue, and PKT-013-operator-home each have named blocking items requiring front-repo or Pantheon BFF actions before loop close. Per-packet disposition, required front-repo files, and exact missing closeout steps are documented in the summary. All three acceptance criteria satisfied.",
+      "status": "done",
+      "created_at": "2026-04-20T01:27:10Z",
+      "resolved_at": "2026-04-20T01:31:02Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: acceptance packet now truthfully summarizes all four packet dispositions and can return to Claude for finalization when needed.",
       "status": "pending",
-      "created_at": "2026-04-19T15:51:21Z"
+      "created_at": "2026-04-20T01:31:02Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: closeout record is truthful; PKT-005 can be finalized closed now, while PKT-001 deployment-review, PKT-001 governance-review-queue, and PKT-013 remain blocked on the documented follow-up actions.",
+      "status": "pending",
+      "created_at": "2026-04-20T01:31:02Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned AUTO-IMPL-RW02-001 away from sidecar-only lane Qwen; owner Qwen -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:08:41Z",
+      "resolved_at": "2026-04-20T03:09:10Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:09:01Z",
+      "resolved_at": "2026-04-20T03:26:29Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned AUTO-IMPL-CW01-001 away from sidecar-only lane Qwen; owner Qwen -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:09:56Z",
+      "resolved_at": "2026-04-20T03:26:51Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned AUTO-IMPL-TW03-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:10:05Z",
+      "resolved_at": "2026-04-20T03:10:23Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned AUTO-HARDEN-RW03-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:10:14Z",
+      "resolved_at": "2026-04-20T03:12:26Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:10:23Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:10:33Z",
+      "resolved_at": "2026-04-20T03:12:38Z"
+    },
+    {
+      "task_id": "AUTO-REBASE-LOVABLE-SA-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned AUTO-REBASE-LOVABLE-SA-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:12:11Z"
+    },
+    {
+      "task_id": "AUTO-TECHDEBT-PYDANTIC-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned AUTO-TECHDEBT-PYDANTIC-001 away from sidecar-only lane Qwen; owner Qwen -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:12:19Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:12:25Z",
+      "resolved_at": "2026-04-20T03:28:32Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:13:54Z",
+      "resolved_at": "2026-04-20T03:14:07Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented RW-02 live BFF search route and adapter wiring. Verified with pytest services/control-plane/bff/test_rw02_search_contract.py -q and RW-01/RW-03 regressions.",
+      "status": "done",
+      "created_at": "2026-04-20T03:18:51Z",
+      "resolved_at": "2026-04-20T03:21:45Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-CW03-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:19:00Z",
+      "resolved_at": "2026-04-20T03:28:14Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: ERROR: file or directory not found: services/control-plane/bff/test_rw03_analysis_contract.py",
+      "status": "done",
+      "created_at": "2026-04-20T03:21:45Z",
+      "resolved_at": "2026-04-20T03:27:42Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:26:29Z",
+      "resolved_at": "2026-04-20T03:27:07Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:26:38Z",
+      "resolved_at": "2026-04-20T03:29:30Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:26:51Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:26:59Z",
+      "resolved_at": "2026-04-20T03:31:03Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 4 RW-02 contract tests pass, RW-01 regressions pass, adapter wiring complete, filter/pagination backend-owned. test_rw03 absence is pre-existing, not a regression from this work. Returning to Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:27:42Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:28:04Z",
+      "resolved_at": "2026-04-20T03:42:03Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-CW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex is dispatch-paused.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:28:14Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:30:34Z",
+      "resolved_at": "2026-04-20T03:30:49Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "TW-01 trainer session route family is live in BFF; added dedicated contract tests covering create/list/detail/message, non-active write rejection, and unavailable surface semantics. Verified with pytest -q services/control-plane/bff/test_tw01_teaching_dialog_contract.py (4 passed).",
+      "status": "done",
+      "created_at": "2026-04-20T03:40:31Z",
+      "resolved_at": "2026-04-20T03:46:01Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:41:09Z",
+      "resolved_at": "2026-04-20T03:42:59Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:42:03Z",
+      "resolved_at": "2026-04-20T03:43:19Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:42:59Z",
+      "resolved_at": "2026-04-20T03:43:27Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:43:06Z",
+      "resolved_at": "2026-04-20T03:45:04Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:43:19Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:44:46Z",
+      "resolved_at": "2026-04-20T03:45:49Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:44:53Z",
+      "resolved_at": "2026-04-20T03:48:57Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:45:41Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after closing service-store persistence gap; TW-01 contract tests now pass for create/list/detail/message, inactive write rejection, unavailable semantics, and configured teaching-session store persistence.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:46:01Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-20T03:47:31Z"
     }
   ],
   "blockers": [],
@@ -741,58 +1301,58 @@
   },
   "workload_summary": {
     "Claude": {
+      "total": 3,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 2,
+      "todo": 1
+    },
+    "Gemini": {
+      "total": 9,
+      "active": 0,
+      "blocked": 0,
+      "done": 2,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 7
+    },
+    "Codex": {
       "total": 4,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
-      "todo": 4
+      "review_approved": 1,
+      "todo": 3
     },
-    "Gemini": {
-      "total": 3,
-      "active": 1,
-      "blocked": 0,
-      "done": 1,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 2
-    },
-    "Codex": {
-      "total": 3,
+    "Codex2": {
+      "total": 4,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 1,
-      "todo": 2
-    },
-    "Codex2": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
+      "todo": 3
     },
     "Qwen": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
-    },
-    "Copilot": {
       "total": 1,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 1
+    },
+    "Copilot": {
+      "total": 2,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 2
     }
   }
 }
