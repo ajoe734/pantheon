@@ -5,7 +5,7 @@
 - Packet family ID: `EW-004`
 - Workbench: Evolution Workbench
 - Phase origin: `BP5-WB-004`
-- Lovable readiness: **partial** — `EW-01`, `EW-02`, and `EW-03` are already handoff-ready via `PKT-003`; `EW-04` contract is published via `EW-04-OPEN-001` (route spec, composed object, `meta.surfaces.inspiration`, and handoff bundle now exist) but the BFF route is not yet live — Lovable UI task activates once BFF confirms the route; `EW-05` contract is published via `EW-05-OPEN-001` (route spec, composed `MutationReviewProjection`, `ApproveMutation`/`RejectMutation` command vocabulary, `allowedActions` authority signals, `meta.surfaces.mutation_review`, and handoff bundle now exist) but the BFF route and operator command extension are not yet live — Lovable UI task activates once BFF confirms both the route and command vocabulary
+- Lovable readiness: **all modules ready** — `EW-01`, `EW-02`, and `EW-03` are handoff-ready via `PKT-003`; `EW-04` BFF route `GET /api/v1/lineage/inspiration/{artifact_id}` is now **live** (confirmed via `EW-04-OPEN-001` rebaseline) and the Lovable UI task is active; `EW-05` contract and handoff bundle are published via `EW-05-OPEN-001`, and the live Pantheon BFF exposes the mutation-review read route plus the `ApproveMutation` / `RejectMutation` operator command extension
 - Recommended wave: Wave 2 read-only baseline, then Wave 3 mutation authority
 - Owner: Codex2
 - Reviewer: Claude
@@ -35,7 +35,7 @@ No Evolution Workbench screen may invent graph structure, mutation authority, or
 | Operational orchestration settlement | `BP5-SVC-013`; `services/runtime-manager/`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md` | Freeze, rollback follow-through, and kill-switch fast-path ownership are now explicitly settled in the runtime-manager path, so `EW-05` no longer depends on reopening the old execution-boundary debate |
 | Shared degraded-state substrate | `docs/pantheon-handoffs/PKT-005-degradation-banner/`, `docs/pantheon-handoffs/PKT-005-sse-substrate/` | Canonical degradation banner inheritance and optional SSE guidance for read-only Evolution surfaces |
 
-Historical note: older phase-3 packet text describes `EW-05 Mutation Review` as blocked on "EVO-004 execution boundary settlement." In current repo reality, that boundary is materially anchored by `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `services/control-plane/governance/evolution_decision.contract.md`, and the service realization work in `BP5-SVC-012` / `BP5-SVC-013`. What remains missing is the operator-facing mutation-review read model, the explicit operator command vocabulary for approve/reject review actions, and the backend-shaped `allowedActions` gating for that screen.
+Historical note: older phase-3 packet text describes `EW-05 Mutation Review` as blocked on "EVO-004 execution boundary settlement." In current repo reality, that boundary is materially anchored by `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `services/control-plane/governance/evolution_decision.contract.md`, and the service realization work in `BP5-SVC-012` / `BP5-SVC-013`. The operator-facing mutation-review read model, explicit approve/reject command vocabulary, and backend-shaped `allowedActions` gating are now implemented in the local BFF workspace and no longer represent the remaining blocker for `EW-05`.
 
 ---
 
@@ -46,8 +46,8 @@ Historical note: older phase-3 packet text describes `EW-05 Mutation Review` as 
 | `EW-01` | Post-Incident Review | resolved incident index, composed post-incident review, postmortem refs, linked evolution evidence | ready via `PKT-003` plus frontend handoff bundle | ready | Wave 1 baseline |
 | `EW-02` | Evolution Center | evolution decision list/detail, freeze-order index, rollback history, read-only review context | ready via `PKT-003` plus frontend handoff bundle | ready | Wave 2 - 1st |
 | `EW-03` | Lineage View | lineage list, edge detail, lineage graph, incident/evolution trace context | ready via `PKT-003` plus frontend handoff bundle; `LN-03 root_type` caveat documented | ready with caveat | Wave 2 - 2nd |
-| `EW-04` | Inspiration Graph | artifact-centered creative lineage graph, strategy tags, influence-weight display | contract published via `EW-04-OPEN-001`: route spec, composed object, example payload, and frontend handoff bundle now exist; BFF route not yet live | pending-bff | Wave 2 - 3rd |
-| `EW-05` | Mutation Review | composed mutation review with evolution decision context, incident/postmortem/rollback evidence, and approve/reject CTA | contract published via `EW-05-OPEN-001`: route spec, composed `MutationReviewProjection`, `ApproveMutation`/`RejectMutation` command vocabulary, `allowedActions` authority signals, `meta.surfaces.mutation_review`, and frontend handoff bundle now exist; BFF route and operator command extension not yet live | pending-bff | Wave 3 - 1st |
+| `EW-04` | Inspiration Graph | artifact-centered creative lineage graph, strategy tags, influence-weight display | route live via `EW-04-OPEN-001` rebaseline: route spec, composed object, example payload, and frontend handoff bundle confirmed; BFF route `GET /api/v1/lineage/inspiration/{artifact_id}` is live | ready | Wave 2 - 3rd |
+| `EW-05` | Mutation Review | composed mutation review with evolution decision context, incident/postmortem/rollback evidence, and approve/reject CTA | contract published via `EW-05-OPEN-001`: route spec, composed `MutationReviewProjection`, `ApproveMutation`/`RejectMutation` command vocabulary, `allowedActions` authority signals, `meta.surfaces.mutation_review`, and frontend handoff bundle now exist; the local Pantheon BFF now exposes the live route and operator command extension | ready | Wave 3 - 1st |
 
 ---
 
@@ -123,7 +123,7 @@ Do not expose `root_type` as a working filter until the registry metadata prereq
 
 ### Existing packet state
 
-`docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, and `docs/examples/PKT-003-inspiration-graph.json` provide the blocked packet language and required field shape, now published as a contract via `EW-04-OPEN-001`. The frontend handoff bundle exists at `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md`. The remaining gate is BFF route implementation going live.
+`docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, and `docs/examples/PKT-003-inspiration-graph.json` provide the route contract and required field shape, confirmed live via `EW-04-OPEN-001` rebaseline. The frontend handoff bundle exists at `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md`. The BFF route `GET /api/v1/lineage/inspiration/{artifact_id}` is confirmed live. Frontend production lane is unblocked.
 
 ### Backend gaps
 
@@ -136,11 +136,11 @@ Do not expose `root_type` as a working filter until the registry metadata prereq
 
 ### Packetization prerequisite
 
-The blocked `PKT-003` draft may move to a real frontend handoff only when the BFF inspiration route exists, its response shape is stable, and `meta.surfaces.inspiration` is wired through to `PKT-005`. The UI must never synthesize this graph from `LN-01`/`LN-03` results.
+The `PKT-003` inspiration graph handoff is now active. The BFF inspiration route is live, its response shape is stable, and `meta.surfaces.inspiration` is wired through to `PKT-005`. The UI must never synthesize this graph from `LN-01`/`LN-03` results.
 
 ### Lovable readiness gate
 
-`pending-bff` — the route spec, field shape, staleness signal, and frontend handoff bundle now exist (published via `EW-04-OPEN-001`). The remaining gate is BFF confirming the live route. Once the BFF route is up and returning the published field shape, the Lovable UI task activates.
+`ready` — the route spec, field shape, staleness signal, and frontend handoff bundle are confirmed via `EW-04-OPEN-001` rebaseline. The BFF route `GET /api/v1/lineage/inspiration/{artifact_id}` is live. Lovable may implement the production page now; any runtime divergence should be emitted as a fresh `bff-gap`.
 
 ---
 
@@ -170,12 +170,12 @@ The blocked `PKT-003` draft may move to a real frontend handoff only when the BF
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/mutation-review/{decision_id}` | **contract published** — BFF implementation pending | primary BFF-composed mutation-review route; field shape published in `docs/bff/EW-05-mutation-review.md`; example payload in `docs/examples/EW-05-mutation-review.json` |
-| `POST /api/v1/operator/commands` mutation-review vocabulary | **contract published** — BFF implementation pending | `ApproveMutation` and `RejectMutation` command vocabulary published in `docs/bff/EW-05-mutation-review.md`; commands may change governance-review state only and must not bypass deployment/runtime/research write owners |
-| Mutation-review composed object | **contract published** — BFF implementation pending | full field shape for `proposed_changes`, `risk_assessment`, `required_approvals`, incident/postmortem evidence refs, rollback-followthrough refs, and `allowedActions` defined in `docs/bff/EW-05-mutation-review.md` |
-| `allowedActions.canApproveMutation` and `allowedActions.canRejectMutation` | **contract published** — BFF implementation pending | authority signal rules and evaluation preconditions defined in `docs/bff/EW-05-mutation-review.md` |
-| `meta.surfaces.mutation_review` | **contract published** — BFF implementation pending | staleness signal semantics and UI behavior table defined in `docs/bff/EW-05-mutation-review.md` |
-| Frontend handoff bundle | **published** via `EW-05-OPEN-001` | `docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md` now exists; Lovable UI task activates once BFF confirms both the live route and live command vocabulary |
+| `GET /api/v1/operator/mutation-review/{decision_id}` | **live** | primary BFF-composed mutation-review route; field shape published in `docs/bff/EW-05-mutation-review.md`; implementation verified in `services/control-plane/bff/main.py` and `services/control-plane/bff/test_ew05_mutation_review_contract.py` |
+| `POST /api/v1/operator/commands` mutation-review vocabulary | **live** | `ApproveMutation` and `RejectMutation` command vocabulary published in `docs/bff/EW-05-mutation-review.md`; accepted by the live operator command path and verified in `services/control-plane/bff/test_governance_command_submission.py` |
+| Mutation-review composed object | **live** | full field shape for `proposed_changes`, `risk_assessment`, `required_approvals`, incident/postmortem evidence refs, rollback-followthrough refs, and `allowedActions` is implemented and contract-tested |
+| `allowedActions.canApproveMutation` and `allowedActions.canRejectMutation` | **live** | authority signal rules and evaluation preconditions are now returned by the live read route |
+| `meta.surfaces.mutation_review` | **live** | staleness signal semantics and UI behavior table are now returned by the live read route, including the `unavailable` degradation branch |
+| Frontend handoff bundle | **published and active** via `EW-05-OPEN-001` | `docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md`; Lovable may implement against the live route and command vocabulary |
 
 ### Packetization prerequisite
 
@@ -186,13 +186,11 @@ The execution-boundary semantics themselves are no longer the main blocker. They
 - `retrain` follows research-plane work-item semantics
 - `redeploy` is deployment follow-through and is not a new `EvolutionDecision.action_type`
 
-What is still missing is a truthful operator mutation-review projection that composes those semantics into one read model without collapsing them into a shadow runtime or deployment command surface.
-
-The remaining command-path work is specifically the review-facing command vocabulary and authority gating. It is no longer a question of whether rollback, freeze, or kill-switch semantics belong to runtime-manager versus governance; that ownership split is already settled and this packet family must inherit it.
+The operator mutation-review projection is now materially realized as a live BFF surface. Remaining work for `EW-05` is in the frontend implementation loop, not in Pantheon's mutation-review route or operator command vocabulary.
 
 ### Lovable readiness gate
 
-`pending-bff` — the route spec, field shape, command vocabulary, authority signals, staleness signal, and frontend handoff bundle now exist (published via `EW-05-OPEN-001`). The remaining gate is BFF confirming both the live read route and the live operator command extension. Once the BFF route is up and the commands are live, the Lovable UI task activates.
+`ready` — the route spec, field shape, command vocabulary, authority signals, staleness signal, and frontend handoff bundle are aligned with the live BFF implementation. Lovable may proceed, and any later runtime divergence should be emitted as a fresh `bff-gap` instead of reopening this historical pre-live blocker.
 
 ---
 
@@ -202,16 +200,16 @@ Each row is scoped to one or more blocked modules. A blocked module advances to 
 
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `GET /api/v1/lineage/inspiration/{artifact_id}` | `EW-04` | contract published — BFF implementation pending | entire Inspiration Graph surface; route spec in `docs/bff/PKT-003-inspiration-graph.md` |
-| Inspiration graph composed object | `EW-04` | contract published — BFF implementation pending | field shape in `docs/bff/PKT-003-inspiration-graph.md`; example in `docs/examples/PKT-003-inspiration-graph.json` |
-| `meta.surfaces.inspiration` | `EW-04` | contract published — BFF implementation pending | degradation banner and graph suppression rules; signal defined in route contract |
-| Frontend handoff bundle for Inspiration Graph | `EW-04` | **published** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` |
-| `GET /api/v1/operator/mutation-review/{decision_id}` | `EW-05` | contract published — BFF implementation pending | entire Mutation Review surface; route spec in `docs/bff/EW-05-mutation-review.md` |
-| Mutation-review composed object | `EW-05` | contract published — BFF implementation pending | field shape in `docs/bff/EW-05-mutation-review.md`; example in `docs/examples/EW-05-mutation-review.json` |
-| `ApproveMutation` / `RejectMutation` command vocabulary | `EW-05` | contract published — BFF implementation pending | command vocabulary in `docs/bff/EW-05-mutation-review.md`; approve/reject CTA semantics |
-| `allowedActions.canApproveMutation` / `canRejectMutation` | `EW-05` | contract published — BFF implementation pending | authority signal rules defined in `docs/bff/EW-05-mutation-review.md` |
-| `meta.surfaces.mutation_review` | `EW-05` | contract published — BFF implementation pending | staleness signal semantics defined in `docs/bff/EW-05-mutation-review.md` |
-| Frontend handoff bundle for Mutation Review | `EW-05` | **published** via `EW-05-OPEN-001` | `docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md` |
+| `GET /api/v1/lineage/inspiration/{artifact_id}` | `EW-04` | **live** | entire Inspiration Graph surface; route spec in `docs/bff/PKT-003-inspiration-graph.md`; confirmed live via `EW-04-OPEN-001` rebaseline |
+| Inspiration graph composed object | `EW-04` | **live** | field shape in `docs/bff/PKT-003-inspiration-graph.md`; example in `docs/examples/PKT-003-inspiration-graph.json` |
+| `meta.surfaces.inspiration` | `EW-04` | **live** | degradation banner and graph suppression rules; signal confirmed live in route contract |
+| Frontend handoff bundle for Inspiration Graph | `EW-04` | **published and active** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md`; Lovable may implement against the live route |
+| `GET /api/v1/operator/mutation-review/{decision_id}` | `EW-05` | live | entire Mutation Review surface; route spec in `docs/bff/EW-05-mutation-review.md` |
+| Mutation-review composed object | `EW-05` | live | field shape in `docs/bff/EW-05-mutation-review.md`; example in `docs/examples/EW-05-mutation-review.json` |
+| `ApproveMutation` / `RejectMutation` command vocabulary | `EW-05` | live | command vocabulary in `docs/bff/EW-05-mutation-review.md`; approve/reject CTA semantics |
+| `allowedActions.canApproveMutation` / `canRejectMutation` | `EW-05` | live | authority signal rules defined in `docs/bff/EW-05-mutation-review.md` |
+| `meta.surfaces.mutation_review` | `EW-05` | live | staleness signal semantics defined in `docs/bff/EW-05-mutation-review.md` |
+| Frontend handoff bundle for Mutation Review | `EW-05` | **published and active** via `EW-05-OPEN-001` | `docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md` |
 
 ---
 
@@ -283,7 +281,7 @@ When authoring follow-on packet language for this family:
 - Backlog source: `docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md`
 - Existing packet baseline: `docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/PKT-003-post-incident-evolution-packet-family.md`
 - Existing ready handoffs: `docs/pantheon-handoffs/PKT-003-post-incident-review/`, `docs/pantheon-handoffs/PKT-003-evolution-center/`, `docs/pantheon-handoffs/PKT-003-lineage-view/`
-- Blocked inspiration draft artifacts: `docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, `docs/examples/PKT-003-inspiration-graph.json`
+- Inspiration graph route-live artifacts: `docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, `docs/examples/PKT-003-inspiration-graph.json`
 - Evolution object anchors: `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `services/control-plane/governance/evolution_decision.contract.md`, `services/control-plane/governance/evolution_decision.schema.json`
 - Incident object anchors: `services/incident/contract.md`, `services/incident/incident_case.schema.json`, `services/incident/postmortem.schema.json`
 - Approval and rollback anchors: `services/control-plane/governance/contract.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`

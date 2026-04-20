@@ -458,7 +458,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | Post-Incident Review | `/operator/incidents/:incident_id/review` | `PKT-003` | ready | split-pane evidence review |
 | Evolution Center | `/evolution` | `PKT-003` | ready | board or list-detail |
 | Lineage View | `/evolution/lineage` | `PKT-003` | ready | graph + inspector |
-| Inspiration Graph | `/evolution/inspiration/:artifact_id` | `EW-04` | contract-ready | graph + inspector against the live BFF route |
+| Inspiration Graph | `/evolution/inspiration/:artifact_id` | `EW-04` | route-live | graph + inspector against the live BFF route |
 | Mutation Review | `/evolution/mutation-review/:decision_id` | `EW-05` | contract-ready | implement against the live BFF route and command vocabulary |
 
 ### 9.3 頁面定義

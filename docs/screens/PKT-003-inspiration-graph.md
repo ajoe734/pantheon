@@ -5,15 +5,12 @@
 - Workbench: Evolution Workbench
 - Screen ID: `screen-evolution-inspiration-graph`
 - Feature ID: `PKT-003-inspiration-graph`
-- Packet status: **blocked** — pending BFF inspiration route (`GET /api/v1/lineage/inspiration/{artifact_id}`)
+- Packet status: **route-live** — BFF route `GET /api/v1/lineage/inspiration/{artifact_id}` is confirmed live; UI work is unblocked
+- Task: `EW-04-OPEN-001`
 
-## Blocker
+## Contract Note
 
-This screen cannot be packetized for Lovable until:
-
-1. `GET /api/v1/lineage/inspiration/{artifact_id}` is implemented in the BFF and the response field shape is locked.
-2. `meta.surfaces.inspiration` staleness signal is wired through from the BFF.
-3. The lineage `LN-03 root_type` registry prerequisite is resolved so that creative lineage edges are addressable.
+The route contract and composed object field shape are confirmed. The BFF route is now live and returning the published field shape. UI implementation may proceed.
 
 The UI must not construct an inspiration graph from raw lineage edges client-side. The BFF must compose the inspiration graph before it reaches the frontend.
 

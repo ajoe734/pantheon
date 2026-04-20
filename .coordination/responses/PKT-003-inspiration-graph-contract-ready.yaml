@@ -2,19 +2,17 @@ feature_id: PKT-003-inspiration-graph
 type: contract-ready
 source_repo: ajoe734/pantheon
 screen: inspiration-graph
-status: published
+status: live
 published_at: "2026-04-19T16:30:00Z"
 task: EW-04-OPEN-001
 description: >-
-  EW-04 Inspiration Graph contract published. The route spec
+  EW-04 Inspiration Graph route is live. The route
   (GET /api/v1/lineage/inspiration/{artifact_id}), composed object field shape,
   meta.surfaces.inspiration staleness signal, and frontend handoff bundle are all
-  defined. BFF implementation is the remaining gate before Lovable UI production
-  work starts. Front-end may add a "coming soon / blocked by Pantheon BFF"
-  placeholder now; production screen must not be built until BFF confirms route live.
-  This file closes the PKT-003 naming chain for the delivery_dependency reference
-  in PKT-003-inspiration-graph-lovable-ui-task.yaml. The canonical contract artifact
-  is EW-04-inspiration-graph-contract-ready.yaml.
+  confirmed. BFF implementation is complete and the frontend production lane is
+  unblocked. This file closes the PKT-003 naming chain for the delivery_dependency
+  reference in PKT-003-inspiration-graph-lovable-ui-task.yaml. The canonical contract
+  artifact is EW-04-inspiration-graph-contract-ready.yaml.
 artifacts:
   bff_contract: docs/bff/PKT-003-inspiration-graph.md
   screen_spec: docs/screens/PKT-003-inspiration-graph.md
@@ -30,12 +28,11 @@ handoff_bundle:
   - lovable_ui_task
   - example_payload
 readiness_gate: >-
-  BFF must confirm GET /api/v1/lineage/inspiration/{artifact_id} is live and
-  returning the published field shape before Lovable UI production task activates.
-  Until then front-end renders a shell placeholder only.
+  GET /api/v1/lineage/inspiration/{artifact_id} is confirmed live and returning
+  the published field shape. Lovable UI production task is now active — production
+  build may proceed. Shell placeholder is no longer needed.
 front_actions_required:
-  - do not start production UI until BFF confirms route is live
-  - when BFF is ready, build the Inspiration Graph panel from the BFF inspiration route only
+  - build the Inspiration Graph panel from the BFF inspiration route only — route is live, production build may proceed
   - build the Strategy Tags rail from strategy_tags[] in the BFF response
   - build the Inspiration Edge Detail drawer triggered from graph-edge selection
   - render explicit empty state when inspiration_edges[] is empty
@@ -44,7 +41,7 @@ front_actions_required:
   - do not traverse GET /api/v1/lineage or GET /api/v1/lineage/graph to synthesize the graph
 acceptance_met:
   contract_ready_published: true
-  bff_route_live: false
+  bff_route_live: true
   lovable_ui_task_published: true
   front_repo_receives_handoff_bundle: true
 reactivation_note: >-
