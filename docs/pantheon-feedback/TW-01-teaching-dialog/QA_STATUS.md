@@ -15,5 +15,6 @@
 
 ## Functional QA
 
-- Pending BFF confirmation: UI shows placeholder, cannot test live routes yet.
-- Once routes are confirmed live, remove BFF_PENDING flag and perform full integration QA.
+- Pantheon confirmed all four TW-01 BFF routes live at 2026-04-20T14:14:33Z returning the published field shape.
+- BFF_PENDING gate in TeachingDialogList.tsx and TeachingDialogDetail.tsx is ready for removal.
+- Full integration QA against live routes should be run after BFF_PENDING = false is deployed.

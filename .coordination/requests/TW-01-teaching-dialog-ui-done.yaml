@@ -5,14 +5,37 @@ source_branch: pkt-004-detail-fix
 source_commit: 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f
 screen: teaching-dialog
 blocking: false
+status: live
+pantheon_disposition: accepted
+acknowledged_at: "2026-04-20T14:16:31Z"
+acknowledged_by: Codex
+rebaselined_at: "2026-04-20T14:32:47Z"
+rebaselined_by: Claude
+review_file: .coordination/reviews/TW-01-teaching-dialog-review.md
+resolution_summary: >-
+  Pantheon confirmed all four TW-01 routes live and returning the published
+  field shape in the current BFF workspace (bff_route_live_at:
+  2026-04-20T14:14:33Z). The front implementation in
+  9d0478269bb43780bc4d6f2ca16e4b9230b0de8f contains the trainer-session
+  composer, session list, session detail, and coaching message composer aligned
+  to the published contract: create via POST /api/v1/trainer/sessions,
+  list via GET /api/v1/trainer/sessions, detail via
+  GET /api/v1/trainer/sessions/{session_id}, message via
+  POST /api/v1/trainer/sessions/{session_id}/message. context_refs[] optional
+  field is supported in the composer. Transcript renders from backend events[]
+  ordered by sequence_number. Message composer gated by
+  allowedActions.canSendMessage exclusively. PKT-005 degradation banners wired
+  for stale/degraded/unavailable. No optimistic transcript mutation. No persona
+  teaching-history fallback. The BFF_PENDING gate should be removed in the next
+  front deployment cycle now that routes are confirmed live.
 
 summary: >-
-  TW-01 Teaching Dialog UI implemented with pending-BFF placeholder. Routes
-  /trainer/sessions and /trainer/sessions/:session_id registered. All four BFF
-  endpoints wired via tw01Api in bffClient.ts. UI shows non-dismissable
-  pending-BFF banner until Pantheon confirms routes are live. Session composer
-  includes optional context_refs[] aligned to the published create contract.
-  Feedback bundle published at docs/pantheon-feedback/TW-01-teaching-dialog/.
+  TW-01 Teaching Dialog UI implemented and aligned to the live Pantheon BFF
+  contract. Routes /trainer/sessions and /trainer/sessions/:session_id
+  registered. All four BFF endpoints wired via tw01Api in bffClient.ts.
+  Session composer includes optional context_refs[]. Feedback bundle committed
+  at docs/pantheon-feedback/TW-01-teaching-dialog/. BFF_PENDING gate ready
+  for removal now that all TW-01 routes are confirmed live.
 
 changed_files:
   - src/pages/trainer/TeachingDialogList.tsx
@@ -21,21 +44,15 @@ changed_files:
   - src/lib/bffClient.ts
   - src/App.tsx
 
-bff_pending_routes:
-  - POST /api/v1/trainer/sessions
-  - GET /api/v1/trainer/sessions
-  - GET /api/v1/trainer/sessions/{session_id}
-  - POST /api/v1/trainer/sessions/{session_id}/message
-
-activation_note: >-
-  Set BFF_PENDING = false in TeachingDialogList.tsx and TeachingDialogDetail.tsx
-  once Pantheon confirms all four TW-01 routes are live and returning the
-  published field shape.
-
 follow_up_requested:
-  - Pantheon to confirm TW-01 BFF routes are live and returning the published field shape
-  - Remove BFF_PENDING gate and run full integration QA once routes are live
+  - Remove BFF_PENDING = true from TeachingDialogList.tsx and TeachingDialogDetail.tsx now that Pantheon has confirmed all four TW-01 routes live
+  - Run full integration QA against live BFF routes after BFF_PENDING gate is removed
   - Emit a bff-gap handoff if any required fields are absent from live responses
+
+coordination_updates:
+  backend_delivery: .coordination/responses/TW-01-teaching-dialog-backend-delivery.yaml
+  contract_ready: .coordination/responses/TW-01-teaching-dialog-contract-ready.yaml
+  frontend_feedback: .coordination/requests/TW-01-teaching-dialog-frontend-feedback.yaml
 
 feedback_bundle:
   - docs/pantheon-feedback/TW-01-teaching-dialog/LOVABLE_CHANGE_FEEDBACK.md

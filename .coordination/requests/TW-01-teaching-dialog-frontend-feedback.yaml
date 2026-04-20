@@ -1,0 +1,46 @@
+feature_id: TW-01-teaching-dialog
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f
+workbench: trainer-workbench
+screen_id: screen-teaching-dialog
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/TW-01-teaching-dialog
+feedback_path: docs/pantheon-feedback/TW-01-teaching-dialog/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/TW-01-teaching-dialog/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/TW-01-teaching-dialog/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/TW-01-teaching-dialog/QA_STATUS.md
+blocking_summary: ""
+
+changed_files:
+  - src/pages/trainer/TeachingDialogList.tsx
+  - src/pages/trainer/TeachingDialogDetail.tsx
+  - src/pages/trainer/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+
+pantheon_review_hint: review-ui
+
+summary: >-
+  TW-01 Teaching Dialog implemented against the live Pantheon BFF contract.
+  Trainer-session composer (POST /api/v1/trainer/sessions) with full published
+  create shape including optional context_refs[]. Session list from
+  GET /api/v1/trainer/sessions with backend filter params. Session detail from
+  GET /api/v1/trainer/sessions/{session_id} including actor_context,
+  session_summary, events[], and allowedActions.canSendMessage. Coaching
+  message via POST /api/v1/trainer/sessions/{session_id}/message. Transcript
+  rendered from backend events[] ordered by sequence_number. Message composer
+  gated exclusively by allowedActions.canSendMessage. PKT-005 degradation
+  banners wired for stale/degraded/unavailable trainer_dialog surface states.
+  No optimistic transcript mutation. No persona teaching-history fallback. No
+  API gaps found — API_GAP_REQUESTS.json is empty. BFF_PENDING gate present
+  in current source; ready for removal once Pantheon routes are confirmed live
+  in the deployed environment.
+
+api_gaps: []
+
+coordination_updates:
+  ui_done: .coordination/requests/TW-01-teaching-dialog-ui-done.yaml
+  contract_ready: .coordination/responses/TW-01-teaching-dialog-contract-ready.yaml
+  backend_delivery: .coordination/responses/TW-01-teaching-dialog-backend-delivery.yaml
