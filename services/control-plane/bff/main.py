@@ -110,7 +110,7 @@ def _bff_error(
             ),
         )
     )
-    return HTTPException(status_code=status_code, detail=body.dict())
+    return HTTPException(status_code=status_code, detail=body.model_dump())
 
 
 # --------------------------------------------------------------------------- #
@@ -3344,8 +3344,82 @@ _RW01_STATUS_TRANSITIONS = {
     "closed": {"archived"},
     "archived": set(),
 }
+_RW02_ALLOWED_MATCH_TYPES = {"all", "ticket", "experiment", "artifact"}
+_RW02_ALLOWED_ADAPTER_STATES = {"fresh", "stale", "degraded", "unavailable"}
 _RW03_ALLOWED_STATUSES = {"queued", "running", "completed", "failed"}
 _RW03_ALLOWED_DATE_RANGES = {"24h", "7d", "30d", "90d"}
+_EW04_ALLOWED_SURFACE_STATES = {"fresh", "stale", "unavailable"}
+
+
+def _ew04_inspiration_surface_state(
+    projection: Optional[Dict[str, Any]],
+    *,
+    artifact_exists: bool,
+) -> str:
+    source = read_store.dataset_source("inspiration_graphs")
+    base_status = _surface_status().get("status")
+
+    explicit_state = (
+        projection.get("meta", {})
+        .get("surfaces", {})
+        .get("inspiration")
+        if projection
+        else None
+    )
+    explicit_state = str(explicit_state or "").strip().lower()
+    if explicit_state in _EW04_ALLOWED_SURFACE_STATES:
+        return explicit_state
+
+    if source == "missing" or base_status == "unavailable":
+        return "unavailable"
+    if source == "local_snapshot" or base_status == "degraded":
+        return "stale"
+    if artifact_exists:
+        return "fresh"
+    return "unavailable"
+
+
+def _ew04_inspiration_payload(
+    artifact_id: str,
+    projection: Optional[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+    artifact_exists: bool,
+) -> Dict[str, Any]:
+    if projection:
+        payload = json.loads(json.dumps(projection))
+    else:
+        payload = {
+            "artifact_id": artifact_id,
+            "inspiration_edges": [],
+            "strategy_tags": [],
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {},
+            },
+        }
+
+    payload["artifact_id"] = artifact_id
+    payload["inspiration_edges"] = list(payload.get("inspiration_edges") or [])
+    if "strategy_tags" in payload:
+        payload["strategy_tags"] = list(payload.get("strategy_tags") or [])
+    else:
+        payload["strategy_tags"] = []
+
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        payload["meta"] = meta
+    meta["snapshot_at"] = str(meta.get("snapshot_at") or snapshot_at)
+    surfaces = meta.get("surfaces")
+    if not isinstance(surfaces, dict):
+        surfaces = {}
+        meta["surfaces"] = surfaces
+    surfaces["inspiration"] = _ew04_inspiration_surface_state(
+        projection,
+        artifact_exists=artifact_exists,
+    )
+    return payload
 
 
 def _rw01_surface_state(
@@ -3360,6 +3434,84 @@ def _rw01_surface_state(
         snapshot_at=snapshot_at,
         has_data=has_data,
         missing_message=missing_message,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "stale"
+    return "fresh"
+
+
+_TW01_SESSION_STATUSES = {"active", "paused", "completed", "abandoned"}
+
+
+def _tw01_validate_session_status(value: Optional[str]) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _TW01_SESSION_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer session status",
+            f"status must be one of {sorted(_TW01_SESSION_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _tw01_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
+
+
+def _tw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid context_refs",
+            "context_refs must be an array of { type, id } objects",
+            precondition_failed="context_refs",
+        )
+    refs: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid context_refs entry",
+                "Each context_refs entry must be an object",
+                precondition_failed="context_refs",
+            )
+        refs.append(
+            {
+                "type": _tw01_required_text(item, "type"),
+                "id": _tw01_required_text(item, "id"),
+            }
+        )
+    return refs
+
+
+def _tw01_trainer_dialog_surface_state(
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        "teaching_sessions",
+        snapshot_at=snapshot_at,
+        has_data=has_data,
     )
     if surface.get("status") == "unavailable":
         return "unavailable"
@@ -3420,6 +3572,86 @@ def _rw03_validate_date_range(date_range: Any) -> str:
             precondition_failed="date_range",
         )
     return normalized
+
+
+def _rw02_invalid_query(detail: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "invalid_search_query",
+            "detail": detail,
+        },
+    )
+
+
+def _rw02_validate_query(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError("q is required and must be non-empty")
+    return normalized
+
+
+def _rw02_validate_match_type(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    if normalized not in _RW02_ALLOWED_MATCH_TYPES:
+        raise ValueError(
+            f"match_type must be one of {sorted(_RW02_ALLOWED_MATCH_TYPES)}"
+        )
+    return normalized
+
+
+def _rw02_validate_status(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized not in _RW01_ALLOWED_STATUSES:
+        raise ValueError(
+            f"status must be one of {sorted(_RW01_ALLOWED_STATUSES)}"
+        )
+    return normalized
+
+
+def _rw02_validate_date_range(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized not in _RW03_ALLOWED_DATE_RANGES:
+        raise ValueError(
+            f"date_range must be one of {sorted(_RW03_ALLOWED_DATE_RANGES)}"
+        )
+    return normalized
+
+
+def _rw02_page_slice(
+    items: List[Dict[str, Any]],
+    page_token: Optional[str],
+    page_size: int,
+) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    if page_token in (None, ""):
+        start = 0
+    else:
+        try:
+            start = int(page_token)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("page_token must be a non-negative integer offset") from exc
+        if start < 0:
+            raise ValueError("page_token must be a non-negative integer offset")
+    end = start + page_size
+    next_page_token = str(end) if end < len(items) else None
+    return items[start:end], next_page_token
+
+
+def _rw02_adapter_state(index_adapter: Optional[Dict[str, Any]], *, snapshot_at: str) -> str:
+    derived_state = _rw01_surface_state("research_search_documents", snapshot_at=snapshot_at)
+    if derived_state in {"unavailable", "degraded"}:
+        return derived_state
+    if isinstance(index_adapter, dict):
+        state = str(index_adapter.get("adapter_state") or "").strip().lower()
+        if state in _RW02_ALLOWED_ADAPTER_STATES:
+            if derived_state == "stale" and state == "fresh":
+                return "stale"
+            return state
+    return derived_state
 
 
 def _rw01_required_text(payload: Dict[str, Any], field: str) -> str:
@@ -4278,6 +4510,200 @@ async def get_persona_capabilities(
     }
 
 
+@app.post("/api/v1/trainer/sessions")
+async def create_trainer_session(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona_id = _tw01_required_text(payload, "persona_id")
+    session_type = _tw01_required_text(payload, "session_type")
+    objective = _tw01_required_text(payload, "objective")
+    context_refs = _tw01_validate_context_refs(payload.get("context_refs"))
+
+    if session_type != "trainer":
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer session type",
+            "session_type must equal 'trainer' for TW-01",
+            precondition_failed="session_type",
+        )
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    session = read_store.create_trainer_session(
+        persona_id=persona_id,
+        objective=objective,
+        context_refs=context_refs,
+        actor_id=identity.operator_id,
+        created_at=utc_now(),
+    )
+    if session is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer session store unavailable",
+            "Trainer session creation store is unavailable.",
+        )
+
+    return {
+        "session_id": session["session_id"],
+        "persona_id": session["persona_id"],
+        "session_type": session["session_type"],
+        "objective": session["objective"],
+        "status": session["status"],
+        "started_at": session["started_at"],
+        "allowedActions": session["allowedActions"],
+        "links": session["links"],
+    }
+
+
+@app.get("/api/v1/trainer/sessions")
+async def list_trainer_sessions(
+    persona_id: str,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    normalized_status = _tw01_validate_session_status(status) if status is not None else None
+    sessions = read_store.list_trainer_sessions(persona_id=persona_id, status=normalized_status) or []
+    surface_state = _tw01_trainer_dialog_surface_state(snapshot_at=snapshot_at, has_data=sessions is not None)
+
+    total = len(sessions)
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(sessions, page_token, page_size)
+
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "trainer_dialog": surface_state,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}")
+async def get_trainer_session_detail(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    payload = dict(session)
+    payload["meta"] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "trainer_dialog": _tw01_trainer_dialog_surface_state(snapshot_at=snapshot_at, has_data=True),
+        },
+    }
+    return payload
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/message")
+async def append_trainer_message(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    if session["status"] != "active":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session is not active",
+            "POST /message is only allowed while the trainer session status is active",
+            precondition_failed="status",
+        )
+    if not session["allowedActions"].get("canSendMessage"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Trainer message submission unavailable",
+            "allowedActions.canSendMessage is false for this trainer session",
+            precondition_failed="allowedActions.canSendMessage",
+        )
+
+    message_body = _tw01_required_text(payload, "message_body")
+    result = read_store.append_trainer_message(
+        session_id,
+        message_body=message_body,
+        actor_id=identity.operator_id,
+        accepted_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer session store unavailable",
+            "Trainer message append store is unavailable.",
+        )
+
+    updated = result["session"]
+    return {
+        "session_id": updated["session_id"],
+        "status": updated["status"],
+        "accepted_at": result["accepted_at"],
+        "event": result["event"],
+        "session_summary": updated["session_summary"],
+        "allowedActions": updated["allowedActions"],
+    }
+
+
 @app.get("/api/v1/capital-pools")
 async def list_capital_pools(
     status: Optional[str] = None,
@@ -5106,6 +5532,91 @@ async def patch_research_ticket(
     }
 
 
+@app.get("/api/v1/research/search")
+async def search_research_corpus(
+    q: str,
+    match_type: str = "all",
+    status: Optional[str] = None,
+    date_range: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=25, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    try:
+        query = _rw02_validate_query(q)
+        match_type = _rw02_validate_match_type(match_type)
+        status = _rw02_validate_status(status)
+        date_range = _rw02_validate_date_range(date_range)
+    except ValueError as exc:
+        return _rw02_invalid_query(str(exc))
+
+    snapshot_at = utc_now()
+    index_adapter = read_store.get_research_search_index()
+    adapter_state = _rw02_adapter_state(index_adapter, snapshot_at=snapshot_at)
+    if index_adapter is None or adapter_state == "unavailable":
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "search_unavailable",
+                "meta": {
+                    "surfaces": {
+                        "search_results": "unavailable",
+                    }
+                },
+            },
+        )
+
+    items = read_store.list_research_search_results(
+        query=query,
+        match_type=match_type,
+        status=status,
+        date_range=date_range,
+    )
+    total = len(items)
+    try:
+        page_items, next_page_token = _rw02_page_slice(items, page_token, page_size)
+    except ValueError as exc:
+        return _rw02_invalid_query(str(exc))
+
+    index_snapshot_at = str(index_adapter.get("snapshot_at") or snapshot_at)
+    source_watermarks = index_adapter.get("source_watermarks")
+    if not isinstance(source_watermarks, dict):
+        source_watermarks = {}
+    indexed_match_types = index_adapter.get("indexed_match_types")
+    if not isinstance(indexed_match_types, list):
+        indexed_match_types = []
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "search_results": adapter_state,
+    }
+    meta["index_adapter"] = {
+        "snapshot_at": index_snapshot_at,
+        "adapter_state": adapter_state,
+        "indexed_match_types": [
+            str(value)
+            for value in indexed_match_types
+            if str(value).strip()
+        ],
+        "source_watermarks": {
+            "tickets": source_watermarks.get("tickets"),
+            "experiments": source_watermarks.get("experiments"),
+            "artifacts": source_watermarks.get("artifacts"),
+        },
+    }
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": meta,
+    }
+
+
 @app.get("/api/v1/research/analysis")
 async def list_research_analysis(
     ticket_id: Optional[str] = None,
@@ -5206,81 +5717,24 @@ async def get_research_analysis(
     return payload
 
 
-_KW01_EXAMPLE_ENTRIES = [
-    {
-        "entry_id": "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
-        "knowledge_type": "incident_lesson",
-        "headline": "Risk exposure exceeded thresholds during BTC-regime shift due to stale parameter sync",
-        "scope": "system_wide",
-        "scope_filter": None,
-        "written_at": "2026-04-07T14:30:00Z",
-        "write_authority": "incident-svc",
-        "tags": ["risk", "latency", "regime-shift", "btc"],
-        "reuse_count": 28,
-        "is_superseded": False,
-        "route_href": "/knowledge/memory/mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
-    },
-    {
-        "entry_id": "mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f",
-        "knowledge_type": "regime_pattern",
-        "headline": "Momentum strategy underperforms in low-volatility sideways regimes",
-        "scope": "strategy_family",
-        "scope_filter": "momentum",
-        "written_at": "2026-04-10T09:15:00Z",
-        "write_authority": "evolution-svc",
-        "tags": ["regime", "momentum", "volatility"],
-        "reuse_count": 14,
-        "is_superseded": False,
-        "route_href": "/knowledge/memory/mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f",
-    },
-    {
-        "entry_id": "mem-8e9f0a1b-2c3d-4e5f-6a7b-8c9d0e1f2a3b",
-        "knowledge_type": "policy_precedent",
-        "headline": "Simultaneous drawdown across correlated instruments triggers portfolio-level halt",
-        "scope": "system_wide",
-        "scope_filter": None,
-        "written_at": "2026-03-28T16:00:00Z",
-        "write_authority": "incident-svc",
-        "tags": ["policy", "drawdown", "halt", "correlation"],
-        "reuse_count": 41,
-        "is_superseded": True,
-        "route_href": "/knowledge/memory/mem-8e9f0a1b-2c3d-4e5f-6a7b-8c9d0e1f2a3b",
-    },
-]
-
-_KW01_ENTRY_DETAIL_BY_ID: Dict[str, Dict[str, Any]] = {
-    "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c": {
-        "entry_id": "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
-        "knowledge_type": "incident_lesson",
-        "content": {
-            "headline": "Risk exposure exceeded thresholds during BTC-regime shift due to stale parameter sync",
-            "body": (
-                "Detailed investigation into the incident on 2026-04-05 revealed that the latency in "
-                "parameter propagation from the Research Plane to the Execution Plane allowed the persona "
-                "'Alpha-Momentum' to maintain high exposure even as market volatility spiked. The lesson "
-                "learned is that parameter staleness signals must trigger an immediate safety halt or "
-                "aggressive de-risking if the drift exceeds 300ms during high-volatility regimes."
-            ),
-            "structured_payload": {
-                "affected_personas": ["Alpha-Momentum", "Beta-Arbitrage"],
-                "drift_observed_ms": 450,
-                "max_exposure_violation_pct": 12.5,
-            },
-            "tags": ["risk", "latency", "regime-shift", "btc"],
-        },
-        "source_event": {
-            "type": "postmortem_published",
-            "id": "pm-2026-04-05-btc-drift",
-            "href": "/operator/incidents/inc-2026-04-05-001/review",
-        },
-        "contributing_persona_ids": ["Alpha-Momentum"],
-        "written_at": "2026-04-07T14:30:00Z",
-        "write_authority": "incident-svc",
-        "scope": {"type": "system_wide", "filter": None},
-        "lifecycle": {"status": "active", "superseded_by": None},
-        "usage": {"reuse_count": 28, "last_cited_at": "2026-04-19T08:45:00Z"},
-    },
-}
+def _kw01_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded":
+        return "degraded"
+    return "ok"
 
 
 @app.get("/api/v1/knowledge/memory")
@@ -5298,7 +5752,7 @@ async def list_institutional_memory(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    entries = list(_KW01_EXAMPLE_ENTRIES)
+    entries = read_store.list_institutional_memory_entries()
 
     if knowledge_type:
         entries = [e for e in entries if e["knowledge_type"] == knowledge_type]
@@ -5314,6 +5768,16 @@ async def list_institutional_memory(
     start = (page - 1) * page_size
     page_entries = entries[start : start + page_size]
     total_pages = max(1, (total_count + page_size - 1) // page_size)
+    memory_list_surface = _kw01_surface_state(
+        "institutional_memory_entries",
+        snapshot_at=snapshot_at,
+        has_data=bool(entries),
+        missing_message="Institutional memory list is unavailable.",
+    )
+    if memory_list_surface == "unavailable":
+        page_entries = []
+        total_count = 0
+        total_pages = 0
 
     return {
         "entries": page_entries,
@@ -5325,7 +5789,7 @@ async def list_institutional_memory(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
-            "surfaces": {"memory_list": "ok"},
+            "surfaces": {"memory_list": memory_list_surface},
         },
     }
 
@@ -5340,18 +5804,33 @@ async def get_institutional_memory_entry(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    entry = _KW01_ENTRY_DETAIL_BY_ID.get(entry_id)
+    entry = read_store.get_institutional_memory_entry(entry_id)
     if entry is None:
         return JSONResponse(
             status_code=404,
             content={"error": "entry_not_found", "entry_id": entry_id},
         )
 
+    source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
+    source_context_available = bool(source_event.get("type")) and bool(source_event.get("id"))
+
     return {
         **entry,
         "meta": {
             **_snapshot_meta(snapshot_at),
-            "surfaces": {"entry_detail": "ok", "source_context": "ok"},
+            "surfaces": {
+                "entry_detail": _kw01_surface_state(
+                    "institutional_memory_entries",
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                ),
+                "source_context": _kw01_surface_state(
+                    "institutional_memory_entries",
+                    snapshot_at=snapshot_at,
+                    has_data=source_context_available,
+                    missing_message="Institutional memory source context is unavailable.",
+                ),
+            },
         },
     }
 
@@ -6492,6 +6971,36 @@ async def get_lineage_graph(
     }
 
 
+@app.get("/api/v1/lineage/inspiration/{artifact_id}")
+async def get_inspiration_graph(
+    artifact_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """EW-04: BFF-composed inspiration graph for a target artifact."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    projection = read_store.get_inspiration_graph(artifact_id)
+    artifact_exists = read_store.artifact_exists(artifact_id)
+    dataset_source = read_store.dataset_source("inspiration_graphs")
+
+    if projection is None and not artifact_exists:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Artifact not found",
+            f"Artifact {artifact_id} does not exist",
+        )
+
+    return _ew04_inspiration_payload(
+        artifact_id,
+        projection,
+        snapshot_at=snapshot_at,
+        artifact_exists=artifact_exists or projection is not None,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Telemetry Surfaces (Wave 3 — TL-01 – TL-03)
 # --------------------------------------------------------------------------- #
@@ -6884,7 +7393,7 @@ async def submit_command(
             "authentication", "authorization", "params_shape", "concurrent_safety"
         ],
         "timestamp": submitted_at,
-        "staleness_warning": staleness_warning.dict() if staleness_warning else None,
+        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
         "auth_token": raw_token,
         "mfa_token": mfa_token,
     }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -333,12 +333,47 @@ class ServiceBackedReadAdapter:
             "keys": ["id"],
             "snapshot_key": "lineage_edges",
         },
+        "inspiration_graphs": {
+            "env": "PANTHEON_BFF_INSPIRATION_GRAPH_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["artifact_id", "id"],
+            "snapshot_key": "inspiration_graphs",
+        },
         "research_tickets": {
             "env": "PANTHEON_BFF_RESEARCH_TICKET_STORE",
             "dirs": (),
             "filenames": (),
             "keys": ["ticket_id", "id"],
             "snapshot_key": "research_tickets",
+        },
+        "research_experiments": {
+            "env": "PANTHEON_BFF_RESEARCH_EXPERIMENT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["experiment_id", "id"],
+            "snapshot_key": "research_experiments",
+        },
+        "institutional_memory_entries": {
+            "env": "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE",
+            "dirs": ("PANTHEON_MEMORY_DATA_DIR",),
+            "filenames": ("institutional_memory_entries.json", "institutional_memory.json"),
+            "keys": ["entry_id", "id"],
+            "snapshot_key": "institutional_memory_entries",
+        },
+        "research_search_documents": {
+            "env": "PANTHEON_BFF_RESEARCH_SEARCH_DOCUMENT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["result_id", "id"],
+            "snapshot_key": "research_search_documents",
+        },
+        "research_search_index": {
+            "env": "PANTHEON_BFF_RESEARCH_SEARCH_INDEX_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["adapter_id", "id"],
+            "snapshot_key": "research_search_index",
         },
     }
 
@@ -404,6 +439,25 @@ class ServiceBackedReadAdapter:
             return available, None
         available, records = self._load_dataset(dataset)
         return available, records.get(str(record_id))
+
+    def write_records(self, dataset: str, records: Dict[str, Dict[str, Any]]) -> bool:
+        path = self._resolve_path(dataset)
+        if path is None:
+            return False
+
+        normalized = {
+            str(key): json.loads(json.dumps(value))
+            for key, value in records.items()
+            if isinstance(value, dict)
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(normalized, indent=2, ensure_ascii=True),
+            encoding="utf-8",
+        )
+        self._cache[dataset] = normalized
+        self._cache_meta[dataset] = (str(path), path.stat().st_mtime_ns)
+        return True
 
 
 def _default_read_data() -> Dict[str, Any]:
@@ -563,23 +617,99 @@ def _default_read_data() -> Dict[str, Any]:
             },
         },
         "teaching_sessions": {
-            "teach-001": {
-                "id": "teach-001",
-                "session_id": "teach-001",
+            "trn-20260419-001": {
+                "id": "trn-20260419-001",
+                "session_id": "trn-20260419-001",
                 "persona_id": "persona-alpha",
-                "opened_by": "operator-oncall",
-                "mode": "trainer",
-                "status": "completed",
-                "started_at": "2026-04-09T09:00:00Z",
-                "completed_at": "2026-04-09T09:45:00Z",
-                "current_control_state": "released",
-                "topic": "drawdown_threshold_tuning",
-                "operator_id": "operator-oncall",
-                "outcomes": [
-                    "Adjusted drawdown threshold from 10% to 8% for pool-main",
-                    "Added queue-depth alerting for promotion gate",
+                "session_type": "trainer",
+                "opened_by": "operator-hedging-desk",
+                "status": "active",
+                "started_at": "2026-04-19T19:30:00Z",
+                "ended_at": None,
+                "objective": "Tighten event-window response and reduce premature signal reversals during macro surprise sessions.",
+                "context_refs": [
+                    {
+                        "type": "research_ticket",
+                        "id": "rt-20260419-007",
+                    },
+                    {
+                        "type": "memory_entry",
+                        "id": "mem-8f3c6d45-7d61-4c61-a0c6-3c5e8d1740f1",
+                    },
                 ],
-                "session_artifacts": ["artifact-042"],
+                "actor_context": {
+                    "persona_display_name": "Alpha Persona",
+                    "persona_role_context": "systematic momentum coach",
+                },
+                "events": [
+                    {
+                        "event_id": "tevt-20260419-001",
+                        "session_id": "trn-20260419-001",
+                        "actor": "operator",
+                        "message_body": "Focus on macro surprise windows where the current policy reverses within the first three bars after a data release.",
+                        "emitted_at": "2026-04-19T19:30:11Z",
+                        "sequence_number": 1,
+                        "outcome_signal": None,
+                    },
+                    {
+                        "event_id": "tevt-20260419-002",
+                        "session_id": "trn-20260419-001",
+                        "actor": "persona",
+                        "message_body": "I am overweighting immediate reversal probability after event spikes. I can hold the initial directional bias longer when volatility expands with breadth confirmation.",
+                        "emitted_at": "2026-04-19T19:31:04Z",
+                        "sequence_number": 2,
+                        "outcome_signal": "acknowledged-adjustment",
+                    },
+                    {
+                        "event_id": "tevt-20260419-003",
+                        "session_id": "trn-20260419-001",
+                        "actor": "operator",
+                        "message_body": "Constrain reversal sensitivity during the first five minutes unless the spread regime also deteriorates.",
+                        "emitted_at": "2026-04-19T19:37:40Z",
+                        "sequence_number": 3,
+                        "outcome_signal": "candidate-adjustment-ready",
+                    },
+                ],
+                "topic": "macro surprise window coaching",
+                "outcomes": ["candidate-adjustment-ready"],
+            },
+            "trn-20260418-003": {
+                "id": "trn-20260418-003",
+                "session_id": "trn-20260418-003",
+                "persona_id": "persona-alpha",
+                "session_type": "trainer",
+                "opened_by": "operator-risk-desk",
+                "status": "completed",
+                "started_at": "2026-04-18T08:00:00Z",
+                "ended_at": "2026-04-18T08:42:00Z",
+                "objective": "Reduce regime-switch whipsaw sensitivity in drawdown containment mode.",
+                "context_refs": [],
+                "actor_context": {
+                    "persona_display_name": "Alpha Persona",
+                    "persona_role_context": "systematic momentum coach",
+                },
+                "events": [
+                    {
+                        "event_id": "tevt-20260418-001",
+                        "session_id": "trn-20260418-003",
+                        "actor": "operator",
+                        "message_body": "Focus on drawdown containment and reduce sensitivity to short-lived regime flips.",
+                        "emitted_at": "2026-04-18T08:00:12Z",
+                        "sequence_number": 1,
+                        "outcome_signal": None,
+                    },
+                    {
+                        "event_id": "tevt-20260418-002",
+                        "session_id": "trn-20260418-003",
+                        "actor": "persona",
+                        "message_body": "I can widen confirmation requirements before reversing the posture in containment mode.",
+                        "emitted_at": "2026-04-18T08:42:00Z",
+                        "sequence_number": 2,
+                        "outcome_signal": "teaching-complete",
+                    },
+                ],
+                "topic": "drawdown containment coaching",
+                "outcomes": ["teaching-complete"],
             },
         },
         "runtime_bindings": {
@@ -1296,6 +1426,35 @@ def _default_read_data() -> Dict[str, Any]:
                 "created_at": "2026-04-10T00:00:00Z",
             },
         },
+        "inspiration_graphs": {
+            "artifact-042": {
+                "artifact_id": "artifact-042",
+                "inspiration_edges": [
+                    {
+                        "source_artifact_id": "artifact-041",
+                        "relationship_type": "derived_from",
+                        "influence_weight": 0.85,
+                    },
+                    {
+                        "source_artifact_id": "artifact-039",
+                        "relationship_type": "strategy_applied",
+                        "influence_weight": 0.60,
+                    },
+                    {
+                        "source_artifact_id": "artifact-038",
+                        "relationship_type": "inspired_by",
+                        "influence_weight": 0.40,
+                    },
+                ],
+                "strategy_tags": [
+                    "momentum-alpha",
+                    "low-volatility",
+                    "sector-rotation",
+                ],
+                "snapshot_at": "2026-04-19T03:00:00Z",
+                "surface_state": "fresh",
+            },
+        },
         # ------------------------------------------------------------------ #
         # Consultation surfaces (CS-01 – CS-06)
         # ------------------------------------------------------------------ #
@@ -1899,6 +2058,98 @@ def _default_read_data() -> Dict[str, Any]:
                 "linked_artifacts": ["artifact-20260417-004-a"],
             },
         },
+        "institutional_memory_entries": {
+            "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c": {
+                "entry_id": "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
+                "knowledge_type": "incident_lesson",
+                "content": {
+                    "headline": "Risk exposure exceeded thresholds during BTC-regime shift due to stale parameter sync",
+                    "body": (
+                        "Detailed investigation into the incident on 2026-04-05 revealed that the latency in "
+                        "parameter propagation from the Research Plane to the Execution Plane allowed the persona "
+                        "'Alpha-Momentum' to maintain high exposure even as market volatility spiked. The lesson "
+                        "learned is that parameter staleness signals must trigger an immediate safety halt or "
+                        "aggressive de-risking if the drift exceeds 300ms during high-volatility regimes."
+                    ),
+                    "structured_payload": {
+                        "affected_personas": ["Alpha-Momentum", "Beta-Arbitrage"],
+                        "drift_observed_ms": 450,
+                        "max_exposure_violation_pct": 12.5,
+                    },
+                    "tags": ["risk", "latency", "regime-shift", "btc"],
+                },
+                "source_event": {
+                    "type": "postmortem_published",
+                    "id": "pm-2026-04-05-btc-drift",
+                    "href": "/operator/incidents/inc-2026-04-05-001/review",
+                },
+                "contributing_persona_ids": ["Alpha-Momentum"],
+                "written_at": "2026-04-07T14:30:00Z",
+                "write_authority": "incident-svc",
+                "scope": {"type": "system_wide", "filter": None},
+                "lifecycle": {"status": "active", "superseded_by": None},
+                "usage": {"reuse_count": 28, "last_cited_at": "2026-04-19T08:45:00Z"},
+            },
+            "mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f": {
+                "entry_id": "mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f",
+                "knowledge_type": "regime_pattern",
+                "content": {
+                    "headline": "Momentum strategy underperforms in low-volatility sideways regimes",
+                    "body": (
+                        "Cross-regime replay analysis shows the momentum stack loses edge when volatility compresses "
+                        "and breadth confirmation decays. Future deployments should widen confirmation thresholds "
+                        "or reduce exposure scaling in sideways regimes."
+                    ),
+                    "structured_payload": {
+                        "affected_strategy_family": "momentum",
+                        "observed_regime": "low_vol_sideways",
+                        "underperformance_window_days": 17,
+                    },
+                    "tags": ["regime", "momentum", "volatility"],
+                },
+                "source_event": {
+                    "type": "evolution_decision_published",
+                    "id": "evo-2026-04-10-regime-001",
+                    "href": "/operator/mutation-review?decision=evo-2026-04-10-regime-001",
+                },
+                "contributing_persona_ids": ["persona-alpha", "p-macro-observer"],
+                "written_at": "2026-04-10T09:15:00Z",
+                "write_authority": "evolution-svc",
+                "scope": {"type": "strategy_family", "filter": "momentum"},
+                "lifecycle": {"status": "active", "superseded_by": None},
+                "usage": {"reuse_count": 14, "last_cited_at": "2026-04-18T14:20:00Z"},
+            },
+            "mem-8e9f0a1b-2c3d-4e5f-6a7b-8c9d0e1f2a3b": {
+                "entry_id": "mem-8e9f0a1b-2c3d-4e5f-6a7b-8c9d0e1f2a3b",
+                "knowledge_type": "policy_precedent",
+                "content": {
+                    "headline": "Simultaneous drawdown across correlated instruments triggers portfolio-level halt",
+                    "body": (
+                        "This precedent was archived after newer capital-pool controls replaced the original halt "
+                        "policy, but the older rationale remains relevant for historical incident interpretation."
+                    ),
+                    "structured_payload": {
+                        "halt_threshold_pct": 9.0,
+                        "correlation_bucket": "high_beta_cluster",
+                    },
+                    "tags": ["policy", "drawdown", "halt", "correlation"],
+                },
+                "source_event": {
+                    "type": "incident_policy_archived",
+                    "id": "policy-2026-03-28-portfolio-halt",
+                    "href": "/operator/post-incident-review?incident=inc-2026-03-28-002",
+                },
+                "contributing_persona_ids": ["p-risk-analyst", "p-compliance-sponsor"],
+                "written_at": "2026-03-28T16:00:00Z",
+                "write_authority": "incident-svc",
+                "scope": {"type": "system_wide", "filter": None},
+                "lifecycle": {
+                    "status": "superseded",
+                    "superseded_by": "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
+                },
+                "usage": {"reuse_count": 41, "last_cited_at": "2026-04-11T10:00:00Z"},
+            },
+        },
         "research_analyses": {
             "analysis-20260419-007-a": {
                 "analysis_id": "analysis-20260419-007-a",
@@ -2163,6 +2414,102 @@ def _default_read_data() -> Dict[str, Any]:
                 },
             },
         },
+        "research_search_documents": {
+            "rt-20260419-007": {
+                "result_id": "rt-20260419-007",
+                "match_type": "ticket",
+                "title": "Evaluate momentum factor decay in high-volatility regime",
+                "excerpt": (
+                    "Research ticket asks whether momentum factors lose predictive power during sustained "
+                    "volatility spikes and whether current rebalancing windows are too slow."
+                ),
+                "linked_ticket_id": "rt-20260419-007",
+                "linked_ticket_status": "in_progress",
+                "relevance_score": 0.98,
+                "updated_at": "2026-04-19T20:15:00Z",
+                "search_text": (
+                    "momentum decay volatility regime ticket predictive power rebalancing windows "
+                    "sustained volatility spikes"
+                ),
+                "links": {
+                    "result_detail": "/research/tickets/rt-20260419-007",
+                    "linked_ticket_detail": "/research/tickets/rt-20260419-007",
+                },
+            },
+            "exp-20260419-012": {
+                "result_id": "exp-20260419-012",
+                "match_type": "experiment",
+                "title": "Momentum decay replay on March volatility cluster",
+                "excerpt": (
+                    "Experiment replay compares signal half-life before and after the March volatility "
+                    "cluster and shows reduced persistence after regime break."
+                ),
+                "linked_ticket_id": "rt-20260419-007",
+                "linked_ticket_status": "in_progress",
+                "relevance_score": 0.91,
+                "updated_at": "2026-04-19T20:14:30Z",
+                "search_text": (
+                    "momentum decay experiment replay march volatility cluster signal half life regime break"
+                ),
+                "links": {
+                    "result_detail": "/research/experiments/exp-20260419-012",
+                    "linked_ticket_detail": "/research/tickets/rt-20260419-007",
+                },
+            },
+            "artifact-20260418-005": {
+                "result_id": "artifact-20260418-005",
+                "match_type": "artifact",
+                "title": "Momentum regime-break feature set v5",
+                "excerpt": (
+                    "Artifact notes include volatility-regime bucketing and a shorter half-life decay "
+                    "coefficient intended for stressed market windows."
+                ),
+                "linked_ticket_id": "rt-20260419-007",
+                "linked_ticket_status": "in_progress",
+                "relevance_score": 0.87,
+                "updated_at": "2026-04-18T20:12:58Z",
+                "search_text": (
+                    "momentum artifact volatility regime bucketing shorter half life decay stressed market windows"
+                ),
+                "links": {
+                    "result_detail": "/research/artifacts/artifact-20260418-005",
+                    "linked_ticket_detail": "/research/tickets/rt-20260419-007",
+                },
+            },
+            "rt-20260415-001": {
+                "result_id": "rt-20260415-001",
+                "match_type": "ticket",
+                "title": "Validate signal quality on macro event windows",
+                "excerpt": (
+                    "Closed research ticket recorded weaker signal quality around scheduled macro events "
+                    "and tested whether exclusion windows were sufficient."
+                ),
+                "linked_ticket_id": "rt-20260415-001",
+                "linked_ticket_status": "closed",
+                "relevance_score": 0.64,
+                "updated_at": "2026-04-19T11:00:00Z",
+                "search_text": (
+                    "signal quality macro event windows exclusion windows scheduled macro events closed ticket"
+                ),
+                "links": {
+                    "result_detail": "/research/tickets/rt-20260415-001",
+                    "linked_ticket_detail": "/research/tickets/rt-20260415-001",
+                },
+            },
+        },
+        "research_search_index": {
+            "rw02-search-index": {
+                "adapter_id": "rw02-search-index",
+                "snapshot_at": "2026-04-19T20:14:30Z",
+                "adapter_state": "fresh",
+                "indexed_match_types": ["ticket", "experiment", "artifact"],
+                "source_watermarks": {
+                    "tickets": "2026-04-19T20:14:10Z",
+                    "experiments": "2026-04-19T20:13:42Z",
+                    "artifacts": "2026-04-19T20:12:58Z",
+                },
+            }
+        },
     }
 
 
@@ -2187,6 +2534,7 @@ class ReadSurfaceStore:
         "telemetry_performance": "telemetry_performance",
         "paper_live_drift_reports": "paper_live_drift_reports",
         "lineage_edges": "lineage_edges",
+        "inspiration_graphs": "inspiration_graphs",
         "kill_switch": "kill_switch",
         "rollbacks": "rollbacks",
         "rollbacks_by_incident": "rollbacks_by_incident",
@@ -2199,7 +2547,11 @@ class ReadSurfaceStore:
         "approval_queue_items": "approval_queue_items",
         "deployment_diffs": "deployment_diffs",
         "research_tickets": "research_tickets",
+        "research_experiments": "research_experiments",
+        "institutional_memory_entries": "institutional_memory_entries",
         "research_analyses": "research_analyses",
+        "research_search_documents": "research_search_documents",
+        "research_search_index": "research_search_index",
     }
 
     def __init__(
@@ -2257,6 +2609,14 @@ class ReadSurfaceStore:
         default_registry_entries = default_data.get("registry_entries", {})
         research_analyses = self._data.get("research_analyses")
         default_research_analyses = default_data.get("research_analyses", {})
+        institutional_memory_entries = self._data.get("institutional_memory_entries")
+        default_institutional_memory_entries = default_data.get("institutional_memory_entries", {})
+        research_search_documents = self._data.get("research_search_documents")
+        default_research_search_documents = default_data.get("research_search_documents", {})
+        research_search_index = self._data.get("research_search_index")
+        default_research_search_index = default_data.get("research_search_index", {})
+        inspiration_graphs = self._data.get("inspiration_graphs")
+        default_inspiration_graphs = default_data.get("inspiration_graphs", {})
 
         if isinstance(deployment_plans, dict):
             for plan_id, default_plan in default_plans.items():
@@ -2374,6 +2734,46 @@ class ReadSurfaceStore:
                     research_analyses[analysis_id] = json.loads(json.dumps(default_analysis))
                     changed = True
 
+        if institutional_memory_entries is None:
+            self._data["institutional_memory_entries"] = json.loads(
+                json.dumps(default_institutional_memory_entries)
+            )
+            changed = True
+        elif isinstance(institutional_memory_entries, dict):
+            for entry_id, default_entry in default_institutional_memory_entries.items():
+                if entry_id not in institutional_memory_entries:
+                    institutional_memory_entries[entry_id] = json.loads(json.dumps(default_entry))
+                    changed = True
+
+        if research_search_documents is None:
+            self._data["research_search_documents"] = json.loads(
+                json.dumps(default_research_search_documents)
+            )
+            changed = True
+        elif isinstance(research_search_documents, dict):
+            for result_id, default_document in default_research_search_documents.items():
+                if result_id not in research_search_documents:
+                    research_search_documents[result_id] = json.loads(json.dumps(default_document))
+                    changed = True
+
+        if research_search_index is None:
+            self._data["research_search_index"] = json.loads(json.dumps(default_research_search_index))
+            changed = True
+        elif isinstance(research_search_index, dict):
+            for adapter_id, default_index in default_research_search_index.items():
+                if adapter_id not in research_search_index:
+                    research_search_index[adapter_id] = json.loads(json.dumps(default_index))
+                    changed = True
+
+        if inspiration_graphs is None:
+            self._data["inspiration_graphs"] = json.loads(json.dumps(default_inspiration_graphs))
+            changed = True
+        elif isinstance(inspiration_graphs, dict):
+            for artifact_id, default_graph in default_inspiration_graphs.items():
+                if artifact_id not in inspiration_graphs:
+                    inspiration_graphs[artifact_id] = json.loads(json.dumps(default_graph))
+                    changed = True
+
         return changed
 
     def _save(self) -> None:
@@ -2397,6 +2797,11 @@ class ReadSurfaceStore:
         if dataset in ServiceBackedReadAdapter._DATASETS:
             available, _ = self._service.list_records(dataset)
             if available:
+                if (
+                    self._allow_local_snapshot_fallback
+                    and self._service._resolve_path(dataset) is None
+                ):
+                    return "local_snapshot"
                 return "service_store"
         local_payload = self._local_fallback(dataset)
         if local_payload not in (None, "", [], {}):
@@ -3033,7 +3438,7 @@ class ReadSurfaceStore:
         statuses: Optional[List[str]] = None,
         owner: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        tickets = list((self._local_fallback("research_tickets") or {}).values())
+        tickets = self._read_dataset_records("research_tickets")
         if statuses:
             requested_statuses = {str(value).strip().lower() for value in statuses if str(value).strip()}
             tickets = [
@@ -3060,7 +3465,9 @@ class ReadSurfaceStore:
     def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
-        ticket = (self._local_fallback("research_tickets") or {}).get(ticket_id)
+        available, ticket = self._service.record("research_tickets", ticket_id)
+        if not available:
+            ticket = (self._local_fallback("research_tickets") or {}).get(ticket_id)
         if not ticket:
             return None
         return self._project_research_ticket_detail(ticket)
@@ -3075,7 +3482,20 @@ class ReadSurfaceStore:
         actor_id: str,
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        tickets = self._local_fallback("research_tickets")
+        service_store_path = self._service._resolve_path("research_tickets")
+        persist_service_store = service_store_path is not None
+        tickets: Optional[Dict[str, Any]]
+        if persist_service_store:
+            available, service_tickets = self._service.list_records("research_tickets")
+            if not available and service_store_path.exists():
+                raise RuntimeError("Research ticket store is unavailable.")
+            tickets = {
+                str(ticket.get("ticket_id") or ticket.get("id") or ""): json.loads(json.dumps(ticket))
+                for ticket in service_tickets
+                if isinstance(ticket, dict) and str(ticket.get("ticket_id") or ticket.get("id") or "").strip()
+            }
+        else:
+            tickets = self._local_fallback("research_tickets")
         if tickets is None:
             raise RuntimeError("Research ticket store is unavailable.")
 
@@ -3107,7 +3527,10 @@ class ReadSurfaceStore:
             "linked_artifacts": [],
         }
         tickets[ticket_id] = ticket
-        self._save()
+        if persist_service_store:
+            self._service.write_records("research_tickets", tickets)
+        else:
+            self._save()
         return self._project_research_ticket_detail(ticket)
 
     def patch_research_ticket(
@@ -3118,7 +3541,20 @@ class ReadSurfaceStore:
         actor_id: str,
         updated_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        tickets = self._local_fallback("research_tickets")
+        service_store_path = self._service._resolve_path("research_tickets")
+        persist_service_store = service_store_path is not None
+        tickets: Optional[Dict[str, Any]]
+        if persist_service_store:
+            available, service_tickets = self._service.list_records("research_tickets")
+            if not available and service_store_path.exists():
+                return None
+            tickets = {
+                str(ticket.get("ticket_id") or ticket.get("id") or ""): json.loads(json.dumps(ticket))
+                for ticket in service_tickets
+                if isinstance(ticket, dict) and str(ticket.get("ticket_id") or ticket.get("id") or "").strip()
+            }
+        else:
+            tickets = self._local_fallback("research_tickets")
         if tickets is None:
             return None
         ticket = tickets.get(ticket_id)
@@ -3157,8 +3593,68 @@ class ReadSurfaceStore:
             )
 
         ticket["updated_at"] = timestamp
-        self._save()
+        if persist_service_store:
+            self._service.write_records("research_tickets", tickets)
+        else:
+            self._save()
         return self._project_research_ticket_detail(ticket)
+
+    @staticmethod
+    def _project_institutional_memory_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
+        entry_id = str(entry.get("entry_id") or entry.get("id") or "")
+        content = entry.get("content") if isinstance(entry.get("content"), dict) else {}
+        scope = entry.get("scope") if isinstance(entry.get("scope"), dict) else {}
+        lifecycle = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
+        usage = entry.get("usage") if isinstance(entry.get("usage"), dict) else {}
+        return {
+            "entry_id": entry_id,
+            "knowledge_type": entry.get("knowledge_type"),
+            "headline": content.get("headline"),
+            "scope": scope.get("type"),
+            "scope_filter": scope.get("filter"),
+            "written_at": entry.get("written_at"),
+            "write_authority": entry.get("write_authority"),
+            "tags": list(content.get("tags") or []),
+            "reuse_count": usage.get("reuse_count") or 0,
+            "is_superseded": str(lifecycle.get("status") or "").strip().lower() == "superseded",
+            "route_href": f"/knowledge/memory/{entry_id}",
+        }
+
+    @staticmethod
+    def _project_institutional_memory_detail(entry: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "entry_id": entry.get("entry_id") or entry.get("id"),
+            "knowledge_type": entry.get("knowledge_type"),
+            "content": json.loads(json.dumps(entry.get("content") or {})),
+            "source_event": json.loads(json.dumps(entry.get("source_event") or {})),
+            "contributing_persona_ids": list(entry.get("contributing_persona_ids") or []),
+            "written_at": entry.get("written_at"),
+            "write_authority": entry.get("write_authority"),
+            "scope": json.loads(json.dumps(entry.get("scope") or {})),
+            "lifecycle": json.loads(json.dumps(entry.get("lifecycle") or {})),
+            "usage": json.loads(json.dumps(entry.get("usage") or {})),
+        }
+
+    def list_institutional_memory_entries(self) -> List[Dict[str, Any]]:
+        entries = self._read_dataset_records("institutional_memory_entries")
+        entries.sort(
+            key=lambda entry: (
+                _parse_rfc3339(entry.get("written_at")) or datetime.min,
+                int(((entry.get("usage") or {}).get("reuse_count") or 0)),
+            ),
+            reverse=True,
+        )
+        return [self._project_institutional_memory_summary(entry) for entry in entries]
+
+    def get_institutional_memory_entry(self, entry_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not entry_id:
+            return None
+        available, entry = self._service.record("institutional_memory_entries", entry_id)
+        if not available:
+            entry = (self._local_fallback("institutional_memory_entries") or {}).get(entry_id)
+        if not entry:
+            return None
+        return self._project_institutional_memory_detail(entry)
 
     # ------------------------------------------------------------------ #
     # Research Analyze surfaces (RW-03)
@@ -3263,6 +3759,174 @@ class ReadSurfaceStore:
         if not analysis:
             return None
         return self._project_research_analysis_detail(analysis)
+
+    def _read_dataset_records(self, dataset: str) -> List[Dict[str, Any]]:
+        if dataset in ServiceBackedReadAdapter._DATASETS:
+            available, records = self._service.list_records(dataset)
+            if available:
+                return list(records)
+        local_payload = self._local_fallback(dataset)
+        if isinstance(local_payload, dict):
+            return [record for record in local_payload.values() if isinstance(record, dict)]
+        if isinstance(local_payload, list):
+            return [record for record in local_payload if isinstance(record, dict)]
+        return []
+
+    def get_research_search_index(self) -> Optional[Dict[str, Any]]:
+        adapter: Optional[Dict[str, Any]] = None
+        if "research_search_index" in ServiceBackedReadAdapter._DATASETS:
+            available, adapter = self._service.record("research_search_index", "rw02-search-index")
+            if available and adapter:
+                return json.loads(json.dumps(adapter))
+
+        local_index = self._local_fallback("research_search_index") or {}
+        if isinstance(local_index, dict):
+            adapter = local_index.get("rw02-search-index")
+            if isinstance(adapter, dict):
+                return json.loads(json.dumps(adapter))
+
+        documents = self._read_dataset_records("research_search_documents")
+        if not documents:
+            return None
+
+        indexed_match_types = sorted(
+            {
+                str(document.get("match_type") or "").strip()
+                for document in documents
+                if str(document.get("match_type") or "").strip()
+            }
+        )
+        latest_update = max(
+            (
+                _parse_rfc3339(
+                    document.get("updated_at")
+                    or document.get("indexed_at")
+                    or document.get("created_at")
+                )
+                for document in documents
+            ),
+            default=None,
+        )
+        snapshot_at = (
+            latest_update.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            if latest_update is not None
+            else _utc_now_rfc3339()
+        )
+        return {
+            "adapter_id": "rw02-search-index",
+            "snapshot_at": snapshot_at,
+            "adapter_state": "fresh",
+            "indexed_match_types": indexed_match_types,
+            "source_watermarks": {
+                "tickets": None,
+                "experiments": None,
+                "artifacts": None,
+            },
+        }
+
+    def list_research_search_results(
+        self,
+        *,
+        query: str,
+        match_type: str = "all",
+        status: Optional[str] = None,
+        date_range: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        documents = self._read_dataset_records("research_search_documents")
+        if not documents:
+            return []
+
+        ticket_status_by_id = {
+            str(ticket.get("ticket_id") or ""): str(ticket.get("status") or "")
+            for ticket in self._read_dataset_records("research_tickets")
+            if str(ticket.get("ticket_id") or "").strip()
+        }
+        query_terms = [token for token in str(query).strip().lower().split() if token]
+        cutoff_days = self._date_range_cutoff_token(date_range)
+        reference_now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        projected: List[Dict[str, Any]] = []
+        for document in documents:
+            document_match_type = str(document.get("match_type") or "").strip().lower()
+            if document_match_type not in {"ticket", "experiment", "artifact"}:
+                continue
+            if match_type != "all" and document_match_type != match_type:
+                continue
+
+            linked_ticket_id = str(document.get("linked_ticket_id") or "").strip()
+            linked_ticket_status = ticket_status_by_id.get(linked_ticket_id) or str(
+                document.get("linked_ticket_status") or ""
+            ).strip()
+            if status and linked_ticket_status.lower() != status.lower():
+                continue
+
+            updated_at = _parse_rfc3339(
+                document.get("updated_at")
+                or document.get("indexed_at")
+                or document.get("created_at")
+            )
+            if cutoff_days is not None:
+                if updated_at is None:
+                    continue
+                if (reference_now - updated_at.replace(tzinfo=None)).days >= cutoff_days:
+                    continue
+
+            search_text = " ".join(
+                [
+                    str(document.get("title") or ""),
+                    str(document.get("excerpt") or ""),
+                    str(document.get("search_text") or ""),
+                ]
+            ).lower()
+            matched_terms = sum(1 for token in query_terms if token in search_text)
+            if matched_terms == 0:
+                continue
+
+            title_text = str(document.get("title") or "").lower()
+            title_hits = sum(1 for token in query_terms if token in title_text)
+            base_score = float(document.get("relevance_score") or 0.0)
+            score = round(
+                min(0.999, max(base_score, base_score + matched_terms * 0.01 + title_hits * 0.015)),
+                3,
+            )
+
+            links = document.get("links") if isinstance(document.get("links"), dict) else {}
+            projected.append(
+                {
+                    "result_id": str(document.get("result_id") or ""),
+                    "match_type": document_match_type,
+                    "title": str(document.get("title") or ""),
+                    "excerpt": str(document.get("excerpt") or ""),
+                    "linked_ticket_id": linked_ticket_id,
+                    "relevance_score": score,
+                    "links": {
+                        "result_detail": str(
+                            links.get("result_detail")
+                            or (
+                                f"/research/tickets/{document.get('result_id')}"
+                                if document_match_type == "ticket"
+                                else f"/research/{document_match_type}s/{document.get('result_id')}"
+                            )
+                        ),
+                        "linked_ticket_detail": str(
+                            links.get("linked_ticket_detail")
+                            or f"/research/tickets/{linked_ticket_id}"
+                        ),
+                    },
+                    "_updated_at": updated_at or datetime.min,
+                }
+            )
+
+        projected.sort(
+            key=lambda item: (
+                float(item.get("relevance_score") or 0.0),
+                item.get("_updated_at") or datetime.min,
+            ),
+            reverse=True,
+        )
+        for item in projected:
+            item.pop("_updated_at", None)
+        return projected
 
     # ------------------------------------------------------------------ #
     # Incident surfaces (IN-01 – IN-05)
@@ -3669,6 +4333,66 @@ class ReadSurfaceStore:
             return raw
         return (self._local_fallback("lineage_edges") or {}).get(edge_id)
 
+    @staticmethod
+    def _project_inspiration_graph(raw: Dict[str, Any]) -> Dict[str, Any]:
+        meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+        surfaces = meta.get("surfaces") if isinstance(meta.get("surfaces"), dict) else {}
+
+        edges: List[Dict[str, Any]] = []
+        for edge in raw.get("inspiration_edges") or []:
+            if not isinstance(edge, dict):
+                continue
+            source_artifact_id = str(edge.get("source_artifact_id") or "").strip()
+            relationship_type = str(edge.get("relationship_type") or "").strip()
+            if not source_artifact_id or not relationship_type:
+                continue
+            try:
+                influence_weight = float(edge.get("influence_weight") or 0.0)
+            except (TypeError, ValueError):
+                influence_weight = 0.0
+            edges.append(
+                {
+                    "source_artifact_id": source_artifact_id,
+                    "relationship_type": relationship_type,
+                    "influence_weight": round(min(max(influence_weight, 0.0), 1.0), 3),
+                }
+            )
+
+        strategy_tags = [
+            str(tag).strip()
+            for tag in raw.get("strategy_tags") or []
+            if str(tag).strip()
+        ]
+
+        projection: Dict[str, Any] = {
+            "artifact_id": str(raw.get("artifact_id") or raw.get("id") or "").strip(),
+            "inspiration_edges": edges,
+            "strategy_tags": strategy_tags,
+            "meta": {
+                "snapshot_at": str(
+                    raw.get("snapshot_at")
+                    or meta.get("snapshot_at")
+                    or _utc_now_rfc3339()
+                ),
+                "surfaces": {
+                    "inspiration": str(
+                        surfaces.get("inspiration")
+                        or raw.get("surface_state")
+                        or "fresh"
+                    ),
+                },
+            },
+        }
+
+        page_info = raw.get("page_info") if isinstance(raw.get("page_info"), dict) else {}
+        next_page_token = raw.get("next_page_token")
+        if next_page_token is None:
+            next_page_token = page_info.get("next_page_token")
+        if next_page_token not in (None, ""):
+            projection["page_info"] = {"next_page_token": str(next_page_token)}
+
+        return projection
+
     def get_lineage_graph(
         self,
         root_type: Optional[str] = None,
@@ -3726,6 +4450,19 @@ class ReadSurfaceStore:
                 }
             )
         return nodes
+
+    def artifact_exists(self, artifact_id: str) -> bool:
+        artifact_key = str(artifact_id or "").strip()
+        if not artifact_key:
+            return False
+        return artifact_key in self._artifact_metadata_index()
+
+    def get_inspiration_graph(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        available, raw = self._service.record("inspiration_graphs", artifact_id)
+        if available:
+            return self._project_inspiration_graph(raw) if raw else None
+        raw = (self._local_fallback("inspiration_graphs") or {}).get(artifact_id)
+        return self._project_inspiration_graph(raw) if raw else None
 
     # ------------------------------------------------------------------ #
     # Telemetry surfaces (TL-01 – TL-03)
@@ -3878,6 +4615,291 @@ class ReadSurfaceStore:
         if status:
             sessions = [s for s in sessions if s.get("status") == status]
         return sessions
+
+    @staticmethod
+    def _trainer_session_allowed_actions(status: Optional[str]) -> Dict[str, bool]:
+        return {
+            "canSendMessage": str(status or "").strip().lower() == "active",
+        }
+
+    def _trainer_actor_context(self, session: Dict[str, Any]) -> Dict[str, Optional[str]]:
+        explicit = session.get("actor_context")
+        if isinstance(explicit, dict):
+            return {
+                "persona_display_name": explicit.get("persona_display_name"),
+                "persona_role_context": explicit.get("persona_role_context"),
+            }
+
+        persona = self.get_persona(session.get("persona_id"))
+        if persona:
+            return {
+                "persona_display_name": persona.get("name"),
+                "persona_role_context": persona.get("mandate") or persona.get("strategy_family"),
+            }
+        return {
+            "persona_display_name": None,
+            "persona_role_context": None,
+        }
+
+    @staticmethod
+    def _project_teaching_event(session_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "event_id": event.get("event_id"),
+            "session_id": session_id,
+            "actor": event.get("actor"),
+            "message_body": event.get("message_body"),
+            "emitted_at": event.get("emitted_at"),
+            "sequence_number": event.get("sequence_number"),
+            "outcome_signal": event.get("outcome_signal"),
+        }
+
+    def _project_trainer_session_summary(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = str(session.get("session_id") or session.get("id") or "")
+        events = sorted(
+            [
+                self._project_teaching_event(session_id, event)
+                for event in (session.get("events") or [])
+                if isinstance(event, dict)
+            ],
+            key=lambda item: int(item.get("sequence_number") or 0),
+        )
+        latest_outcome_signal = None
+        for event in events:
+            if event.get("outcome_signal") not in (None, ""):
+                latest_outcome_signal = event.get("outcome_signal")
+        last_event_at = events[-1].get("emitted_at") if events else None
+        return {
+            "message_count": len(events),
+            "last_event_at": last_event_at,
+            "latest_outcome_signal": latest_outcome_signal,
+        }
+
+    def _project_trainer_session_list_item(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = str(session.get("session_id") or session.get("id") or "")
+        summary = self._project_trainer_session_summary(session)
+        status = session.get("status")
+        return {
+            "session_id": session_id,
+            "persona_id": session.get("persona_id"),
+            "session_type": session.get("session_type") or "trainer",
+            "objective": session.get("objective") or session.get("topic"),
+            "status": status,
+            "started_at": session.get("started_at"),
+            "ended_at": session.get("ended_at") or session.get("completed_at"),
+            "message_count": summary["message_count"],
+            "last_event_at": summary["last_event_at"],
+            "latest_outcome_signal": summary["latest_outcome_signal"],
+            "actor_context": self._trainer_actor_context(session),
+            "allowedActions": self._trainer_session_allowed_actions(status),
+            "links": {
+                "workbench_detail": f"/trainer/sessions/{session_id}",
+            },
+        }
+
+    def _project_trainer_session_detail(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = str(session.get("session_id") or session.get("id") or "")
+        events = sorted(
+            [
+                self._project_teaching_event(session_id, event)
+                for event in (session.get("events") or [])
+                if isinstance(event, dict)
+            ],
+            key=lambda item: int(item.get("sequence_number") or 0),
+        )
+        status = session.get("status")
+        return {
+            "session_id": session_id,
+            "persona_id": session.get("persona_id"),
+            "session_type": session.get("session_type") or "trainer",
+            "objective": session.get("objective") or session.get("topic"),
+            "status": status,
+            "started_at": session.get("started_at"),
+            "ended_at": session.get("ended_at") or session.get("completed_at"),
+            "opened_by": session.get("opened_by") or session.get("operator_id"),
+            "context_refs": json.loads(json.dumps(session.get("context_refs") or [])),
+            "actor_context": self._trainer_actor_context(session),
+            "session_summary": self._project_trainer_session_summary(session),
+            "events": events,
+            "allowedActions": self._trainer_session_allowed_actions(status),
+            "links": {
+                "self": f"/api/v1/trainer/sessions/{session_id}",
+                "workbench_detail": f"/trainer/sessions/{session_id}",
+            },
+        }
+
+    def list_trainer_sessions(
+        self,
+        *,
+        persona_id: Optional[str],
+        status: Optional[str] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        sessions = self.get_teaching_sessions_for_persona(persona_id)
+        if sessions is None:
+            return None
+        items = [
+            self._project_trainer_session_list_item(session)
+            for session in sessions
+            if str(session.get("session_type") or session.get("mode") or "").strip().lower() == "trainer"
+        ]
+        if status:
+            normalized = str(status).strip().lower()
+            items = [item for item in items if str(item.get("status") or "").strip().lower() == normalized]
+        items.sort(
+            key=lambda item: (
+                _parse_rfc3339(item.get("last_event_at"))
+                or _parse_rfc3339(item.get("started_at"))
+                or datetime.min
+            ),
+            reverse=True,
+        )
+        return items
+
+    def get_trainer_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        available, raw = self._service.record("teaching_sessions", session_id)
+        if available:
+            if raw is None:
+                return None
+            normalized = dict(raw)
+        else:
+            teaching_sessions = self._local_fallback("teaching_sessions") or {}
+            normalized = teaching_sessions.get(session_id)
+            if normalized is None:
+                return None
+        session_type = str(normalized.get("session_type") or normalized.get("mode") or "").strip().lower()
+        if session_type != "trainer":
+            return None
+        return self._project_trainer_session_detail(normalized)
+
+    def create_trainer_session(
+        self,
+        *,
+        persona_id: str,
+        objective: str,
+        context_refs: List[Dict[str, Any]],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        service_store_path = self._service._resolve_path("teaching_sessions")
+        persist_service_store = service_store_path is not None
+        teaching_sessions: Optional[Dict[str, Dict[str, Any]]]
+        if persist_service_store:
+            available, service_sessions = self._service.list_records("teaching_sessions")
+            if not available and service_store_path.exists():
+                return None
+            teaching_sessions = {
+                str(session.get("session_id") or session.get("id") or ""): json.loads(
+                    json.dumps(session)
+                )
+                for session in service_sessions
+                if isinstance(session, dict)
+                and str(session.get("session_id") or session.get("id") or "").strip()
+            }
+        else:
+            teaching_sessions = self._local_fallback("teaching_sessions")
+        if teaching_sessions is None:
+            return None
+
+        timestamp = created_at or _utc_now_rfc3339()
+        prefix = timestamp[:10].replace("-", "")
+        next_index = len(teaching_sessions) + 1
+        session_id = f"trn-{prefix}-{next_index:03d}"
+        while session_id in teaching_sessions:
+            next_index += 1
+            session_id = f"trn-{prefix}-{next_index:03d}"
+
+        persona = self.get_persona(persona_id)
+        session = {
+            "id": session_id,
+            "session_id": session_id,
+            "persona_id": persona_id,
+            "session_type": "trainer",
+            "objective": objective,
+            "status": "active",
+            "started_at": timestamp,
+            "ended_at": None,
+            "opened_by": actor_id,
+            "context_refs": json.loads(json.dumps(context_refs)),
+            "actor_context": {
+                "persona_display_name": (persona or {}).get("name"),
+                "persona_role_context": (persona or {}).get("mandate") or (persona or {}).get("strategy_family"),
+            },
+            "events": [],
+            "topic": objective,
+            "outcomes": [],
+        }
+        teaching_sessions[session_id] = session
+        if persist_service_store:
+            self._service.write_records("teaching_sessions", teaching_sessions)
+        else:
+            self._save()
+        return self._project_trainer_session_detail(session)
+
+    def append_trainer_message(
+        self,
+        session_id: str,
+        *,
+        message_body: str,
+        actor_id: str,
+        accepted_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        service_store_path = self._service._resolve_path("teaching_sessions")
+        persist_service_store = service_store_path is not None
+        teaching_sessions: Optional[Dict[str, Dict[str, Any]]]
+        if persist_service_store:
+            available, service_sessions = self._service.list_records("teaching_sessions")
+            if not available and service_store_path.exists():
+                return None
+            teaching_sessions = {
+                str(session.get("session_id") or session.get("id") or ""): json.loads(
+                    json.dumps(session)
+                )
+                for session in service_sessions
+                if isinstance(session, dict)
+                and str(session.get("session_id") or session.get("id") or "").strip()
+            }
+        else:
+            teaching_sessions = self._local_fallback("teaching_sessions")
+        if teaching_sessions is None:
+            return None
+
+        session = teaching_sessions.get(session_id)
+        if session is None:
+            return None
+
+        timestamp = accepted_at or _utc_now_rfc3339()
+        events = session.setdefault("events", [])
+        next_sequence = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
+        prefix = timestamp[:10].replace("-", "")
+        event_id = f"tevt-{prefix}-{next_sequence:03d}"
+        existing_ids = {str(event.get("event_id") or "") for event in events if isinstance(event, dict)}
+        dedupe_index = next_sequence
+        while event_id in existing_ids:
+            dedupe_index += 1
+            event_id = f"tevt-{prefix}-{dedupe_index:03d}"
+
+        event = {
+            "event_id": event_id,
+            "session_id": session_id,
+            "actor": "operator",
+            "message_body": message_body,
+            "emitted_at": timestamp,
+            "sequence_number": next_sequence,
+            "outcome_signal": None,
+        }
+        events.append(event)
+        if persist_service_store:
+            self._service.write_records("teaching_sessions", teaching_sessions)
+        else:
+            self._save()
+
+        projected = self._project_trainer_session_detail(session)
+        return {
+            "accepted_at": timestamp,
+            "event": self._project_teaching_event(session_id, event),
+            "session": projected,
+        }
 
     def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not snapshot_id:
