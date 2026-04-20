@@ -7,7 +7,7 @@
 **Parent status:** `review`  
 **Sidecar task:** `AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF`  
 **Prepared by:** `Codex`  
-**Reviewer:** `Codex2`  
+**Reviewer:** `Claude`  
 **Date:** `2026-04-20`  
 **Mutates canonical:** `no`
 
@@ -52,7 +52,7 @@ remaining work is reviewer acceptance and any downstream frontend absorption.
 | `docs/bff/TW-03-before-after-compare.md:143-226` | Canonical status branches, polling contract, write authority, and degradation rules |
 | `docs/screens/TW-03-before-after-compare.md:1-107` | Screen intent, route, pending-BFF placeholder history, and frontend rendering constraints |
 | `docs/examples/TW-03-before-after-compare.json` | Happy-path and degraded example payloads for frontend wiring |
-| `services/control-plane/bff/main.py:4720-4815` | Landed GET/POST preview endpoints and refresh precondition handling |
+| `services/control-plane/bff/main.py:4853-4952` | Landed GET/POST preview endpoints and refresh precondition handling |
 | `services/control-plane/bff/read_store.py:5531-5868` | Surface-state projection, degraded copy, deadline collapse, eval lookup, and refresh persistence |
 | `services/control-plane/bff/test_tw03_before_after_compare_contract.py:50-159` | Executable proof for complete, pending, refresh dedupe, and preview-unavailable branches |
 | `services/control-plane/bff/data/read_surfaces.json:166-421` | Seed data that exercises complete, pending, failed, and preview-unavailable states |
@@ -71,9 +71,9 @@ TW-03 now has the expected route family:
 | `POST` | `/api/v1/trainer/sessions/{session_id}/preview` | Accepts only `refresh_mode = "manual"`; rejects invalid refresh authority; reuses existing pending eval instead of duplicating work |
 
 Implementation evidence:
-- `main.py:4720-4758` wires GET preview and builds the degraded success body when
+- `main.py:4853-4891` wires GET preview and builds the degraded success body when
   no preview record is available.
-- `main.py:4761-4815` validates refresh mode, enforces refresh authority, checks
+- `main.py:4894-4952` validates refresh mode, enforces refresh authority, checks
   trainer session state, and returns `503` only when the preview store itself
   cannot persist.
 
@@ -275,9 +275,9 @@ TW-03-specific coverage from `test_tw03_before_after_compare_contract.py`:
 
 ---
 
-## 10. Handoff to Reviewer (`Codex2`)
-
-This sidecar is ready for review.
+## 10. Final Handoff
+This sidecar has been reviewed and approved, and is ready to remain as support
+material for the parent task closeout.
 
 What it gives you:
 1. A compact statement that TW-03 no longer has a "missing BFF route" gap.
@@ -286,12 +286,12 @@ What it gives you:
 3. A frontend-facing checklist that stays inside the published contract and the
    implemented behavior.
 
-Recommended reviewer stance:
-1. Approve this sidecar if it accurately reflects the landed TW-03 route family
-   and does not overclaim beyond the current implementation.
-2. Use it as a support appendix while reviewing `AUTO-IMPL-TW03-001`.
-3. Let the parent owner decide whether any part of this packet should be folded
+Recommended use after approval:
+1. Keep this sidecar as the support appendix for `AUTO-IMPL-TW03-001`.
+2. Let the parent owner decide whether any part of this packet should be folded
    into the main review notes or downstream frontend handoff materials.
+3. Treat the packet as support-only evidence; the parent owner decides whether
+   and how to absorb it into the mainline review narrative.
 
 ---
 
