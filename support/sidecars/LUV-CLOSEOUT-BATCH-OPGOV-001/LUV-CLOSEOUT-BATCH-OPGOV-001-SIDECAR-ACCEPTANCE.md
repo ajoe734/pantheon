@@ -3,10 +3,11 @@
 **Parent Task**: `LUV-CLOSEOUT-BATCH-OPGOV-001` — Finalize closeout records for feedback-reviewed Operator and Governance packets  
 **Parent Owner**: `Claude`  
 **Parent Reviewer**: `Codex`  
-**Parent Status**: `review`  
+**Parent Status**: `review` (sidecar finalized 2026-04-20)  
 **Sidecar Task**: `LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-ACCEPTANCE`  
 **Sidecar Owner**: `Claude`  
 **Sidecar Reviewer**: `Codex`  
+**Sidecar Status**: `done` — review_approved by Codex; finalized by Claude  
 **Helper Kind**: `acceptance_packet`  
 **Generated**: `2026-04-20`
 
