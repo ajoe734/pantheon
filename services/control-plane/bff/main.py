@@ -5717,6 +5717,276 @@ async def get_research_analysis(
     return payload
 
 
+# --------------------------------------------------------------------------- #
+# RW-04 — Experiment Launch helpers
+# --------------------------------------------------------------------------- #
+
+_RW04_ALLOWED_STATUSES = {"queued", "running", "completed", "failed", "canceled"}
+_RW04_ALLOWED_EXECUTION_MODES = {"paper", "backtest", "simulation"}
+_RW04_ALLOWED_PRIORITIES = {"normal", "high"}
+
+
+def _rw04_validate_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _RW04_ALLOWED_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid experiment status",
+            f"status must be one of {sorted(_RW04_ALLOWED_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _rw04_surface_state(snapshot_at: str, *, has_data: Optional[bool] = None) -> str:
+    return _rw01_surface_state("research_experiments", snapshot_at=snapshot_at, has_data=has_data)
+
+
+def _rw04_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
+
+
+def _rw04_required_dict(payload: Dict[str, Any], field: str) -> Dict[str, Any]:
+    value = payload.get(field)
+    if not isinstance(value, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing or invalid field: {field}",
+            f"{field} must be an object",
+            precondition_failed=field,
+        )
+    return value
+
+
+def _rw04_validate_run_config(run_config: Dict[str, Any]) -> Dict[str, Any]:
+    dataset_ref = _rw04_required_text(run_config, "dataset_ref")
+    time_range = _rw04_required_dict(run_config, "time_range")
+    start_at = _rw04_required_text(time_range, "start_at")
+    end_at = _rw04_required_text(time_range, "end_at")
+    execution_mode = str(run_config.get("execution_mode") or "").strip().lower()
+    if execution_mode not in _RW04_ALLOWED_EXECUTION_MODES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid execution_mode",
+            f"execution_mode must be one of {sorted(_RW04_ALLOWED_EXECUTION_MODES)}",
+            precondition_failed="execution_mode",
+        )
+    priority = str(run_config.get("priority") or "normal").strip().lower()
+    if priority not in _RW04_ALLOWED_PRIORITIES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid priority",
+            f"priority must be one of {sorted(_RW04_ALLOWED_PRIORITIES)}",
+            precondition_failed="priority",
+        )
+    requested_by = _rw04_required_text(run_config, "requested_by")
+    return {
+        "dataset_ref": dataset_ref,
+        "time_range": {"start_at": start_at, "end_at": end_at},
+        "execution_mode": execution_mode,
+        "priority": priority,
+        "requested_by": requested_by,
+    }
+
+
+@app.post("/api/v1/experiments/launch")
+async def launch_experiment(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    ticket_id = _rw04_required_text(payload, "ticket_id")
+    experiment_name = _rw04_required_text(payload, "experiment_name")
+    strategy_selector = _rw04_required_dict(payload, "strategy_selector")
+    parameter_set = _rw04_required_dict(payload, "parameter_set")
+    run_config_raw = _rw04_required_dict(payload, "run_config")
+    run_config = _rw04_validate_run_config(run_config_raw)
+    launch_context_raw = payload.get("launch_context") or {}
+    analysis_refs = launch_context_raw.get("analysis_refs")
+    if analysis_refs is not None and not isinstance(analysis_refs, list):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid launch_context.analysis_refs",
+            "analysis_refs must be null or an array of strings",
+            precondition_failed="launch_context.analysis_refs",
+        )
+    launch_context = {"analysis_refs": list(analysis_refs) if analysis_refs is not None else None}
+
+    experiment = read_store.create_research_experiment(
+        ticket_id=ticket_id,
+        experiment_name=experiment_name,
+        strategy_selector=strategy_selector,
+        parameter_set=parameter_set,
+        run_config=run_config,
+        launch_context=launch_context,
+    )
+
+    experiment_id = experiment["experiment_id"]
+    return {
+        "experiment_id": experiment_id,
+        "ticket_id": experiment["ticket_id"],
+        "status": experiment["status"],
+        "queued_at": experiment["queued_at"],
+        "allowedActions": {"canCancel": True},
+        "links": {
+            "self": f"/api/v1/experiments/{experiment_id}",
+            "workbench_detail": f"/research/experiments/{experiment_id}",
+        },
+    }
+
+
+@app.get("/api/v1/experiments")
+async def list_experiments(
+    ticket_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_status: Optional[str] = None
+    if status is not None:
+        validated_status = _rw04_validate_status(status)
+
+    snapshot_at = utc_now()
+    items = read_store.list_research_experiments(
+        ticket_id=ticket_id,
+        status=validated_status,
+    )
+    total = len(items)
+    surface_state = _rw04_surface_state(snapshot_at)
+    if surface_state == "unavailable":
+        page_items: List[Dict[str, Any]] = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    for item in page_items:
+        exp_id = str(item.get("experiment_id") or "")
+        ticket_ref = str(item.get("ticket_id") or "")
+        item["links"] = {
+            "self": f"/api/v1/experiments/{exp_id}",
+            "workbench_detail": f"/research/experiments/{exp_id}",
+        }
+        item["allowedActions"] = {"canCancel": item.get("allowedActions", {}).get("canCancel", False)}
+        _ = ticket_ref
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"experiment_history": surface_state}
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/experiments/{experiment_id}")
+async def get_experiment(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    experiment = read_store.get_research_experiment(experiment_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    ticket_ref = str(experiment.get("ticket_id") or "")
+    payload = dict(experiment)
+    payload["links"] = {
+        "self": f"/api/v1/experiments/{experiment_id}",
+        "workbench_detail": f"/research/experiments/{experiment_id}",
+        "linked_ticket_detail": f"/research/tickets/{ticket_ref}",
+    }
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "experiment_status": _rw04_surface_state(snapshot_at, has_data=True),
+        },
+    }
+    return payload
+
+
+@app.post("/api/v1/experiments/{experiment_id}/cancel")
+async def cancel_experiment(
+    experiment_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required field: reason",
+            "reason must be a non-empty string",
+            precondition_failed="reason",
+        )
+
+    experiment = read_store.get_research_experiment(experiment_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+
+    status = str(experiment.get("status") or "")
+    if status not in {"queued", "running"}:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Experiment cannot be canceled",
+            f"Experiment {experiment_id} is in terminal state '{status}' and cannot be canceled",
+        )
+
+    canceled = read_store.cancel_research_experiment(experiment_id)
+    if not canceled:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Experiment cancel rejected",
+            f"Experiment {experiment_id} could not be canceled; it may have already reached a terminal state",
+        )
+
+    return {
+        "experiment_id": experiment_id,
+        "status": canceled["status"],
+        "completed_at": canceled["completed_at"],
+        "allowedActions": {"canCancel": False},
+    }
+
+
 def _kw01_surface_state(
     dataset: str,
     *,

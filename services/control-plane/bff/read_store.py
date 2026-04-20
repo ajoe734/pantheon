@@ -375,6 +375,13 @@ class ServiceBackedReadAdapter:
             "keys": ["adapter_id", "id"],
             "snapshot_key": "research_search_index",
         },
+        "consult_requests": {
+            "env": "PANTHEON_BFF_CONSULT_REQUEST_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["request_id", "id"],
+            "snapshot_key": "consult_requests",
+        },
     }
 
     def __init__(self, *, snapshot_path: Optional[Path] = None) -> None:
@@ -2414,6 +2421,85 @@ def _default_read_data() -> Dict[str, Any]:
                 },
             },
         },
+        "research_experiments": {
+            "exp-20260419-012": {
+                "experiment_id": "exp-20260419-012",
+                "ticket_id": "rt-20260419-007",
+                "experiment_name": "Momentum decay replay on March volatility cluster",
+                "status": "completed",
+                "queued_at": "2026-04-19T19:00:00Z",
+                "started_at": "2026-04-19T19:03:00Z",
+                "completed_at": "2026-04-19T20:15:00Z",
+                "progress": {"percent": 100, "phase": "aggregation", "message": "Aggregation complete."},
+                "strategy_selector": {"strategy_id": "strat-momentum-v4", "variant_id": "var-short-halflife"},
+                "parameter_set": {"half_life_days": 5, "rebalance_window": "2d", "signal_threshold": 0.62},
+                "run_config": {
+                    "dataset_ref": "equities-us-2026Q1",
+                    "time_range": {"start_at": "2026-03-01T00:00:00Z", "end_at": "2026-03-31T23:59:59Z"},
+                    "execution_mode": "backtest",
+                    "priority": "high",
+                    "requested_by": "persona-risk-chief",
+                },
+                "launch_context": {"analysis_refs": ["analysis-20260418-004-b"]},
+                "validation_warnings": [],
+                "artifact_ids": ["artifact-20260418-005", "artifact-20260419-014"],
+                "failure": {"reason_code": None, "message": None},
+                "allowedActions": {"canCancel": False},
+            },
+            "exp-20260418-009": {
+                "experiment_id": "exp-20260418-009",
+                "ticket_id": "rt-20260419-007",
+                "experiment_name": "Momentum decay baseline — short lookback variant",
+                "status": "running",
+                "queued_at": "2026-04-18T14:00:00Z",
+                "started_at": "2026-04-18T14:05:00Z",
+                "completed_at": None,
+                "progress": {"percent": 62, "phase": "signal_aggregation", "message": "Aggregating signal windows…"},
+                "strategy_selector": {"strategy_id": "strat-momentum-v4", "variant_id": "var-baseline"},
+                "parameter_set": {"half_life_days": 10, "rebalance_window": "3d", "signal_threshold": 0.58},
+                "run_config": {
+                    "dataset_ref": "equities-us-2026Q1",
+                    "time_range": {"start_at": "2026-02-01T00:00:00Z", "end_at": "2026-04-17T23:59:59Z"},
+                    "execution_mode": "backtest",
+                    "priority": "normal",
+                    "requested_by": "persona-risk-chief",
+                },
+                "launch_context": {"analysis_refs": None},
+                "validation_warnings": [
+                    {"code": "WIDE_DATE_RANGE", "message": "Date range exceeds 60 days; runtime may be elevated."}
+                ],
+                "artifact_ids": [],
+                "failure": {"reason_code": None, "message": None},
+                "allowedActions": {"canCancel": True},
+            },
+            "exp-20260417-004": {
+                "experiment_id": "exp-20260417-004",
+                "ticket_id": "rt-20260415-001",
+                "experiment_name": "Macro event signal quality — exclusion window test",
+                "status": "failed",
+                "queued_at": "2026-04-17T12:00:00Z",
+                "started_at": "2026-04-17T12:02:00Z",
+                "completed_at": "2026-04-17T12:07:00Z",
+                "progress": {"percent": None, "phase": None, "message": None},
+                "strategy_selector": {"strategy_id": "strat-macro-event-v2", "variant_id": None},
+                "parameter_set": {"exclusion_window_hrs": 4, "signal_min_quality": 0.70},
+                "run_config": {
+                    "dataset_ref": "equities-us-2026Q1",
+                    "time_range": {"start_at": "2026-01-01T00:00:00Z", "end_at": "2026-04-16T23:59:59Z"},
+                    "execution_mode": "simulation",
+                    "priority": "normal",
+                    "requested_by": "persona-risk-chief",
+                },
+                "launch_context": {"analysis_refs": None},
+                "validation_warnings": [],
+                "artifact_ids": [],
+                "failure": {
+                    "reason_code": "MISSING_DATA_PARTITION",
+                    "message": "Macro calendar partition for Q1 was missing from source snapshot.",
+                },
+                "allowedActions": {"canCancel": False},
+            },
+        },
         "research_search_documents": {
             "rt-20260419-007": {
                 "result_id": "rt-20260419-007",
@@ -2552,6 +2638,7 @@ class ReadSurfaceStore:
         "research_analyses": "research_analyses",
         "research_search_documents": "research_search_documents",
         "research_search_index": "research_search_index",
+        "consult_requests": "consult_requests",
     }
 
     def __init__(
@@ -3759,6 +3846,190 @@ class ReadSurfaceStore:
         if not analysis:
             return None
         return self._project_research_analysis_detail(analysis)
+
+    # ------------------------------------------------------------------ #
+    # Research Experiments (RW-04)
+    # ------------------------------------------------------------------ #
+
+    _RW04_TERMINAL_STATUSES = frozenset({"completed", "failed", "canceled"})
+    _RW04_CANCELABLE_STATUSES = frozenset({"queued", "running"})
+
+    @classmethod
+    def _rw04_can_cancel(cls, status: Optional[str]) -> bool:
+        return str(status or "").strip().lower() in cls._RW04_CANCELABLE_STATUSES
+
+    @classmethod
+    def _project_research_experiment_summary(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
+        status = str(exp.get("status") or "")
+        return {
+            "experiment_id": exp.get("experiment_id"),
+            "ticket_id": exp.get("ticket_id"),
+            "experiment_name": exp.get("experiment_name"),
+            "status": status,
+            "queued_at": exp.get("queued_at"),
+            "started_at": exp.get("started_at"),
+            "completed_at": exp.get("completed_at"),
+            "artifact_ids": list(exp.get("artifact_ids") or []),
+            "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
+        }
+
+    @classmethod
+    def _project_research_experiment_detail(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
+        status = str(exp.get("status") or "")
+        failure = exp.get("failure") or {}
+        progress = exp.get("progress") or {}
+        strategy_selector = exp.get("strategy_selector") or {}
+        run_config = exp.get("run_config") or {}
+        time_range = run_config.get("time_range") or {}
+        launch_context = exp.get("launch_context") or {}
+        return {
+            "experiment_id": exp.get("experiment_id"),
+            "ticket_id": exp.get("ticket_id"),
+            "experiment_name": exp.get("experiment_name"),
+            "status": status,
+            "queued_at": exp.get("queued_at"),
+            "started_at": exp.get("started_at"),
+            "completed_at": exp.get("completed_at"),
+            "progress": {
+                "percent": progress.get("percent"),
+                "phase": progress.get("phase"),
+                "message": progress.get("message"),
+            },
+            "strategy_selector": {
+                "strategy_id": strategy_selector.get("strategy_id"),
+                "variant_id": strategy_selector.get("variant_id"),
+            },
+            "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
+            "run_config": {
+                "dataset_ref": run_config.get("dataset_ref"),
+                "time_range": {
+                    "start_at": time_range.get("start_at"),
+                    "end_at": time_range.get("end_at"),
+                },
+                "execution_mode": run_config.get("execution_mode"),
+                "priority": run_config.get("priority"),
+                "requested_by": run_config.get("requested_by"),
+            },
+            "launch_context": {
+                "analysis_refs": (
+                    list(launch_context["analysis_refs"])
+                    if isinstance(launch_context.get("analysis_refs"), list)
+                    else None
+                ),
+            },
+            "validation_warnings": json.loads(json.dumps(exp.get("validation_warnings") or [])),
+            "artifact_ids": list(exp.get("artifact_ids") or []),
+            "failure": {
+                "reason_code": failure.get("reason_code"),
+                "message": failure.get("message"),
+            },
+            "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
+        }
+
+    def list_research_experiments(
+        self,
+        *,
+        ticket_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        experiments = list((self._local_fallback("research_experiments") or {}).values())
+        if ticket_id:
+            experiments = [
+                exp for exp in experiments
+                if str(exp.get("ticket_id") or "") == str(ticket_id)
+            ]
+        if status:
+            requested_status = str(status).strip().lower()
+            experiments = [
+                exp for exp in experiments
+                if str(exp.get("status") or "").strip().lower() == requested_status
+            ]
+        experiments.sort(
+            key=lambda exp: _parse_rfc3339(exp.get("queued_at")) or datetime.min,
+            reverse=True,
+        )
+        return [self._project_research_experiment_summary(exp) for exp in experiments]
+
+    def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not experiment_id:
+            return None
+        experiment = (self._local_fallback("research_experiments") or {}).get(experiment_id)
+        if not experiment:
+            return None
+        return self._project_research_experiment_detail(experiment)
+
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id: str,
+        experiment_name: str,
+        strategy_selector: Dict[str, Any],
+        parameter_set: Dict[str, Any],
+        run_config: Dict[str, Any],
+        launch_context: Dict[str, Any],
+        queued_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        experiments = self._local_fallback("research_experiments")
+        if experiments is None:
+            experiments = {}
+
+        timestamp = queued_at or _utc_now_rfc3339()
+        date_part = timestamp[:10].replace("-", "")
+        experiment_id = f"exp-{date_part}-{len(experiments) + 1:03d}"
+        while experiment_id in experiments:
+            experiment_id = f"exp-{date_part}-{len(experiments) + 2:03d}"
+
+        record: Dict[str, Any] = {
+            "experiment_id": experiment_id,
+            "ticket_id": ticket_id,
+            "experiment_name": experiment_name,
+            "status": "queued",
+            "queued_at": timestamp,
+            "started_at": None,
+            "completed_at": None,
+            "progress": {"percent": None, "phase": None, "message": None},
+            "strategy_selector": json.loads(json.dumps(strategy_selector)),
+            "parameter_set": json.loads(json.dumps(parameter_set)),
+            "run_config": json.loads(json.dumps(run_config)),
+            "launch_context": json.loads(json.dumps(launch_context)),
+            "validation_warnings": [],
+            "artifact_ids": [],
+            "failure": {"reason_code": None, "message": None},
+            "allowedActions": {"canCancel": True},
+        }
+
+        if isinstance(self._data.get("research_experiments"), dict):
+            self._data["research_experiments"][experiment_id] = record
+        else:
+            self._data.setdefault("research_experiments", {})[experiment_id] = record
+        self._save()
+        return self._project_research_experiment_detail(record)
+
+    def cancel_research_experiment(
+        self,
+        experiment_id: str,
+        *,
+        completed_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        experiments = self._local_fallback("research_experiments")
+        if experiments is None or experiment_id not in experiments:
+            return None
+
+        record = dict(json.loads(json.dumps(experiments[experiment_id])))
+        status = str(record.get("status") or "").strip().lower()
+        if status not in self._RW04_CANCELABLE_STATUSES:
+            return None
+
+        record["status"] = "canceled"
+        record["completed_at"] = completed_at or _utc_now_rfc3339()
+        record["allowedActions"] = {"canCancel": False}
+
+        if isinstance(self._data.get("research_experiments"), dict):
+            self._data["research_experiments"][experiment_id] = record
+        else:
+            self._data.setdefault("research_experiments", {})[experiment_id] = record
+        self._save()
+        return self._project_research_experiment_detail(record)
 
     def _read_dataset_records(self, dataset: str) -> List[Dict[str, Any]]:
         if dataset in ServiceBackedReadAdapter._DATASETS:
