@@ -90,4 +90,4 @@ After routes are live and verified, update `contract-ready.yaml` → `bff_route_
 | next-step note refreshed or precise blocker recorded | ✓ BLOCKED — BFF routes not implemented |
 | reviewable reactivation handoff created | ✓ this file |
 
-**Status: ready for Codex2 review.**
+**Status: review_approved — finalized done 2026-04-20.**
