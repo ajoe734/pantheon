@@ -46,6 +46,22 @@ def _seeded_client():
             bff_main.read_store = original_store
 
 
+@contextmanager
+def _no_fallback_client():
+    """Client with allow_local_snapshot_fallback=False — the production path."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        client = TestClient(bff_main.app)
+        try:
+            yield client
+        finally:
+            bff_main.read_store = original_store
+
+
 # ---------------------------------------------------------------------------
 # POST /api/v1/experiments/launch
 # ---------------------------------------------------------------------------
@@ -338,3 +354,65 @@ def test_rw04_canceled_experiment_is_not_cancelable_again() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert detail.json()["allowedActions"]["canCancel"] is False
+
+
+# ---------------------------------------------------------------------------
+# Non-fallback regression: production path (allow_local_snapshot_fallback=False)
+# ---------------------------------------------------------------------------
+
+def test_rw04_no_fallback_launch_list_detail_cancel_round_trip() -> None:
+    """With fallback disabled a launched experiment must be listable, fetchable, and cancelable."""
+    with _no_fallback_client() as client:
+        # Launch
+        launch_resp = client.post(
+            "/api/v1/experiments/launch",
+            json=LAUNCH_PAYLOAD,
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert launch_resp.status_code == 200, launch_resp.text
+        experiment_id = launch_resp.json()["experiment_id"]
+        assert launch_resp.json()["status"] == "queued"
+
+        # List must include the new experiment
+        list_resp = client.get("/api/v1/experiments", headers={"Authorization": OPERATOR_AUTH})
+        assert list_resp.status_code == 200, list_resp.text
+        ids = [item["experiment_id"] for item in list_resp.json()["data"]]
+        assert experiment_id in ids, f"{experiment_id} not found in list: {ids}"
+
+        # Detail must be fetchable
+        detail_resp = client.get(
+            f"/api/v1/experiments/{experiment_id}",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        assert detail_resp.json()["status"] == "queued"
+        assert detail_resp.json()["allowedActions"]["canCancel"] is True
+
+        # Cancel must succeed
+        cancel_resp = client.post(
+            f"/api/v1/experiments/{experiment_id}/cancel",
+            json={"reason": "Non-fallback path regression test"},
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert cancel_resp.status_code == 200, cancel_resp.text
+        assert cancel_resp.json()["status"] == "canceled"
+        assert cancel_resp.json()["allowedActions"]["canCancel"] is False
+
+        # Post-cancel detail must reflect terminal state
+        post_cancel_detail = client.get(
+            f"/api/v1/experiments/{experiment_id}",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert post_cancel_detail.status_code == 200
+        assert post_cancel_detail.json()["status"] == "canceled"
+        assert post_cancel_detail.json()["allowedActions"]["canCancel"] is False
+
+
+def test_rw04_no_fallback_missing_experiment_returns_404() -> None:
+    with _no_fallback_client() as client:
+        resp = client.get(
+            "/api/v1/experiments/exp-does-not-exist",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"

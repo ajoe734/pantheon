@@ -268,6 +268,13 @@ class ServiceBackedReadAdapter:
             "keys": ["session_id", "id"],
             "snapshot_key": "teaching_sessions",
         },
+        "trainer_previews": {
+            "env": "PANTHEON_BFF_TRAINER_PREVIEW_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["session_id", "id"],
+            "snapshot_key": "trainer_previews",
+        },
         "consultation_sessions": {
             "env": "PANTHEON_BFF_CONSULTATION_SESSION_STORE",
             "dirs": (),
@@ -717,6 +724,268 @@ def _default_read_data() -> Dict[str, Any]:
                 ],
                 "topic": "drawdown containment coaching",
                 "outcomes": ["teaching-complete"],
+            },
+        },
+        "trainer_previews": {
+            "trn-20260419-001": {
+                "session_id": "trn-20260419-001",
+                "latest_eval_id": "teval-20260419-014",
+                "evaluations": {
+                    "teval-20260419-014": {
+                        "session_id": "trn-20260419-001",
+                        "status": "complete",
+                        "eval_id": "teval-20260419-014",
+                        "baseline_snapshot_at": "2026-04-19T19:43:30Z",
+                        "candidate_snapshot_at": "2026-04-19T19:48:00Z",
+                        "control_diff": [
+                            {
+                                "control_id": "ctrl-reversal-threshold",
+                                "parameter_key": "reversal_threshold",
+                                "display_label": "Reversal Threshold",
+                                "previous_value": 0.65,
+                                "new_value": 0.9,
+                                "unit": "score",
+                                "last_modified_at": "2026-04-19T19:45:12Z",
+                            },
+                            {
+                                "control_id": "ctrl-hold-bars",
+                                "parameter_key": "minimum_hold_bars",
+                                "display_label": "Minimum Hold Bars",
+                                "previous_value": 3,
+                                "new_value": 4,
+                                "unit": "bars",
+                                "last_modified_at": "2026-04-19T19:43:30Z",
+                            },
+                        ],
+                        "metric_delta": [
+                            {
+                                "metric_key": "event_window_reversal_rate",
+                                "display_label": "Event Window Reversal Rate",
+                                "baseline_value": 0.31,
+                                "candidate_value": 0.22,
+                                "delta": -0.09,
+                                "delta_pct": -29.03,
+                                "unit": "ratio",
+                                "direction": "improved",
+                            },
+                            {
+                                "metric_key": "sponsor_alignment_score",
+                                "display_label": "Sponsor Alignment Score",
+                                "baseline_value": 0.74,
+                                "candidate_value": 0.81,
+                                "delta": 0.07,
+                                "delta_pct": 9.46,
+                                "unit": "score",
+                                "direction": "improved",
+                            },
+                            {
+                                "metric_key": "latency_to_recover_after_false_break",
+                                "display_label": "False-Break Recovery Latency",
+                                "baseline_value": 3.2,
+                                "candidate_value": 3.6,
+                                "delta": 0.4,
+                                "delta_pct": 12.5,
+                                "unit": "bars",
+                                "direction": "regressed",
+                            },
+                        ],
+                        "warnings": [
+                            {
+                                "warning_id": "warn-preview-20260419-001",
+                                "warning_code": "upper_bound_pressure",
+                                "level": "high",
+                                "parameter_key": "reversal_threshold",
+                                "metric_key": "latency_to_recover_after_false_break",
+                                "message": "The candidate pushes reversal sensitivity near the upper bound and increases false-break recovery latency.",
+                                "impact_summary": "Recovery remains slower in thin-liquidity regimes even though immediate reversal rate improves.",
+                            },
+                            {
+                                "warning_id": "warn-preview-20260419-002",
+                                "warning_code": "limited_regime_coverage",
+                                "level": "medium",
+                                "parameter_key": None,
+                                "metric_key": "sponsor_alignment_score",
+                                "message": "Rapid-eval coverage is directional only for the last two FOMC surprise windows.",
+                                "impact_summary": "Preview is useful for operator review, but the sample is not broad enough for unattended promotion.",
+                            },
+                            {
+                                "warning_id": "warn-preview-20260419-003",
+                                "warning_code": "spread_gate_note",
+                                "level": "informational",
+                                "parameter_key": "spread_regime_gate",
+                                "metric_key": None,
+                                "message": "Spread regime gate remains unchanged from the current baseline.",
+                                "impact_summary": "No additional gating was introduced for stable spread sessions.",
+                            },
+                        ],
+                        "warning_count_by_level": {
+                            "critical": 0,
+                            "high": 1,
+                            "medium": 1,
+                            "informational": 1,
+                        },
+                        "preview_quality": "directional_only",
+                        "allowedActions": {
+                            "canRefreshPreview": True,
+                        },
+                        "polling": {
+                            "enabled": False,
+                            "poll_interval_ms": 3000,
+                            "max_wait_ms": 45000,
+                            "deadline_at": None,
+                        },
+                        "degraded_copy": None,
+                        "meta": {
+                            "snapshot_at": "2026-04-19T19:48:04Z",
+                            "surfaces": {
+                                "trainer_preview": "ok",
+                            },
+                        },
+                    },
+                    "teval-20260419-015": {
+                        "session_id": "trn-20260419-001",
+                        "status": "pending",
+                        "eval_id": "teval-20260419-015",
+                        "baseline_snapshot_at": "2026-04-19T19:43:30Z",
+                        "candidate_snapshot_at": "2026-04-19T19:50:00Z",
+                        "control_diff": [
+                            {
+                                "control_id": "ctrl-reversal-threshold",
+                                "parameter_key": "reversal_threshold",
+                                "display_label": "Reversal Threshold",
+                                "previous_value": 0.65,
+                                "new_value": 0.85,
+                                "unit": "score",
+                                "last_modified_at": "2026-04-19T19:50:00Z",
+                            },
+                        ],
+                        "metric_delta": [],
+                        "warnings": [],
+                        "warning_count_by_level": {
+                            "critical": 0,
+                            "high": 0,
+                            "medium": 0,
+                            "informational": 0,
+                        },
+                        "preview_quality": "directional_only",
+                        "allowedActions": {
+                            "canRefreshPreview": False,
+                        },
+                        "polling": {
+                            "enabled": True,
+                            "poll_interval_ms": 3000,
+                            "max_wait_ms": 45000,
+                            "deadline_at": "2026-04-19T19:50:45Z",
+                        },
+                        "degraded_copy": {
+                            "title": "Trainer preview is still running",
+                            "body": "Pantheon is evaluating the current trainer candidate. Keep the compare surface open and poll again after the published interval.",
+                        },
+                        "meta": {
+                            "snapshot_at": "2026-04-19T19:50:03Z",
+                            "surfaces": {
+                                "trainer_preview": "ok",
+                            },
+                        },
+                    },
+                    "teval-20260419-016": {
+                        "session_id": "trn-20260419-001",
+                        "status": "failed",
+                        "eval_id": "teval-20260419-016",
+                        "baseline_snapshot_at": "2026-04-19T19:43:30Z",
+                        "candidate_snapshot_at": "2026-04-19T19:51:10Z",
+                        "control_diff": [
+                            {
+                                "control_id": "ctrl-hold-bars",
+                                "parameter_key": "minimum_hold_bars",
+                                "display_label": "Minimum Hold Bars",
+                                "previous_value": 3,
+                                "new_value": 5,
+                                "unit": "bars",
+                                "last_modified_at": "2026-04-19T19:51:10Z",
+                            },
+                        ],
+                        "metric_delta": [],
+                        "warnings": [],
+                        "warning_count_by_level": {
+                            "critical": 0,
+                            "high": 0,
+                            "medium": 0,
+                            "informational": 0,
+                        },
+                        "preview_quality": "insufficient_data",
+                        "allowedActions": {
+                            "canRefreshPreview": False,
+                        },
+                        "polling": {
+                            "enabled": False,
+                            "poll_interval_ms": 3000,
+                            "max_wait_ms": 45000,
+                            "deadline_at": None,
+                        },
+                        "degraded_copy": {
+                            "title": "Trainer preview could not complete",
+                            "body": "Pantheon could not finish the rapid-eval for this candidate. Review the current control diff, then retry the preview when the compare surface is healthy.",
+                        },
+                        "meta": {
+                            "snapshot_at": "2026-04-19T19:51:22Z",
+                            "surfaces": {
+                                "trainer_preview": "degraded",
+                            },
+                        },
+                    },
+                },
+            },
+            "trn-20260418-003": {
+                "session_id": "trn-20260418-003",
+                "latest_eval_id": None,
+                "evaluations": {},
+                "preview": {
+                    "session_id": "trn-20260418-003",
+                    "status": "preview_unavailable",
+                    "eval_id": None,
+                    "baseline_snapshot_at": "2026-04-18T08:35:00Z",
+                    "candidate_snapshot_at": "2026-04-18T08:40:00Z",
+                    "control_diff": [
+                        {
+                            "control_id": "ctrl-reversal-threshold",
+                            "parameter_key": "reversal_threshold",
+                            "display_label": "Reversal Threshold",
+                            "previous_value": 0.65,
+                            "new_value": 0.8,
+                            "unit": "score",
+                            "last_modified_at": "2026-04-18T08:40:00Z",
+                        },
+                    ],
+                    "metric_delta": [],
+                    "warnings": [],
+                    "warning_count_by_level": {
+                        "critical": 0,
+                        "high": 0,
+                        "medium": 0,
+                        "informational": 0,
+                    },
+                    "preview_quality": "not_available",
+                    "allowedActions": {
+                        "canRefreshPreview": False,
+                    },
+                    "polling": {
+                        "enabled": False,
+                        "poll_interval_ms": 3000,
+                        "max_wait_ms": 45000,
+                        "deadline_at": None,
+                    },
+                    "degraded_copy": {
+                        "title": "Trainer preview is temporarily unavailable",
+                        "body": "Pantheon cannot serve rapid-eval results for the trainer compare surface right now. Control changes remain visible, but before/after metrics are temporarily unavailable.",
+                    },
+                    "meta": {
+                        "snapshot_at": "2026-04-18T08:40:07Z",
+                        "surfaces": {
+                            "trainer_preview": "degraded",
+                        },
+                    },
+                },
             },
         },
         "runtime_bindings": {
@@ -2611,6 +2880,7 @@ class ReadSurfaceStore:
         "sessions": "sessions",
         "capability_snapshots": "capability_snapshots",
         "teaching_sessions": "teaching_sessions",
+        "trainer_previews": "trainer_previews",
         "consultation_sessions": "consultation_sessions",
         "consult_policies": "consult_policies",
         "incidents": "incidents",
@@ -2704,6 +2974,8 @@ class ReadSurfaceStore:
         default_research_search_index = default_data.get("research_search_index", {})
         inspiration_graphs = self._data.get("inspiration_graphs")
         default_inspiration_graphs = default_data.get("inspiration_graphs", {})
+        trainer_previews = self._data.get("trainer_previews")
+        default_trainer_previews = default_data.get("trainer_previews", {})
 
         if isinstance(deployment_plans, dict):
             for plan_id, default_plan in default_plans.items():
@@ -2859,6 +3131,15 @@ class ReadSurfaceStore:
             for artifact_id, default_graph in default_inspiration_graphs.items():
                 if artifact_id not in inspiration_graphs:
                     inspiration_graphs[artifact_id] = json.loads(json.dumps(default_graph))
+                    changed = True
+
+        if trainer_previews is None:
+            self._data["trainer_previews"] = json.loads(json.dumps(default_trainer_previews))
+            changed = True
+        elif isinstance(trainer_previews, dict):
+            for session_id, default_preview in default_trainer_previews.items():
+                if session_id not in trainer_previews:
+                    trainer_previews[session_id] = json.loads(json.dumps(default_preview))
                     changed = True
 
         return changed
@@ -3926,13 +4207,26 @@ class ReadSurfaceStore:
             "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
         }
 
+    def _research_experiments_store(self) -> Dict[str, Any]:
+        """Return the live experiment store regardless of fallback setting.
+
+        Uses the service-backed snapshot (same on-disk file create/cancel write
+        to) so launch→list/detail/cancel round-trip works with fallback=False.
+        Falls through to the in-memory dict so experiments created in the same
+        process are always visible before the file-cache is flushed.
+        """
+        available, records = self._service.list_records("research_experiments")
+        if available:
+            return {str(r.get("experiment_id") or r.get("id") or ""): r for r in records}
+        return self._data.get("research_experiments") or {}
+
     def list_research_experiments(
         self,
         *,
         ticket_id: Optional[str] = None,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        experiments = list((self._local_fallback("research_experiments") or {}).values())
+        experiments = list(self._research_experiments_store().values())
         if ticket_id:
             experiments = [
                 exp for exp in experiments
@@ -3953,7 +4247,10 @@ class ReadSurfaceStore:
     def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not experiment_id:
             return None
-        experiment = (self._local_fallback("research_experiments") or {}).get(experiment_id)
+        available, record = self._service.record("research_experiments", experiment_id)
+        if available:
+            return self._project_research_experiment_detail(record) if record else None
+        experiment = (self._data.get("research_experiments") or {}).get(experiment_id)
         if not experiment:
             return None
         return self._project_research_experiment_detail(experiment)
@@ -3969,9 +4266,7 @@ class ReadSurfaceStore:
         launch_context: Dict[str, Any],
         queued_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        experiments = self._local_fallback("research_experiments")
-        if experiments is None:
-            experiments = {}
+        experiments = self._data.get("research_experiments") or {}
 
         timestamp = queued_at or _utc_now_rfc3339()
         date_part = timestamp[:10].replace("-", "")
@@ -4011,8 +4306,8 @@ class ReadSurfaceStore:
         *,
         completed_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        experiments = self._local_fallback("research_experiments")
-        if experiments is None or experiment_id not in experiments:
+        experiments = self._data.get("research_experiments") or {}
+        if experiment_id not in experiments:
             return None
 
         record = dict(json.loads(json.dumps(experiments[experiment_id])))
