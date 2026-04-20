@@ -1,0 +1,49 @@
+feature_id: TW-01-teaching-dialog
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f
+screen: teaching-dialog
+blocking: false
+
+summary: >-
+  TW-01 Teaching Dialog UI implemented with pending-BFF placeholder. Routes
+  /trainer/sessions and /trainer/sessions/:session_id registered. All four BFF
+  endpoints wired via tw01Api in bffClient.ts. UI shows non-dismissable
+  pending-BFF banner until Pantheon confirms routes are live. Session composer
+  includes optional context_refs[] aligned to the published create contract.
+  Feedback bundle published at docs/pantheon-feedback/TW-01-teaching-dialog/.
+
+changed_files:
+  - src/pages/trainer/TeachingDialogList.tsx
+  - src/pages/trainer/TeachingDialogDetail.tsx
+  - src/pages/trainer/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+
+bff_pending_routes:
+  - POST /api/v1/trainer/sessions
+  - GET /api/v1/trainer/sessions
+  - GET /api/v1/trainer/sessions/{session_id}
+  - POST /api/v1/trainer/sessions/{session_id}/message
+
+activation_note: >-
+  Set BFF_PENDING = false in TeachingDialogList.tsx and TeachingDialogDetail.tsx
+  once Pantheon confirms all four TW-01 routes are live and returning the
+  published field shape.
+
+follow_up_requested:
+  - Pantheon to confirm TW-01 BFF routes are live and returning the published field shape
+  - Remove BFF_PENDING gate and run full integration QA once routes are live
+  - Emit a bff-gap handoff if any required fields are absent from live responses
+
+feedback_bundle:
+  - docs/pantheon-feedback/TW-01-teaching-dialog/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-01-teaching-dialog/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-01-teaching-dialog/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-01-teaching-dialog/QA_STATUS.md
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
