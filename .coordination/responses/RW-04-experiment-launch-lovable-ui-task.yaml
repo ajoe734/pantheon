@@ -1,0 +1,47 @@
+feature_id: RW-04-experiment-launch
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: null
+screen: experiment-launch
+screen_id: null
+ui_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
+frontend_change_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- POST /api/v1/experiments/launch
+- GET /api/v1/experiments
+- GET /api/v1/experiments/{experiment_id}
+- POST /api/v1/experiments/{experiment_id}/cancel
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- launch experiments via POST /api/v1/experiments/launch only
+- poll async state through GET /api/v1/experiments/{experiment_id}
+- render status badges from the published state machine vocabulary exactly
+- surface cancel CTA only when allowedActions.canCancel is true
+- do not synthesize experiment state from ticker data or local timers
+- emit a bff-gap handoff if any required field is absent
+required_feedback:
+- docs/pantheon-feedback/RW-04-experiment-launch/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/RW-04-experiment-launch/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/RW-04-experiment-launch/UI_DECISIONS.md
+- docs/pantheon-feedback/RW-04-experiment-launch/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/RW-04-experiment-launch-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/RW-04-experiment-launch.md
+  ui_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
+  frontend_change_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/RW-04-experiment-launch.json
+  handoff_bundle_dir: docs/pantheon-handoffs/RW-04-experiment-launch
+gap_handoff_path: .coordination/requests/RW-04-experiment-launch-bff-gap.yaml
+gap_handoff_template: .coordination/requests/RW-04-experiment-launch-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/RW-04-experiment-launch-ui-done.yaml
+completion_handoff_template: .coordination/requests/RW-04-experiment-launch-ui-done.example.yaml

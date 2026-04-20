@@ -2,7 +2,7 @@
 
 ## Status
 
-**Contract published** — the experiment launch request, async run lifecycle, history ledger, cancel authority, and status payload are now the definitive implementation target for the Pantheon BFF. UI work must not start until Pantheon confirms the routes are live and returning this field shape.
+**Routes live** — all four experiment launch routes (`POST /api/v1/experiments/launch`, `GET /api/v1/experiments`, `GET /api/v1/experiments/{experiment_id}`, `POST /api/v1/experiments/{experiment_id}/cancel`) are confirmed live as of 2026-04-20T12:45:00Z and returning the published field shape. Frontend handoff bundle published at `docs/pantheon-handoffs/RW-04-experiment-launch/`. UI implementation may proceed.
 
 Task: `RW-04-EXPERIMENT-001`
 

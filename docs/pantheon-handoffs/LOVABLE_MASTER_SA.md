@@ -336,12 +336,12 @@ Evolution Workbench bridges incident evidence, lineage, and governed follow-up.
 | `EW-02 Evolution Center` | evolution decision browse and detail | board or list-detail | ready via `PKT-003` |
 | `EW-03 Lineage View` | lineage graph and edge detail | graph plus inspector | ready via `PKT-003` |
 | `EW-04 Inspiration Graph` | artifact-centered inspiration graph | graph plus strategy-tag rail | pending-bff — contract published via `EW-04-OPEN-001`; activates once BFF route is live |
-| `EW-05 Mutation Review` | approve or reject mutation follow-up | high-focus evidence review page | pending-bff — contract published via `EW-05-OPEN-001`; activates once BFF route and command vocabulary are live |
+| `EW-05 Mutation Review` | approve or reject mutation follow-up | high-focus evidence review page | ready — contract and live BFF route/command vocabulary are aligned; implement against the published handoff bundle |
 
 ### Design intent
 
 The first three modules are the read-only evidence baseline.
-The last two modules must not be implemented as production screens until Pantheon confirms their BFF routes are live.
+`EW-04` still waits on a live BFF route; `EW-05` may now be implemented as a production screen against the live handoff bundle.
 
 ## 6.5 Research Workbench
 
@@ -362,7 +362,7 @@ Research Workbench is for creating and moving research work through a governed r
 | `RW-01 Research Ticket` | ticket list, detail, lifecycle | list-detail | blocked |
 | `RW-02 Search` | backend-owned search corpus | search page with filter rail | blocked |
 | `RW-03 Analyze` | analysis results and grouped metrics | detail plus compare panels | blocked |
-| `RW-04 Experiment Launch` | launch async runs and inspect status | wizard or form plus status board | blocked |
+| `RW-04 Experiment Launch` | launch async runs and inspect status | wizard or form plus status board | **ready** — routes live; handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
 | `RW-05 Artifact Compare` | compare versioned artifacts | compare surface | blocked |
 
 ### Design intent
@@ -441,10 +441,10 @@ Trainer Workbench is for persona coaching and controlled parameter adjustment.
 
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
-| `TW-01 Teaching Dialog` | training-session chat and status | transcript plus control sidebar | blocked |
-| `TW-02 Parameter Controls` | inspect and patch controls | form plus diff rail | blocked |
-| `TW-03 Before/After Compare` | preview deltas and warnings | compare page | blocked |
-| `TW-04 Teaching Replay` | replay finished session and commit or discard | timeline plus evidence drawer | blocked |
+| `TW-01 Teaching Dialog` | training-session chat and status | transcript plus control sidebar | pending-bff — contract published; activates once the BFF routes are live |
+| `TW-02 Parameter Controls` | inspect and patch controls | form plus diff rail | pending-bff — contract published; activates once the BFF routes are live |
+| `TW-03 Before/After Compare` | preview deltas and warnings | compare page | pending-bff — contract published; activates once the BFF routes are live |
+| `TW-04 Teaching Replay` | replay finished session and commit or discard | timeline plus evidence drawer | pending-bff — contract published; activates once the BFF routes are live |
 
 ### Design intent
 

@@ -106,9 +106,9 @@ Pantheon
 | `Governance` | review, approval, diff, rollback, audit, promotion | ready / contract-ready |
 | `Evolution` | post-incident, evolution decision, lineage, future mutation review | baseline ready + EW-04/EW-05 route-live |
 | `Persona` | persona, sessions, teaching, capabilities, capital, bindings | ready |
-| `Research` | tickets, search, analysis, experiments, artifact compare | RW-01–03 route-live; RW-04 contract-published; RW-05 blocked |
+| `Research` | tickets, search, analysis, experiments, artifact compare | RW-01–04 route-live; RW-05 blocked |
 | `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01 route-live; KW-02–05 blocked / module-gated |
-| `Consultation` | request, transcript, committee board, red-team memo | overview route live; CW-03 route-live but module-gated |
+| `Consultation` | request, transcript, committee board, red-team memo | overview route live; CW-01 route-live with current front follow-up; CW-03 route-live but module-gated |
 | `Trainer` | teaching dialog, controls, compare, replay | TW-01 route-live; TW-02–04 contract-published |
 
 ---
@@ -301,8 +301,6 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/knowledge/strategy-specs` | Strategy Spec List | Knowledge | blocked shell only |
 | `/knowledge/strategy-specs/:strategy_id` | Strategy Spec Detail | Knowledge | blocked shell only |
 | `/knowledge/strategy-specs/:strategy_id/compare` | Strategy Spec Compare | Knowledge | blocked shell only |
-| `/consultation/requests` | Consult Request | Consultation | blocked shell only |
-| `/consultation/requests/:request_id` | Consult Request Detail | Consultation | blocked shell only |
 | `/consultation/transcripts/:session_id` | Debate Transcript | Consultation | blocked shell only |
 | `/consultation/committees` | Committee Board | Consultation | module-gated: BFF route live, but production handoff must wait for CW-01/CW-02 |
 | `/consultation/committees/:committee_id` | Committee Detail | Consultation | module-gated: BFF route live, but production handoff must wait for CW-01/CW-02 |
@@ -576,7 +574,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | Research Ticket Detail | `/research/tickets/:ticket_id` | `RW-01` | contract-ready | implement against the live BFF route; module backlog still open for truth-hardening |
 | Search | `/research/search` | `RW-02` | contract-ready | implement against the live BFF route and index-adapter metadata |
 | Analyze | `/research/analyze` | `RW-03` | contract-ready | implement against the live BFF route; module backlog still open for truth-hardening |
-| Experiment Launch / History | `/research/experiments` | `RW-04` | contract-published | pending-bff placeholder only |
+| Experiment Launch / History | `/research/experiments` | `RW-04` | **route-live** | implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
 | Artifact Compare | `/research/compare` | `RW-05` | blocked | shell-only |
 
 ### 11.3 頁面定義
@@ -617,7 +615,8 @@ Lovable 應先做以下 primitive，再做頁面：
 - 目標頁面：launch form、async status、run history、run detail
 - 期待 BFF：launch route、experiment state machine、status route、cancel authority
 - 契約狀態：`docs/bff/RW-04-experiment-launch.md` 已發布 `POST /api/v1/experiments/launch`、`GET /api/v1/experiments/{experiment_id}`、`GET /api/v1/experiments`、`POST /api/v1/experiments/{experiment_id}/cancel`、async state machine、durable history ledger、`allowedActions.canCancel`、degradation semantics。
-- 現在可做：明確 pending-bff placeholder；等待 live BFF routes 對齊 published contract。
+- BFF 狀態：四條 routes 已 live（2026-04-20）；`allowedActions.canCancel` 與 async state machine 已確認 live。
+- 現在可做：依 `docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md` 實作 launch form、async status、run history、run detail。
 - 不可做：假進度條、假 async state machine、從 live worker/runtime 推斷 run history、或依 `status` 自己判定 cancel authority。
 
 #### 11.3.6 RW-05 Artifact Compare
@@ -707,8 +706,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Consultation Overview | `/consultation` | `PKT-consultation-workbench` | overview-only | 可正式做 |
-| Consult Request List / Composer | `/consultation/requests` | `CW-01` | contract-published | pending-bff placeholder only |
-| Consult Request Detail | `/consultation/requests/:request_id` | `CW-01` | contract-published | pending-bff placeholder only |
+| Consult Request List / Composer | `/consultation/requests` | `CW-01` | contract-ready | live BFF route; current returned UI still needs truthful republish and Pantheon follow-up fixes |
+| Consult Request Detail | `/consultation/requests/:request_id` | `CW-01` | contract-ready | live BFF route; current returned UI still needs truthful republish and Pantheon follow-up fixes |
 | Debate Transcript | `/consultation/transcripts/:session_id` | `CW-02` | blocked | shell-only |
 | Committee Board | `/consultation/committees` | `CW-03` | blocked (module-gated) | BFF route live, but do not hand off production UI before CW-01/CW-02 close |
 | Committee Detail | `/consultation/committees/:committee_id` | `CW-03` | blocked (module-gated) | BFF route live, but do not hand off production UI before CW-01/CW-02 close |
@@ -728,7 +727,8 @@ Lovable 應先做以下 primitive，再做頁面：
 - 目標頁面：request composer、request list、request detail、cancel path、request-to-session status
 - 已發布 contract：`docs/bff/CW-01-consult-request.md`、`docs/screens/CW-01-consult-request.md`、`docs/examples/CW-01-consult-request.json`
 - 前端 handoff：`docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md`
-- 目前 gate：BFF 必須先讓 create/list/detail/cancel routes 上線並回傳已發布 field shape
+- 契約狀態：create/list/detail/cancel routes 已 live，且當前 Pantheon workspace 透過 CW-01 contract test 與 example-payload smoke 驗證通過
+- 目前 gate：前端這一輪 returned UI 尚未可結案；必須從一個真實 Git-visible front commit 重新發布 `ui-done` + `frontend-feedback`，並補齊 `context_refs[]`、degraded empty-state、degraded cancel gating、與 list row `target_type` 顯示
 
 #### 13.3.3 CW-02 Debate Transcript
 
@@ -740,7 +740,7 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：board list、participant roster、escalation reason、sponsor decision、synthesis summary
 - 契約狀態：`GET /api/v1/committees`、`GET /api/v1/committees/{committee_id}` 與 sponsor decision authority 已 live
-- 目前 gate：雖然 committee routes 已存在，但 consultation overview truth 仍把 CW-03 視為 module-gated，因為 `CW-01` request identity 與 `CW-02` transcript ordering 尚未 live
+- 目前 gate：雖然 committee routes 已存在，但 consultation overview truth 仍把 CW-03 視為 module-gated，因為 `CW-02` transcript ordering 尚未 live，且 `CW-01` 前端 loop 仍在 follow-up 中
 - shell / gated 階段：不可從 participant votes 自己算 verdict，也不可把 committee routes 的存在誤讀成整個 Consultation Workbench 已 ready
 
 #### 13.3.5 CW-04 Red-team Memo

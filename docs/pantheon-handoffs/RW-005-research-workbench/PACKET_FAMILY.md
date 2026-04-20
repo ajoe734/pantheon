@@ -5,7 +5,7 @@
 - Packet family ID: `RW-005`
 - Workbench: Research Workbench
 - Phase origin: `BP5-WB-005`
-- Lovable readiness: **partial** — RW-01 Research Ticket contract published via `RW-01-FOUNDATION-001`, RW-02 Search contract published via `RW-02-SEARCH-001`; remaining three modules still lack canonical BFF routes; Lovable handoff must not open for any module until its own BFF prerequisites are satisfied
+- Lovable readiness: **partial** — RW-01 Research Ticket routes live; RW-02 Search routes live; RW-03 Analyze routes live; RW-04 Experiment Launch routes live (handoff bundle published 2026-04-20); RW-05 Artifact Compare contract published via `RW-05-ARTIFACT-COMPARE-001` — BFF implementation still pending; Lovable handoff must not open for RW-05 until its own BFF prerequisites are satisfied
 - Recommended wave: Wave 3 — after Operator Console (Wave 1–2) and Persona Workbench (Wave 1–2) packetization are settled
 - Reviewer: Codex
 
@@ -24,8 +24,8 @@ Give researchers one coherent workbench for creating and tracking research ticke
 | `RW-01` | Research Ticket | ticket list, ticket detail, lifecycle state machine | contract-published — pending BFF implementation | Wave 3 — 1st |
 | `RW-02` | Search | query input, result list, filter rail, result drilldown | contract-published — pending BFF implementation | Wave 3 — 2nd |
 | `RW-03` | Analyze | analysis result view, metric aggregation, comparative summary | contract-published — pending BFF implementation | Wave 3 — 3rd |
-| `RW-04` | Experiment Launch | launch form, parameter inputs, async run status, run history | not ready | Wave 3 — 4th |
-| `RW-05` | Artifact Compare | artifact selector, version diff view, side-by-side compare | not ready | Wave 3 — 5th |
+| `RW-04` | Experiment Launch | launch form, parameter inputs, async run status, run history | **route-live — ready for Lovable implementation** | Wave 3 — 4th |
+| `RW-05` | Artifact Compare | artifact selector, version diff view, side-by-side compare | contract-published — pending BFF implementation | Wave 3 — 5th |
 
 ---
 
@@ -128,19 +128,19 @@ The research result payload contract (metric keys, aggregation shape, comparison
 
 | Route | Status | Notes |
 |---|---|---|
-| `POST /api/v1/experiments/launch` | **missing** | launch route; must define input parameter schema, validation rules, and initial response with `experiment_id` and `status: queued` |
-| `GET /api/v1/experiments/{experiment_id}` | **missing** | run detail and status route; must expose `status`, `progress`, `artifact_ids`, `allowedActions.canCancel`, and `meta.surfaces.experiment_status` |
-| `GET /api/v1/experiments` | **missing** | run history list route; must support `ticket_id`, `status`, `page_token`, `page_size` |
-| `POST /api/v1/experiments/{experiment_id}/cancel` | **missing** | cancel command route; must be backed by `allowedActions.canCancel` signal |
-| Experiment state machine | **missing** | BFF-side experiment lifecycle (`queued → running → completed | failed | canceled`); must be explicit so the UI can map states to display copy |
+| `POST /api/v1/experiments/launch` | **live** | route live and returning published field shape as of `2026-04-20T12:45:00Z` |
+| `GET /api/v1/experiments/{experiment_id}` | **live** | detail/status route, durable progress payload, `artifact_ids`, `allowedActions.canCancel`, and `meta.surfaces.experiment_status` live |
+| `GET /api/v1/experiments` | **live** | run history list route, pagination, and `meta.surfaces.experiment_history` live; persisted run records confirmed |
+| `POST /api/v1/experiments/{experiment_id}/cancel` | **live** | cancel command route live; `allowedActions.canCancel` gating confirmed |
+| Experiment state machine | **live** | BFF-owned lifecycle (`queued → running → completed | failed | canceled`) and cancel authority semantics confirmed live |
 
 ### Packetization prerequisite
 
-The launch request contract (input parameters, validation rules, async status polling, and `allowedActions.canCancel`) must be agreed as canonical BFF truth before this screen can be packet-defined. Depends on Research Ticket (`RW-01`) for lineage tracking and Analyze (`RW-03`) for feeding result context into launch configuration.
+All four RW-04 routes are live and returning the published field shape. The frontend handoff bundle is published at `docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md`. The coordination bundle (`contract-ready` + `lovable-ui-task`) is ready.
 
 ### Lovable readiness gate
 
-`false` — the launch route, experiment state machine, run status route, and `allowedActions.canCancel` shape must all be implemented and field shapes locked before a screen spec can be opened.
+`route-live` — all four routes are live, `allowedActions.canCancel` is wired, and the frontend handoff bundle is published. Lovable UI implementation may begin.
 
 ---
 
@@ -158,18 +158,18 @@ The launch request contract (input parameters, validation rules, async status po
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/artifacts` | **missing** | artifact registry list route; must support `experiment_id`, `ticket_id`, `version`, `page_token`, `page_size` |
-| `GET /api/v1/artifacts/{artifact_id}` | **missing** | artifact detail route; must expose version, provenance (linked experiment, ticket), metric summary, and lineage refs |
-| `GET /api/v1/artifacts/compare` | **missing** | comparison diff route; must accept two or more `artifact_id` params and return a backend-composed structured diff (`field_pairs`, `change_labels`, `delta_magnitudes`); do not compute the diff client-side |
-| Artifact versioning semantics | **missing** | artifact identity and versioning contract (version numbering, immutability rules, and version ancestry) must be agreed before artifact selectors can be packet-defined |
+| `GET /api/v1/artifacts` | **contract published — pending BFF implementation** | route spec published via `RW-05-ARTIFACT-COMPARE-001` in `docs/bff/RW-05-artifact-compare.md`; must support `experiment_id`, `ticket_id`, `lineage_id`, `status`, `page_token`, `page_size`; return the published artifact list row shape and include `meta.surfaces.artifact_list` |
+| `GET /api/v1/artifacts/{artifact_id}` | **contract published — pending BFF implementation** | detail route, version chain, provenance (linked experiment and ticket), full metrics, lineage refs, `allowedActions.canCompare`, and `meta.surfaces.artifact_detail` published via `RW-05-ARTIFACT-COMPARE-001` |
+| `GET /api/v1/artifacts/compare` | **contract published — pending BFF implementation** | comparison diff route published via `RW-05-ARTIFACT-COMPARE-001`; accepts two to four `artifact_id` params; BFF must return the published `field_pairs` entries including `change_label` and `delta_magnitude`, plus `change_summary` and `provenance_pairs`; do not compute the diff client-side |
+| Artifact versioning semantics | **contract published — pending BFF implementation** | artifact identity, immutability rules, version ancestry (`lineage_id`, `parent_artifact_id`, `version_chain`), and lifecycle states are published via `RW-05-ARTIFACT-COMPARE-001` |
 
 ### Packetization prerequisite
 
-Artifact identity and versioning semantics must be locked before a compare view can be packet-defined. Depends on Experiment Launch (`RW-04`) producing versioned artifact refs with stable `artifact_id` values that can be resolved through the registry.
+The artifact registry list contract, artifact detail read model (including `version_chain` and `provenance`), comparison diff route (`field_pairs[].change_label`, `field_pairs[].delta_magnitude`), versioning and immutability semantics, and example payloads are now published as canonical BFF truth via `RW-05-ARTIFACT-COMPARE-001`. RW-05 still depends on Experiment Launch (`RW-04`) for stable versioned `artifact_id` values, and all four live BFF routes still need implementation before UI work can begin.
 
 ### Lovable readiness gate
 
-`false` — the artifact registry routes, comparison diff route, and versioning semantics must all be implemented and field shapes locked before a screen spec can be opened.
+`pending-bff` — the route specs, versioning semantics, `allowedActions.canCompare` shape, degradation semantics, and example payloads now exist, but all four live BFF routes still need implementation before a screen spec can be opened.
 
 ---
 
@@ -188,15 +188,15 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/research/analysis` | RW-03 | contract published — BFF implementation pending | analysis list and filter surface |
 | `GET /api/v1/research/analysis/{analysis_id}` | RW-03 | contract published — BFF implementation pending | analysis detail and metric aggregation |
 | Metric aggregation endpoint | RW-03 | contract published — BFF implementation pending | backend-owned metric grouping; blocks Analyze screen spec until live |
-| `POST /api/v1/experiments/launch` | RW-04 | missing write route | experiment creation and async run entry |
-| `GET /api/v1/experiments/{experiment_id}` | RW-04, RW-05 | missing read route | run status, `allowedActions.canCancel`, and artifact lineage |
-| `GET /api/v1/experiments` | RW-04 | missing read route | run history list |
-| `POST /api/v1/experiments/{experiment_id}/cancel` | RW-04 | missing write route | cancellation command |
-| Experiment state machine | RW-04 | missing lifecycle contract | run status copy and state machine display |
-| `GET /api/v1/artifacts` | RW-05 | missing read route | artifact selector and registry |
-| `GET /api/v1/artifacts/{artifact_id}` | RW-05 | missing read route | artifact detail and evidence drawer |
-| `GET /api/v1/artifacts/compare` | RW-05 | missing read route | diff view; backend must own the comparison computation |
-| Artifact versioning semantics | RW-05 | missing contract | version identity and ancestry needed before selector can be spec'd |
+| `POST /api/v1/experiments/launch` | RW-04 | **live** | resolved — `docs/bff/RW-04-experiment-launch.md`; handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
+| `GET /api/v1/experiments/{experiment_id}` | RW-04, RW-05 | **live** | resolved — run status, `allowedActions.canCancel`, and artifact lineage live |
+| `GET /api/v1/experiments` | RW-04 | **live** | resolved — run history list with pagination and `meta.surfaces.experiment_history` live |
+| `POST /api/v1/experiments/{experiment_id}/cancel` | RW-04 | **live** | resolved — cancellation command and cancel authority gating live |
+| Experiment state machine | RW-04 | **live** | resolved — BFF-owned lifecycle and cancel authority semantics confirmed live |
+| `GET /api/v1/artifacts` | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md |
+| `GET /api/v1/artifacts/{artifact_id}` | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md |
+| `GET /api/v1/artifacts/compare` | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md; backend owns all comparison computation |
+| Artifact versioning semantics | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md; version identity, immutability, and ancestry semantics are locked |
 
 ---
 
