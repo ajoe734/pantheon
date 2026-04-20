@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -875,7 +875,7 @@ def _default_read_data() -> Dict[str, Any]:
                             "enabled": True,
                             "poll_interval_ms": 3000,
                             "max_wait_ms": 45000,
-                            "deadline_at": "2026-04-19T19:50:45Z",
+                            "deadline_at": "2026-04-20T19:50:45Z",
                         },
                         "degraded_copy": {
                             "title": "Trainer preview is still running",
@@ -5466,6 +5466,406 @@ class ReadSurfaceStore:
             "event": self._project_teaching_event(session_id, event),
             "session": projected,
         }
+
+    _TW03_WARNING_LEVELS = ("critical", "high", "medium", "informational")
+    _TW03_SURFACE_STATES = {"ok", "stale", "degraded", "unavailable"}
+    _TW03_REFRESHABLE_SESSION_STATUSES = {"active", "paused"}
+    _TW03_POLL_INTERVAL_MS = 3000
+    _TW03_MAX_WAIT_MS = 45000
+
+    def _trainer_preview_records(self) -> Dict[str, Dict[str, Any]]:
+        available, records = self._service.list_records("trainer_previews")
+        if available:
+            return {
+                str(record.get("session_id") or record.get("id") or ""): json.loads(json.dumps(record))
+                for record in records
+                if isinstance(record, dict) and str(record.get("session_id") or record.get("id") or "").strip()
+            }
+        return json.loads(json.dumps(self._local_fallback("trainer_previews") or {}))
+
+    def _mutable_trainer_preview_records(self) -> Optional[tuple[bool, Dict[str, Dict[str, Any]]]]:
+        service_store_path = self._service._resolve_path("trainer_previews")
+        persist_service_store = service_store_path is not None
+        if persist_service_store:
+            available, service_records = self._service.list_records("trainer_previews")
+            if not available and service_store_path.exists():
+                return None
+            records = {
+                str(record.get("session_id") or record.get("id") or ""): json.loads(json.dumps(record))
+                for record in service_records
+                if isinstance(record, dict) and str(record.get("session_id") or record.get("id") or "").strip()
+            }
+            return True, records
+
+        trainer_previews = self._local_fallback("trainer_previews")
+        if trainer_previews is None:
+            return None
+        return False, json.loads(json.dumps(trainer_previews))
+
+    def _persist_trainer_preview_records(
+        self,
+        *,
+        persist_service_store: bool,
+        records: Dict[str, Dict[str, Any]],
+    ) -> bool:
+        if persist_service_store:
+            return self._service.write_records("trainer_previews", records)
+        self._data["trainer_previews"] = json.loads(json.dumps(records))
+        self._save()
+        return True
+
+    @classmethod
+    def _tw03_zero_warning_counts(cls) -> Dict[str, int]:
+        return {level: 0 for level in cls._TW03_WARNING_LEVELS}
+
+    @classmethod
+    def _tw03_warning_sort_key(cls, warning: Dict[str, Any]) -> tuple[int, str]:
+        level = str(warning.get("level") or "").strip().lower()
+        try:
+            priority = cls._TW03_WARNING_LEVELS.index(level)
+        except ValueError:
+            priority = len(cls._TW03_WARNING_LEVELS)
+        return priority, str(warning.get("warning_id") or "")
+
+    @classmethod
+    def _tw03_preview_degraded_copy(
+        cls,
+        *,
+        status: str,
+        surface_state: str,
+    ) -> Dict[str, str]:
+        if status == "pending":
+            return {
+                "title": "Trainer preview is still running",
+                "body": "Pantheon is evaluating the current trainer candidate. Keep the compare surface open and poll again after the published interval.",
+            }
+        if status == "failed":
+            return {
+                "title": "Trainer preview could not complete",
+                "body": "Pantheon could not finish the rapid-eval for this candidate. Review the current control diff, then retry the preview when the compare surface is healthy.",
+            }
+        if surface_state == "stale":
+            return {
+                "title": "Trainer preview may be stale",
+                "body": "Pantheon is serving the last known compare result. Review the current control diff and refresh only when the compare surface allows it.",
+            }
+        if surface_state == "unavailable":
+            return {
+                "title": "Trainer preview is temporarily unavailable",
+                "body": "Pantheon cannot serve rapid-eval results for the trainer compare surface right now. Before/after metrics are temporarily unavailable.",
+            }
+        return {
+            "title": "Trainer preview is temporarily unavailable",
+            "body": "Pantheon cannot serve rapid-eval results for the trainer compare surface right now. Control changes remain visible, but before/after metrics are temporarily unavailable.",
+        }
+
+    @classmethod
+    def _tw03_preview_surface_state(
+        cls,
+        *,
+        preview: Dict[str, Any],
+        dataset_source: str,
+    ) -> str:
+        meta = preview.get("meta") if isinstance(preview.get("meta"), dict) else {}
+        surfaces = meta.get("surfaces") if isinstance(meta.get("surfaces"), dict) else {}
+        requested = str(surfaces.get("trainer_preview") or "ok").strip().lower()
+        if requested not in cls._TW03_SURFACE_STATES:
+            requested = "ok"
+
+        status = str(preview.get("status") or "").strip().lower()
+        has_control_diff = bool(preview.get("control_diff"))
+        if status == "preview_unavailable":
+            return "degraded" if has_control_diff else "unavailable"
+        if status == "failed" and requested == "ok" and not preview.get("metric_delta"):
+            requested = "degraded"
+        if dataset_source == "local_snapshot" and requested == "ok":
+            return "stale"
+        if dataset_source == "missing":
+            return "degraded" if has_control_diff else "unavailable"
+        return requested
+
+    @classmethod
+    def _project_trainer_preview_payload(
+        cls,
+        preview: Dict[str, Any],
+        *,
+        session_status: Optional[str],
+        dataset_source: str,
+        snapshot_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload = json.loads(json.dumps(preview))
+        snapshot_timestamp = snapshot_at or _utc_now_rfc3339()
+        status = str(payload.get("status") or "preview_unavailable").strip().lower()
+        polling = payload.get("polling") if isinstance(payload.get("polling"), dict) else {}
+        deadline_at = polling.get("deadline_at")
+        deadline = _parse_rfc3339(deadline_at)
+
+        if status == "pending" and deadline is not None and deadline <= _parse_rfc3339(snapshot_timestamp):
+            payload["status"] = "preview_unavailable"
+            payload["eval_id"] = None
+            payload["metric_delta"] = []
+            payload["warnings"] = []
+            payload["warning_count_by_level"] = cls._tw03_zero_warning_counts()
+            payload["preview_quality"] = "not_available"
+            payload["polling"] = {
+                "enabled": False,
+                "poll_interval_ms": cls._TW03_POLL_INTERVAL_MS,
+                "max_wait_ms": cls._TW03_MAX_WAIT_MS,
+                "deadline_at": None,
+            }
+            status = "preview_unavailable"
+
+        warnings = [
+            {
+                "warning_id": item.get("warning_id"),
+                "warning_code": item.get("warning_code"),
+                "level": item.get("level"),
+                "parameter_key": item.get("parameter_key"),
+                "metric_key": item.get("metric_key"),
+                "message": item.get("message"),
+                "impact_summary": item.get("impact_summary"),
+            }
+            for item in (payload.get("warnings") or [])
+            if isinstance(item, dict)
+        ]
+        warnings.sort(key=cls._tw03_warning_sort_key)
+        warning_counts = cls._tw03_zero_warning_counts()
+        for warning in warnings:
+            level = str(warning.get("level") or "").strip().lower()
+            if level in warning_counts:
+                warning_counts[level] += 1
+
+        surface_state = cls._tw03_preview_surface_state(
+            preview=payload,
+            dataset_source=dataset_source,
+        )
+        session_status_normalized = str(session_status or "").strip().lower()
+        allowed_refresh = (
+            bool((payload.get("allowedActions") or {}).get("canRefreshPreview"))
+            and session_status_normalized in cls._TW03_REFRESHABLE_SESSION_STATUSES
+            and status not in {"pending", "preview_unavailable"}
+            and surface_state in {"ok", "stale"}
+        )
+
+        if status == "preview_unavailable":
+            payload["eval_id"] = None
+            payload["metric_delta"] = []
+            warnings = []
+            warning_counts = cls._tw03_zero_warning_counts()
+            payload["preview_quality"] = "not_available"
+            allowed_refresh = False
+            payload["polling"] = {
+                "enabled": False,
+                "poll_interval_ms": cls._TW03_POLL_INTERVAL_MS,
+                "max_wait_ms": cls._TW03_MAX_WAIT_MS,
+                "deadline_at": None,
+            }
+        else:
+            payload["polling"] = {
+                "enabled": status == "pending" and surface_state not in {"degraded", "unavailable"},
+                "poll_interval_ms": cls._TW03_POLL_INTERVAL_MS,
+                "max_wait_ms": cls._TW03_MAX_WAIT_MS,
+                "deadline_at": deadline_at if status == "pending" and deadline is not None else None,
+            }
+
+        payload["status"] = status
+        payload["warnings"] = warnings
+        payload["warning_count_by_level"] = warning_counts
+        payload["allowedActions"] = {"canRefreshPreview": allowed_refresh}
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        payload["meta"] = meta
+        meta["snapshot_at"] = str(meta.get("snapshot_at") or snapshot_timestamp)
+        surfaces = meta.get("surfaces") if isinstance(meta.get("surfaces"), dict) else {}
+        meta["surfaces"] = surfaces
+        surfaces["trainer_preview"] = surface_state
+
+        if status == "preview_unavailable" or surface_state != "ok":
+            payload["degraded_copy"] = cls._tw03_preview_degraded_copy(
+                status=status,
+                surface_state=surface_state,
+            )
+        else:
+            payload["degraded_copy"] = None
+
+        payload.setdefault("control_diff", [])
+        payload.setdefault("metric_delta", [])
+        payload.setdefault("baseline_snapshot_at", None)
+        payload.setdefault("candidate_snapshot_at", None)
+        return payload
+
+    def build_trainer_preview_unavailable(
+        self,
+        session_id: str,
+        *,
+        session_status: Optional[str],
+        snapshot_at: Optional[str] = None,
+        control_diff: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        preview = {
+            "session_id": session_id,
+            "status": "preview_unavailable",
+            "eval_id": None,
+            "baseline_snapshot_at": None,
+            "candidate_snapshot_at": None,
+            "control_diff": json.loads(json.dumps(control_diff or [])),
+            "metric_delta": [],
+            "warnings": [],
+            "warning_count_by_level": self._tw03_zero_warning_counts(),
+            "preview_quality": "not_available",
+            "allowedActions": {
+                "canRefreshPreview": False,
+            },
+            "polling": {
+                "enabled": False,
+                "poll_interval_ms": self._TW03_POLL_INTERVAL_MS,
+                "max_wait_ms": self._TW03_MAX_WAIT_MS,
+                "deadline_at": None,
+            },
+            "degraded_copy": self._tw03_preview_degraded_copy(
+                status="preview_unavailable",
+                surface_state="degraded" if control_diff else "unavailable",
+            ),
+            "meta": {
+                "snapshot_at": snapshot_at or _utc_now_rfc3339(),
+                "surfaces": {
+                    "trainer_preview": "degraded" if control_diff else "unavailable",
+                },
+            },
+        }
+        return self._project_trainer_preview_payload(
+            preview,
+            session_status=session_status,
+            dataset_source=self.dataset_source("trainer_previews"),
+            snapshot_at=snapshot_at,
+        )
+
+    def get_trainer_preview(
+        self,
+        session_id: str,
+        *,
+        session_status: Optional[str],
+        eval_id: Optional[str] = None,
+        snapshot_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        bundle = self._trainer_preview_records().get(session_id)
+        if not bundle:
+            return None
+        evaluations = bundle.get("evaluations") if isinstance(bundle.get("evaluations"), dict) else {}
+
+        preview: Optional[Dict[str, Any]] = None
+        if eval_id:
+            candidate = evaluations.get(eval_id)
+            if isinstance(candidate, dict):
+                preview = candidate
+        else:
+            latest_eval_id = str(bundle.get("latest_eval_id") or "").strip()
+            if latest_eval_id and isinstance(evaluations.get(latest_eval_id), dict):
+                preview = evaluations[latest_eval_id]
+            elif isinstance(bundle.get("preview"), dict):
+                preview = bundle.get("preview")
+            elif evaluations:
+                preview = next(iter(evaluations.values()))
+
+        if not isinstance(preview, dict):
+            return None
+        return self._project_trainer_preview_payload(
+            preview,
+            session_status=session_status,
+            dataset_source=self.dataset_source("trainer_previews"),
+            snapshot_at=snapshot_at,
+        )
+
+    def refresh_trainer_preview(
+        self,
+        session_id: str,
+        *,
+        session_status: Optional[str],
+        refreshed_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        mutable = self._mutable_trainer_preview_records()
+        if mutable is None:
+            return None
+        persist_service_store, records = mutable
+
+        timestamp = refreshed_at or _utc_now_rfc3339()
+        bundle = records.get(session_id) or {
+            "session_id": session_id,
+            "latest_eval_id": None,
+            "evaluations": {},
+        }
+        evaluations = bundle.setdefault("evaluations", {})
+        latest_preview = self.get_trainer_preview(
+            session_id,
+            session_status=session_status,
+            snapshot_at=timestamp,
+        )
+        if latest_preview and latest_preview.get("status") == "pending":
+            return latest_preview
+
+        baseline_snapshot_at = (
+            (latest_preview or {}).get("baseline_snapshot_at")
+            or (self.get_trainer_session(session_id) or {}).get("started_at")
+        )
+        seed_control_diff = list((latest_preview or {}).get("control_diff") or [])
+        latest_preview_count = len(evaluations) + 1
+        prefix = timestamp[:10].replace("-", "")
+        eval_id = f"teval-{prefix}-{latest_preview_count:03d}"
+        while eval_id in evaluations:
+            latest_preview_count += 1
+            eval_id = f"teval-{prefix}-{latest_preview_count:03d}"
+
+        preview = {
+            "session_id": session_id,
+            "status": "pending",
+            "eval_id": eval_id,
+            "baseline_snapshot_at": baseline_snapshot_at,
+            "candidate_snapshot_at": timestamp,
+            "control_diff": json.loads(json.dumps(seed_control_diff)),
+            "metric_delta": [],
+            "warnings": [],
+            "warning_count_by_level": self._tw03_zero_warning_counts(),
+            "preview_quality": "directional_only",
+            "allowedActions": {
+                "canRefreshPreview": False,
+            },
+            "polling": {
+                "enabled": True,
+                "poll_interval_ms": self._TW03_POLL_INTERVAL_MS,
+                "max_wait_ms": self._TW03_MAX_WAIT_MS,
+                "deadline_at": (
+                    (
+                        _parse_rfc3339(timestamp)
+                        or datetime.now(timezone.utc)
+                    ) + timedelta(milliseconds=self._TW03_MAX_WAIT_MS)
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            },
+            "degraded_copy": self._tw03_preview_degraded_copy(
+                status="pending",
+                surface_state="ok",
+            ),
+            "meta": {
+                "snapshot_at": timestamp,
+                "surfaces": {
+                    "trainer_preview": "ok",
+                },
+            },
+        }
+
+        evaluations[eval_id] = preview
+        bundle["latest_eval_id"] = eval_id
+        records[session_id] = bundle
+        if not self._persist_trainer_preview_records(
+            persist_service_store=persist_service_store,
+            records=records,
+        ):
+            return None
+
+        return self._project_trainer_preview_payload(
+            preview,
+            session_status=session_status,
+            dataset_source=self.dataset_source("trainer_previews"),
+            snapshot_at=timestamp,
+        )
 
     def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not snapshot_id:

@@ -3522,6 +3522,19 @@ def _tw01_trainer_dialog_surface_state(
     return "fresh"
 
 
+def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
+    refresh_mode = str(payload.get("refresh_mode") or "").strip().lower()
+    if refresh_mode != "manual":
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer preview refresh mode",
+            "refresh_mode must equal 'manual' for TW-03",
+            precondition_failed="refresh_mode",
+        )
+    return refresh_mode
+
+
 def _rw01_validate_priority(priority: Any) -> str:
     normalized = str(priority or "").strip().lower()
     if normalized not in _RW01_ALLOWED_PRIORITIES:
@@ -4702,6 +4715,109 @@ async def append_trainer_message(
         "session_summary": updated["session_summary"],
         "allowedActions": updated["allowedActions"],
     }
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}/preview")
+async def get_trainer_preview(
+    session_id: str,
+    eval_id: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    preview = read_store.get_trainer_preview(
+        session_id,
+        session_status=session.get("status"),
+        eval_id=eval_id,
+        snapshot_at=snapshot_at,
+    )
+    if preview is None and eval_id:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer preview evaluation not found",
+            f"Trainer preview evaluation {eval_id} does not exist for session {session_id}",
+        )
+    if preview is None:
+        preview = read_store.build_trainer_preview_unavailable(
+            session_id,
+            session_status=session.get("status"),
+            snapshot_at=snapshot_at,
+        )
+    return preview
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/preview")
+async def refresh_trainer_preview(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _tw03_validate_refresh_mode(payload)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    preview = read_store.get_trainer_preview(
+        session_id,
+        session_status=session.get("status"),
+        snapshot_at=utc_now(),
+    ) or read_store.build_trainer_preview_unavailable(
+        session_id,
+        session_status=session.get("status"),
+        snapshot_at=utc_now(),
+    )
+    if preview.get("status") == "pending":
+        return preview
+    if not preview.get("allowedActions", {}).get("canRefreshPreview"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Trainer preview refresh unavailable",
+            "allowedActions.canRefreshPreview is false for this trainer preview",
+            precondition_failed="allowedActions.canRefreshPreview",
+        )
+    if session.get("status") not in {"active", "paused"}:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot refresh preview",
+            "POST /preview is only allowed while the trainer session status is active or paused",
+            precondition_failed="status",
+        )
+
+    refreshed = read_store.refresh_trainer_preview(
+        session_id,
+        session_status=session.get("status"),
+        refreshed_at=utc_now(),
+    )
+    if refreshed is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer preview store unavailable",
+            "Trainer preview refresh store is unavailable.",
+        )
+    return refreshed
 
 
 @app.get("/api/v1/capital-pools")
