@@ -2,17 +2,16 @@ feature_id: RW-02-search
 type: contract-ready
 source_repo: ajoe734/pantheon
 screen: research-search
-status: published
+status: live
 published_at: "2026-04-19T20:20:00Z"
+live_at: "2026-04-20T13:40:00Z"
 task: RW-02-SEARCH-001
 description: >-
-  RW-02 Search contract published as part of RW-02-SEARCH-001. The primary
-  route (GET /api/v1/research/search), SearchResult row shape, backend-owned
-  filter and pagination semantics, search-index adapter metadata, and frontend
-  handoff bundle are now defined. This packet publishes the contract and handoff
-  shape only. The Pantheon BFF search route and adapter implementation are still
-  pending, so the frontend implementation gate remains blocked until Pantheon
-  explicitly confirms the live endpoint returns the published field shape.
+  RW-02 Search route is live. GET /api/v1/research/search is implemented in
+  the BFF (services/control-plane/bff/main.py). The SearchResult row shape,
+  backend-owned filter and pagination semantics, and search-index adapter
+  metadata are all returned by the live endpoint. Frontend implementation
+  gate is now open.
 artifacts:
   bff_contract: docs/bff/RW-02-search.md
   screen_spec: docs/screens/RW-02-search.md
@@ -27,12 +26,9 @@ handoff_bundle:
   - lovable_ui_task
   - example_payload
 readiness_gate: >-
-  Frontend must stay on the blocked placeholder until Pantheon confirms the
-  search route is live, returns the published SearchResult field shape, and
-  exposes the search-index adapter metadata through meta.index_adapter.*. This
-  handoff is contract-published only and does not clear production UI work yet.
+  Route is live. Frontend implementation may proceed. GET /api/v1/research/search
+  returns the published SearchResult field shape and meta.index_adapter.* metadata.
 front_actions_required:
-  - keep the route on a blocked placeholder until Pantheon confirms the search route and adapter are live
   - fetch search results from GET /api/v1/research/search only
   - send q, match_type, status, date_range, page_token, and page_size exactly as published
   - render result rows from the published SearchResult object only
@@ -42,7 +38,7 @@ front_actions_required:
   - emit a bff-gap handoff if any required field is absent
 acceptance_met:
   contract_ready_published: true
-  bff_route_live: false
-  search_index_adapter_live: false
+  bff_route_live: true
+  search_index_adapter_live: true
   lovable_ui_task_published: true
   front_repo_receives_handoff_bundle: true

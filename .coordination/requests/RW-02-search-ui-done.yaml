@@ -1,0 +1,37 @@
+feature_id: RW-02-search
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 09ee64dfe240330ae167c2ff50ffdbaee83cb209
+screen: research-search
+blocking: false
+
+summary: >-
+  RW-02 Research Search UI implemented against live GET /api/v1/research/search.
+  Query bar, filter rail (match_type, status, date_range), paginated result list,
+  degradation banners (stale/degraded/unavailable), and drilldown navigation via
+  BFF-provided links.result_detail and links.linked_ticket_detail are all complete.
+  Build and ESLint passed.
+
+changed_files:
+  - src/pages/research/ResearchSearch.tsx
+  - src/pages/research/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+
+acceptance_evidence:
+  - search route: GET /api/v1/research/search (live confirmed at services/control-plane/bff/main.py:6195)
+  - filter params sent: q, match_type, status, date_range, page_token, page_size
+  - result rows rendered from SearchResult shape only; no client-side re-ranking
+  - drilldowns via links.result_detail and links.linked_ticket_detail only
+  - degradation banners rendered from meta.surfaces.search_results and meta.index_adapter.adapter_state
+  - bff-gap handoff path configured; no field mocking
+  - npm run build passed; npx eslint on touched files passed
+
+follow_up_requested:
+  - review UI against contract and example payload
+  - run integration or acceptance test against live BFF
+
+coordination_updates:
+  contract_ready: .coordination/responses/RW-02-search-contract-ready.yaml (bff_route_live=true, status=live)
+  lovable_ui_task: .coordination/responses/RW-02-search-lovable-ui-task.yaml (status=ready)
