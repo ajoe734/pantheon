@@ -136,8 +136,8 @@ Use this section order:
 | `Governance` | review, approval, promotion, rollback, audit | queue and decision work |
 | `Personas` | persona, binding, capital, deployment context | read-heavy Wave 1 workbench |
 | `Evolution` | post-incident, evolution decisions, lineage, mutation | partly ready, partly blocked |
-| `Research` | tickets, search, analysis, experiments, artifact compare | not ready for full implementation |
-| `Knowledge` | memory, notes, evidence, insights, specs | overview exists; modules blocked |
+| `Research` | tickets, search, analysis, experiments, artifact compare | RW-01 pending BFF; RW-02–05 route-live and handoff-ready |
+| `Knowledge` | memory, notes, evidence, insights, specs | KW-01–03 route-live; KW-04 contract-ready pending BFF; KW-05 blocked |
 | `Consultation` | consult request, transcript, committee, red-team memo | overview exists; modules blocked |
 | `Trainer` | teaching dialog, controls, compare, replay | blocked until BFF contracts land |
 
@@ -360,17 +360,16 @@ Research Workbench is for creating and moving research work through a governed r
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
 | `RW-01 Research Ticket` | ticket list, detail, lifecycle | list-detail | blocked |
-| `RW-02 Search` | backend-owned search corpus | search page with filter rail | blocked |
-| `RW-03 Analyze` | analysis results and grouped metrics | detail plus compare panels | blocked |
-| `RW-04 Experiment Launch` | launch async runs and inspect status | wizard or form plus status board | **ready** — routes live; handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
-| `RW-05 Artifact Compare` | compare versioned artifacts | compare surface | blocked |
+| `RW-02 Search` | backend-owned search corpus | search page with filter rail | **route-live** — handoff bundle at `docs/pantheon-handoffs/RW-02-search/` |
+| `RW-03 Analyze` | analysis results and grouped metrics | detail plus compare panels | **route-live** — handoff bundle at `docs/pantheon-handoffs/RW-03-analyze/` |
+| `RW-04 Experiment Launch` | launch async runs and inspect status | wizard or form plus status board | **route-live** — handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
+| `RW-05 Artifact Compare` | compare versioned artifacts | compare surface | **route-live** — handoff bundle at `docs/pantheon-handoffs/RW-05-artifact-compare/` |
 
 ### Design intent
 
 Do not let Lovable invent this IA from generic "research app" intuition.
-This workbench only becomes buildable module by module after Pantheon lands the missing routes.
-
-If exploratory design is needed before BFF readiness, it should remain shell or wireframe only.
+RW-02 through RW-05 are route-live and may be implemented against the published handoff bundles now.
+RW-01 Research Ticket is contract-published and remains pending BFF implementation — build its shell only until the routes are live.
 
 ## 6.6 Knowledge Workbench
 
@@ -388,10 +387,10 @@ Knowledge Workbench is the durable memory and evidence browsing surface.
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
 | `PKT-knowledge-workbench` | overview shell only | overview dashboard shell | overview ready |
-| `KW-01 Institutional Memory` | memory browse and detail | list-detail | blocked |
-| `KW-02 Research Notes` | notes with ownership and attachments | registry plus detail | blocked |
-| `KW-03 Evidence Refs` | evidence reference browser | ledger plus detail drawer | blocked |
-| `KW-04 Insight Cards` | synthesized insight cards | card grid plus detail inspector | blocked |
+| `KW-01 Institutional Memory` | memory browse and detail | list-detail | **route-live** — handoff bundle at `docs/pantheon-handoffs/KW-01-institutional-memory/` |
+| `KW-02 Research Notes` | notes with ownership and attachments | registry plus detail | **route-live** — handoff bundle at `docs/pantheon-handoffs/KW-02-research-notes/` |
+| `KW-03 Evidence Refs` | evidence reference browser | ledger plus detail drawer | **route-live** — handoff bundle at `docs/pantheon-handoffs/KW-03-evidence-refs/` |
+| `KW-04 Insight Cards` | synthesized insight cards | card grid plus detail inspector | contract-ready — pending BFF implementation |
 | `KW-05 Strategy Spec` | versioned strategy spec browser | list-detail plus compare | blocked |
 
 ### Design intent
@@ -441,10 +440,10 @@ Trainer Workbench is for persona coaching and controlled parameter adjustment.
 
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
-| `TW-01 Teaching Dialog` | training-session chat and status | transcript plus control sidebar | pending-bff — contract published; activates once the BFF routes are live |
-| `TW-02 Parameter Controls` | inspect and patch controls | form plus diff rail | pending-bff — contract published; activates once the BFF routes are live |
-| `TW-03 Before/After Compare` | preview deltas and warnings | compare page | pending-bff — contract published; activates once the BFF routes are live |
-| `TW-04 Teaching Replay` | replay finished session and commit or discard | timeline plus evidence drawer | pending-bff — contract published; activates once the BFF routes are live |
+| `TW-01 Teaching Dialog` | training-session chat and status | transcript plus control sidebar | route-live — implement against the live BFF route family |
+| `TW-02 Parameter Controls` | inspect and patch controls | form plus diff rail | pending-bff — contract published; controls routes still need live BFF implementation |
+| `TW-03 Before/After Compare` | preview deltas and warnings | compare page | route-live — implement against the live preview route family and published handoff bundle |
+| `TW-04 Teaching Replay` | replay finished session and commit or discard | timeline plus evidence drawer | route-live — implement against the live replay route family and published handoff bundle |
 
 ### Design intent
 

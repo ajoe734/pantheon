@@ -2,7 +2,7 @@
 
 **Published by:** Claude (RW-05-ARTIFACT-COMPARE-001)  
 **Reviewed by:** Codex  
-**Status:** contract-published — pending BFF implementation  
+**Status:** route-live — BFF implementation complete; frontend handoff bundle published at `docs/pantheon-handoffs/RW-05-artifact-compare/`  
 **Depends on:** RW-04-EXPERIMENT-001 (`docs/bff/RW-04-experiment-launch.md`)
 
 ---
@@ -60,6 +60,11 @@ Only `sealed` and `superseded` artifacts may appear in compare selections. `pend
 ### `GET /api/v1/artifacts`
 
 Returns a paginated list of artifacts visible to the requesting operator.
+
+List ordering is backend-owned. The BFF must return artifacts newest-first by
+`created_at`, with `version` as a descending tie-breaker for records in the
+same lineage created at the same timestamp. Frontend must render the provided
+order and must not re-sort it client-side.
 
 **Query parameters:**
 
@@ -395,10 +400,12 @@ Returns a backend-composed structured diff between two or more selected artifact
 
 ## 7. Screen Handoff Prerequisites
 
-Before a Lovable screen spec can be opened for RW-05, the following must be true:
+All prerequisites are satisfied as of 2026-04-21:
 
-- All three routes above are implemented with agreed field shapes
+- All three routes are implemented with agreed field shapes (`GET /api/v1/artifacts`, `GET /api/v1/artifacts/{artifact_id}`, `GET /api/v1/artifacts/compare`)
 - `meta.surfaces.artifact_list`, `meta.surfaces.artifact_detail`, and `meta.surfaces.artifact_compare` are wired through to the canonical degradation banner
 - `allowedActions.canCompare` is backend-shaped and documented
-- An example payload JSON exists (see `docs/examples/RW-05-artifact-compare.json`)
-- RW-04 Experiment Launch is Lovable-ready (so versioned `artifact_id` values are stable and resolvable)
+- An example payload JSON exists at `docs/examples/RW-05-artifact-compare.json`
+- RW-04 Experiment Launch routes are live; versioned `artifact_id` values are stable and resolvable
+
+Frontend handoff bundle: `docs/pantheon-handoffs/RW-05-artifact-compare/FRONTEND_CHANGE_SPEC.md`

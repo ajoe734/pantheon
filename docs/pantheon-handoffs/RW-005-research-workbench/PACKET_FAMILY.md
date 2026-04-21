@@ -5,7 +5,7 @@
 - Packet family ID: `RW-005`
 - Workbench: Research Workbench
 - Phase origin: `BP5-WB-005`
-- Lovable readiness: **partial** — RW-01 Research Ticket routes live; RW-02 Search routes live; RW-03 Analyze routes live; RW-04 Experiment Launch routes live (handoff bundle published 2026-04-20); RW-05 Artifact Compare contract published via `RW-05-ARTIFACT-COMPARE-001` — BFF implementation still pending; Lovable handoff must not open for RW-05 until its own BFF prerequisites are satisfied
+- Lovable readiness: **partial** — RW-01 Research Ticket routes live; RW-02 Search routes live; RW-03 Analyze routes live; RW-04 Experiment Launch routes live (handoff bundle published 2026-04-20); RW-05 Artifact Compare routes live (handoff bundle published 2026-04-21) — all five modules are route-live; Lovable may now proceed with production UI for all five modules
 - Recommended wave: Wave 3 — after Operator Console (Wave 1–2) and Persona Workbench (Wave 1–2) packetization are settled
 - Reviewer: Codex
 
@@ -22,10 +22,10 @@ Give researchers one coherent workbench for creating and tracking research ticke
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
 | `RW-01` | Research Ticket | ticket list, ticket detail, lifecycle state machine | contract-published — pending BFF implementation | Wave 3 — 1st |
-| `RW-02` | Search | query input, result list, filter rail, result drilldown | contract-published — pending BFF implementation | Wave 3 — 2nd |
-| `RW-03` | Analyze | analysis result view, metric aggregation, comparative summary | contract-published — pending BFF implementation | Wave 3 — 3rd |
+| `RW-02` | Search | query input, result list, filter rail, result drilldown | **route-live — ready for Lovable implementation** | Wave 3 — 2nd |
+| `RW-03` | Analyze | analysis result view, metric aggregation, comparative summary | **route-live — ready for Lovable implementation** | Wave 3 — 3rd |
 | `RW-04` | Experiment Launch | launch form, parameter inputs, async run status, run history | **route-live — ready for Lovable implementation** | Wave 3 — 4th |
-| `RW-05` | Artifact Compare | artifact selector, version diff view, side-by-side compare | contract-published — pending BFF implementation | Wave 3 — 5th |
+| `RW-05` | Artifact Compare | artifact selector, version diff view, side-by-side compare | **route-live — ready for Lovable implementation** | Wave 3 — 5th |
 
 ---
 
@@ -72,16 +72,16 @@ The ticket lifecycle states, `allowedActions` shape, example payload, and fronte
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/research/search` | **contract published — pending BFF implementation** | route spec published via `RW-02-SEARCH-001` in `docs/bff/RW-02-search.md`; must support `q`, `match_type`, `status`, `date_range`, `page_token`, `page_size`, return the published `SearchResult` row shape, and include `meta.surfaces.search_results` plus `meta.index_adapter.*` |
-| Search index adapter | **contract published — pending BFF implementation** | adapter semantics, corpus coverage metadata, and source watermark expectations are published via `RW-02-SEARCH-001`; BFF must implement backend-owned corpus indexing without UI-side corpus construction |
+| `GET /api/v1/research/search` | **live** | route live and returning the published `SearchResult` row shape, pagination contract, `meta.surfaces.search_results`, and `meta.index_adapter.*` as of `2026-04-20T13:40:00Z` |
+| Search index adapter | **live** | backend-owned corpus indexing, adapter state, indexed match types, and source watermark metadata are confirmed live; UI must preserve backend ranking and coverage semantics |
 
 ### Packetization prerequisite
 
-The query parameters, result shape, filter semantics, example payload, and frontend handoff bundle are now published as canonical BFF truth via `RW-02-SEARCH-001`. Search still depends on the Research Ticket read model (`RW-01`) for corpus identity so that `linked_ticket_id` is resolvable, and the live BFF route still needs to implement the published contract.
+The query parameters, result shape, filter semantics, example payload, and frontend handoff bundle are now published as canonical BFF truth via `RW-02-SEARCH-001`, and the live BFF route is returning that field shape. Search still depends on the Research Ticket read model (`RW-01`) for corpus identity so that `linked_ticket_id` is resolvable, but no additional route implementation is required before frontend activation.
 
 ### Lovable readiness gate
 
-`pending-bff` — the screen spec, example payload, and frontend handoff bundle already exist, but the search route and search index adapter still need live BFF implementation before UI work can begin.
+`route-live` — the search route and search index adapter are live, the frontend handoff bundle is published, and Lovable UI implementation may begin.
 
 ---
 
@@ -99,17 +99,17 @@ The query parameters, result shape, filter semantics, example payload, and front
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/research/analysis` | **contract published — pending BFF implementation** | route spec published via `RW-03-ANALYZE-001` in `docs/bff/RW-03-analyze.md`; must support `ticket_id`, `experiment_id`, `status`, `date_range`, `page_token`, `page_size`, and return the published analysis summary projection |
-| `GET /api/v1/research/analysis/{analysis_id}` | **contract published — pending BFF implementation** | detail route, grouped metric panels, comparative summary, and `meta.surfaces.analysis_results` published via `RW-03-ANALYZE-001` |
-| Analysis result / metric aggregation endpoint | **contract published — pending BFF implementation** | backend owns metric grouping and comparison deltas; the analysis payload must stay pre-aggregated and must not regress into a raw metric dump |
+| `GET /api/v1/research/analysis` | **live** | route live and returning the published ResearchAnalysisSummary projection, canonical filters, pagination contract, and `meta.surfaces.analysis_results` as of `2026-04-21T18:30:00Z` |
+| `GET /api/v1/research/analysis/{analysis_id}` | **live** | detail route live and returning backend-grouped ordered `metric_groups[]`, backend-authored `comparative_summary`, and canonical `links.*` fields |
+| Analysis result / metric aggregation payload | **live** | backend-owned metric grouping and comparison deltas are now shipped inside the RW-03 detail payload; the frontend must render the pre-aggregated payload as returned |
 
 ### Packetization prerequisite
 
-The research result payload contract (metric keys, aggregation shape, comparison payload, and `meta.surfaces` staleness fields) is now published as canonical BFF truth via `RW-03-ANALYZE-001`. Analyze still depends on the Research Ticket read model (`RW-01`) for ticket-scoped queries, and the live BFF routes still need to honor the published field shape.
+The research result payload contract (metric keys, aggregation shape, comparison payload, and `meta.surfaces` staleness fields) is now published as canonical BFF truth via `RW-03-ANALYZE-001`, and the live BFF routes now honor that field shape. Analyze still depends on the Research Ticket read model (`RW-01`) for ticket-scoped queries, but no additional RW-03 BFF implementation is required before frontend activation.
 
 ### Lovable readiness gate
 
-`pending-bff` — the route spec and example payload now exist, but the live BFF routes and aggregation layer still need implementation before UI work can begin.
+`route-live` — the RW-03 list/detail routes are live, the backend-owned metric grouping and comparative summary are published through those routes, and the frontend handoff bundle is published. Lovable UI implementation may begin.
 
 ---
 
@@ -158,18 +158,18 @@ All four RW-04 routes are live and returning the published field shape. The fron
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/artifacts` | **contract published — pending BFF implementation** | route spec published via `RW-05-ARTIFACT-COMPARE-001` in `docs/bff/RW-05-artifact-compare.md`; must support `experiment_id`, `ticket_id`, `lineage_id`, `status`, `page_token`, `page_size`; return the published artifact list row shape and include `meta.surfaces.artifact_list` |
-| `GET /api/v1/artifacts/{artifact_id}` | **contract published — pending BFF implementation** | detail route, version chain, provenance (linked experiment and ticket), full metrics, lineage refs, `allowedActions.canCompare`, and `meta.surfaces.artifact_detail` published via `RW-05-ARTIFACT-COMPARE-001` |
-| `GET /api/v1/artifacts/compare` | **contract published — pending BFF implementation** | comparison diff route published via `RW-05-ARTIFACT-COMPARE-001`; accepts two to four `artifact_id` params; BFF must return the published `field_pairs` entries including `change_label` and `delta_magnitude`, plus `change_summary` and `provenance_pairs`; do not compute the diff client-side |
-| Artifact versioning semantics | **contract published — pending BFF implementation** | artifact identity, immutability rules, version ancestry (`lineage_id`, `parent_artifact_id`, `version_chain`), and lifecycle states are published via `RW-05-ARTIFACT-COMPARE-001` |
+| `GET /api/v1/artifacts` | **live** | route live and returning the published artifact list row shape, `experiment_id`/`ticket_id`/`lineage_id`/`status` filters, pagination, and `meta.surfaces.artifact_list` |
+| `GET /api/v1/artifacts/{artifact_id}` | **live** | detail route live; returns version chain, provenance (linked experiment and ticket), full metrics, lineage refs, `allowedActions.canCompare`, and `meta.surfaces.artifact_detail` |
+| `GET /api/v1/artifacts/compare` | **live** | comparison diff route live; accepts two to four `artifact_id` params; returns `field_pairs` with `change_label`, `delta_magnitude`, `delta_direction`, `delta_display`, `change_summary`, and `provenance_pairs`; BFF owns all comparison computation |
+| Artifact versioning semantics | **live** | artifact identity, immutability rules, version ancestry (`lineage_id`, `parent_artifact_id`, `version_chain`), and lifecycle states are locked and implemented |
 
 ### Packetization prerequisite
 
-The artifact registry list contract, artifact detail read model (including `version_chain` and `provenance`), comparison diff route (`field_pairs[].change_label`, `field_pairs[].delta_magnitude`), versioning and immutability semantics, and example payloads are now published as canonical BFF truth via `RW-05-ARTIFACT-COMPARE-001`. RW-05 still depends on Experiment Launch (`RW-04`) for stable versioned `artifact_id` values, and all four live BFF routes still need implementation before UI work can begin.
+All three artifact routes are live and returning the published field shape. The frontend handoff bundle is published at `docs/pantheon-handoffs/RW-05-artifact-compare/FRONTEND_CHANGE_SPEC.md`. The coordination bundle (`contract-ready` + `lovable-ui-task`) is ready.
 
 ### Lovable readiness gate
 
-`pending-bff` — the route specs, versioning semantics, `allowedActions.canCompare` shape, degradation semantics, and example payloads now exist, but all four live BFF routes still need implementation before a screen spec can be opened.
+`route-live` — all three routes are live, `allowedActions.canCompare` is wired, artifact versioning and immutability semantics are confirmed, and the frontend handoff bundle is published. Lovable UI implementation may begin.
 
 ---
 
@@ -183,20 +183,20 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/research/tickets` | RW-01, RW-02, RW-03, RW-04 | contract published — BFF implementation pending | ticket list surface and cross-module corpus identity |
 | `GET /api/v1/research/tickets/{ticket_id}` | RW-01 | contract published — BFF implementation pending | ticket detail and `allowedActions` gating |
 | `PATCH /api/v1/research/tickets/{ticket_id}` | RW-01 | contract published — BFF implementation pending | lifecycle transitions |
-| `GET /api/v1/research/search` | RW-02 | contract published — BFF implementation pending | entire Search module |
-| Search index adapter | RW-02 | contract published — BFF implementation pending | BFF-side search corpus; blocks query execution |
-| `GET /api/v1/research/analysis` | RW-03 | contract published — BFF implementation pending | analysis list and filter surface |
-| `GET /api/v1/research/analysis/{analysis_id}` | RW-03 | contract published — BFF implementation pending | analysis detail and metric aggregation |
-| Metric aggregation endpoint | RW-03 | contract published — BFF implementation pending | backend-owned metric grouping; blocks Analyze screen spec until live |
+| `GET /api/v1/research/search` | RW-02 | **live** | resolved — ranked result projection, pagination, `meta.surfaces.search_results`, and `meta.index_adapter.*` are live; handoff bundle at `docs/pantheon-handoffs/RW-02-search/` |
+| Search index adapter | RW-02 | **live** | resolved — backend-owned search corpus, adapter state, indexed match types, and source watermark metadata are live |
+| `GET /api/v1/research/analysis` | RW-03 | **live** | resolved — analysis list, canonical filters, pagination, and `meta.surfaces.analysis_results` are live; handoff bundle at `docs/pantheon-handoffs/RW-03-analyze/` |
+| `GET /api/v1/research/analysis/{analysis_id}` | RW-03 | **live** | resolved — analysis detail, ordered `metric_groups[]`, backend-authored `comparative_summary`, and canonical `links.*` fields are live |
+| Metric aggregation payload | RW-03 | **live** | resolved — backend-owned grouping is delivered through the RW-03 detail payload; no client-side grouping or diff computation is allowed |
 | `POST /api/v1/experiments/launch` | RW-04 | **live** | resolved — `docs/bff/RW-04-experiment-launch.md`; handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
 | `GET /api/v1/experiments/{experiment_id}` | RW-04, RW-05 | **live** | resolved — run status, `allowedActions.canCancel`, and artifact lineage live |
 | `GET /api/v1/experiments` | RW-04 | **live** | resolved — run history list with pagination and `meta.surfaces.experiment_history` live |
 | `POST /api/v1/experiments/{experiment_id}/cancel` | RW-04 | **live** | resolved — cancellation command and cancel authority gating live |
 | Experiment state machine | RW-04 | **live** | resolved — BFF-owned lifecycle and cancel authority semantics confirmed live |
-| `GET /api/v1/artifacts` | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md |
-| `GET /api/v1/artifacts/{artifact_id}` | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md |
-| `GET /api/v1/artifacts/compare` | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md; backend owns all comparison computation |
-| Artifact versioning semantics | RW-05 | contract published — BFF implementation pending | resolved — docs/bff/RW-05-artifact-compare.md; version identity, immutability, and ancestry semantics are locked |
+| `GET /api/v1/artifacts` | RW-05 | **live** | resolved — `docs/bff/RW-05-artifact-compare.md`; handoff bundle at `docs/pantheon-handoffs/RW-05-artifact-compare/` |
+| `GET /api/v1/artifacts/{artifact_id}` | RW-05 | **live** | resolved — `docs/bff/RW-05-artifact-compare.md`; version chain, provenance, metrics, and `allowedActions.canCompare` live |
+| `GET /api/v1/artifacts/compare` | RW-05 | **live** | resolved — `docs/bff/RW-05-artifact-compare.md`; BFF owns all comparison computation including `field_pairs`, `change_summary`, and `provenance_pairs` |
+| Artifact versioning semantics | RW-05 | **live** | resolved — `docs/bff/RW-05-artifact-compare.md`; version identity, immutability rules, and ancestry semantics are confirmed live |
 
 ---
 

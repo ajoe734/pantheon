@@ -1,5 +1,7 @@
 # KW-02 Research Notes BFF Contract
 
+**Status:** route-live — BFF implementation complete; frontend handoff bundle published at `docs/pantheon-handoffs/KW-02-research-notes/`
+
 ## Purpose
 
 Provide the second browse module for the Knowledge Workbench. This contract defines note ownership, the attachment taxonomy, referential integrity rules, and the create/list/detail routes for Research Notes. It eliminates client-invented taxonomy and owner inference from the frontend.

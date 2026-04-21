@@ -5,7 +5,7 @@
 - Packet family ID: `KW-006`
 - Workbench: Knowledge Workbench
 - Phase origin: `BP5-WB-006`
-- Lovable readiness: **complete** — KW-01, KW-02, KW-03, KW-04, and KW-05 are all ready
+- Lovable readiness: **partially opened** — `KW-01` is route-live; `KW-02` Research Notes routes live (handoff bundle published 2026-04-21); `KW-03` Evidence Refs routes live (handoff bundle published 2026-04-21); `KW-04` Insight Cards contract-ready with pending BFF implementation; `KW-05` remains blocked pending architecture ratification
 - Overview packet status: `PKT-knowledge-workbench` is published as a truthful overview surface; `KW-01` now provides the first truthful browse module anchoring the family
 - Recommended wave: Wave 3 — after Operator Console (Waves 1-2) and Persona Workbench (Waves 1-2) packetization are settled
 - Owner: Claude
@@ -42,10 +42,10 @@ These artifacts define object- and storage-level truth. They do **not** define a
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
 | `KW-01` | Institutional Memory | memory entry list, entry detail, lifecycle state machine, tag/type filters | ready | Wave 3 — 1st |
-| `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | ready | Wave 3 — 2nd |
-| `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | ready | Wave 3 — 3rd |
-| `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | ready | Wave 3 — 4th |
-| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | ready | Wave 3 — 5th |
+| `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | **route-live — ready for Lovable implementation** | Wave 3 — 2nd |
+| `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | **route-live — ready for Lovable implementation** | Wave 3 — 3rd |
+| `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | contract-ready; pending BFF | Wave 3 — 4th |
+| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | blocked | Wave 3 — 5th |
 
 ---
 
@@ -93,18 +93,18 @@ The memory entry lifecycle and identity schema are locked. Downstream modules (K
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| `POST /api/v1/knowledge/notes` | **implemented** | create route; note body shape, attachment target fields, and ownership metadata defined in `docs/bff/KW-02-research-notes.md` |
-| `GET /api/v1/knowledge/notes` | **implemented** | list route; supports `owner_ref`, `attachment_type`, `attachment_ref`, `page_token`, `page_size`; response includes `meta.surfaces.research_note_list` |
-| `GET /api/v1/knowledge/notes/{note_id}` | **implemented** | detail route; exposes note content, attachment target, owner metadata, linked evidence refs, and `meta.surfaces.research_note_detail` |
-| Research note ownership and attachment contract | **implemented** | canonical `owner_ref` shape, attachment taxonomy (`research_ticket`, `persona`, `strategy_spec`, `free_standing`), referential integrity rules, and `free_standing` semantics defined in `docs/bff/KW-02-research-notes.md` |
+| `POST /api/v1/knowledge/notes` | **live** | create route live and returning the published `note_id`, `created_at`, and `route_href` shape; validates `attachment_type`, `attachment_ref`, `linked_memory_anchors`; owner is server-assigned |
+| `GET /api/v1/knowledge/notes` | **live** | list route live and returning `owner_ref`, `attachment`, `tags`, `excerpt`, pagination, and `meta.surfaces.research_note_list` |
+| `GET /api/v1/knowledge/notes/{note_id}` | **live** | detail route live and returning note body, `linked_evidence_refs` with resolution state, `linked_memory_anchors`, and per-panel surface state |
+| Research note ownership and attachment contract | **ratified** | canonical `owner_ref` shape, attachment taxonomy (`research_ticket`, `persona`, `strategy_spec`, `free_standing`), referential integrity rules, and `free_standing` semantics are locked in `docs/bff/KW-02-research-notes.md` |
 
 ### Packetization prerequisite
 
-Note ownership and attachment semantics are now locked in `docs/bff/KW-02-research-notes.md`. The `linked_memory_anchors` contract references `KW-01` `entry_id` values as stable anchors.
+All three notes routes are live and returning the published field shape. The frontend handoff bundle is published at `docs/pantheon-handoffs/KW-02-research-notes/FRONTEND_CHANGE_SPEC.md`.
 
 ### Lovable readiness gate
 
-`true` — the create route, list route, detail route, ownership contract, attachment taxonomy, and example payloads (`docs/examples/KW-02-research-notes.json`) are all published. Lovable may proceed with production UI for the Research Notes module.
+`route-live` — the create/list/detail routes are live, ownership contract and attachment taxonomy are locked, and the frontend handoff bundle is published. Lovable UI implementation may begin.
 
 ---
 
@@ -122,18 +122,18 @@ Note ownership and attachment semantics are now locked in `docs/bff/KW-02-resear
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/knowledge/evidence` | **implemented** | list route; supports `linked_entity_type`, `linked_entity_ref`, `link_type`, `credibility_tier`, `verified`, `page_token`, `page_size`; response includes `meta.surfaces.evidence_refs_list` — defined in `docs/bff/KW-03-evidence-refs.md` |
-| `GET /api/v1/knowledge/evidence/{ref_id}` | **implemented** | detail route; exposes source-document identity, link-type taxonomy, linked target refs, credibility metadata, `linked_decisions` panel, and `meta.surfaces.evidence_ref_detail` — defined in `docs/bff/KW-03-evidence-refs.md` |
-| Evidence reference read model | **implemented** | canonical `evref-{UUID}` identity, `link_type` taxonomy, `credibility` metadata, `resolved_link` shape, `source_note_context`, and `source_memory_context` published in `docs/bff/KW-03-evidence-refs.md` |
-| Evidence link resolution contract | **implemented** | BFF-owned `resolved_link` object with `availability` state (`available | unavailable | external`) and `route_href`; follows CS-05 precedent; no client-side URL construction permitted — defined in `docs/bff/KW-03-evidence-refs.md` |
+| `GET /api/v1/knowledge/evidence` | **live** | list route live and returning the published `evref-{UUID}` row shape, backend-owned filters (`linked_entity_type`, `linked_entity_ref`, `link_type`, `credibility_tier`, `verified`), pagination, and `meta.surfaces.evidence_refs_list` |
+| `GET /api/v1/knowledge/evidence/{ref_id}` | **live** | detail route live and returning source-document detail, `resolved_link`, `linked_decisions`, `source_note_context`, `source_memory_context`, and per-panel surface state |
+| Evidence reference read model | **ratified** | canonical `evref-{UUID}` identity, `link_type` taxonomy, `credibility` metadata, `resolved_link` shape, `source_note_context`, and `source_memory_context` are locked in `docs/bff/KW-03-evidence-refs.md` |
+| Evidence link resolution contract | **live** | BFF-owned `resolved_link` object with `availability` state (`available | unavailable | external`) and `route_href` is locked and implemented; `open_in_new_tab` is authoritative for external links |
 
 ### Packetization prerequisite
 
-All contracts are now locked in `docs/bff/KW-03-evidence-refs.md` and example payloads are published in `docs/examples/KW-03-evidence-refs.json`. Upstream prerequisites `KW-01` and `KW-02` are both Lovable-ready.
+Both evidence routes are live and returning the published field shape. Upstream prerequisite `KW-01` is live, `KW-02` notes routes are live, and example payloads are published in `docs/examples/KW-03-evidence-refs.json`. The frontend handoff bundle is published at `docs/pantheon-handoffs/KW-03-evidence-refs/FRONTEND_CHANGE_SPEC.md`.
 
 ### Lovable readiness gate
 
-`true` — the list route, detail route, evidence-reference read model, evidence-link resolution contract, and example payloads are all published. Lovable may proceed with production UI for the Evidence Refs module.
+`route-live` — the list/detail routes are live, evidence-reference read model is confirmed, evidence-link resolution is implemented, and the frontend handoff bundle is published. Lovable UI implementation may begin.
 
 ---
 
@@ -151,10 +151,10 @@ All contracts are now locked in `docs/bff/KW-03-evidence-refs.md` and example pa
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| Insight aggregation endpoint | **implemented** | `GET /api/v1/knowledge/insights` — defined in `docs/bff/KW-04-insight-cards.md`; returns backend-shaped card rows, `filter_metadata`, and `meta.surfaces.insight_cards` |
-| Insight card detail endpoint | **implemented** | `GET /api/v1/knowledge/insights/{insight_id}` — defined in `docs/bff/KW-04-insight-cards.md`; exposes `source_ref`, `scope_context`, `confidence`, `supporting_evidence_refs`, `linked_sources`, and `meta.surfaces.insight_card_detail` |
-| Card-surface read model | **implemented** | canonical `ins-{UUID}` identity, card lifecycle (`active | superseded | archived`), confidence scale, aggregation provenance, and linked-source drilldown contract defined in `docs/bff/KW-04-insight-cards.md` |
-| Filter taxonomy and aggregation contract | **implemented** | tag, linked-entity, and recency filters defined as backend truth in `docs/bff/KW-04-insight-cards.md`; `filter_metadata` returned in list response; all filter vocab is backend-shaped |
+| Insight aggregation endpoint | **contract-published** | `GET /api/v1/knowledge/insights` is defined in `docs/bff/KW-04-insight-cards.md`; BFF implementation is still pending |
+| Insight card detail endpoint | **contract-published** | `GET /api/v1/knowledge/insights/{insight_id}` is defined in `docs/bff/KW-04-insight-cards.md`; BFF implementation is still pending |
+| Card-surface read model | **ratified** | canonical `ins-{UUID}` identity, card lifecycle (`active | superseded | archived`), confidence scale, aggregation provenance, and linked-source drilldown contract are locked |
+| Filter taxonomy and aggregation contract | **ratified** | tag, linked-entity, and recency filters are defined as backend truth; route implementation is still pending |
 
 ### Packetization prerequisite
 
@@ -162,7 +162,7 @@ Insight-card identity, display contract, and filter semantics must be locked bef
 
 ### Lovable readiness gate
 
-`true` — the aggregation endpoint (`GET /api/v1/knowledge/insights`), detail endpoint (`GET /api/v1/knowledge/insights/{insight_id}`), card-surface read model, filter taxonomy and aggregation contract, and example payloads (`docs/examples/KW-04-insight-cards.json`) are all published. Lovable may proceed with production UI for the Insight Cards module.
+`pending-bff` — the aggregation/detail contracts, card-surface read model, filter taxonomy, and example payloads are published, but the BFF implementation is still pending.
 
 ---
 
@@ -180,19 +180,19 @@ Insight-card identity, display contract, and filter semantics must be locked bef
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| Strategy-spec list route | **implemented** | `GET /api/v1/knowledge/strategy-specs` — defined in `docs/bff/KW-05-strategy-spec.md`; supports `lifecycle_state`, `source_kind`, `persona_id`, `include_deprecated`, `page_token`, `page_size`; returns `meta.surfaces.strategy_spec_list` |
-| Versioned strategy-spec detail route | **implemented** | `GET /api/v1/knowledge/strategy-specs/{strategy_id}` — defined in `docs/bff/KW-05-strategy-spec.md`; supports `version` selector (`current`, `specver-{UUID}`, or integer `version_seq`); exposes full `StrategySpec` payload, lifecycle state, version ancestry, citation bundle, `allowedActions`, and `meta.surfaces.strategy_spec_detail` |
-| Version history route | **implemented** | `GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions` — defined in `docs/bff/KW-05-strategy-spec.md`; returns ordered version list with ancestry and BFF-authored change summaries |
-| Strategy-spec versioning and lifecycle contract | **implemented** | `draft \| approved \| deprecated` lifecycle, `strat-{UUID}` / `specver-{UUID}` identity, `version_seq` ordering, ancestry fields (`parent_version_id`, `root_version_id`), and version-selector semantics defined in `docs/bff/KW-05-strategy-spec.md` |
-| Strategy-spec diff or compare contract | **implemented** | `GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare` — defined in `docs/bff/KW-05-strategy-spec.md`; returns `field_diffs[]` with `field_path`, `display_label`, `change_type`, `base_value`, `target_value`, `significance`, and `significance_reason`; the UI must not compute diffs from raw spec JSON |
+| Strategy-spec list route | **blocked** | draft contract material exists in `docs/bff/KW-05-strategy-spec.md`, but canonical ratification is still open and implementation must not proceed |
+| Versioned strategy-spec detail route | **blocked** | versioned browse semantics remain architecture-sensitive; do not treat the draft contract as implementation-ready |
+| Version history route | **blocked** | ancestry and history surface remain blocked pending final versioning semantics |
+| Strategy-spec versioning and lifecycle contract | **blocked** | `draft \| approved \| deprecated` lifecycle and ancestry semantics are not yet fully ratified for implementation |
+| Strategy-spec diff or compare contract | **blocked** | compare semantics remain blocked until the versioned strategy-spec contract is fully ratified |
 
 ### Packetization prerequisite
 
-All contracts are now locked in `docs/bff/KW-05-strategy-spec.md` and example payloads are published in `docs/examples/KW-05-strategy-spec.json`. Upstream prerequisites `KW-01`, `KW-02`, `KW-03`, and `KW-04` are all Lovable-ready.
+Draft contract material exists in `docs/bff/KW-05-strategy-spec.md`, but KW-05 remains architecture-blocked. The versioned browse and compare semantics are not yet ratified for implementation.
 
 ### Lovable readiness gate
 
-`true` — the list route, versioned detail route, version history route, versioning and lifecycle contract, diff or compare contract, and example payloads are all published. Lovable may proceed with production UI for the Strategy Spec module.
+`blocked` — KW-05 remains in the architecture lane. Do not treat the draft contract bundle as sufficient for production UI or BFF implementation.
 
 ---
 
@@ -205,22 +205,22 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/knowledge/memory` | KW-01 | **resolved** — `docs/bff/KW-01-institutional-memory.md` | institutional-memory list surface |
 | `GET /api/v1/knowledge/memory/{entry_id}` | KW-01, KW-02, KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-01-institutional-memory.md` | entry-detail anchor for downstream linked-memory resolution |
 | Memory entry lifecycle and identity contract | KW-01, KW-02, KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-01-institutional-memory.md` | lifecycle and identity resolution locked; entry types map to canonical `knowledge_type` enums |
-| `POST /api/v1/knowledge/notes` | KW-02 | **resolved** — `docs/bff/KW-02-research-notes.md` | note creation and attachment capture |
-| `GET /api/v1/knowledge/notes` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | note list surface and evidence source-context lookup |
-| `GET /api/v1/knowledge/notes/{note_id}` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | note detail and source-context resolution for evidence refs |
-| Research note ownership and attachment contract | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md` | owner semantics, attachment taxonomy, and referential integrity |
-| `GET /api/v1/knowledge/evidence` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | evidence list surface and downstream card or citation browsing |
-| `GET /api/v1/knowledge/evidence/{ref_id}` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | evidence detail, card drilldown, and strategy-spec citation drilldown |
-| Evidence reference read model | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | source-document identity, link taxonomy, linked-object refs, and credibility metadata |
-| Evidence link resolution contract | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md` | canonical evidence links with availability state; no client-side URL construction |
-| Insight aggregation endpoint | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | entire Insight Cards module |
-| Insight card detail endpoint | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | card detail and linked-source drilldown |
-| Card-surface read model | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | card identity, scope, summary, confidence, and aggregation provenance |
-| Filter taxonomy and aggregation contract | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md` | tag, linked-entity, and recency filters; card grid and detail semantics |
-| Strategy-spec list route | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | strategy-spec index surface |
-| Versioned strategy-spec detail route | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | strategy-spec viewer and citation panel |
-| Strategy-spec versioning and lifecycle contract | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | version ancestry and `draft \| approved \| deprecated` state |
-| Strategy-spec diff or compare contract | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md` | compare surface; backend owns the diff via `field_diffs[]` |
+| `POST /api/v1/knowledge/notes` | KW-02 | **resolved** — `docs/bff/KW-02-research-notes.md`; handoff bundle at `docs/pantheon-handoffs/KW-02-research-notes/` | note creation and attachment capture |
+| `GET /api/v1/knowledge/notes` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md`; note list with `owner_ref`, `attachment`, `tags`, pagination, and surface state live | note list surface and evidence source-context lookup |
+| `GET /api/v1/knowledge/notes/{note_id}` | KW-02, KW-03 | **resolved** — `docs/bff/KW-02-research-notes.md`; note detail with `linked_evidence_refs`, `linked_memory_anchors`, and per-panel surface state live | note detail and source-context resolution for evidence refs |
+| Research note ownership and attachment contract | KW-02, KW-03 | ratified | owner semantics, attachment taxonomy, and referential integrity are locked |
+| `GET /api/v1/knowledge/evidence` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md`; handoff bundle at `docs/pantheon-handoffs/KW-03-evidence-refs/` | evidence list surface and downstream card browsing |
+| `GET /api/v1/knowledge/evidence/{ref_id}` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md`; evidence detail with `resolved_link`, `linked_decisions`, source contexts, and per-panel surface state live | evidence detail, card drilldown, and citation drilldown |
+| Evidence reference read model | KW-03, KW-04, KW-05 | ratified | source-document identity, link taxonomy, linked-object refs, and credibility metadata are locked |
+| Evidence link resolution contract | KW-03, KW-04, KW-05 | **resolved** — BFF-owned `resolved_link` with `available | unavailable | external` states is implemented; no client-side URL construction | canonical evidence links with availability state |
+| Insight aggregation endpoint | KW-04 | contract published — BFF implementation pending | entire Insight Cards module |
+| Insight card detail endpoint | KW-04 | contract published — BFF implementation pending | card detail and linked-source drilldown |
+| Card-surface read model | KW-04 | ratified | card identity, scope, summary, confidence, and aggregation provenance are locked |
+| Filter taxonomy and aggregation contract | KW-04 | ratified | tag, linked-entity, and recency filters are locked; implementation remains pending |
+| Strategy-spec list route | KW-05 | blocked | strategy-spec browse remains architecture-blocked |
+| Versioned strategy-spec detail route | KW-05 | blocked | strategy-spec viewer and citation panel remain architecture-blocked |
+| Strategy-spec versioning and lifecycle contract | KW-05 | blocked | version ancestry and lifecycle semantics are still open |
+| Strategy-spec diff or compare contract | KW-05 | blocked | compare surface remains blocked until KW-05 ratification completes |
 
 ---
 
@@ -238,7 +238,7 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 ## Promotion Criteria
 
-A Knowledge Workbench module moves from **not ready** to **ready** (and may be handed to Lovable) when all of the following are true:
+A Knowledge Workbench module moves from **contract-ready / pending-bff** or **blocked** to **ready** (and may be handed to Lovable) when all of the following are true:
 
 1. All BFF routes and contracts listed in that module's Backend Gaps table are implemented and have agreed field shapes.
 2. The module's `meta.surfaces.*` staleness signals are defined and wired through to the canonical degradation banner (`PKT-005`).

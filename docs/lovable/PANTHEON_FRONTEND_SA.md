@@ -55,6 +55,7 @@ Lovable 需要先知道：
 
 - `ready`：已有穩定 packet 與 BFF，可正式做 production UI
 - `contract-ready`：contract 與 screen spec 已就位，可做 production UI
+- `partial-ready`：route 已 live，可先做受限 production UI，但完整 handoff 仍受上游 truth gate 約束
 - `overview-only`：只能做總覽頁或 shell，不可發明模組內頁
 - `blocked`：不可做 production UI；最多只能做明確標記的 non-production shell / IA wireframe
 
@@ -106,10 +107,10 @@ Pantheon
 | `Governance` | review, approval, diff, rollback, audit, promotion | ready / contract-ready |
 | `Evolution` | post-incident, evolution decision, lineage, future mutation review | baseline ready + EW-04/EW-05 route-live |
 | `Persona` | persona, sessions, teaching, capabilities, capital, bindings | ready |
-| `Research` | tickets, search, analysis, experiments, artifact compare | RW-01–04 route-live; RW-05 blocked |
-| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01 route-live; KW-02–05 blocked / module-gated |
-| `Consultation` | request, transcript, committee board, red-team memo | overview route live; CW-01 route-live with current front follow-up; CW-03 route-live but module-gated |
-| `Trainer` | teaching dialog, controls, compare, replay | TW-01 route-live; TW-02–04 contract-published |
+| `Research` | tickets, search, analysis, experiments, artifact compare | RW-01–05 route-live |
+| `Knowledge` | memory, notes, evidence, insight cards, strategy specs | KW-01–03 route-live; KW-04 contract-ready / pending BFF; KW-05 blocked |
+| `Consultation` | request, transcript, committee board, red-team memo | overview route live; CW-01 route-live with current front follow-up; CW-03 partial-ready; CW-02 / CW-04 blocked |
+| `Trainer` | teaching dialog, controls, compare, replay | TW-01 route-live; TW-03 route-live and handoff-ready; TW-04 route-live and handoff-ready; TW-02 blocked |
 
 ---
 
@@ -134,9 +135,9 @@ Pantheon
 | `Governance` | deployment review, review queue, approval queue, diff, rollback, audit, promotion |
 | `Evolution` | evolution center, lineage, inspiration, mutation review |
 | `Personas` | personas, sessions, teaching, capabilities, pools, bindings, drilldowns |
-| `Research` | overview + tickets + search + analyze + blocked module shell |
-| `Knowledge` | overview + institutional memory + blocked module shell |
-| `Consultation` | overview + committee board (module-gated) + blocked module shell |
+| `Research` | overview + tickets + search + analyze + experiments + artifact-compare (all route-live) |
+| `Knowledge` | overview + institutional memory + notes + evidence (all route-live) + contract-ready insights placeholder + blocked strategy-spec shell |
+| `Consultation` | overview + request flow + committee board partial activation + blocked transcript/memo shell |
 | `Trainer` | teaching dialog + blocked module shell |
 
 ### 4.3 路由分層規則
@@ -255,7 +256,7 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/governance/promotion/:artifact_id` | Promotion Review | Governance | ready |
 | `/evolution` | Evolution Center | Evolution | ready |
 | `/evolution/lineage` | Lineage View | Evolution | ready |
-| `/evolution/inspiration/:artifact_id` | Inspiration Graph | Evolution | contract-ready |
+| `/evolution/inspiration/:artifact_id` | Inspiration Graph | Evolution | route-live |
 | `/evolution/mutation-review/:decision_id` | Mutation Review | Evolution | contract-ready |
 | `/personas` | Persona Catalog | Persona | ready |
 | `/personas/:persona_id` | Persona Detail | Persona | ready |
@@ -272,14 +273,22 @@ Lovable 應先做以下 primitive，再做頁面：
 | `/deployment-plans/:plan_id` | Deployment Plan Detail | Persona drilldown | ready |
 | `/approval-decisions` | Approval Decision List | Persona drilldown | ready |
 | `/approval-decisions/:decision_id` | Approval Decision Detail | Persona drilldown | ready |
-| `/research/tickets` | Research Ticket List | Research | contract-ready |
-| `/research/tickets/:ticket_id` | Research Ticket Detail | Research | contract-ready |
-| `/research/search` | Search | Research | contract-ready |
-| `/research/analyze` | Analyze | Research | contract-ready |
-| `/knowledge/memory` | Institutional Memory List | Knowledge | contract-ready |
-| `/knowledge/memory/:entry_id` | Institutional Memory Detail | Knowledge | contract-ready |
-| `/trainer/sessions` | Teaching Dialog / Session List | Trainer | contract-ready |
-| `/trainer/sessions/:session_id` | Teaching Dialog Detail | Trainer | contract-ready |
+| `/research/tickets` | Research Ticket List | Research | route-live |
+| `/research/tickets/:ticket_id` | Research Ticket Detail | Research | route-live |
+| `/research/search` | Search | Research | route-live |
+| `/research/analyze` | Analyze | Research | route-live |
+| `/research/experiments` | Experiment Launch / Run History | Research | route-live |
+| `/knowledge/memory` | Institutional Memory List | Knowledge | route-live |
+| `/knowledge/memory/:entry_id` | Institutional Memory Detail | Knowledge | route-live |
+| `/research/compare` | Artifact Compare | Research | route-live — implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/RW-05-artifact-compare/` |
+| `/knowledge/notes` | Research Notes List | Knowledge | route-live — implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/KW-02-research-notes/` |
+| `/knowledge/notes/:note_id` | Research Note Detail | Knowledge | route-live — implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/KW-02-research-notes/` |
+| `/knowledge/evidence` | Evidence Refs List | Knowledge | route-live — implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/KW-03-evidence-refs/` |
+| `/knowledge/evidence/:ref_id` | Evidence Ref Detail | Knowledge | route-live — implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/KW-03-evidence-refs/` |
+| `/trainer/sessions` | Teaching Dialog / Session List | Trainer | route-live |
+| `/trainer/sessions/:session_id` | Teaching Dialog Detail | Trainer | route-live |
+| `/trainer/replay` | Teaching Replay List | Trainer | route-live |
+| `/trainer/replay/:session_id` | Teaching Replay Detail | Trainer | route-live |
 | `/research` | Research Overview | Research | shell-only overview |
 | `/knowledge` | Knowledge Overview | Knowledge | overview-only |
 | `/consultation` | Consultation Overview | Consultation | overview-only |
@@ -290,27 +299,19 @@ Lovable 應先做以下 primitive，再做頁面：
 
 | Path | 頁面 | Workbench | 目前可做的程度 |
 |---|---|---|---|
-| `/research/experiments` | Experiment Launch / Run History | Research | contract published — add "coming soon / blocked by Pantheon BFF" placeholder; production page pending BFF routes |
-| `/research/compare` | Artifact Compare | Research | blocked shell only |
-| `/knowledge/notes` | Research Notes | Knowledge | blocked shell only |
-| `/knowledge/notes/:note_id` | Note Detail | Knowledge | blocked shell only |
-| `/knowledge/evidence` | Evidence Refs | Knowledge | blocked shell only |
-| `/knowledge/evidence/:ref_id` | Evidence Ref Detail | Knowledge | blocked shell only |
-| `/knowledge/insights` | Insight Cards | Knowledge | blocked shell only |
-| `/knowledge/insights/:insight_id` | Insight Card Detail | Knowledge | blocked shell only |
+| `/knowledge/insights` | Insight Cards | Knowledge | contract-ready placeholder only; BFF implementation still pending |
+| `/knowledge/insights/:insight_id` | Insight Card Detail | Knowledge | contract-ready placeholder only; BFF implementation still pending |
 | `/knowledge/strategy-specs` | Strategy Spec List | Knowledge | blocked shell only |
 | `/knowledge/strategy-specs/:strategy_id` | Strategy Spec Detail | Knowledge | blocked shell only |
 | `/knowledge/strategy-specs/:strategy_id/compare` | Strategy Spec Compare | Knowledge | blocked shell only |
 | `/consultation/transcripts/:session_id` | Debate Transcript | Consultation | blocked shell only |
-| `/consultation/committees` | Committee Board | Consultation | module-gated: BFF route live, but production handoff must wait for CW-01/CW-02 |
-| `/consultation/committees/:committee_id` | Committee Detail | Consultation | module-gated: BFF route live, but production handoff must wait for CW-01/CW-02 |
+| `/consultation/committees` | Committee Board | Consultation | partial-ready: BFF route live; read-only / sponsor-status / outcome-summary UI may proceed, but full transcript-linked handoff still waits for CW-02 |
+| `/consultation/committees/:committee_id` | Committee Detail | Consultation | partial-ready: BFF route live; read-only / sponsor-status / outcome-summary UI may proceed, but full transcript-linked handoff still waits for CW-02 |
 | `/consultation/memos` | Red-team Memo List | Consultation | blocked shell only |
 | `/consultation/memos/:memo_id` | Red-team Memo Detail | Consultation | blocked shell only |
 | `/trainer` | Trainer Landing | Trainer | blocked shell only |
 | `/trainer/sessions/:session_id/controls` | Parameter Controls | Trainer | pending-bff placeholder only |
-| `/trainer/sessions/:session_id/compare` | Before/After Compare | Trainer | pending-bff placeholder only |
-| `/trainer/replay` | Teaching Replay List | Trainer | pending-bff placeholder only |
-| `/trainer/replay/:session_id` | Teaching Replay Detail | Trainer | pending-bff placeholder only |
+| `/trainer/sessions/:session_id/compare` | Before/After Compare | Trainer | route-live; implement against the live preview route family and published handoff bundle |
 
 ---
 
@@ -570,12 +571,12 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Research Overview | `/research` | overview shell | blocked family overview | 可做 overview |
-| Research Ticket List | `/research/tickets` | `RW-01` | contract-ready | implement against the live BFF route; module backlog still open for truth-hardening |
-| Research Ticket Detail | `/research/tickets/:ticket_id` | `RW-01` | contract-ready | implement against the live BFF route; module backlog still open for truth-hardening |
-| Search | `/research/search` | `RW-02` | contract-ready | implement against the live BFF route and index-adapter metadata |
-| Analyze | `/research/analyze` | `RW-03` | contract-ready | implement against the live BFF route; module backlog still open for truth-hardening |
-| Experiment Launch / History | `/research/experiments` | `RW-04` | **route-live** | implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
-| Artifact Compare | `/research/compare` | `RW-05` | blocked | shell-only |
+| Research Ticket List | `/research/tickets` | `RW-01` | route-live | implement against the live BFF route; module backlog still open for truth-hardening |
+| Research Ticket Detail | `/research/tickets/:ticket_id` | `RW-01` | route-live | implement against the live BFF route; module backlog still open for truth-hardening |
+| Search | `/research/search` | `RW-02` | route-live | implement against the live BFF route and index-adapter metadata |
+| Analyze | `/research/analyze` | `RW-03` | route-live | implement against the live BFF route; module backlog still open for truth-hardening |
+| Experiment Launch / History | `/research/experiments` | `RW-04` | route-live | implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
+| Artifact Compare | `/research/compare` | `RW-05` | route-live | implement against live BFF routes; handoff bundle at `docs/pantheon-handoffs/RW-05-artifact-compare/` |
 
 ### 11.3 頁面定義
 
@@ -622,8 +623,10 @@ Lovable 應先做以下 primitive，再做頁面：
 #### 11.3.6 RW-05 Artifact Compare
 
 - 目標頁面：artifact selector、structured diff、side-by-side compare、evidence drawer
-- 期待 BFF：artifact registry、artifact detail、compare route、versioning semantics
-- 在 route 未落地前：不可在前端比較兩份 JSON 假裝是產品 diff
+- 契約狀態：`docs/bff/RW-05-artifact-compare.md` 已把 artifact list/detail/compare、version ancestry、immutability、`allowedActions.canCompare`、degradation semantics 鎖定成 canonical contract
+- BFF 狀態：`GET /api/v1/artifacts`、`GET /api/v1/artifacts/{artifact_id}`、`GET /api/v1/artifacts/compare` 已 live；versioning semantics 與 `allowedActions.canCompare` 已實作
+- 現在可做：正式 production UI；依 `docs/pantheon-handoffs/RW-05-artifact-compare/FRONTEND_CHANGE_SPEC.md` 實作 artifact selector、version diff view、side-by-side compare 與 evidence drawer
+- 不可做：在前端比較兩份 JSON 假裝是產品 diff、從 experiment history 自己組 artifact registry、或 client-side 計算 `change_label`/`delta_magnitude`/group 分組
 
 ---
 
@@ -638,14 +641,14 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Knowledge Overview | `/knowledge` | `PKT-knowledge-workbench` | overview-only | 可正式做 |
-| Institutional Memory List | `/knowledge/memory` | `KW-01` | contract-ready | BFF route live；可直接對接 production UI，module backlog 仍有 truth-hardening |
-| Institutional Memory Detail | `/knowledge/memory/:entry_id` | `KW-01` | contract-ready | BFF route live；可直接對接 production UI，module backlog 仍有 truth-hardening |
-| Research Notes List | `/knowledge/notes` | `KW-02` | blocked | shell-only |
-| Research Note Detail | `/knowledge/notes/:note_id` | `KW-02` | blocked | shell-only |
-| Evidence Refs List | `/knowledge/evidence` | `KW-03` | blocked | shell-only |
-| Evidence Ref Detail | `/knowledge/evidence/:ref_id` | `KW-03` | blocked | shell-only |
-| Insight Cards | `/knowledge/insights` | `KW-04` | blocked | shell-only |
-| Insight Card Detail | `/knowledge/insights/:insight_id` | `KW-04` | blocked | shell-only |
+| Institutional Memory List | `/knowledge/memory` | `KW-01` | route-live | BFF route live；可直接對接 production UI，module backlog 仍有 truth-hardening |
+| Institutional Memory Detail | `/knowledge/memory/:entry_id` | `KW-01` | route-live | BFF route live；可直接對接 production UI，module backlog 仍有 truth-hardening |
+| Research Notes List | `/knowledge/notes` | `KW-02` | route-live | BFF route live；可直接對接 production UI；handoff bundle at `docs/pantheon-handoffs/KW-02-research-notes/` |
+| Research Note Detail | `/knowledge/notes/:note_id` | `KW-02` | route-live | BFF route live；可直接對接 production UI；handoff bundle at `docs/pantheon-handoffs/KW-02-research-notes/` |
+| Evidence Refs List | `/knowledge/evidence` | `KW-03` | route-live | BFF route live；可直接對接 production UI；handoff bundle at `docs/pantheon-handoffs/KW-03-evidence-refs/` |
+| Evidence Ref Detail | `/knowledge/evidence/:ref_id` | `KW-03` | route-live | BFF route live；可直接對接 production UI；handoff bundle at `docs/pantheon-handoffs/KW-03-evidence-refs/` |
+| Insight Cards | `/knowledge/insights` | `KW-04` | contract-ready / pending BFF | contract-ready placeholder only |
+| Insight Card Detail | `/knowledge/insights/:insight_id` | `KW-04` | contract-ready / pending BFF | contract-ready placeholder only |
 | Strategy Spec List | `/knowledge/strategy-specs` | `KW-05` | blocked | shell-only |
 | Strategy Spec Detail / Compare | `/knowledge/strategy-specs/:strategy_id`, `/compare` | `KW-05` | blocked | shell-only |
 
@@ -669,28 +672,31 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：notes list/detail、ownership、attachment target
 - 契約狀態：`docs/bff/KW-02-research-notes.md` 已發布 `POST /api/v1/knowledge/notes`、`GET /api/v1/knowledge/notes`、`GET /api/v1/knowledge/notes/{note_id}`，並鎖定 `owner_ref`、attachment taxonomy、referential integrity、degradation semantics。
-- 現在可做：shell-only；knowledge overview truth 仍把 KW-02 視為 `not_ready`
-- 不可做：正式 production UI、自行定義 attachment taxonomy、從 raw id 猜 owner/route、或把 degraded surface 當成 empty state
+- BFF 狀態：所有三條路由已 live；`owner_ref` server-assigned，attachment taxonomy 已實作，linked evidence refs 與 memory anchor resolution 已回傳
+- 現在可做：正式 production UI；依 `docs/pantheon-handoffs/KW-02-research-notes/FRONTEND_CHANGE_SPEC.md` 實作 notes list、note detail、attachment panel、linked evidence refs panel 與 linked memory anchors panel
+- 不可做：自行定義 attachment taxonomy、從 raw id 猜 owner/route/display_label、把 degraded surface 當成 empty state、或 client-side 解析 linked_evidence_refs resolution state
 
 #### 12.3.4 KW-03 Evidence Refs
 
 - 目標頁面：evidence registry + detail + linked decision panel
 - 契約狀態：`docs/bff/KW-03-evidence-refs.md` 已發布 `GET /api/v1/knowledge/evidence`、`GET /api/v1/knowledge/evidence/{ref_id}`，並鎖定 link-type taxonomy、credibility metadata、BFF-owned `resolved_link`、linked decisions panel、degradation semantics。
-- 現在可做：shell-only；knowledge overview truth 仍把 KW-03 視為 `not_ready`
-- 不可做：正式 production UI、從 raw id 猜 URL、client-side 解析 target type、或把 degraded surface 當成 empty state
+- BFF 狀態：兩條路由已 live；BFF-owned `resolved_link`（`available | unavailable | external`）、`credibility` metadata、`linked_decisions`、`source_note_context`、`source_memory_context` 均已實作
+- 現在可做：正式 production UI；依 `docs/pantheon-handoffs/KW-03-evidence-refs/FRONTEND_CHANGE_SPEC.md` 實作 evidence list、evidence detail、resolved-link CTA、credibility panel 與 linked-decision panel
+- 不可做：從 raw `ref_id`/`source_ref` 猜 URL、client-side 解析 target type、把 degraded surface 當成 empty state、或自行推斷 `credibility.tier` 的 gating 語義
 
 #### 12.3.5 KW-04 Insight Cards
 
 - 目標頁面：card grid、card detail、filter rail、linked-source drilldown
 - 期待 BFF：aggregation endpoint、card detail endpoint、filter taxonomy
-- 契約狀態：design contract 已發布，但 knowledge overview truth 仍把 KW-04 視為 `not_ready`
-- 現在可做：shell-only；等待 live BFF aggregation/detail routes
+- 契約狀態：`docs/bff/KW-04-insight-cards.md` 已發布 aggregation/detail contract、filter taxonomy、confidence semantics、aggregation provenance 與 linked-source drilldown 規則
+- 現在可做：contract-ready placeholder；可先做 grid/detail IA、filter rail shell 與 state rendering，但 production UI 要等 live BFF aggregation/detail routes
 - 正式實作規則：不可 client-side 聚合 notes + evidence + memory；必須完全依賴 KW-04 aggregation/detail contract
 
 #### 12.3.6 KW-05 Strategy Spec
 
 - 目標頁面：spec list、viewer、citation panel、version compare
 - 期待 BFF：list/detail/versioning/diff contract
+- 目前狀態：仍 blocked；architecture-sensitive versioning semantics 尚未 fully ratify
 - shell 階段：不可比較 raw spec JSON 假裝是正式 compare
 
 ---
@@ -709,8 +715,8 @@ Lovable 應先做以下 primitive，再做頁面：
 | Consult Request List / Composer | `/consultation/requests` | `CW-01` | contract-ready | live BFF route; current returned UI still needs truthful republish and Pantheon follow-up fixes |
 | Consult Request Detail | `/consultation/requests/:request_id` | `CW-01` | contract-ready | live BFF route; current returned UI still needs truthful republish and Pantheon follow-up fixes |
 | Debate Transcript | `/consultation/transcripts/:session_id` | `CW-02` | blocked | shell-only |
-| Committee Board | `/consultation/committees` | `CW-03` | blocked (module-gated) | BFF route live, but do not hand off production UI before CW-01/CW-02 close |
-| Committee Detail | `/consultation/committees/:committee_id` | `CW-03` | blocked (module-gated) | BFF route live, but do not hand off production UI before CW-01/CW-02 close |
+| Committee Board | `/consultation/committees` | `CW-03` | partial-ready | BFF route live; read-only / sponsor-status / outcome-summary UI may proceed, but full transcript-linked production handoff still waits for CW-02 |
+| Committee Detail | `/consultation/committees/:committee_id` | `CW-03` | partial-ready | BFF route live; read-only / sponsor-status / outcome-summary UI may proceed, but full transcript-linked production handoff still waits for CW-02 |
 | Red-team Memo List | `/consultation/memos` | `CW-04` | blocked | shell-only |
 | Red-team Memo Detail | `/consultation/memos/:memo_id` | `CW-04` | blocked | shell-only |
 
@@ -740,8 +746,8 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：board list、participant roster、escalation reason、sponsor decision、synthesis summary
 - 契約狀態：`GET /api/v1/committees`、`GET /api/v1/committees/{committee_id}` 與 sponsor decision authority 已 live
-- 目前 gate：雖然 committee routes 已存在，但 consultation overview truth 仍把 CW-03 視為 module-gated，因為 `CW-02` transcript ordering 尚未 live，且 `CW-01` 前端 loop 仍在 follow-up 中
-- shell / gated 階段：不可從 participant votes 自己算 verdict，也不可把 committee routes 的存在誤讀成整個 Consultation Workbench 已 ready
+- 目前 gate：依最新 ratification，`CW-03` 可 partial-activate；可先交付 read-only / sponsor-status / outcome-summary 版本，但完整 transcript-linked production handoff 仍要等 `CW-02` live
+- partial-ready 階段不可做：不可從 participant votes 自己算 verdict、不可發明 transcript drill-down、也不可把 committee routes 的存在誤讀成整個 Consultation Workbench 已 fully ready
 
 #### 13.3.5 CW-04 Red-team Memo
 
@@ -762,12 +768,12 @@ Lovable 應先做以下 primitive，再做頁面：
 | 頁面 | Path | 期待 contract | 狀態 | 目前可做 |
 |---|---|---|---|---|
 | Trainer Landing | `/trainer` | workbench shell | blocked | shell-only |
-| Teaching Dialog / Session List | `/trainer/sessions` | `TW-01` | contract-ready | implement against the live BFF route family |
-| Teaching Dialog Detail | `/trainer/sessions/:session_id` | `TW-01` | contract-ready | implement against the live BFF route family |
+| Teaching Dialog / Session List | `/trainer/sessions` | `TW-01` | route-live | implement against the live BFF route family |
+| Teaching Dialog Detail | `/trainer/sessions/:session_id` | `TW-01` | route-live | implement against the live BFF route family |
 | Parameter Controls | `/trainer/sessions/:session_id/controls` | `TW-02` | contract-published | pending-bff placeholder only |
-| Before/After Compare | `/trainer/sessions/:session_id/compare` | `TW-03` | contract-published | pending-bff placeholder only |
-| Teaching Replay List | `/trainer/replay` | `TW-04` | contract-published | pending-bff placeholder only |
-| Teaching Replay Detail | `/trainer/replay/:session_id` | `TW-04` | contract-published | pending-bff placeholder only |
+| Before/After Compare | `/trainer/sessions/:session_id/compare` | `TW-03` | route-live | implement against the live preview route family and published handoff bundle |
+| Teaching Replay List | `/trainer/replay` | `TW-04` | route-live | implement against the live replay route family and published handoff bundle |
+| Teaching Replay Detail | `/trainer/replay/:session_id` | `TW-04` | route-live | implement against the live replay route family and published handoff bundle |
 
 ### 14.3 頁面定義
 
@@ -800,15 +806,18 @@ Lovable 應先做以下 primitive，再做頁面：
 
 - 目標頁面：metric panels、warning hierarchy、control diff、rapid-eval summary
 - 已發布 contract：`docs/bff/TW-03-before-after-compare.md`、`docs/screens/TW-03-before-after-compare.md`、`docs/examples/TW-03-before-after-compare.json`
-- 目前 gate：BFF 必須先讓 `GET /api/v1/trainer/sessions/{session_id}/preview` 與 `POST /api/v1/trainer/sessions/{session_id}/preview` 上線，並回傳已發布的 compare payload、warning hierarchy、`preview_unavailable` degraded branch 與 polling contract
-- pending-BFF 階段：可做明確 blocked placeholder；不可用 mock performance chart、不可從 TW-02 diff 自己推 performance preview，也不可把 `preview_unavailable` 假裝成 loading
+- 路由真相：`GET /api/v1/trainer/sessions/{session_id}/preview` 與 `POST /api/v1/trainer/sessions/{session_id}/preview` 已 live，並應回傳已發布的 compare payload、warning hierarchy、`preview_unavailable` degraded branch 與 polling contract
+- handoff truth：`docs/pantheon-handoffs/TW-03-before-after-compare/FRONTEND_CHANGE_SPEC.md`、`.coordination/responses/TW-03-before-after-compare-contract-ready.yaml`、`.coordination/responses/TW-03-before-after-compare-lovable-ui-task.yaml` 已發布，frontend lane 可直接進 production UI
+- 不可做：不可用 mock performance chart、不可從 TW-02 diff 自己推 performance preview、不可輪詢 `POST /preview`，也不可把 `preview_unavailable` 假裝成 loading
 
 #### 14.3.5 TW-04 Teaching Replay
 
 - 目標頁面：session history、ordered event timeline、evidence drawer、commit/discard authority、replay cursor
 - 已發布 contract：`docs/bff/TW-04-teaching-replay.md`、`docs/screens/TW-04-teaching-replay.md`、`docs/examples/TW-04-teaching-replay.json`
-- 目前 gate：BFF 必須先讓 `GET /api/v1/trainer/replay`、`GET /api/v1/trainer/replay/{session_id}`、`POST /api/v1/trainer/sessions/{session_id}/commit` 與 `POST /api/v1/trainer/sessions/{session_id}/discard` 上線，並回傳已發布的 replay payload、full `TeachingEvent` schema、resolved evidence links 與 artifact refs
-- pending-BFF 階段：可做明確 blocked placeholder；不可把 Persona teaching history 誤當 Trainer replay、不可自行拼 evidence drawer link，也不可用本地狀態推 commit/discard CTA
+- 路由真相：`GET /api/v1/trainer/replay`、`GET /api/v1/trainer/replay/{session_id}`、`POST /api/v1/trainer/sessions/{session_id}/commit` 與 `POST /api/v1/trainer/sessions/{session_id}/discard` 已 live，並回傳已發布的 replay payload、full `TeachingEvent` schema、resolved evidence links 與 artifact refs
+- 前端 handoff：`docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md`
+- 現在可做：直接依 live replay route family 與已發布 handoff bundle 實作 production UI
+- 不可做：不可把 Persona teaching history 誤當 Trainer replay、不可自行拼 evidence drawer link，也不可用本地狀態推 commit/discard CTA
 
 ---
 
@@ -833,7 +842,7 @@ Lovable 應先做以下 primitive，再做頁面：
 2. Governance
 3. Persona
 4. Evolution baseline
-5. route-live expansion：`EW-04`, `EW-05`, `RW-01`, `RW-02`, `RW-03`, `KW-01`, `TW-01`
+5. route-live expansion：`EW-04`, `EW-05`, `RW-01`, `RW-02`, `RW-03`, `RW-04`, `RW-05`, `KW-01`, `KW-02`, `KW-03`, `TW-01`, `TW-03`, `TW-04`
 
 ### 15.3 第三層：做 overview-only / module-gated workbench
 
@@ -841,19 +850,20 @@ Lovable 應先做以下 primitive，再做頁面：
 
 1. Knowledge Overview
 2. Consultation Overview
-3. `CW-03` committee routes 雖已 live，但仍屬 module-gated，不可跳過 `CW-01` / `CW-02`
+3. `CW-03` committee routes 雖已 live，但目前只屬 partial-ready，不可跳過 `CW-01` / `CW-02`
+   可先 partial-activate read-only / sponsor-status / outcome-summary UI，但不可假裝 transcript truth 已完整。
 4. Research Overview 仍可先做 workbench-level overview，但它已不是唯一可做頁面
-5. Trainer Landing 仍可先做 workbench shell，但它已不是唯一可做頁面，因為 `TW-01` 已 route-live
+5. Trainer Landing 仍可先做 workbench shell，但它已不是唯一可做頁面，因為 `TW-01`、`TW-03`、`TW-04` 已 route-live
 
 ### 15.4 第四層：blocked 模組只有在 packet 開啟後才能轉正式實作
 
 以下仍不得當作 fully open production module：
 
-- `RW-04`, `RW-05`
-- `KW-02` 到 `KW-05`
-- `CW-01`, `CW-02`, `CW-04`
-- `CW-03`：committee routes 已 live，但仍是 module-gated
-- `TW-02` 到 `TW-04`
+- `KW-04`：contract-ready / pending BFF，不是 fully open production module
+- `KW-05`
+- `CW-02`, `CW-04`
+- `CW-03`：committee routes 已 live，但只允許 partial activation
+- `TW-02`
 
 ---
 

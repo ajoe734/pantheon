@@ -1,5 +1,7 @@
 # KW-03 Evidence Refs BFF Contract
 
+**Status:** route-live — BFF implementation complete; frontend handoff bundle published at `docs/pantheon-handoffs/KW-03-evidence-refs/`
+
 ## Purpose
 
 Provide the third browse module for the Knowledge Workbench. This contract defines the evidence reference read model, link-type taxonomy, credibility metadata, and the BFF-owned link resolution contract for Evidence Refs. It eliminates client-side URL construction from raw `ref_id` or `storage_ref` values.
