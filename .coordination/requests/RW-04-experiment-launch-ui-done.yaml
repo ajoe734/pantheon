@@ -11,11 +11,13 @@ source_commit_note: >-
   6e17dd8..f672af2..f00791b is now GitHub-visible on origin/pkt-004-detail-fix.
 screen: experiment-launch
 blocking: false
-status: resubmitted
-pantheon_disposition: pending_review
+status: closed
+pantheon_disposition: accepted
 acknowledged_at: "2026-04-21T16:50:45Z"
 acknowledged_by: Codex
 resubmitted_at: "2026-04-21T18:15:00Z"
+finalized_at: "2026-04-21T18:20:00Z"
+finalized_by: Claude
 review_file: .coordination/reviews/RW-04-experiment-launch-review.md
 resolution_summary: >-
   Corrected RW-04 publication chain pushed to origin/pkt-004-detail-fix.
