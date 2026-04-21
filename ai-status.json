@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-20T12:50:37Z",
+  "updated_at": "2026-04-21T15:59:09Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,15 +93,15 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "finalize",
       "current_task_ids": [
-        "EXEC-REBASE-EW04-001",
-        "EXEC-REBASE-RW04-001",
-        "EXEC-REBASE-TW04-001"
+        "EXEC-FRONT-RW02-001",
+        "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+        "EXEC-OSS-WANDB-001-SIDECAR-REVIEW"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "All review findings resolved: handoff bundle created at docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md; lovable-ui-task.yaml paths populated; WORKBENCH_DELIVERY_BACKLOG, PACKET_FAMILY, LOVABLE_MASTER_SA, PANTHEON_FRONTEND_SA, and bff doc all updated to route-live/ready truth. Ready for re-review.",
-      "last_update": "2026-04-20T12:50:33Z"
+      "next": "Supervisor paused finalize on EXEC-FRONT-RW02-001 to free Claude for higher-priority review work; task remains review_approved.",
+      "last_update": "2026-04-21T06:16:25Z"
     },
     {
       "name": "Gemini",
@@ -111,15 +111,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "EXEC-FRONT-RW02-001",
-        "EXEC-FRONT-TW01-001",
-        "EXEC-OSS-STATSMODELS-001"
+        "EXEC-RUNTIME-RW01-001"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-20T12:25:41Z"
+      "next": "Supervisor re-dispatched EXEC-RUNTIME-RW01-001; task remains in progress.",
+      "last_update": "2026-04-21T15:58:47Z"
     },
     {
       "name": "Codex",
@@ -129,17 +127,33 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "reviewing",
       "current_task_ids": [
-        "EXEC-FRONT-PKT003-001",
-        "EXEC-REBASE-BACKLOG-SA-001",
-        "EXEC-OSS-RL-001",
-        "EXEC-OSS-VECTORBT-001",
-        "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF"
+        "EXEC-FRONT-RW03-001",
+        "EXEC-FRONT-RW04-001",
+        "EXEC-BFF-KW03-001",
+        "EXEC-CLOSEOUT-FRONTEND-001",
+        "EXEC-REBASE-EW04-001",
+        "EXEC-REBASE-TW03-001",
+        "EXEC-REBASE-TW04-001",
+        "EXEC-OSS-WANDB-001",
+        "EXEC-OSS-QUANTLIB-001",
+        "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+        "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+        "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+        "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+        "EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF",
+        "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF",
+        "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+        "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+        "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW",
+        "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+        "EXEC-REBASE-TW03-001-SIDECAR-BFF-HANDOFF",
+        "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-20T12:42:57Z"
+      "next": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "last_update": "2026-04-21T15:59:09Z"
     },
     {
       "name": "Codex2",
@@ -149,13 +163,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "blocked",
       "current_task_ids": [
-        "EXEC-FRONT-EW05-001"
+        "EXEC-FRONT-RW01-001",
+        "EXEC-FRONT-TW01-002"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "EW-05 delivery republished from front-ai-trading-system with replayable Git evidence. Implementation commit: 58fc79cc3aed641a97b1c9c74140cb6626dbb231. Handoff commits: 15399e9e6387001a61747e5a07d7d6ea3388615b then source_commit correction fc3b98dc4607ebf5a31244dcffea4f9d640c9422. Verified git show for ui-done and implementation routes, npx eslint on src/App.tsx + MutationReview files passed, and npm run build passed.",
-      "last_update": "2026-04-20T12:50:37Z"
+      "next": "Supervisor re-dispatched EXEC-FRONT-TW01-002; task remains in progress.",
+      "last_update": "2026-04-21T15:58:58Z"
     },
     {
       "name": "Copilot",
@@ -165,15 +180,13 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
+      "status": "waiting",
       "current_task_ids": [
-        "EXEC-FRONT-RW01-001",
-        "EXEC-CLOSEOUT-FRONTEND-001",
-        "EXEC-REBASE-TW03-001"
+        "EXEC-REBASE-RW05-KW23-001"
       ],
       "branch": "feat/grok-research-critique",
-      "next": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "last_update": "2026-04-20T12:21:58Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-21T01:39:53Z"
     },
     {
       "name": "Qwen",
@@ -187,7 +200,7 @@
       "current_task_ids": [],
       "branch": "feat/qwen-code-agent",
       "next": "",
-      "last_update": "2026-04-20T12:50:10Z"
+      "last_update": "2026-04-21T15:58:01Z"
     }
   ],
   "tasks": [
@@ -270,91 +283,13 @@
       ]
     },
     {
-      "id": "EXEC-FRONT-EW05-001",
-      "title": "Implement EW-05 mutation review front-end flow against the activated handoff",
-      "summary_zh": "依已 activation 的 EW-05 handoff 與 live route，在 front-end lane 實作 mutation review flow，並保留 command vocabulary 對齊。",
-      "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        ".coordination/responses/EW-05-mutation-review-contract-ready.yaml",
-        ".coordination/responses/EW-05-mutation-review-lovable-ui-task.yaml",
-        "docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md"
-      ],
-      "acceptance": [
-        "mutation review UI 依 live route / command vocabulary 實作",
-        "不自行發明 action semantics 或 shadow state",
-        "完成後提交 ui-done handoff 並留下可 review 的前端變更摘要"
-      ],
-      "next": "EW-05 delivery republished from front-ai-trading-system with replayable Git evidence. Implementation commit: 58fc79cc3aed641a97b1c9c74140cb6626dbb231. Handoff commits: 15399e9e6387001a61747e5a07d7d6ea3388615b then source_commit correction fc3b98dc4607ebf5a31244dcffea4f9d640c9422. Verified git show for ui-done and implementation routes, npx eslint on src/App.tsx + MutationReview files passed, and npm run build passed.",
-      "last_update": "2026-04-20T12:50:37Z",
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EXEC-FRONT-KW01-001",
-      "title": "Implement KW-01 institutional memory front-end flow against live Pantheon APIs",
-      "summary_zh": "在 front-end lane 實作 KW-01 institutional memory list/detail flow，使用既有 handoff bundle 與 live BFF routes。",
-      "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        ".coordination/responses/KW-01-institutional-memory-contract-ready.yaml",
-        ".coordination/responses/KW-01-institutional-memory-lovable-ui-task.yaml",
-        "docs/pantheon-handoffs/KW-01-institutional-memory/FRONTEND_CHANGE_SPEC.md"
-      ],
-      "acceptance": [
-        "institutional memory list/detail UI 對齊已發布 contract",
-        "若 payload 缺欄位則發 bff-gap，而不是用 placeholder 偽造資料",
-        "完成後提交 ui-done handoff"
-      ],
-      "next": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "last_update": "2026-04-20T12:45:43Z",
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EXEC-FRONT-PKT003-001",
-      "title": "Implement PKT-003 inspiration graph front-end flow against the live EW-04 route",
-      "summary_zh": "在 front-end lane 實作 PKT-003 inspiration graph，必須吃 BFF 組好的 graph response，不可 client-side synthesize lineage/inspiration graph。",
-      "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        ".coordination/responses/PKT-003-inspiration-graph-contract-ready.yaml",
-        ".coordination/responses/PKT-003-inspiration-graph-lovable-ui-task.yaml",
-        "docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md"
-      ],
-      "acceptance": [
-        "inspiration graph UI 使用 live inspiration graph route 與 published response shape",
-        "前端不得自行合成 graph truth 或改寫 degraded semantics",
-        "完成後提交 ui-done handoff"
-      ],
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-20T12:42:57Z",
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
       "id": "EXEC-FRONT-RW01-001",
       "title": "Implement RW-01 research ticket front-end flow against live Pantheon APIs",
       "summary_zh": "在 front-end lane 實作 research ticket flow，沿用已發布 contract 與 lifecycle state machine，不發明 local lifecycle。",
       "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "blocked",
       "depends_on": [],
       "artifacts": [
         ".coordination/responses/RW-01-research-ticket-contract-ready.yaml",
@@ -366,21 +301,22 @@
         "authority signals 與 lifecycle history 由 backend truth 驅動",
         "完成後提交 ui-done handoff"
       ],
-      "next": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "last_update": "2026-04-20T12:21:58Z",
+      "next": "Front repo published RW-01 readiness-gated implementation plus truthful ui-done/frontend-feedback bundle from commits 7b807fbe9ebcd5c84baca77de966121c0b2d1d73 and 4ff06511cf24c643d63c79f4a32265015a926730. Targeted eslint, tsc, and build pass, but live probes on 2026-04-20 still return HTTP 404 for /api/v1/research/tickets and expose no RW-01 paths in /openapi.json, so approval remains blocked on runtime refresh.",
+      "last_update": "2026-04-20T23:58:30Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
-      "mutates_canonical": true
+      "mutates_canonical": true,
+      "waiting_for": "Gemini"
     },
     {
       "id": "EXEC-FRONT-RW02-001",
       "title": "Implement RW-02 search front-end flow against the live search route",
       "summary_zh": "在 front-end lane 實作 RW-02 search，直接使用已 live 的 search route 與 backend-owned filter/pagination semantics。",
       "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Gemini",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         ".coordination/responses/RW-02-search-contract-ready.yaml",
@@ -392,36 +328,124 @@
         "empty / degraded state 對齊 published semantics",
         "完成後提交 ui-done handoff"
       ],
-      "next": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-20T12:25:41Z",
+      "next": "Supervisor paused finalize on EXEC-FRONT-RW02-001 to free Claude for higher-priority review work; task remains review_approved.",
+      "last_update": "2026-04-21T06:16:25Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "RW-02 search 前端 slice 已對齊 live contract：只送出 published query params、結果列與 drilldown 全都以 backend-owned SearchResult/links.* 為準，degraded/unavailable 行為也符合規格。當前 127.0.0.1:18001 runtime 仍是 stale 404、owner detail routes 尚未掛載，屬於後續 runtime/owner-screen follow-up，不阻擋這個 task 的 review approval。"
+      ],
+      "review_file": ".coordination/reviews/RW-02-search-review.md"
+    },
+    {
+      "id": "EXEC-FRONT-RW03-001",
+      "title": "Implement RW-03 analyze front-end flow against live Pantheon APIs",
+      "summary_zh": "在 front-end lane 實作 RW-03 analyze list/detail flow，直接使用已 live 的 analysis routes 與 backend-owned metric aggregation / comparative summary。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "docs/bff/RW-03-analyze.md",
+        "docs/examples/RW-03-analyze.json",
+        "WORKBENCH_DELIVERY_BACKLOG.md"
+      ],
+      "acceptance": [
+        "analyze list/detail UI 對齊 live analysis routes 與 backend-owned metric aggregation",
+        "前端不得自行 group metrics 或 client-side 合成 comparative summary",
+        "完成後提交 ui-done handoff 並附前端變更摘要"
+      ],
+      "next": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "last_update": "2026-04-21T15:59:09Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
       "auto_generated": true,
       "mutates_canonical": true
     },
     {
-      "id": "EXEC-FRONT-TW01-001",
-      "title": "Implement TW-01 teaching dialog front-end flow against live Pantheon APIs",
-      "summary_zh": "在 front-end lane 實作 teaching dialog flow，對齊 session lifecycle、allowedActions.canSendMessage 與 backend-owned event ordering。",
+      "id": "EXEC-FRONT-RW04-001",
+      "title": "Implement RW-04 experiment launch front-end flow against live Pantheon APIs",
+      "summary_zh": "在 front-end lane 實作 RW-04 experiment launch / history / detail flow，依 live route family 與已補齊的前端 handoff bundle 接線。",
       "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Gemini",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
+      "depends_on": [
+        "EXEC-REBASE-RW04-001"
+      ],
       "artifacts": [
-        ".coordination/responses/TW-01-teaching-dialog-contract-ready.yaml",
-        ".coordination/responses/TW-01-teaching-dialog-lovable-ui-task.yaml",
-        "docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md"
+        ".coordination/responses/RW-04-experiment-launch-contract-ready.yaml",
+        ".coordination/responses/RW-04-experiment-launch-lovable-ui-task.yaml",
+        "docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md"
       ],
       "acceptance": [
-        "teaching dialog UI 對齊 create/list/detail/message 四條 live routes",
-        "前端不得本地重排 event order 或覆寫 allowedActions truth",
-        "完成後提交 ui-done handoff"
+        "experiment launch / history / detail UI 對齊四條 live routes 與 async state machine",
+        "前端不得假造 progress / run history，也不得覆寫 allowedActions.canCancel truth",
+        "完成後提交 ui-done handoff 並附前端變更摘要"
       ],
-      "next": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "last_update": "2026-04-20T12:06:09Z",
+      "next": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T04:39:31Z",
       "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
+      "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-BFF-KW03-001",
+      "title": "Implement KW-03 evidence refs BFF routes from the ratified contract",
+      "summary_zh": "實作 KW-03 evidence refs list / detail BFF routes，保留 resolved_link、credibility、linked_decisions 與 availability semantics。",
+      "phase": "Execution / BFF Implementation",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
+      "depends_on": [
+        "EXEC-BFF-KW02-001"
+      ],
+      "artifacts": [
+        "docs/bff/KW-03-evidence-refs.md",
+        "docs/examples/KW-03-evidence-refs.json",
+        "MODULE_READINESS_RATIFICATION_2026-04-20.md"
+      ],
+      "acceptance": [
+        "實作 KW-03 list / detail routes 與 BFF-owned resolved_link / linked_decisions panel",
+        "不得讓前端再自行構 URL；payload 必須保留 availability / credibility semantics",
+        "完成後補 contract verification 與 next-action truth"
+      ],
+      "next": "KW-03 evidence list/detail routes are implemented with BFF-owned resolved_link, availability, credibility, and linked_decisions semantics. Targeted pytest passed for KW-03 contract, KW-02 regression, and PKT-016 knowledge workbench overview.",
+      "last_update": "2026-04-21T05:06:56Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-BFF-KW04-001",
+      "title": "Implement KW-04 insight cards BFF routes from the ratified contract",
+      "summary_zh": "實作 KW-04 insight cards aggregation / detail BFF routes，保留 backend-owned filter taxonomy、confidence、aggregation provenance 與 linked-source semantics。",
+      "phase": "Execution / BFF Implementation",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "EXEC-BFF-KW03-001"
+      ],
+      "artifacts": [
+        "docs/bff/KW-04-insight-cards.md",
+        "docs/examples/KW-04-insight-cards.json",
+        "MODULE_READINESS_RATIFICATION_2026-04-20.md"
+      ],
+      "acceptance": [
+        "實作 KW-04 aggregation / detail routes 並保留 backend-owned filter taxonomy / confidence / provenance semantics",
+        "不得退回 client-side aggregation，也不得發明 local tag vocabulary",
+        "完成後補 contract verification 與 next-action truth"
+      ],
+      "next": "Queued from the 2026-04-20 gap audit; awaiting supervisor dispatch.",
+      "last_update": "2026-04-20T13:53:44Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
       "auto_generated": true,
       "mutates_canonical": true
     },
@@ -430,9 +454,9 @@
       "title": "Finalize closure truth for all remaining frontend_feedback_reviewed loops",
       "summary_zh": "把 current-work 中仍停留在 frontend_feedback_reviewed 的 loops 批次收斂成 canonical closeout truth，避免 loop 已完成但看板仍顯示未關閉。",
       "phase": "Execution / Frontend Loop Closeout",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "current-work.md",
@@ -444,8 +468,8 @@
         "補齊缺失的 closure record 或精確記錄 residual blocker",
         "同步 canonical closeout bookkeeping 與 current-work truth"
       ],
-      "next": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "last_update": "2026-04-20T12:06:18Z",
+      "next": "Closeout truth reconciled. ai_status now prefers Pantheon closeout responses plus explicit loop-close states, stale frontend closeout responses were refreshed for the reviewed close-now packets, and current-work now collapses the previously stuck reviewed loops into loop_complete/closed. Remaining non-closed entries are now limited to genuine follow-up lanes plus RW-02-search, which still lacks a formal closeout response and remains inspect-disposition only.",
+      "last_update": "2026-04-21T05:38:48Z",
       "task_class": "lovable_review_closeout",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
@@ -456,9 +480,9 @@
       "title": "Rebaseline EW-04 inspiration graph handoff truth to route-live status",
       "summary_zh": "把 EW-04 / PKT-003 inspiration graph 的 coordination bundle 從 pending-bff rebaseline 到 route-live truth，解鎖正式前端 lane。",
       "phase": "Execution / Handoff Activation and Rebaseline",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         ".coordination/responses/EW-04-inspiration-graph-contract-ready.yaml",
@@ -470,34 +494,8 @@
         "前端 handoff 不再停留在 pending-bff 敘述",
         "相關 backlog / packet wording 同步完成"
       ],
-      "next": "Changes requested: PKT-003 mirror contract-ready still carries status: published while the file body now describes route-live truth, and the related packet/backlog docs are not fully rebaselined yet (EW-004 packet family still says pending-bff; PANTHEON_FRONTEND_SA inventory row still says contract-ready). Please align the mirror packet plus the remaining packet/backlog wording, then re-submit. See docs/reviews/2026-04-20-exec-rebase-ew04-001-codex-review.md.",
-      "last_update": "2026-04-20T12:49:00Z",
-      "task_class": "auto_worker_implementation",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EXEC-REBASE-RW04-001",
-      "title": "Refresh RW-04 experiment launch frontend handoff and coordination bundle",
-      "summary_zh": "補齊 RW-04 experiment launch 的前端 handoff / coordination bundle，讓已落地 route family 能被正確交接到前端 lane。",
-      "phase": "Execution / Handoff Activation and Rebaseline",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "docs/bff/RW-04-experiment-launch.md",
-        "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md",
-        "WORKBENCH_DELIVERY_BACKLOG.md"
-      ],
-      "acceptance": [
-        "RW-04 frontend handoff bundle 補齊到可直接使用",
-        "coordination truth 與 live route family 對齊",
-        "相關 readiness / next-action 敘述同步更新"
-      ],
-      "next": "All review findings resolved: handoff bundle created at docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md; lovable-ui-task.yaml paths populated; WORKBENCH_DELIVERY_BACKLOG, PACKET_FAMILY, LOVABLE_MASTER_SA, PANTHEON_FRONTEND_SA, and bff doc all updated to route-live/ready truth. Ready for re-review.",
-      "last_update": "2026-04-20T12:50:33Z",
+      "next": "Rebased EW-04 handoff truth to route-live: docs/examples/PKT-003-inspiration-graph.json now marks the payload route-live, docs/pantheon-handoffs/EW-004-evolution-workbench/PACKET_FAMILY.md no longer describes EW-04 as blocked/pending, and the PKT-003 mirror lovable-ui-task now points back to the active EW-04 dispatch artifact instead of an obsolete cycle-2 follow-up record.",
+      "last_update": "2026-04-21T05:16:33Z",
       "task_class": "auto_worker_implementation",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
@@ -508,9 +506,9 @@
       "title": "Refresh TW-03 before-after compare frontend handoff and coordination bundle",
       "summary_zh": "補齊 TW-03 before-after compare 的前端 handoff / coordination bundle，讓 preview route family 的 live truth 能被前端 lane 接手。",
       "phase": "Execution / Handoff Activation and Rebaseline",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "docs/bff/TW-03-before-after-compare.md",
@@ -522,8 +520,8 @@
         "preview_unavailable degraded semantics 在前端 handoff 中正確表達",
         "coordination / backlog truth 同步完成"
       ],
-      "next": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-20T12:38:37Z",
+      "next": "TW-03 frontend handoff bundle, coordination templates, screen spec, trainer packet family, and frontend SA are rebaselined to route-live truth. Please review the new TW-03 handoff artifacts and doc sync.",
+      "last_update": "2026-04-21T06:27:25Z",
       "task_class": "auto_worker_implementation",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
@@ -534,9 +532,9 @@
       "title": "Refresh TW-04 teaching replay frontend handoff and coordination bundle",
       "summary_zh": "補齊 TW-04 teaching replay 的前端 handoff / coordination bundle，讓 replay list/detail/commit/discard 的 live truth 能被前端 lane 接手。",
       "phase": "Execution / Handoff Activation and Rebaseline",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "docs/bff/TW-04-teaching-replay.md",
@@ -548,61 +546,9 @@
         "authority / evidence-link semantics 在 handoff 中正確表達",
         "coordination / backlog truth 同步完成"
       ],
-      "next": "Changes requested: TW-04 is not ready for approval yet. The claimed frontend handoff bundle is still missing (no docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md and no TW-04 bff-gap/ui-done templates), screen_id is inconsistent across the screen spec/prompt/ui-task, and backlog/packet docs still say pending-bff. Please complete the handoff bundle and sync the remaining truth sources, then re-submit. See docs/reviews/2026-04-20-exec-rebase-tw04-001-codex-review.md.",
-      "last_update": "2026-04-20T12:48:16Z",
+      "next": "TW-04 teaching replay handoff bundle refreshed for review: BFF/screen/packet truth now mark the route family live, coordination YAML publishes all four replay routes plus action-layer semantics, and handoff wording consistently uses event.evidence_ref instead of evidence_links[]. Verified via targeted rg plus YAML parse for the TW-04 coordination files.",
+      "last_update": "2026-04-21T05:53:49Z",
       "task_class": "auto_worker_implementation",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EXEC-REBASE-BACKLOG-SA-001",
-      "title": "Rebaseline backlog and frontend SA truth for already-live route families",
-      "summary_zh": "把 backlog / frontend SA / packet family 裡仍停留在 pending-BFF implementation 的敘述，更新成已 route-live 的真實狀態。",
-      "phase": "Execution / Handoff Activation and Rebaseline",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "WORKBENCH_DELIVERY_BACKLOG.md",
-        "docs/lovable/PANTHEON_FRONTEND_SA.md",
-        "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
-      ],
-      "acceptance": [
-        "route-live modules 的 backlog / SA 敘述完成 rebaseline",
-        "不再把已完成 backend implementation 誤寫成 pending BFF",
-        "前端 lane 的 next-action truth 對齊 live backend 狀態"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-20T11:50:35Z",
-      "task_class": "auto_worker_implementation",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EXEC-OSS-RL-001",
-      "title": "Advance the RL path activation decision into an execution-ready slice",
-      "summary_zh": "把 RL path activation decision 從現有 gate 文件推進成可執行 slice，明確界定第一條可落地 lane 與前置驗證。",
-      "phase": "Execution / OSS Next Wave",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/learning/rl/RL_PATH_APPROVAL_GATE.md",
-        "services/learning/rl/PATH_DEFINITION.md",
-        "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
-      ],
-      "acceptance": [
-        "RL first-lane scope 與 gate 條件明確化",
-        "execution-ready slice 不偷渡 architecture-expansion",
-        "留下可 review 的 activation decision / next-step evidence"
-      ],
-      "next": "Ownership updated",
-      "last_update": "2026-04-20T11:55:09Z",
-      "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
       "mutates_canonical": true
@@ -612,9 +558,9 @@
       "title": "Advance the W&B backend parity decision into a reviewable execution slice",
       "summary_zh": "把 W&B backend parity decision 從 deferred gate 文件整理成 reviewable execution slice，精確標記當前阻塞與 reopen 條件。",
       "phase": "Execution / OSS Next Wave",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "services/registry/experiments/WANDB_ACTIVATION.md",
@@ -626,60 +572,8 @@
         "execution slice 不越過既有 deferral gate",
         "留下可 review 的 next-step recommendation"
       ],
-      "next": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-20T12:42:01Z",
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EXEC-OSS-VECTORBT-001",
-      "title": "Advance vectorbt next-wave execution readiness",
-      "summary_zh": "延續 vectorbt activation/materialization 基線，把下一波 execution readiness、adapter boundary 與 smoke-test path 收斂成可執行工作。",
-      "phase": "Execution / OSS Next Wave",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/vectorbt/ACTIVATION_CRITERIA.md",
-        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
-        "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
-      ],
-      "acceptance": [
-        "vectorbt next-wave scope 與 readiness gap 被明確列出",
-        "adapter / smoke-test / governed I/O 邊界清楚",
-        "留下可 review 的 execution-ready plan 或 patch set"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-20T11:51:07Z",
-      "task_class": "execution_candidate",
-      "auto_created_by": "2026-04-20-execution-continuation-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "EXEC-OSS-STATSMODELS-001",
-      "title": "Advance statsmodels next-wave execution readiness",
-      "summary_zh": "把 statsmodels 下一波執行面收斂成可執行工作，補齊 source selection、adapter boundary 與 smoke-test next step。",
-      "phase": "Execution / OSS Next Wave",
-      "owner": "Gemini",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/statsmodels/ACTIVATION_CRITERIA.md",
-        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
-        "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
-      ],
-      "acceptance": [
-        "statsmodels next-wave gap 與第一個可執行 slice 明確",
-        "adapter / smoke-test / governed I/O 邊界清楚",
-        "留下可 review 的 execution-ready plan 或 patch set"
-      ],
-      "next": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-20T12:42:09Z",
+      "next": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T06:35:30Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
@@ -690,9 +584,9 @@
       "title": "Advance QuantLib next-wave execution readiness",
       "summary_zh": "把 QuantLib 下一波執行面收斂成可執行工作，補齊 source selection、adapter boundary 與 smoke-test next step。",
       "phase": "Execution / OSS Next Wave",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "services/research/quantlib/ACTIVATION_CRITERIA.md",
@@ -704,36 +598,655 @@
         "adapter / smoke-test / governed I/O 邊界清楚",
         "留下可 review 的 execution-ready plan 或 patch set"
       ],
-      "next": "Auto-reassigned EXEC-OSS-QUANTLIB-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-04-20T11:51:41Z",
+      "next": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T06:50:28Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
       "mutates_canonical": true
     },
     {
-      "id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare EXEC-REBASE-EW04-001 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 EXEC-REBASE-EW04-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "Execution / Handoff Activation and Rebaseline",
+      "id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "title": "Prepare EXEC-FRONT-KW01-001 review packet and evidence summary",
+      "summary_zh": "平行支援 EXEC-FRONT-KW01-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Execution / Frontend Lane Implementation",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
-        "support/sidecars/EXEC-REBASE-EW04-001/EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF.md"
+        "support/sidecars/EXEC-FRONT-KW01-001/EXEC-FRONT-KW01-001-SIDECAR-REVIEW.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-20T12:50:24Z",
+      "next": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T14:37:12Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "EXEC-REBASE-EW04-001",
+      "helper_parent": "EXEC-FRONT-KW01-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "title": "Prepare EXEC-OSS-VECTORBT-001 review packet and evidence summary",
+      "summary_zh": "平行支援 EXEC-OSS-VECTORBT-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Execution / OSS Next Wave",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-OSS-VECTORBT-001/EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T10:02:44Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-OSS-VECTORBT-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare EXEC-BFF-RW05-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 EXEC-BFF-RW05-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / BFF Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-BFF-RW05-001/EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Support packet is ready at support/sidecars/EXEC-BFF-RW05-001/EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF.md. It records RW-05 as route-live with no open BFF gap, cites the archived parent done record plus current main.py/read_store/test evidence, and isolates the remaining work to frontend packetization plus stale pending-bff narrative in docs/bff/RW-05-artifact-compare.md and docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md.",
+      "last_update": "2026-04-21T04:11:25Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-BFF-RW05-001",
       "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare EXEC-FRONT-CW03-PARTIAL-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 EXEC-FRONT-CW03-PARTIAL-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Gemini",
+      "reviewer": "Codex2",
+      "status": "done",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-FRONT-CW03-PARTIAL-001/EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Owner finalized approved sidecar handoff packet and closed it.",
+      "last_update": "2026-04-20T17:15:00Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-FRONT-CW03-PARTIAL-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "packet 已核對：BFF route / projection / authority mapping 與 support handoff 一致；linked_evidence contract gap、transcript gate 與 partial activation 邊界敘述清楚，可交由 parent owner 決定是否吸收進主線。"
+      ]
+    },
+    {
+      "id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare EXEC-FRONT-PKT003-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 EXEC-FRONT-PKT003-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-FRONT-PKT003-001/EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T04:25:02Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-FRONT-PKT003-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare EXEC-BFF-KW02-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 EXEC-BFF-KW02-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / BFF Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-BFF-KW02-001/EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Support packet is ready at support/sidecars/EXEC-BFF-KW02-001/EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF.md. It records KW-02 as route-live with no open BFF gap, cites the live main.py/read_store/test evidence plus the parent review-approved state, and isolates the remaining work to missing frontend packetization plus stale readiness/overview surfaces in KW-006, MODULE_READINESS_RATIFICATION_2026-04-20.md, PKT-knowledge-workbench, and the /api/v1/workbench/knowledge payload.",
+      "last_update": "2026-04-21T04:22:48Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-BFF-KW02-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare EXEC-BFF-KW03-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 EXEC-BFF-KW03-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / BFF Implementation",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
+      "depends_on": [
+        "EXEC-BFF-KW02-001"
+      ],
+      "artifacts": [
+        "support/sidecars/EXEC-BFF-KW03-001/EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Support packet is ready at support/sidecars/EXEC-BFF-KW03-001/EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF.md. It classifies KW-03 as no-open-BFF-gap, confirms the live list/detail routes plus resolved_link and linked_decisions semantics, records 10 passing targeted tests, and isolates the remaining work to frontend packetization plus stale KW-006 / readiness / PKT overview narratives.",
+      "last_update": "2026-04-21T06:39:50Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-BFF-KW03-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare EXEC-CLOSEOUT-FRONTEND-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 EXEC-CLOSEOUT-FRONTEND-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Execution / Frontend Loop Closeout",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T03:18:45Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-CLOSEOUT-FRONTEND-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "Sidecar acceptance packet 已核對完成：26/4/3/1 分桶與 current-work closeout table 一致，且只涉及 support artifact。",
+        "已修正 packet 內過期 reviewer / handoff metadata，現在與 ai-status.json 與 task brief 的 Codex reviewer truth 一致。"
+      ],
+      "review_file": "support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE.md"
+    },
+    {
+      "id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare EXEC-FRONT-RW03-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 EXEC-FRONT-RW03-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-FRONT-RW03-001/EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T03:22:08Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-FRONT-RW03-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare EXEC-FRONT-RW04-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 EXEC-FRONT-RW04-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [
+        "EXEC-REBASE-RW04-001"
+      ],
+      "artifacts": [
+        "support/sidecars/EXEC-FRONT-RW04-001/EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T03:32:19Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-FRONT-RW04-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW",
+      "title": "Prepare EXEC-CLOSEOUT-FRONTEND-001 review packet and evidence summary",
+      "summary_zh": "平行支援 EXEC-CLOSEOUT-FRONTEND-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Execution / Frontend Loop Closeout",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Review packet is ready at support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW.md. It summarizes the parent closeout-precedence changes in scripts/ai_status.py, the refreshed closeout response batch, the resulting current-work state transitions, and the two main reviewer cautions: unrelated OSS inventory doc edits plus collateral save_state hardening inside the same file.",
+      "last_update": "2026-04-21T07:18:57Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-CLOSEOUT-FRONTEND-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "title": "Prepare EXEC-OSS-QUANTLIB-001 review packet and evidence summary",
+      "summary_zh": "平行支援 EXEC-OSS-QUANTLIB-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Execution / OSS Next Wave",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Review packet is ready at support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW.md. It summarizes the parent QuantLib reclose handoff, the governed adapter/worker/sample-dataset surface, rerun smoke/pytest/worker evidence from 2026-04-21, and the two main cautions: the older acceptance sidecar is stale and several QuantLib docs still carry pre-reassignment reviewer headers while the live parent reviewer is now Copilot.",
+      "last_update": "2026-04-21T07:48:31Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-OSS-QUANTLIB-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-OSS-WANDB-001-SIDECAR-REVIEW",
+      "title": "Prepare EXEC-OSS-WANDB-001 review packet and evidence summary",
+      "summary_zh": "平行支援 EXEC-OSS-WANDB-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Execution / OSS Next Wave",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-OSS-WANDB-001/EXEC-OSS-WANDB-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T07:56:40Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-OSS-WANDB-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "review packet 已核對 WANDB_ACTIVATION.md §7.3/§7.5、DEFERRED_OSS_ACTIVATION_MAP.md §5 與現行 MLflow-first 實作真相；defer gate、2026-05-15 最早 reopen 日期、以及 reopen packet 優先於 implementation 的結論一致。"
+      ],
+      "review_file": "support/sidecars/EXEC-OSS-WANDB-001/EXEC-OSS-WANDB-001-SIDECAR-REVIEW.md"
+    },
+    {
+      "id": "EXEC-REBASE-TW03-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare EXEC-REBASE-TW03-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 EXEC-REBASE-TW03-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Execution / Handoff Activation and Rebaseline",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-REBASE-TW03-001/EXEC-REBASE-TW03-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Support packet ready at support/sidecars/EXEC-REBASE-TW03-001/EXEC-REBASE-TW03-001-SIDECAR-BFF-HANDOFF.md. It classifies TW-03 as route-live with no open BFF gap or missing handoff bundle, confirms no returned frontend loop exists yet, and isolates the remaining reviewer-facing issues to stale backlog/example wording plus the currently expired pending-preview contract-test fixture.",
+      "last_update": "2026-04-21T08:36:32Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-REBASE-TW03-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare EXEC-FRONT-RW01-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 EXEC-FRONT-RW01-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-FRONT-RW01-001/EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-04-21T09:12:19Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-FRONT-RW01-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-RUNTIME-RW01-001",
+      "title": "Refresh the active RW-01 runtime so research ticket routes are live over HTTP",
+      "summary_zh": "刷新 active operator-bff runtime，讓 RW-01 research ticket route family 對外 live HTTP 與 published contract 一致，解除前端 lane 的 runtime blocker。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/RW-01-research-ticket-needs-runtime.yaml",
+        ".coordination/responses/RW-01-research-ticket-frontend-feedback.yaml",
+        ".coordination/reviews/RW-01-research-ticket-review.md"
+      ],
+      "acceptance": [
+        "active operator-bff runtime exposes the RW-01 POST/GET/GET/PATCH route family over live HTTP||live OpenAPI and probe results match the published RW-01 field shapes and degraded semantics||EXEC-FRONT-RW01-001 may be unblocked after verification"
+      ],
+      "next": "Supervisor re-dispatched EXEC-RUNTIME-RW01-001; task remains in progress.",
+      "last_update": "2026-04-21T15:58:47Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-FRONT-CW01-002",
+      "title": "Republish the CW-01 consult request UI cycle with truthful feedback and pagination fixes",
+      "summary_zh": "依現有 review / frontend-feedback 結論，重發 CW-01 consult request 的前端 publication cycle，修正 pagination 與 degraded-state truth，並保證 request pair / feedback bundle 指向同一個 Git-visible commit。",
+      "phase": "Execution / Frontend Follow-up",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/CW-01-consult-request-frontend-feedback.yaml",
+        ".coordination/reviews/CW-01-consult-request-review.md",
+        "docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "one Git-visible front commit contains the CW-01 UI files",
+        "ui-done request",
+        "frontend-feedback request",
+        "and docs/pantheon-feedback/CW-01-consult-request bundle||pagination and degraded-state contract findings from the CW-01 review are resolved||the request pair points source_commit at that same immutable publication commit"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T15:54:49Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-FRONT-TW01-002",
+      "title": "Republish the TW-01 teaching dialog UI cycle from one truthful Git-visible commit",
+      "summary_zh": "把已審過的 TW-01 teaching dialog UI 從 current workspace 正式重發到 Git-visible publication，並保證 ui-done / frontend-feedback / feedback bundle 來自同一個可重播 commit。",
+      "phase": "Execution / Frontend Follow-up",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/TW-01-teaching-dialog-frontend-feedback.yaml",
+        ".coordination/reviews/TW-01-teaching-dialog-review.md",
+        "docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "a Git-visible front commit contains the reviewed TW-01 UI files plus the canonical ui-done and frontend-feedback requests||docs/pantheon-feedback/TW-01-teaching-dialog bundle is published from the same source_commit||the follow-up no longer depends on unpublished local-only front evidence"
+      ],
+      "next": "Supervisor re-dispatched EXEC-FRONT-TW01-002; task remains in progress.",
+      "last_update": "2026-04-21T15:58:58Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-RUNTIME-TW01-001",
+      "title": "Refresh the active TW-01 runtime so trainer session routes are live over HTTP",
+      "summary_zh": "刷新 active operator-bff runtime，讓 TW-01 trainer session route family 對外 live HTTP 與 published contract 一致，解除 teaching dialog loop 的 runtime freshness blocker。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/TW-01-teaching-dialog-needs-runtime.yaml",
+        ".coordination/responses/TW-01-teaching-dialog-frontend-feedback.yaml",
+        ".coordination/reviews/TW-01-teaching-dialog-review.md"
+      ],
+      "acceptance": [
+        "the active operator-bff runtime exposes the TW-01 create/list/detail/message route family over live HTTP||live runtime results match the published TW-01 session and message field shape||the TW-01 follow-up loop can close once front publication evidence is replayable"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T15:55:09Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-FRONT-TW03-001",
+      "title": "Implement the TW-03 before/after compare UI against the live preview routes",
+      "summary_zh": "依已 rebaseline 的 handoff bundle，實作 TW-03 before/after compare production UI，直接使用 live preview route family、warning hierarchy、preview_unavailable 分支與 polling semantics。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "EXEC-REBASE-TW03-001"
+      ],
+      "artifacts": [
+        ".coordination/responses/TW-03-before-after-compare-contract-ready.yaml",
+        ".coordination/responses/TW-03-before-after-compare-lovable-ui-task.yaml",
+        "docs/pantheon-handoffs/TW-03-before-after-compare/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "TW-03 compare UI uses only the live preview route family and backend-owned warning hierarchy||frontend does not invent compare output",
+        "local polling rules",
+        "or degraded semantics||a canonical ui-done handoff is emitted when the screen is ready"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T15:55:19Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-RUNTIME-TW04-001",
+      "title": "Refresh the active TW-04 runtime and validate live replay route topology",
+      "summary_zh": "刷新 active operator-bff runtime，讓 TW-04 replay route family 對外 live HTTP，並驗證 replay/session links 與 evidence targets 會正確落到已部署 front routes。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/TW-04-teaching-replay-needs-runtime.yaml",
+        ".coordination/responses/TW-04-teaching-replay-frontend-feedback.yaml",
+        ".coordination/reviews/TW-04-teaching-replay-review.md"
+      ],
+      "acceptance": [
+        "the active operator-bff runtime exposes the TW-04 replay route family over live HTTP||browser-facing replay/session links match the mounted front routes and evidence_ref targets resolve to deployed owner routes||live runtime truth preserves the published degraded and unavailable replay semantics"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T15:55:29Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-RUNTIME-RW04-001",
+      "title": "Refresh the active RW-04 runtime so experiment routes are live over HTTP",
+      "summary_zh": "刷新 active operator-bff runtime，讓 /api/v1/experiments route family 對外 live HTTP，解除 RW-04 loop 的 runtime freshness blocker，並用 live probes 驗證 queued/running/degraded/unavailable semantics。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/RW-04-experiment-launch-needs-runtime.yaml",
+        ".coordination/responses/RW-04-experiment-launch-frontend-feedback.yaml",
+        ".coordination/reviews/RW-04-experiment-launch-review.md"
+      ],
+      "acceptance": [
+        "the active operator-bff runtime exposes the full RW-04 /api/v1/experiments route family over live HTTP||live runtime returns the published queued",
+        "running",
+        "degraded",
+        "unavailable",
+        "and terminal semantics||the existing RW-04 front follow-up no longer waits on runtime freshness"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T15:55:40Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-REBASE-RW05-KW23-001",
+      "title": "Rebaseline RW-05, KW-02, and KW-03 to route-live truth and open their frontend handoff bundles",
+      "summary_zh": "把 RW-05、KW-02、KW-03 從舊的 pending-BFF / placeholder wording rebaseline 到 route-live truth，並為 research compare 與 knowledge notes/evidence 補齊可交給前端 lane 的 handoff bundle。",
+      "phase": "Execution / Handoff Activation and Rebaseline",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "EXEC-BFF-KW03-001"
+      ],
+      "artifacts": [
+        "docs/bff/RW-05-artifact-compare.md",
+        "docs/bff/KW-02-research-notes.md",
+        "docs/bff/KW-03-evidence-refs.md",
+        "docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md",
+        "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md"
+      ],
+      "acceptance": [
+        "RW-05",
+        "KW-02",
+        "and KW-03 are no longer described as pending BFF where the live routes already exist||frontend-facing handoff materials for /research/compare",
+        "/knowledge/notes",
+        "and /knowledge/evidence are published or explicitly opened for the UI lane||route-live readiness truth is synchronized across packet family and frontend SA surfaces"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T15:55:50Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE",
+      "title": "Prepare EXEC-FRONT-CW01-002 acceptance packet and dependency map",
+      "summary_zh": "平行支援 EXEC-FRONT-CW01-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Execution / Frontend Follow-up",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-04-21T15:58:36Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-FRONT-CW01-002",
+      "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
     }
@@ -812,15 +1325,6 @@
       "resolved_at": "2026-04-19T16:40:22Z"
     },
     {
-      "task_id": "EXEC-FRONT-KW01-001",
-      "from": "Qwen",
-      "to": "Claude",
-      "message": "Auto-reassigned EXEC-FRONT-KW01-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "done",
-      "created_at": "2026-04-20T11:48:46Z",
-      "resolved_at": "2026-04-20T11:58:40Z"
-    },
-    {
       "task_id": "EXEC-REBASE-TW04-001",
       "from": "Qwen",
       "to": "Claude",
@@ -834,26 +1338,9 @@
       "from": "Qwen",
       "to": "Claude",
       "message": "Auto-reassigned EXEC-OSS-QUANTLIB-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "pending",
-      "created_at": "2026-04-20T11:51:41Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "EW-05 mutation review frontend implementation is ready for review. UI route, BFF client wiring, command submission flow, and ui-done handoff are complete; npm run build passed in front-ai-trading-system.",
       "status": "done",
-      "created_at": "2026-04-20T11:57:02Z",
-      "resolved_at": "2026-04-20T12:09:52Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-KW01-001",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:05:47Z",
-      "resolved_at": "2026-04-20T12:06:28Z"
+      "created_at": "2026-04-20T11:51:41Z",
+      "resolved_at": "2026-04-20T13:10:03Z"
     },
     {
       "task_id": "EXEC-FRONT-RW02-001",
@@ -865,38 +1352,13 @@
       "resolved_at": "2026-04-20T12:06:38Z"
     },
     {
-      "task_id": "EXEC-FRONT-TW01-001",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:06:09Z"
-    },
-    {
       "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
       "from": "Claude",
       "to": "Copilot",
       "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:06:18Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Changes requested: approval_decision_id currently links to /personas/approval-decisions/:id but App.tsx does not mount that route, so the deep link lands on NotFound. linked_postmortem_id is also routed to /operator/post-incident-review?incident=<postmortem_id>, but that screen consumes an incident id, not a postmortem id. Please fix both navigation issues and re-submit. See docs/reviews/2026-04-20-exec-front-ew05-001-codex-review.md.",
       "status": "done",
-      "created_at": "2026-04-20T12:09:52Z",
-      "resolved_at": "2026-04-20T12:09:52Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-04-20T12:12:08Z",
-      "resolved_at": "2026-04-20T12:12:08Z"
+      "created_at": "2026-04-20T12:06:18Z",
+      "resolved_at": "2026-04-20T13:10:29Z"
     },
     {
       "task_id": "EXEC-REBASE-EW04-001",
@@ -906,24 +1368,6 @@
       "status": "done",
       "created_at": "2026-04-20T12:12:25Z",
       "resolved_at": "2026-04-20T12:19:55Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-KW01-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:14:31Z",
-      "resolved_at": "2026-04-20T12:14:51Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-PKT003-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:14:43Z",
-      "resolved_at": "2026-04-20T12:16:57Z"
     },
     {
       "task_id": "EXEC-FRONT-RW01-001",
@@ -944,15 +1388,6 @@
       "resolved_at": "2026-04-20T12:20:29Z"
     },
     {
-      "task_id": "EXEC-FRONT-PKT003-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:16:57Z",
-      "resolved_at": "2026-04-20T12:21:50Z"
-    },
-    {
       "task_id": "EXEC-REBASE-EW04-001",
       "from": "Codex",
       "to": "Claude",
@@ -971,100 +1406,31 @@
       "resolved_at": "2026-04-20T12:31:00Z"
     },
     {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Fixed approval decision route activation and linked_postmortem_id deep-link resolution; targeted eslint and vite build passed in front-ai-trading-system.",
-      "status": "done",
-      "created_at": "2026-04-20T12:20:25Z",
-      "resolved_at": "2026-04-20T12:27:17Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-PKT003-001",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:21:50Z",
-      "resolved_at": "2026-04-20T12:42:37Z"
-    },
-    {
       "task_id": "EXEC-FRONT-RW01-001",
       "from": "Claude",
       "to": "Copilot",
       "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:21:58Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-KW01-001",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-04-20T12:25:18Z",
-      "resolved_at": "2026-04-20T12:25:51Z"
+      "created_at": "2026-04-20T12:21:58Z",
+      "resolved_at": "2026-04-20T12:54:37Z"
     },
     {
       "task_id": "EXEC-FRONT-RW02-001",
       "from": "Codex2",
       "to": "Gemini",
       "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:25:41Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "EW-05 ui-done handoff is now published in front-ai-trading-system; approval-decision routes and postmortem deep-link fix are verified; npx eslint on touched files and npm run build passed.",
       "status": "done",
-      "created_at": "2026-04-20T12:27:31Z",
-      "resolved_at": "2026-04-20T12:28:05Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Error: ENOENT: no such file or directory, open '/home/edna/code/front-ai-trading-system/vite.config.ts.timestamp-1776687865252-01e3e9239cbe1.mjs'",
-      "status": "done",
-      "created_at": "2026-04-20T12:28:05Z",
-      "resolved_at": "2026-04-20T12:36:39Z"
-    },
-    {
-      "task_id": "EXEC-REBASE-RW04-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:28:48Z",
-      "resolved_at": "2026-04-20T12:40:34Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Claude review: code PASS, blocking delivery issue — MutationReview.tsx + MutationReviewTypes.ts untracked, App.tsx unstaged, source_commit points to wrong commit. Commit EW-05 files in front-ai-trading-system and update source_commit in ui-done.yaml, then re-submit. Full review at docs/reviews/2026-04-20-exec-front-ew05-001-claude-review.md.",
-      "status": "done",
-      "created_at": "2026-04-20T12:36:39Z",
-      "resolved_at": "2026-04-20T12:36:39Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-04-20T12:36:41Z",
-      "resolved_at": "2026-04-20T12:36:41Z"
+      "created_at": "2026-04-20T12:25:41Z",
+      "resolved_at": "2026-04-20T12:58:42Z"
     },
     {
       "task_id": "EXEC-REBASE-TW03-001",
       "from": "Codex2",
       "to": "Copilot",
       "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:38:37Z"
+      "status": "done",
+      "created_at": "2026-04-20T12:38:37Z",
+      "resolved_at": "2026-04-20T23:43:00Z"
     },
     {
       "task_id": "EXEC-REBASE-EW04-001",
@@ -1074,15 +1440,6 @@
       "status": "done",
       "created_at": "2026-04-20T12:50:00Z",
       "resolved_at": "2026-04-20T12:49:00Z"
-    },
-    {
-      "task_id": "EXEC-REBASE-RW04-001",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "RW-04 coordination bundle created: contract-ready (status:live) and lovable-ui-task (status:ready) for POST /api/v1/experiments/launch + history + detail + cancel family.",
-      "status": "done",
-      "created_at": "2026-04-20T12:50:00Z",
-      "resolved_at": "2026-04-20T12:43:03Z"
     },
     {
       "task_id": "EXEC-REBASE-TW04-001",
@@ -1098,60 +1455,9 @@
       "from": "Codex2",
       "to": "Claude",
       "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:42:01Z"
-    },
-    {
-      "task_id": "EXEC-OSS-STATSMODELS-001",
-      "from": "Codex2",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:42:09Z"
-    },
-    {
-      "task_id": "EXEC-REBASE-RW04-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Review requested changes: publish the actual RW-04 handoff bundle and align canonical Research docs with the new live/ready truth. See docs/reviews/2026-04-20-exec-rebase-rw04-001-codex2-review.md.",
       "status": "done",
-      "created_at": "2026-04-20T12:43:03Z",
-      "resolved_at": "2026-04-20T12:43:03Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:43:37Z",
-      "resolved_at": "2026-04-20T12:44:53Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-EW05-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:44:53Z",
-      "resolved_at": "2026-04-20T12:45:52Z"
-    },
-    {
-      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:45:03Z",
-      "resolved_at": "2026-04-20T12:46:04Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-KW01-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:45:43Z"
+      "created_at": "2026-04-20T12:42:01Z",
+      "resolved_at": "2026-04-20T12:58:08Z"
     },
     {
       "task_id": "EXEC-REBASE-TW04-001",
@@ -1163,15 +1469,6 @@
       "resolved_at": "2026-04-20T12:48:16Z"
     },
     {
-      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Qwen",
-      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-20T12:48:52Z",
-      "resolved_at": "2026-04-20T12:49:46Z"
-    },
-    {
       "task_id": "EXEC-REBASE-EW04-001",
       "from": "Codex",
       "to": "Claude",
@@ -1181,23 +1478,2773 @@
       "resolved_at": "2026-04-20T12:49:00Z"
     },
     {
-      "task_id": "EXEC-REBASE-RW04-001",
+      "task_id": "EXEC-OSS-WANDB-001",
       "from": "Claude",
-      "to": "Codex2",
-      "message": "All review findings resolved: handoff bundle created at docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md; lovable-ui-task.yaml paths populated; WORKBENCH_DELIVERY_BACKLOG, PACKET_FAMILY, LOVABLE_MASTER_SA, PANTHEON_FRONTEND_SA, and bff doc all updated to route-live/ready truth. Ready for re-review.",
-      "status": "pending",
-      "created_at": "2026-04-20T12:50:33Z"
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:58:07Z",
+      "resolved_at": "2026-04-20T13:31:59Z"
     },
     {
-      "task_id": "EXEC-FRONT-EW05-001",
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:10:03Z",
+      "resolved_at": "2026-04-21T01:24:16Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:21:34Z",
+      "resolved_at": "2026-04-20T13:33:09Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:25:14Z",
+      "resolved_at": "2026-04-20T13:38:13Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:26:54Z",
+      "resolved_at": "2026-04-20T14:12:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
       "from": "Codex2",
       "to": "Codex",
-      "message": "EW-05 delivery republished from front-ai-trading-system with replayable Git evidence. Implementation commit: 58fc79cc3aed641a97b1c9c74140cb6626dbb231. Handoff commits: 15399e9e6387001a61747e5a07d7d6ea3388615b then source_commit correction fc3b98dc4607ebf5a31244dcffea4f9d640c9422. Verified git show for ui-done and implementation routes, npx eslint on src/App.tsx + MutationReview files passed, and npm run build passed.",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:33:08Z",
+      "resolved_at": "2026-04-20T14:56:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-02 search UI implemented: ResearchSearch.tsx at /research/search, types.ts, rw02SearchApi in bffClient.ts. Wires GET /api/v1/research/search with filter rail (match_type, status, date_range), backend pagination, degradation banners. Build + ESLint passed. source_commit 09ee64dfe240330ae167c2ff50ffdbaee83cb209 in front-ai-trading-system. ui-done at .coordination/requests/RW-02-search-ui-done.yaml.",
+      "status": "done",
+      "created_at": "2026-04-20T13:53:01Z",
+      "resolved_at": "2026-04-20T15:29:25Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:04:31Z",
+      "resolved_at": "2026-04-20T14:04:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T14:20:22Z",
+      "resolved_at": "2026-04-20T23:39:26Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:52:10Z",
+      "resolved_at": "2026-04-20T14:52:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:56:52Z",
+      "resolved_at": "2026-04-20T15:00:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:57:00Z",
+      "resolved_at": "2026-04-20T15:07:16Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:59:51Z",
+      "resolved_at": "2026-04-20T15:16:36Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:01:41Z",
+      "resolved_at": "2026-04-20T15:11:57Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:08:49Z",
+      "resolved_at": "2026-04-20T15:09:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:09:00Z",
+      "resolved_at": "2026-04-20T15:43:08Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:13:07Z",
+      "resolved_at": "2026-04-20T15:13:22Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:21:57Z",
+      "resolved_at": "2026-04-20T15:26:36Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:25:38Z",
+      "resolved_at": "2026-04-20T15:32:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:26:36Z",
+      "resolved_at": "2026-04-20T16:17:31Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:27:55Z",
+      "resolved_at": "2026-04-20T15:37:49Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-02 search frontend slice is contract-aligned at 09ee64d; runtime refresh and owner drilldown route rollout remain follow-up items outside this task scope.",
+      "status": "done",
+      "created_at": "2026-04-20T15:29:25Z",
+      "resolved_at": "2026-04-21T01:27:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:34:37Z",
+      "resolved_at": "2026-04-20T15:36:13Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:38:58Z",
+      "resolved_at": "2026-04-20T15:39:14Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:00:37Z",
+      "resolved_at": "2026-04-20T16:01:54Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:01:36Z",
+      "resolved_at": "2026-04-20T23:36:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:02:58Z",
+      "resolved_at": "2026-04-20T16:06:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:06:01Z",
+      "resolved_at": "2026-04-20T16:25:45Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:07:37Z",
+      "resolved_at": "2026-04-20T16:12:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:15:24Z",
+      "resolved_at": "2026-04-20T16:15:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:34:18Z",
+      "resolved_at": "2026-04-20T16:34:34Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "RW-01 research ticket frontend is implemented and verified. Review the new /research/tickets and /research/tickets/:ticket_id flows plus the ui-done handoff in front-ai-trading-system.",
+      "status": "done",
+      "created_at": "2026-04-20T16:35:52Z",
+      "resolved_at": "2026-04-20T23:41:18Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Support packet reviewed and approved. The handoff is consistent with the live BFF contract, partial-activation boundaries, and current residual gaps. Owner can finalize this sidecar when ready.",
+      "status": "done",
+      "created_at": "2026-04-20T16:45:43Z",
+      "resolved_at": "2026-04-20T17:15:00Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:49:27Z",
+      "resolved_at": "2026-04-20T23:37:56Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:36:55Z",
+      "resolved_at": "2026-04-21T01:08:20Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:37:54Z",
+      "resolved_at": "2026-04-20T23:40:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001",
+      "from": "Copilot",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:39:25Z",
+      "resolved_at": "2026-04-21T01:40:55Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:41:13Z",
+      "resolved_at": "2026-04-21T01:24:04Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review failed; see .coordination/responses/RW-01-research-ticket-frontend-feedback.yaml. Required fixes: replace free-text owner inputs with backend-provided persona identity selection, remove lifecycle transitions from the generic status save path and gate close/archive strictly through allowedActions, resolve linked experiment/artifact refs to mounted owner screens or stop claiming that navigation, republish the ui-done/feedback bundle from a truthful Git-visible commit, and re-verify after the runtime refresh tracked in .coordination/requests/RW-01-research-ticket-needs-runtime.yaml.",
+      "status": "done",
+      "created_at": "2026-04-20T23:41:18Z",
+      "resolved_at": "2026-04-20T23:41:18Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requires follow-up; see .coordination/reviews/RW-01-research-ticket-review.md. Fix the status-transition authority bypass in ResearchTicketDetail and republish a replay-clean ui-done + RW-01 feedback bundle from an immutable commit.",
+      "status": "done",
+      "created_at": "2026-04-20T23:43:34Z",
+      "resolved_at": "2026-04-20T23:43:34Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requires fixes before approval. See .coordination/reviews/RW-01-research-ticket-review.md for the two list-flow findings: clearing the status filter does not remove the query param, and pagination history is not reset when filters change.",
+      "status": "done",
+      "created_at": "2026-04-20T23:45:48Z",
+      "resolved_at": "2026-04-20T23:45:48Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:15:27Z",
+      "resolved_at": "2026-04-21T00:17:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:16:50Z",
+      "resolved_at": "2026-04-21T00:35:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:16:58Z",
+      "resolved_at": "2026-04-21T00:24:41Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:18:39Z",
+      "resolved_at": "2026-04-21T00:20:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:18:47Z",
+      "resolved_at": "2026-04-21T00:19:46Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:20:56Z",
+      "resolved_at": "2026-04-21T00:26:54Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:26:29Z",
+      "resolved_at": "2026-04-21T00:28:09Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:27:38Z",
+      "resolved_at": "2026-04-21T00:28:17Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:28:09Z",
+      "resolved_at": "2026-04-21T00:36:47Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:29:17Z",
+      "resolved_at": "2026-04-21T00:43:11Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:32:56Z",
+      "resolved_at": "2026-04-21T00:33:58Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:33:04Z",
+      "resolved_at": "2026-04-21T00:40:16Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:38:46Z",
+      "resolved_at": "2026-04-21T00:39:05Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:41:20Z",
+      "resolved_at": "2026-04-21T00:42:03Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:44:15Z",
+      "resolved_at": "2026-04-21T00:44:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:48:03Z",
+      "resolved_at": "2026-04-21T00:50:23Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:48:44Z",
+      "resolved_at": "2026-04-21T00:51:08Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:50:23Z",
+      "resolved_at": "2026-04-21T01:56:39Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:54:17Z",
+      "resolved_at": "2026-04-21T00:59:42Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:55:47Z",
+      "resolved_at": "2026-04-21T01:03:56Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:56:45Z",
+      "resolved_at": "2026-04-21T01:07:18Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:02:11Z",
+      "resolved_at": "2026-04-21T01:02:40Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:05:04Z",
+      "resolved_at": "2026-04-21T01:05:48Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:07:04Z",
+      "resolved_at": "2026-04-21T01:08:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:08:01Z",
+      "resolved_at": "2026-04-21T02:12:23Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:09:41Z",
+      "resolved_at": "2026-04-21T01:09:57Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:10:42Z",
+      "resolved_at": "2026-04-21T01:17:50Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:13:38Z",
+      "resolved_at": "2026-04-21T01:18:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:14:36Z",
+      "resolved_at": "2026-04-21T01:23:02Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:17:49Z",
+      "resolved_at": "2026-04-21T01:22:38Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:18:01Z",
+      "resolved_at": "2026-04-21T01:27:14Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:20:55Z",
+      "resolved_at": "2026-04-21T01:30:47Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:21:03Z",
+      "resolved_at": "2026-04-21T01:29:46Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:22:28Z",
+      "resolved_at": "2026-04-21T03:29:36Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Auto-reassigned ownership from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T01:27:24Z",
+      "resolved_at": "2026-04-21T01:41:33Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:28:03Z",
+      "resolved_at": "2026-04-21T01:33:42Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:29:16Z",
+      "resolved_at": "2026-04-21T01:38:34Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:31:58Z",
+      "resolved_at": "2026-04-21T01:35:44Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:32:28Z",
+      "resolved_at": "2026-04-21T01:33:12Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:36:07Z",
+      "resolved_at": "2026-04-21T03:34:45Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:38:59Z",
+      "resolved_at": "2026-04-21T01:40:03Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T01:41:33Z",
+      "resolved_at": "2026-04-21T01:43:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:42:36Z",
+      "resolved_at": "2026-04-21T01:44:54Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Auto-reassigned ownership from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T01:43:27Z",
+      "resolved_at": "2026-04-21T01:58:21Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:43:36Z",
+      "resolved_at": "2026-04-21T01:43:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T01:58:21Z",
+      "resolved_at": "2026-04-21T02:01:34Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Auto-reassigned ownership from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:01:35Z",
+      "resolved_at": "2026-04-21T02:16:02Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T02:16:02Z",
+      "resolved_at": "2026-04-21T02:18:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T02:16:42Z",
+      "resolved_at": "2026-04-21T02:21:37Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Auto-reassigned ownership from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:18:09Z",
+      "resolved_at": "2026-04-21T03:36:22Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Acceptance packet added at support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE.md. Scope is classified into 26 fast-close rows, 4 disposition-check rows, 3 follow-up rows that must stay open, and 1 ui_done_reviewed row that stays out of batch.",
+      "status": "done",
+      "created_at": "2026-04-21T02:24:58Z",
+      "resolved_at": "2026-04-21T02:31:53Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T02:31:53Z",
+      "resolved_at": "2026-04-21T02:35:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T02:33:43Z",
+      "resolved_at": "2026-04-21T02:36:34Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T02:33:59Z",
+      "resolved_at": "2026-04-21T02:35:20Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar packet reviewed and approved. Classification matches current-work closeout truth, metadata is now aligned with the current Codex review assignment, and the task can return to Codex2 for final done closeout.",
+      "status": "done",
+      "created_at": "2026-04-21T02:35:24Z",
+      "resolved_at": "2026-04-21T02:39:14Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Codex2 to Qwen after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T02:39:14Z",
+      "resolved_at": "2026-04-21T02:40:49Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:40:49Z",
+      "resolved_at": "2026-04-21T02:42:16Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:42:16Z",
+      "resolved_at": "2026-04-21T02:44:42Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Support packet landed at support/sidecars/EXEC-FRONT-RW03-001/EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF.md. It confirms the RW-03 analysis list/detail routes are live, documents the missing frontend handoff bundle, and calls out the packet-family versus backlog truth drift plus remaining service-owned hardening gap. Please review for support-only accuracy and handoff readiness.",
+      "status": "done",
+      "created_at": "2026-04-21T02:42:57Z",
+      "resolved_at": "2026-04-21T02:47:34Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:44:42Z",
+      "resolved_at": "2026-04-21T02:46:12Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:46:12Z",
+      "resolved_at": "2026-04-21T02:50:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Copilot to Qwen after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T02:47:34Z",
+      "resolved_at": "2026-04-21T02:50:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:50:24Z",
+      "resolved_at": "2026-04-21T02:51:27Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:50:59Z",
+      "resolved_at": "2026-04-21T02:52:49Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:51:27Z",
+      "resolved_at": "2026-04-21T02:52:59Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:52:49Z",
+      "resolved_at": "2026-04-21T02:53:43Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:52:59Z",
+      "resolved_at": "2026-04-21T02:53:55Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:53:43Z",
+      "resolved_at": "2026-04-21T02:55:20Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:53:55Z",
+      "resolved_at": "2026-04-21T02:55:30Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:55:20Z",
+      "resolved_at": "2026-04-21T02:56:42Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:55:30Z",
+      "resolved_at": "2026-04-21T02:57:30Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:56:42Z",
+      "resolved_at": "2026-04-21T02:58:39Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Acceptance packet ready at support/sidecars/EXEC-FRONT-RW04-001/EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE.md. It confirms EXEC-REBASE-RW04-001 is satisfied, traces RW-04 contract->BFF->handoff readiness, and records the exact bff-gap/ui-done outputs the parent frontend lane should emit.",
+      "status": "done",
+      "created_at": "2026-04-21T02:56:53Z",
+      "resolved_at": "2026-04-21T03:05:15Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:57:30Z",
+      "resolved_at": "2026-04-21T02:59:17Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:58:40Z",
+      "resolved_at": "2026-04-21T03:01:13Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:59:17Z",
+      "resolved_at": "2026-04-21T03:03:01Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:01:14Z",
+      "resolved_at": "2026-04-21T03:06:18Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:03:01Z",
+      "resolved_at": "2026-04-21T03:06:27Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Copilot to Qwen after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T03:05:15Z",
+      "resolved_at": "2026-04-21T03:08:14Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:06:19Z",
+      "resolved_at": "2026-04-21T03:18:45Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:06:27Z",
+      "resolved_at": "2026-04-21T03:08:04Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:08:04Z",
+      "resolved_at": "2026-04-21T03:09:57Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:08:14Z",
+      "resolved_at": "2026-04-21T03:09:39Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:09:39Z",
+      "resolved_at": "2026-04-21T03:11:05Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:09:57Z",
+      "resolved_at": "2026-04-21T03:11:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:11:05Z",
+      "resolved_at": "2026-04-21T03:20:22Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:11:14Z",
+      "resolved_at": "2026-04-21T03:12:36Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:11:24Z",
+      "resolved_at": "2026-04-21T03:15:09Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:12:21Z",
+      "resolved_at": "2026-04-21T03:29:51Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:14:59Z",
+      "resolved_at": "2026-04-21T03:16:13Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:15:09Z",
+      "resolved_at": "2026-04-21T03:19:37Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:16:13Z",
+      "resolved_at": "2026-04-21T03:17:16Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:17:05Z",
+      "resolved_at": "2026-04-21T03:39:24Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
       "status": "pending",
-      "created_at": "2026-04-20T12:50:37Z"
+      "created_at": "2026-04-21T03:18:45Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:19:37Z",
+      "resolved_at": "2026-04-21T03:22:08Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:20:22Z",
+      "resolved_at": "2026-04-21T03:32:19Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:20:49Z",
+      "resolved_at": "2026-04-21T03:21:51Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:21:50Z",
+      "resolved_at": "2026-04-21T03:22:51Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T03:22:08Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:23:07Z",
+      "resolved_at": "2026-04-21T03:27:23Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:25:38Z",
+      "resolved_at": "2026-04-21T03:27:11Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:27:10Z",
+      "resolved_at": "2026-04-21T03:28:13Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:27:23Z",
+      "resolved_at": "2026-04-21T03:28:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:29:36Z",
+      "resolved_at": "2026-04-21T03:44:31Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:29:51Z",
+      "resolved_at": "2026-04-21T03:31:06Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:31:06Z",
+      "resolved_at": "2026-04-21T03:34:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T03:32:19Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "KW-01 sidecar review packet is ready. It summarizes the archived parent closeout, review arc, evidence crosswalk, and the historical feedback-bundle SHA discrepancy without reopening parent truth.",
+      "status": "done",
+      "created_at": "2026-04-21T03:33:19Z",
+      "resolved_at": "2026-04-21T05:04:26Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:34:45Z",
+      "resolved_at": "2026-04-21T03:55:16Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:35:59Z",
+      "resolved_at": "2026-04-21T05:43:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "pending",
+      "created_at": "2026-04-21T03:36:23Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:44:31Z",
+      "resolved_at": "2026-04-21T03:45:32Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-03 analyze front-end flow is ready for review. Front repo now has /research/analyze and /research/analyze/:analysis_id wired to live rw03AnalyzeApi list/detail routes, renders backend-owned metric_group_refs/metric_groups/comparative_summary without client regrouping or diff synthesis, handles stale/degraded/unavailable plus OBJECT_NOT_FOUND truthfully, and build passed. Review the front repo changes plus .coordination/requests/RW-03-analyze-ui-done.yaml.",
+      "status": "done",
+      "created_at": "2026-04-21T03:55:46Z",
+      "resolved_at": "2026-04-21T03:56:55Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:56:55Z",
+      "resolved_at": "2026-04-21T04:07:23Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T04:02:01Z",
+      "resolved_at": "2026-04-21T04:19:00Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet is ready at support/sidecars/EXEC-OSS-VECTORBT-001/EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW.md. It summarizes the archived parent closeout, the two-step reopen / re-review arc, the final delivery commit, and the residual notes needed to review this support-only slice without reopening canonical vectorbt work.",
+      "status": "done",
+      "created_at": "2026-04-21T04:06:03Z",
+      "resolved_at": "2026-04-21T09:57:17Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T04:07:23Z",
+      "resolved_at": "2026-04-21T04:08:39Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:08:39Z",
+      "resolved_at": "2026-04-21T04:22:53Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet is ready at support/sidecars/EXEC-BFF-RW05-001/EXEC-BFF-RW05-001-SIDECAR-BFF-HANDOFF.md. It records RW-05 as route-live with no open BFF gap, cites the archived parent done record plus current main.py/read_store/test evidence, and isolates the remaining work to frontend packetization plus stale pending-bff narrative in docs/bff/RW-05-artifact-compare.md and docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md.",
+      "status": "pending",
+      "created_at": "2026-04-21T04:11:25Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Support packet is ready at support/sidecars/EXEC-FRONT-PKT003-001/EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE.md. It maps the archived PKT-003 inspiration-graph frontend acceptance scope, the EW-04 -> route-live dependency chain, and the replay-clean repair arc that closed the parent task without reopening canonical truth or runtime/frontend implementations.",
+      "status": "done",
+      "created_at": "2026-04-21T04:15:39Z",
+      "resolved_at": "2026-04-21T04:25:02Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet is ready at support/sidecars/EXEC-BFF-KW02-001/EXEC-BFF-KW02-001-SIDECAR-BFF-HANDOFF.md. It records KW-02 as route-live with no open BFF gap, cites the live main.py/read_store/test evidence plus the parent review-approved state, and isolates the remaining work to missing frontend packetization plus stale readiness/overview surfaces in KW-006, MODULE_READINESS_RATIFICATION_2026-04-20.md, PKT-knowledge-workbench, and the /api/v1/workbench/knowledge payload.",
+      "status": "pending",
+      "created_at": "2026-04-21T04:22:48Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T04:22:53Z",
+      "resolved_at": "2026-04-21T04:23:54Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:23:54Z",
+      "resolved_at": "2026-04-21T04:39:45Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T04:25:02Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-04 front-end implementation complete: mounted /research/experiments launch/history/detail, added durable polling and backend-owned cancel gating, validated with targeted eslint, npx tsc --noEmit, and npm run build, and wrote .coordination/requests/RW-04-experiment-launch-ui-done.yaml.",
+      "status": "done",
+      "created_at": "2026-04-21T04:37:03Z",
+      "resolved_at": "2026-04-21T04:39:31Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T04:39:31Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T04:39:45Z",
+      "resolved_at": "2026-04-21T04:40:54Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:40:54Z",
+      "resolved_at": "2026-04-21T04:55:50Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T04:55:40Z",
+      "resolved_at": "2026-04-21T04:56:33Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T04:55:50Z",
+      "resolved_at": "2026-04-21T04:57:03Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:57:03Z",
+      "resolved_at": "2026-04-21T05:11:27Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:04:26Z",
+      "resolved_at": "2026-04-21T05:06:43Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:06:43Z",
+      "resolved_at": "2026-04-21T06:20:25Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "KW-03 evidence list/detail routes are implemented with BFF-owned resolved_link, availability, credibility, and linked_decisions semantics. Targeted pytest passed for KW-03 contract, KW-02 regression, and PKT-016 knowledge workbench overview.",
+      "status": "pending",
+      "created_at": "2026-04-21T05:06:56Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
+      "from": "Copilot",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:11:08Z",
+      "resolved_at": "2026-04-21T05:12:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:11:18Z",
+      "resolved_at": "2026-04-21T05:12:22Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T05:11:27Z",
+      "resolved_at": "2026-04-21T05:13:42Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:13:42Z",
+      "resolved_at": "2026-04-21T05:28:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Rebased EW-04 handoff truth to route-live: docs/examples/PKT-003-inspiration-graph.json now marks the payload route-live, docs/pantheon-handoffs/EW-004-evolution-workbench/PACKET_FAMILY.md no longer describes EW-04 as blocked/pending, and the PKT-003 mirror lovable-ui-task now points back to the active EW-04 dispatch artifact instead of an obsolete cycle-2 follow-up record.",
+      "status": "pending",
+      "created_at": "2026-04-21T05:16:33Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T05:28:28Z",
+      "resolved_at": "2026-04-21T05:29:35Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:29:35Z",
+      "resolved_at": "2026-04-21T05:44:10Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Closeout truth reconciled. ai_status now prefers Pantheon closeout responses plus explicit loop-close states, stale frontend closeout responses were refreshed for the reviewed close-now packets, and current-work now collapses the previously stuck reviewed loops into loop_complete/closed. Remaining non-closed entries are now limited to genuine follow-up lanes plus RW-02-search, which still lacks a formal closeout response and remains inspect-disposition only.",
+      "status": "pending",
+      "created_at": "2026-04-21T05:38:48Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Copilot",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:43:40Z",
+      "resolved_at": "2026-04-21T05:45:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:43:50Z",
+      "resolved_at": "2026-04-21T05:45:19Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:43:58Z",
+      "resolved_at": "2026-04-21T05:45:32Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T05:44:10Z",
+      "resolved_at": "2026-04-21T05:46:38Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:46:38Z",
+      "resolved_at": "2026-04-21T05:59:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "TW-04 teaching replay handoff bundle refreshed for review: BFF/screen/packet truth now mark the route family live, coordination YAML publishes all four replay routes plus action-layer semantics, and handoff wording consistently uses event.evidence_ref instead of evidence_links[]. Verified via targeted rg plus YAML parse for the TW-04 coordination files.",
+      "status": "pending",
+      "created_at": "2026-04-21T05:53:49Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:59:19Z",
+      "resolved_at": "2026-04-21T06:00:45Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T05:59:40Z",
+      "resolved_at": "2026-04-21T06:01:13Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T06:00:45Z",
+      "resolved_at": "2026-04-21T06:01:02Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:01:13Z",
+      "resolved_at": "2026-04-21T06:16:14Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T06:15:19Z",
+      "resolved_at": "2026-04-21T06:33:23Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T06:16:14Z",
+      "resolved_at": "2026-04-21T06:18:11Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:18:11Z",
+      "resolved_at": "2026-04-21T06:32:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:20:25Z",
+      "resolved_at": "2026-04-21T06:24:35Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:24:35Z",
+      "resolved_at": "2026-04-21T07:44:07Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "TW-03 frontend handoff bundle, coordination templates, screen spec, trainer packet family, and frontend SA are rebaselined to route-live truth. Please review the new TW-03 handoff artifacts and doc sync.",
+      "status": "pending",
+      "created_at": "2026-04-21T06:27:25Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T06:32:01Z",
+      "resolved_at": "2026-04-21T06:33:07Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:33:07Z",
+      "resolved_at": "2026-04-21T06:48:01Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T06:33:23Z",
+      "resolved_at": "2026-04-21T06:34:09Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "W&B defer/reopen execution slice is ready for review: gate doc now reflects the selector-stub truth and Codex/Claude execution ownership, activation map makes the reopen packet the first executable follow-up, and the next-work inventory now frames OSS-NEXT-004 as defer/reopen-packet work with earliest eligible reopen date 2026-05-15.",
+      "status": "done",
+      "created_at": "2026-04-21T06:34:06Z",
+      "resolved_at": "2026-04-21T06:35:30Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T06:35:30Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Support packet is ready at support/sidecars/EXEC-BFF-KW03-001/EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF.md. It classifies KW-03 as no-open-BFF-gap, confirms the live list/detail routes plus resolved_link and linked_decisions semantics, records 10 passing targeted tests, and isolates the remaining work to frontend packetization plus stale KW-006 / readiness / PKT overview narratives.",
+      "status": "pending",
+      "created_at": "2026-04-21T06:39:50Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "QuantLib baseline reclosed: added worker.py + governed sample dataset; rebaselined activation/maturity/inventory/checklist truth to governed; verified smoke_test.py, pytest (17 passed, 1 skipped), and worker sample fallback on 2026-04-21.",
+      "status": "done",
+      "created_at": "2026-04-21T06:47:16Z",
+      "resolved_at": "2026-04-21T06:50:28Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T06:48:01Z",
+      "resolved_at": "2026-04-21T06:49:17Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:49:17Z",
+      "resolved_at": "2026-04-21T07:05:53Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T06:50:28Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:05:25Z",
+      "resolved_at": "2026-04-21T07:06:48Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T07:05:53Z",
+      "resolved_at": "2026-04-21T07:07:51Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:07:51Z",
+      "resolved_at": "2026-04-21T07:21:15Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:08:20Z",
+      "resolved_at": "2026-04-21T07:13:04Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:13:04Z",
+      "resolved_at": "2026-04-21T07:14:07Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet is ready at support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-REVIEW.md. It summarizes the parent closeout-precedence changes in scripts/ai_status.py, the refreshed closeout response batch, the resulting current-work state transitions, and the two main reviewer cautions: unrelated OSS inventory doc edits plus collateral save_state hardening inside the same file.",
+      "status": "pending",
+      "created_at": "2026-04-21T07:18:57Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T07:21:15Z",
+      "resolved_at": "2026-04-21T07:22:44Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:22:44Z",
+      "resolved_at": "2026-04-21T07:37:30Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:36:00Z",
+      "resolved_at": "2026-04-21T07:37:03Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/EXEC-OSS-WANDB-001/EXEC-OSS-WANDB-001-SIDECAR-REVIEW.md. It summarizes the active parent review boundary: W&B remains formally deferred, earliest eligible reopen stays 2026-05-15, the config stub is already landed, and the only legitimate next slice is a reopen packet after all six WANDB_ACTIVATION.md §7.3 conditions are simultaneously satisfied. No canonical truth or runtime files were modified.",
+      "status": "done",
+      "created_at": "2026-04-21T07:37:14Z",
+      "resolved_at": "2026-04-21T07:40:41Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T07:37:30Z",
+      "resolved_at": "2026-04-21T07:40:46Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:38:23Z",
+      "resolved_at": "2026-04-21T07:40:22Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar review approved: packet is accurate against the current W&B defer gate, keeps the config stub framed as already landed context, and correctly limits the next legitimate slice to a reopen packet after all six WANDB_ACTIVATION.md §7.3 conditions are met.",
+      "status": "done",
+      "created_at": "2026-04-21T07:40:41Z",
+      "resolved_at": "2026-04-21T07:42:55Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:40:46Z",
+      "resolved_at": "2026-04-21T07:53:43Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:41:55Z",
+      "resolved_at": "2026-04-21T07:43:57Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Codex2 to Qwen after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T07:42:55Z",
+      "resolved_at": "2026-04-21T07:56:40Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:43:57Z",
+      "resolved_at": "2026-04-21T07:45:08Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:44:07Z",
+      "resolved_at": "2026-04-21T07:55:15Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet is ready at support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW.md. It summarizes the parent QuantLib reclose handoff, the governed adapter/worker/sample-dataset surface, rerun smoke/pytest/worker evidence from 2026-04-21, and the two main cautions: the older acceptance sidecar is stale and several QuantLib docs still carry pre-reassignment reviewer headers while the live parent reviewer is now Copilot.",
+      "status": "pending",
+      "created_at": "2026-04-21T07:48:31Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T07:53:43Z",
+      "resolved_at": "2026-04-21T07:55:05Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:55:05Z",
+      "resolved_at": "2026-04-21T08:09:15Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:55:15Z",
+      "resolved_at": "2026-04-21T08:32:01Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T07:56:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T08:09:15Z",
+      "resolved_at": "2026-04-21T08:10:35Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:10:35Z",
+      "resolved_at": "2026-04-21T08:25:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T08:25:01Z",
+      "resolved_at": "2026-04-21T08:26:46Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:26:46Z",
+      "resolved_at": "2026-04-21T08:41:17Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T08:29:50Z",
+      "resolved_at": "2026-04-21T08:30:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:32:01Z",
+      "resolved_at": "2026-04-21T08:38:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet ready at support/sidecars/EXEC-REBASE-TW03-001/EXEC-REBASE-TW03-001-SIDECAR-BFF-HANDOFF.md. It classifies TW-03 as route-live with no open BFF gap or missing handoff bundle, confirms no returned frontend loop exists yet, and isolates the remaining reviewer-facing issues to stale backlog/example wording plus the currently expired pending-preview contract-test fixture.",
+      "status": "pending",
+      "created_at": "2026-04-21T08:36:32Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:38:57Z",
+      "resolved_at": "2026-04-21T09:56:28Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T08:41:17Z",
+      "resolved_at": "2026-04-21T08:42:53Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:42:53Z",
+      "resolved_at": "2026-04-21T08:56:47Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T08:56:47Z",
+      "resolved_at": "2026-04-21T08:58:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:58:01Z",
+      "resolved_at": "2026-04-21T09:12:06Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet ready at support/sidecars/EXEC-FRONT-RW01-001/EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE.md. It packages the RW-01 dependency chain, confirms the front return is replay-clean, and isolates the remaining blocker to the runtime refresh tracked in .coordination/requests/RW-01-research-ticket-needs-runtime.yaml.",
+      "status": "done",
+      "created_at": "2026-04-21T08:58:22Z",
+      "resolved_at": "2026-04-21T09:00:53Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed and reviewer-ready at support/sidecars/EXEC-FRONT-RW01-001/EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE.md. It cleanly separates delivered RW-01 frontend evidence from the remaining runtime-refresh blocker tracked in .coordination/requests/RW-01-research-ticket-needs-runtime.yaml.",
+      "status": "done",
+      "created_at": "2026-04-21T09:00:53Z",
+      "resolved_at": "2026-04-21T09:03:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex2 to Qwen after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T09:03:12Z",
+      "resolved_at": "2026-04-21T09:12:19Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T09:12:06Z",
+      "resolved_at": "2026-04-21T09:13:34Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T09:12:19Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:13:34Z",
+      "resolved_at": "2026-04-21T09:27:22Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T09:27:22Z",
+      "resolved_at": "2026-04-21T09:29:31Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:29:31Z",
+      "resolved_at": "2026-04-21T09:44:15Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T09:44:15Z",
+      "resolved_at": "2026-04-21T09:45:35Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:45:35Z",
+      "resolved_at": "2026-04-21T09:59:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:56:28Z",
+      "resolved_at": "2026-04-21T10:02:07Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:57:17Z",
+      "resolved_at": "2026-04-21T10:02:44Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T09:59:52Z",
+      "resolved_at": "2026-04-21T10:01:09Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:01:09Z",
+      "resolved_at": "2026-04-21T10:15:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:02:07Z",
+      "resolved_at": "2026-04-21T11:22:03Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T10:02:44Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T10:15:12Z",
+      "resolved_at": "2026-04-21T10:16:41Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:16:41Z",
+      "resolved_at": "2026-04-21T10:31:19Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T10:31:19Z",
+      "resolved_at": "2026-04-21T10:32:42Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:32:42Z",
+      "resolved_at": "2026-04-21T10:46:38Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T10:46:38Z",
+      "resolved_at": "2026-04-21T10:47:55Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:47:55Z",
+      "resolved_at": "2026-04-21T11:02:39Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T11:02:39Z",
+      "resolved_at": "2026-04-21T11:03:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:03:56Z",
+      "resolved_at": "2026-04-21T11:18:31Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T11:18:31Z",
+      "resolved_at": "2026-04-21T11:19:42Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:19:42Z",
+      "resolved_at": "2026-04-21T11:33:51Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:22:03Z",
+      "resolved_at": "2026-04-21T11:27:38Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:27:38Z",
+      "resolved_at": "2026-04-21T12:41:07Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T11:33:51Z",
+      "resolved_at": "2026-04-21T11:35:38Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:35:38Z",
+      "resolved_at": "2026-04-21T11:49:30Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T11:49:30Z",
+      "resolved_at": "2026-04-21T11:50:44Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:50:44Z",
+      "resolved_at": "2026-04-21T12:04:58Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T12:04:58Z",
+      "resolved_at": "2026-04-21T12:05:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:05:59Z",
+      "resolved_at": "2026-04-21T12:20:43Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T12:20:43Z",
+      "resolved_at": "2026-04-21T12:22:29Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:22:29Z",
+      "resolved_at": "2026-04-21T12:37:22Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T12:37:22Z",
+      "resolved_at": "2026-04-21T12:38:41Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:38:41Z",
+      "resolved_at": "2026-04-21T12:54:28Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:41:07Z",
+      "resolved_at": "2026-04-21T12:49:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:49:01Z",
+      "resolved_at": "2026-04-21T13:38:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T12:54:28Z",
+      "resolved_at": "2026-04-21T12:56:20Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:56:20Z",
+      "resolved_at": "2026-04-21T13:10:41Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T13:10:41Z",
+      "resolved_at": "2026-04-21T13:11:48Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:11:48Z",
+      "resolved_at": "2026-04-21T13:26:37Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T13:26:37Z",
+      "resolved_at": "2026-04-21T13:28:45Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:28:45Z",
+      "resolved_at": "2026-04-21T13:42:46Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:38:56Z",
+      "resolved_at": "2026-04-21T13:43:58Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T13:42:46Z",
+      "resolved_at": "2026-04-21T13:44:08Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:43:58Z",
+      "resolved_at": "2026-04-21T14:34:04Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:44:08Z",
+      "resolved_at": "2026-04-21T13:57:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T13:57:59Z",
+      "resolved_at": "2026-04-21T13:59:13Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:59:13Z",
+      "resolved_at": "2026-04-21T14:13:11Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T14:13:11Z",
+      "resolved_at": "2026-04-21T14:14:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:14:21Z",
+      "resolved_at": "2026-04-21T14:30:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T14:30:24Z",
+      "resolved_at": "2026-04-21T14:31:50Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:31:50Z",
+      "resolved_at": "2026-04-21T14:45:43Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:34:04Z",
+      "resolved_at": "2026-04-21T14:37:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-04-21T14:37:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T14:45:43Z",
+      "resolved_at": "2026-04-21T14:46:58Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:46:58Z",
+      "resolved_at": "2026-04-21T15:01:28Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T15:01:28Z",
+      "resolved_at": "2026-04-21T15:02:38Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:02:38Z",
+      "resolved_at": "2026-04-21T15:19:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T15:19:40Z",
+      "resolved_at": "2026-04-21T15:57:48Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T15:57:48Z",
+      "resolved_at": "2026-04-21T15:59:09Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "pending",
+      "created_at": "2026-04-21T15:59:09Z"
     }
   ],
-  "blockers": [],
+  "blockers": [
+    {
+      "task_id": "EXEC-FRONT-RW01-001",
+      "owner": "Codex2",
+      "waiting_for": "Gemini",
+      "message": "Front repo published RW-01 readiness-gated implementation plus truthful ui-done/frontend-feedback bundle from commits 7b807fbe9ebcd5c84baca77de966121c0b2d1d73 and 4ff06511cf24c643d63c79f4a32265015a926730. Targeted eslint, tsc, and build pass, but live probes on 2026-04-20 still return HTTP 404 for /api/v1/research/tickets and expose no RW-01 paths in /openapi.json, so approval remains blocked on runtime refresh.",
+      "status": "open",
+      "created_at": "2026-04-20T23:58:30Z"
+    }
+  ],
   "workload": {
     "Claude": 15,
     "Gemini": 30,
@@ -1209,39 +4256,39 @@
   "workload_summary": {
     "Claude": {
       "total": 5,
-      "active": 3,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
+      "review_approved": 3,
+      "todo": 2
+    },
+    "Gemini": {
+      "total": 7,
+      "active": 1,
+      "blocked": 0,
+      "done": 3,
+      "review": 0,
       "review_approved": 0,
       "todo": 4
     },
-    "Gemini": {
-      "total": 5,
-      "active": 0,
-      "blocked": 0,
-      "done": 2,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 3
-    },
     "Codex": {
-      "total": 5,
-      "active": 0,
+      "total": 22,
+      "active": 21,
       "blocked": 0,
       "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 5
-    },
-    "Codex2": {
-      "total": 2,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 1,
+      "review": 21,
       "review_approved": 0,
       "todo": 1
+    },
+    "Codex2": {
+      "total": 3,
+      "active": 2,
+      "blocked": 1,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 2
     },
     "Qwen": {
       "total": 0,
@@ -1253,13 +4300,13 @@
       "todo": 0
     },
     "Copilot": {
-      "total": 3,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 1
     }
   }
 }
