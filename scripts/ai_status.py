@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import yaml
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +33,7 @@ from task_archive import (
     task_satisfies_dependency,
     terminal_outcome_for,
 )
+from runtime_state import load_runtime_state
 
 STATUS_FILE = ROOT / "ai-status.json"
 LOG_FILE = ROOT / "ai-activity-log.jsonl"
@@ -538,7 +541,13 @@ def load_config() -> dict[str, Any]:
 
 
 def save_state(state: dict[str, Any]) -> None:
-    STATUS_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False) as handle:
+        handle.write(serialized)
+        handle.flush()
+        os.fsync(handle.fileno())
+        temp_path = Path(handle.name)
+    os.replace(temp_path, STATUS_FILE)
 
 
 def task_resolver(state: dict[str, Any]) -> TaskResolver:
@@ -1852,12 +1861,64 @@ def coordination_payload_resolved(entry: dict[str, Any] | None) -> bool:
     return status in {"resolved", "completed", "done"}
 
 
+def normalize_coordination_token(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def coordination_payload_status(entry: dict[str, Any] | None) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+    return normalize_coordination_token(payload.get("status"))
+
+
+def coordination_payload_field(entry: dict[str, Any] | None, field: str) -> Any:
+    if not isinstance(entry, dict):
+        return None
+    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+    return payload.get(field)
+
+
+def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
+    candidate = str(path_value or "").strip()
+    if not candidate or candidate.startswith("../") or "://" in candidate:
+        return None
+    local_path = ROOT / candidate
+    if not local_path.exists() or not local_path.is_file():
+        return None
+    try:
+        text = local_path.read_text(encoding="utf-8")
+        if local_path.suffix == ".json":
+            payload = json.loads(text)
+        else:
+            payload = yaml.safe_load(text)
+    except (OSError, json.JSONDecodeError, yaml.YAMLError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def coordination_local_response_path(feature: dict[str, Any], payload_type: str) -> str | None:
+    feature_id = str(feature.get("feature_id") or "").strip()
+    if not feature_id:
+        return None
+    candidate = ROOT / ".coordination" / "responses" / f"{feature_id}-{payload_type}.yaml"
+    if candidate.exists():
+        return str(candidate.relative_to(ROOT))
+    return None
+
+
 def coordination_payload_entry(feature: dict[str, Any], bucket: str, payload_type: str) -> dict[str, Any] | None:
     typed_key = f"{bucket}_by_type"
     typed_entries = feature.get(typed_key)
     if isinstance(typed_entries, dict):
         candidate = typed_entries.get(payload_type)
         if isinstance(candidate, dict):
+            if bucket == "responses" and payload_type == "frontend-feedback":
+                local_payload = load_local_coordination_payload(str(candidate.get("path") or ""))
+                if isinstance(local_payload, dict):
+                    overlaid = dict(candidate)
+                    overlaid["payload"] = local_payload
+                    return overlaid
             return candidate
 
     latest_key = "latest_request" if bucket == "requests" else "latest_response"
@@ -1872,6 +1933,20 @@ def coordination_payload_entry(feature: dict[str, Any], bucket: str, payload_typ
             "source_repo_id": feature.get("source_repo_id"),
             "target_repo_id": feature.get("target_repo_id"),
         }
+
+    if bucket == "responses" and payload_type == "frontend-feedback":
+        local_path = coordination_local_response_path(feature, payload_type)
+        if local_path:
+            local_payload = load_local_coordination_payload(local_path)
+            if isinstance(local_payload, dict):
+                return {
+                    "type": payload_type,
+                    "path": local_path,
+                    "payload": local_payload,
+                    "updated_at": local_payload.get("reviewed_at") or feature.get("last_updated_at"),
+                    "source_repo_id": feature.get("source_repo_id"),
+                    "target_repo_id": feature.get("target_repo_id"),
+                }
 
     if bucket == "responses" and payload_type == "lovable-ui-task" and isinstance(feature.get("lovable_task"), dict):
         lovable_payload = feature["lovable_task"]
@@ -1914,6 +1989,8 @@ def coordination_review_snapshot(feature_id: str | None) -> dict[str, str] | Non
         or "blocked" in scoped_text
     ):
         disposition = "follow_up_required"
+    elif "task scope" in scoped_text or "acceptance gate" in scoped_text:
+        disposition = "reviewed"
     elif (
         "approved" in scoped_text
         or "loop is complete" in scoped_text
@@ -1930,11 +2007,56 @@ def coordination_review_snapshot(feature_id: str | None) -> dict[str, str] | Non
 
 def coordination_stage(feature: dict[str, Any]) -> tuple[str, str]:
     frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+    frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
     ui_done = coordination_payload_entry(feature, "requests", "ui-done")
     bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
     contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
     lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
+    backend_delivery = coordination_payload_entry(feature, "responses", "backend-delivery")
     review = coordination_review_snapshot(feature.get("feature_id"))
+
+    response_disposition = normalize_coordination_token(coordination_payload_field(frontend_feedback_response, "disposition"))
+    response_can_close = bool(coordination_payload_field(frontend_feedback_response, "can_close"))
+    response_lovable_status = normalize_coordination_token(coordination_payload_field(frontend_feedback_response, "lovable_ui_task_status"))
+    response_coordination_stage = normalize_coordination_token(coordination_payload_field(frontend_feedback_response, "coordination_stage"))
+    response_next_action = str(coordination_payload_field(frontend_feedback_response, "next_action") or "").strip()
+    ui_status = coordination_payload_status(ui_done)
+    ui_disposition = normalize_coordination_token(coordination_payload_field(ui_done, "pantheon_disposition"))
+    lovable_status = coordination_payload_status(lovable_task)
+    backend_status = coordination_payload_status(backend_delivery)
+
+    response_marks_complete = response_can_close or response_disposition in {"approved", "close", "loop_complete"}
+    response_marks_followup = response_disposition in {"blocked", "follow_up", "follow_up_required"} or response_coordination_stage in {"blocked", "follow_up", "follow_up_required"}
+    explicit_loop_complete = (
+        response_marks_complete
+        or ui_disposition == "loop_complete"
+        or lovable_status == "loop_complete"
+        or backend_status == "loop_complete"
+        or response_lovable_status == "loop_complete"
+    )
+    explicit_closed = (
+        ui_status == "closed"
+        or lovable_status == "closed"
+        or response_lovable_status == "closed"
+    )
+
+    if explicit_loop_complete:
+        return "loop_complete", "Pantheon closeout record marks the current packet loop complete."
+
+    if response_marks_followup:
+        if explicit_closed and not response_coordination_stage and response_next_action and response_next_action.lower() != "none":
+            # Keep the loop visible as follow-up when the response explicitly names a next action.
+            pass
+        elif explicit_closed and not response_coordination_stage:
+            return "closed", "Current packet record is closed for this scope; reopen only if a later follow-up cycle is dispatched."
+        return "frontend_feedback_reviewed_followup", (
+            f"Pantheon review is complete; follow-up remains ({response_next_action})."
+            if response_next_action and response_next_action.lower() != "none"
+            else "Pantheon review is complete; follow-up remains per the closeout response."
+        )
+
+    if explicit_closed:
+        return "closed", "Current packet record is closed for this scope; reopen only if a later follow-up cycle is dispatched."
 
     if frontend_feedback:
         if review:
@@ -2305,8 +2427,9 @@ def build_dashboard_bundle(
 
 
 def write_dashboard_bundle(state: dict[str, Any]) -> None:
+    config = load_config()
     planning_state = load_planning_state()
-    orchestrator_state = load_json_file(ORCHESTRATOR_STATE_FILE, {})
+    orchestrator_state = load_runtime_state(config)
     approval_state = load_json_file(APPROVAL_QUEUE_FILE, {"pending": [], "history": []})
     bundle = build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
     DASHBOARD_BUNDLE_FILE.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

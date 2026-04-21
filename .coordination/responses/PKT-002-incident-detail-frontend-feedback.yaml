@@ -1,69 +1,122 @@
 feature_id: PKT-002-incident-detail
 type: frontend-feedback
-pantheon_reviewer: Claude
-reviewed_source_commit: c08acb3ea59f4c56ced578820aa6a5129a309de1
-feedback_bundle_commit: dea4186
-feedback_bundle_transport: front-repo main @ dea4186
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-19T13:51:24Z'
+reviewed_source_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3
+request_pair_commit: 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe
+feedback_bundle_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3
+verified_front_workspace_head: 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe
+verified_remote_publish_commit: 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe
+feedback_bundle_transport: >-
+  Transport commit eb1a6cbb727a681db21ecd4b121348605fb8a4d3 on
+  origin/pkt-004-detail-fix contains the PKT-002 request pair, feedback
+  bundle, and claimed UI files. Branch head
+  42dc4856b36a7c92f5c40cafd94bf8ef09665bbe keeps both request bodies pointed at
+  that transport commit and is itself GitHub-visible on the same branch.
+screen: incident-detail
+workbench: operator-console
+screen_id: screen-operator-incident-detail
 
-disposition: follow-up-required
+disposition: close
 
-summary: |
-  The PKT-002 Incident Detail UI is substantially aligned with the REST read contract.
-  However, source_commit c08acb3 integrates the PKT-005 SSE substrate directly into
-  IncidentDetail.tsx, opening three SSE streams from the screen component via SseClient
-  (outside the shared BFF client). This deviates from the lovable-ui-task constraint
-  "use existing bff client only / do not add raw fetch in components" and requires
-  explicit Pantheon acknowledgement before the loop can be marked loop-complete.
+summary: >-
+  Pantheon re-reviewed PKT-002 Incident Detail against the canonical
+  incident-detail contract, the mirrored request pair, the published feedback
+  bundle, the sibling front implementation, and the local Pantheon acceptance
+  slice. The returned UI cycle is now replay-clean and contract-aligned:
+  transport commit eb1a6cbb727a681db21ecd4b121348605fb8a4d3 on
+  origin/pkt-004-detail-fix contains the request pair, feedback bundle, and
+  claimed UI files; branch head 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe
+  keeps both request bodies pointed at that transport commit; the detail view
+  still reads through operatorApi.getIncidentResponse on
+  GET /api/v1/operator/incident-response/{incident_id}; operator navigation is
+  truthful at /operator/incidents/:incidentId and
+  /operator/incidents/:incidentId/action; opened_at and per-action rationale
+  copy are rendered; the live-update overlay stays on the approved PKT-005 SSE
+  substrate; targeted front verification passed; and the Pantheon smoke slice
+  now passes with 5 tests green. The only remaining note is non-blocking:
+  HardRollback still lacks a canonical target_artifact_id source when launched
+  from Incident Detail, so that command must remain disabled from this host
+  context until Pantheon publishes it.
 
-  The feedback bundle has been republished at front-repo commit dea4186 with truthful
-  documentation of the SSE boundary deviation.
+acceptance_verified:
+  - criterion: keep the composed incident-detail read on the canonical PKT-002 route
+    status: pass
+    note: >-
+      IncidentDetail.tsx still reads through operatorApi.getIncidentResponse()
+      on GET /api/v1/operator/incident-response/{incident_id}; no component
+      introduced raw fetch or a shadow endpoint.
+  - criterion: keep navigation within the committed operator route boundary
+    status: pass
+    note: >-
+      The detail screen remains mounted at /operator/incidents/:incidentId, the
+      back action returns to /operator/incidents, and the drawer CTA targets
+      /operator/incidents/:incidentId/action.
+  - criterion: render the required incident summary and action rationale fields
+    status: pass
+    note: >-
+      The incident summary now renders data.incident.opened_at, and the action
+      strip renders short rationale copy for every backend-shaped action.
+  - criterion: keep live updates on the canonical PKT-005 SSE substrate only
+    status: pass
+    note: >-
+      IncidentDetail.tsx and IncidentActionDrawerPage.tsx use only
+      /api/v1/runtime/{runtime_id}/events/stream, /api/v1/incidents/stream,
+      and /api/v1/kill-switch/updates via the shared sseClient/sseReconciler
+      pair; no new realtime endpoint or local shadow state was introduced.
+  - criterion: publish a truthful GitHub-visible request pair and feedback bundle
+    status: pass
+    note: >-
+      origin/pkt-004-detail-fix contains both the transport commit
+      eb1a6cbb727a681db21ecd4b121348605fb8a4d3 and the current request-pair
+      head 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe.
+  - criterion: pass targeted front verification on the reviewed tree
+    status: pass
+    note: >-
+      `npm run build` passed in ../front-ai-trading-system, and targeted ESLint
+      passed on src/pages/operator/IncidentDetail.tsx,
+      src/pages/operator/IncidentActionDrawerPage.tsx,
+      src/pages/operator/PostIncidentReviewConsole.tsx,
+      src/pages/operator/DeploymentReviewConsole.tsx,
+      src/pages/operator/types.ts, src/lib/sseClient.ts,
+      src/lib/sseReconciler.ts, and src/App.tsx.
+  - criterion: pass the Pantheon-owned incident-detail acceptance slice
+    status: pass
+    note: >-
+      `python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q
+      -k 'in02_incident_detail or composed_incident_response or
+      in05_kill_switch_status or
+      in05_kill_switch_unavailable_disables_actions'` now returns
+      `5 passed, 15 deselected`.
 
-sse_boundary_deviation:
-  component: src/pages/operator/IncidentDetail.tsx
-  streams:
-    - endpoint: /api/v1/runtime/{runtimeId}/events/stream
-      event_types: [runtime_state_changed]
-      filter: runtimeId
-    - endpoint: /api/v1/incidents/stream
-      event_types: [incident_updated]
-      filter: incidentId
-    - endpoint: /api/v1/kill-switch/updates
-      event_types: [kill_switch_activated, kill_switch_deactivated]
-      local_effect: killSwitchActivatedViaSse state
-  degradation_behaviour: >
-    Page degrades gracefully to initial REST snapshot when SSE endpoints are unavailable.
-    SSE connectivity state is rendered in the page header.
+api_gaps: []
 
-api_gap_requests:
-  - id: IDR-GAP-001
-    blocking: false
-    kind: write_contract
-    summary: HardRollback target_artifact_id not published in incident-detail packet
-  - id: IDR-GAP-002
-    blocking: true
-    kind: sse_endpoint_boundary_acknowledgement
-    summary: >
-      Three SSE endpoints used directly in IncidentDetail.tsx are outside the
-      allowed_endpoints boundary. Pantheon must confirm these are live or declare
-      this integration pre-production and update lovable-ui-task allowed_endpoints.
+follow_up_items:
+  - type: contract_note
+    status: deferred_non_blocking
+    note: >-
+      The embedded Incident Action Drawer must keep HardRollback disabled from
+      Incident Detail until Pantheon publishes a canonical
+      params.target_artifact_id source for that command context.
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Static verification passed, but live browser and command-path QA against
+      a running Pantheon BFF remains outstanding.
 
-acceptance_criteria_coverage:
-  build_passes: true
-  eslint_passes: true
-  route_incident_detail: true
-  bff_client_for_snapshot: true
-  no_field_invention: true
-  cta_backend_shaped: true
-  degraded_surface_copy: true
-  staleness_banner: true
-  kill_switch_commands_rendered: true
-  sse_boundary_acknowledged: false  # blocking until Pantheon confirms PKT-005 endpoints
-  hard_rollback_target_artifact: false  # non-blocking follow-up
+loop_close_condition: >-
+  Met. Transport commit eb1a6cbb727a681db21ecd4b121348605fb8a4d3 and request
+  pair head 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe are both GitHub-visible on
+  origin/pkt-004-detail-fix, and the reviewed UI now matches the canonical
+  PKT-002 read contract plus the approved PKT-005 SSE boundary.
 
-next_front_actions:
-  - none required from front; this cycle is complete from the frontend side
+risk_note: >-
+  Remaining risk is integration-only. Live browser QA and real command
+  execution are still deferred, and HardRollback stays intentionally disabled
+  from Incident Detail until Pantheon publishes canonical rollback target
+  context.
 
-next_pantheon_actions:
-  - confirm PKT-005 SSE endpoints are live or mark integration pre-production (IDR-GAP-002, blocking)
-  - publish canonical rollback target source for HardRollback (IDR-GAP-001, non-blocking)
-  - run live browser QA once BFF is available
+lovable_ui_task_status: closed
+next_action: none
+review_findings_ref: .coordination/reviews/PKT-002-incident-detail-review.md

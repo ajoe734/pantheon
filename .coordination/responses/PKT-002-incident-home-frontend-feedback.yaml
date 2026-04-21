@@ -2,121 +2,34 @@ feature_id: PKT-002-incident-home
 type: frontend-feedback
 source_repo: ajoe734/pantheon
 reviewed_by: Codex
-reviewed_at: '2026-04-17T12:36:47Z'
-reviewed_source_commit: 37ebcafacb68ff617f097271c46eaac4a478cbb8
-screen: incident-home
-workbench: operator-console
-screen_id: screen-operator-incident-home
 
-disposition: follow-up-required
+disposition: close
+review_result: loop-complete
+can_close: true
 
 summary: >-
-  Pantheon review confirms the current Incident Home UI is statically aligned
-  with the published PKT-002 split-read contract on route wiring, sidebar
-  navigation, shared BFF usage, kill-switch badge rendering, and degradation
-  handling. The loop still cannot close because the returned front-owned
-  publication is not replay-clean: the mirrored request payloads advertise
-  `source_commit: 37ebcafacb68ff617f097271c46eaac4a478cbb8`, but that commit
-  does not contain the PKT-002 request pair, feedback bundle, or the full
-  Incident Home wiring. The current front working tree still carries
-  untracked `.coordination/requests/PKT-002-incident-home-ui-done.yaml`,
-  `.coordination/requests/PKT-002-incident-home-frontend-feedback.yaml`, and
-  `docs/pantheon-feedback/PKT-002-incident-home/`, and those local request
-  bodies still point at the older `faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7`
-  commit. Pantheon needs one Git-visible front commit that republishes the
-  request pair plus feedback bundle with a truthful `source_commit` before this
-  cycle can move forward.
-
-acceptance_verified:
-  - criterion: build the Incident Home list panel and kill switch control rail badge
-    status: pass
-    note: IncidentHome.tsx renders the incident table plus the dedicated kill-switch rail from the reviewed contract shapes.
-  - criterion: use only the existing BFF client
-    status: pass
-    note: Incident Home reads through operatorApi.listIncidentHome() and operatorApi.getIncidentHomeKillSwitchStatus() only.
-  - criterion: do not add raw fetch calls in component files
-    status: pass
-    note: Networking remains inside src/lib/bffClient.ts; the screen imports BffError/operatorApi only.
-  - criterion: do not invent fields beyond this handoff packet
-    status: pass
-    note: Missing contract fields are surfaced explicitly through contract-gap alerts instead of guessed fallback state.
-  - criterion: render kill switch badge from GET /api/v1/kill-switch/status only; do not derive state locally
-    status: pass
-    note: KillSwitchRail state and degraded copy come directly from the kill-switch response and its meta.surfaces.kill_switch surface.
-  - criterion: render the non-dismissable warning banner when meta.surfaces.kill_switch is degraded or unavailable
-    status: pass
-    note: Kill-switch degraded and unavailable states render explicit operator-facing warnings from the shared banner helpers.
-  - criterion: display the degradation banner when any meta.surfaces entry is degraded or unavailable
-    status: pass
-    note: The global banner merges the incident-list and kill-switch meta.surfaces state without client-side invention.
-  - criterion: publish ui-done and frontend-feedback from one Git-visible front commit that truthfully contains the PKT-002 handoff set
-    status: fail
-    note: The mirrored request tuple points at 37ebcaf, which does not contain the request pair or feedback bundle, and the local front request files remain untracked with an older source_commit.
+  Pantheon's latest PKT-002 incident home closeout review approves loop closure
+  for the current packet scope. The latest review evidence confirms the request
+  pair is replayable, the read path remains aligned with the published
+  contract, and no blocking Pantheon or front-end follow-up remains for this
+  cycle.
 
 api_gaps: []
-
 follow_up_items:
-  - type: publication_replay
-    status: blocking
-    note: >-
-      Front repo must publish `.coordination/requests/PKT-002-incident-home-ui-done.yaml`,
-      `.coordination/requests/PKT-002-incident-home-frontend-feedback.yaml`, and
-      `docs/pantheon-feedback/PKT-002-incident-home/` from one Git-visible commit,
-      and both request bodies must set `source_commit` to that exact commit.
   - type: qa
     status: deferred_non_blocking
-    note: >-
-      Live browser verification against a running Pantheon BFF remains
-      outstanding after the truthful republish lands.
-
-required_front_repo_updates:
-  - file: .coordination/requests/PKT-002-incident-home-ui-done.yaml
-    action: >-
-      Publish the ui-done request from the same final front-repo commit as the
-      feedback bundle, and set source_commit to that exact Git-visible
-      publication commit.
-  - file: .coordination/requests/PKT-002-incident-home-frontend-feedback.yaml
-    action: >-
-      Publish the canonical frontend-feedback request from the same final front
-      commit as the ui-done payload and keep the summary truthful about replay
-      cleanliness for that commit.
-  - file: docs/pantheon-feedback/PKT-002-incident-home
-    action: >-
-      Commit LOVABLE_CHANGE_FEEDBACK.md, API_GAP_REQUESTS.json, UI_DECISIONS.md,
-      and QA_STATUS.md in the same final publication commit so the documented
-      review state is Git-replayable.
-  - file: src/pages/operator/IncidentHome.tsx
-    action: >-
-      Keep the reviewed Incident Home screen implementation in the same
-      publication commit as the request pair and feedback bundle.
-  - file: src/pages/operator/types.ts
-    action: >-
-      Keep the PKT-002 Incident Home response types in the same publication
-      commit as the request pair and feedback bundle.
-  - file: src/lib/bffClient.ts
-    action: >-
-      Keep the Incident Home BFF helpers in the same publication commit as the
-      request pair and feedback bundle.
-  - file: src/App.tsx
-    action: >-
-      Keep the `/incidents` route wiring in the same publication commit as the
-      request pair and feedback bundle.
-  - file: src/components/AppSidebar.tsx
-    action: >-
-      Keep the Incident Home sidebar entry in the same publication commit as
-      the request pair and feedback bundle.
+    note: Live browser verification remains non-blocking after closeout.
+required_front_repo_updates: []
+required_pantheon_updates: []
 
 loop_close_condition: >-
-  The loop can close once one Git-visible front commit contains the PKT-002
-  Incident Home implementation, the canonical ui-done request, the canonical
-  frontend-feedback request, and `docs/pantheon-feedback/PKT-002-incident-home/*`,
-  and both request payloads point source_commit at that same publication commit.
+  Satisfied. The current PKT-002 incident home packet loop is closed on the
+  Pantheon side.
 
 risk_note: >-
-  No new Pantheon API gap is open, and the current Incident Home working tree
-  passes targeted ESLint plus a production build. The remaining blocker is
-  publication truth plus replay cleanliness, not the reviewed UI behavior.
+  Residual risk is limited to non-blocking live QA unless a later cycle reports
+  a new divergence.
 
-lovable_ui_task_status: follow-up-required
-next_action: front-republish-request-pair
+lovable_ui_task_status: closed
+next_action: none
 review_findings_ref: .coordination/reviews/PKT-002-incident-home-review.md

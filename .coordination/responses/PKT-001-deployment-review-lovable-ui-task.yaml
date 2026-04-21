@@ -1,7 +1,7 @@
 feature_id: PKT-001-deployment-review
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: follow-up-required
 pantheon_pr: null
 base_url: null
 workbench: operator-console
