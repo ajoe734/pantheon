@@ -96,7 +96,7 @@ Overview packet note: `PKT-consultation-workbench` now publishes a truthful over
 | `TW-01 Teaching Dialog` | contract-live — create/list/detail/message routes implemented | the TW-01 route family is live and aligns with the published contract; remaining work is frontend activation rather than route implementation | activate the Lovable UI task against the live TW-01 routes |
 | `TW-02 Parameter Controls` | not ready | missing controls read route, patch route, validation contract, and diff response shape | publish `ControlParameter` contract and patch semantics |
 | `TW-03 Before/After Compare` | contract published — BFF implementation pending | preview read/refresh routes, warning hierarchy, `preview_unavailable` degraded branch, and polling semantics published via `TW-03-COMPARE-001`; BFF must implement the route family before UI work starts | BFF implements preview routes → activate Lovable UI task |
-| `TW-04 Teaching Replay` | contract published — BFF implementation pending | replay list/detail routes, replay-grade `TeachingEvent` schema, BFF-resolved evidence links, commit/discard authority, and before/candidate/after artifact refs published via `TW-04-REPLAY-001`; live BFF routes still pending | BFF implements replay routes and commit/discard paths → activate Lovable UI task |
+| `TW-04 Teaching Replay` | route-live — frontend handoff ready | replay list/detail routes, replay-grade `TeachingEvent` schema, BFF-resolved evidence links, commit/discard authority, and before/candidate/after artifact refs live via `TW-04-REPLAY-001`; frontend handoff bundle published at `docs/pantheon-handoffs/TW-04-teaching-replay/` | activate Lovable UI task against the live TW-04 route family |
 
 ## 4. Cross-Family Order
 
