@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "RW-04-EXPERIMENT-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-19T20:22:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RW-04-EXPERIMENT-001-SIDECAR-REVIEW",
+    "title": "Prepare RW-04-EXPERIMENT-001 review packet and evidence summary",
+    "summary_zh": "平行支援 RW-04-EXPERIMENT-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "RW-01-FOUNDATION-001",
+      "RW-03-ANALYZE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/RW-04-EXPERIMENT-001/RW-04-EXPERIMENT-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet. Support artifact is complete, archived, and handed off as a non-canonical reviewer summary for RW-04 parent delivery.",
+    "last_update": "2026-04-19T20:22:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "RW-04-EXPERIMENT-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 審查通過：內容僅引用已存在的 RW-04 canonical/docs/archive 證據，正確描述 parent task 已完成並歸檔；queued -> canceled 與 terminal canCancel=false 的兩輪修正歷史摘要準確，且 PACKET_FAMILY / PANTHEON_FRONTEND_SA 對外狀態皆與 contract-published pending BFF implementation 一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:22:47Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 756,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RW-04-EXPERIMENT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:06:38Z",
+      "resolved_at": "2026-04-19T20:09:00Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:09:00Z",
+      "resolved_at": "2026-04-19T20:10:25Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:11:34Z",
+      "resolved_at": "2026-04-19T20:14:23Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support packet ready at support/sidecars/RW-04-EXPERIMENT-001/RW-04-EXPERIMENT-001-SIDECAR-REVIEW.md. It summarizes the finalized RW-04 review state: canonical contract and example payloads are published, the earlier transition/cancel contradictions were resolved before final approval, and frontend-facing summaries already align on contract-published pending BFF implementation.",
+      "status": "done",
+      "created_at": "2026-04-19T20:16:25Z",
+      "resolved_at": "2026-04-19T20:21:24Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support packet complete. It accurately summarizes the finalized RW-04 state: the experiment launch/history/detail/cancel contract and examples are published, the earlier review-loop contradictions are resolved, and frontend-facing summaries already align on contract-published pending BFF implementation.",
+      "status": "done",
+      "created_at": "2026-04-19T20:21:24Z",
+      "resolved_at": "2026-04-19T20:22:47Z"
+    }
+  ],
+  "blockers": []
+}

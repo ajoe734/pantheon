@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "task_id": "RW-04-EXPERIMENT-001",
+  "archived_at": "2026-04-19T20:13:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RW-04-EXPERIMENT-001",
+    "title": "Publish Experiment Launch lifecycle and async run contract",
+    "summary_zh": "為 RW-04 補齊 experiment launch、run status、run history、cancel authority 與 state machine，讓 Research Workbench 能真實追蹤實驗。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "RW-01-FOUNDATION-001",
+      "RW-03-ANALYZE-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "launch and run status routes are published",
+      "async state machine and cancel authority are explicit",
+      "experiment history no longer depends on inferred runtime state"
+    ],
+    "next": "Owner finalized approved task and closed it. All three acceptance criteria confirmed: launch/run-status/cancel routes published, state machine explicit with queued->canceled pre-execution path and terminal canCancel invariants, experiment history requires persisted run records. Finalization review at docs/reviews/2026-04-19-rw-04-experiment-launch-review.md.",
+    "last_update": "2026-04-19T20:13:06Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "RW-04 契約審查通過：experiment launch/history/detail/cancel 路由已發布；狀態機明確允許 queued -> canceled 的預執行取消路徑，並一致要求 terminal payload 與 cancel response 的 allowedActions.canCancel=false；history ledger 也明確要求來自 persisted run records，不得由 live worker state 推導。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:13:06Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "10ee260d58add77c6cd6575dfe841bfa51daed2e",
+      "commit_subject": "RW-04-EXPERIMENT-001 finalize: close review and confirm all acceptance criteria met",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "criteria confirmed": "launch/run-status/cancel routes published, state machine is",
+        "LLM-Agent": "Claude",
+        "Task-ID": "RW-04-EXPERIMENT-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 753,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:34:45Z",
+      "resolved_at": "2026-04-19T19:35:04Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:35:50Z",
+      "resolved_at": "2026-04-19T19:36:17Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Published RW-04 experiment launch/detail/history/cancel contracts, added example payload, and synced Research Workbench readiness docs to contract-published pending BFF implementation.",
+      "status": "done",
+      "created_at": "2026-04-19T19:43:50Z",
+      "resolved_at": "2026-04-19T19:46:15Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer found a contract gap in docs/bff/RW-04-experiment-launch.md: the file lists lifecycle states but does not publish the legal transition graph or terminal-state cancel invariants. Please make the state machine explicit (queued -> running -> completed | failed | canceled), reject invalid transitions, and require allowedActions.canCancel=false for terminal runs before resubmitting for review.",
+      "status": "done",
+      "created_at": "2026-04-19T19:46:15Z",
+      "resolved_at": "2026-04-19T19:46:15Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "RW-04 contract gap addressed. docs/bff/RW-04-experiment-launch.md now publishes the legal transition graph (queued -> running -> completed | failed | canceled), rejects invalid transitions and repeat terminal cancels, and requires allowedActions.canCancel=false for terminal runs. docs/examples/RW-04-experiment-launch.json now shows terminal history/detail payloads with canCancel=false. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-19T19:49:07Z",
+      "resolved_at": "2026-04-19T19:51:01Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requested changes: docs/bff/RW-04-experiment-launch.md currently marks queued -> canceled as illegal, but the launch example returns status=queued with allowedActions.canCancel=true. Resolve the contradiction by choosing one lifecycle semantic and aligning the contract, example payloads, and packet wording before re-handoff.",
+      "status": "done",
+      "created_at": "2026-04-19T19:51:01Z",
+      "resolved_at": "2026-04-19T19:51:01Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-04 contract contradiction resolved. Changes: (1) docs/bff/RW-04-experiment-launch.md — added queued -> canceled as a legal transition (pre-execution cancel), removed it from illegal transitions, updated Required invariants to document both lifecycle paths (queued->running->completed|failed|canceled and queued->canceled), clarified canCancel invariant covers both queued and running non-terminal states; (2) docs/examples/RW-04-experiment-launch.json — added queued_cancel_response example showing the direct queued->canceled path with canCancel=false in response. All three acceptance criteria are now met: launch/run-status routes published, async state machine and cancel authority are explicit with no internal contradictions, experiment history does not depend on inferred runtime state. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-19T19:57:54Z",
+      "resolved_at": "2026-04-19T20:10:05Z"
+    },
+    {
+      "task_id": "RW-04-EXPERIMENT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-04 review approved. Contract and example payloads now align on queued pre-execution cancel semantics, terminal canCancel invariants, and persisted experiment-history truth. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T20:10:05Z",
+      "resolved_at": "2026-04-19T20:13:06Z"
+    }
+  ],
+  "blockers": []
+}

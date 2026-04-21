@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-20T05:45:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AUTO-IMPL-RW04-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AUTO-IMPL-RW04-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AUTO-IMPL-RW04-001/AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF handoff packet and closed it. Support artifact stays non-canonical; reviewer-approved route inventory, gap caveats, operator journey, and frontend consume rules are ready for parent-owner absorption.",
+    "last_update": "2026-04-20T05:45:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AUTO-IMPL-RW04-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T05:45:55Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "5c8474351a1fb75caf03cb09d163689438236e75",
+      "commit_subject": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF: align reviewer metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 814,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:36:54Z",
+      "resolved_at": "2026-04-20T04:38:31Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:55:19Z",
+      "resolved_at": "2026-04-20T05:00:14Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:07:14Z",
+      "resolved_at": "2026-04-20T05:08:16Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T05:16:15Z",
+      "resolved_at": "2026-04-20T05:16:38Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:17:48Z",
+      "resolved_at": "2026-04-20T05:24:13Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T05:24:13Z",
+      "resolved_at": "2026-04-20T05:24:29Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar BFF handoff packet ready for review at support/sidecars/AUTO-IMPL-RW04-001/AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF.md. Scope stayed support-only. Packet captures live RW-04 route family, four remaining caveats (executor handoff, explicit service-store split, surface-state semantics, cancel-reason non-echo), truthful operator journey, frontend consume rules, and local verification: pytest services/control-plane/bff/test_rw04_experiment_launch_contract.py -> 21 passed.",
+      "status": "done",
+      "created_at": "2026-04-20T05:30:32Z",
+      "resolved_at": "2026-04-20T05:39:57Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex2 to Qwen after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-20T05:39:57Z",
+      "resolved_at": "2026-04-20T05:40:46Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-20T05:40:46Z",
+      "resolved_at": "2026-04-20T05:42:37Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Handoff packet reviewed and approved: all 4 RW-04 routes documented, 4 gap caveats recorded, operator journeys and frontend render checklist complete. Parent owner may absorb as reviewer context.",
+      "status": "done",
+      "created_at": "2026-04-20T05:42:37Z",
+      "resolved_at": "2026-04-20T05:45:56Z"
+    }
+  ],
+  "blockers": []
+}

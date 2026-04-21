@@ -1,12 +1,12 @@
 feature_id: RW-04-experiment-launch
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: loop-complete
 pantheon_pr: null
 base_url: null
-workbench: null
+workbench: research-workbench
 screen: experiment-launch
-screen_id: null
+screen_id: screen-experiment-launch
 ui_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
 frontend_change_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
@@ -45,3 +45,5 @@ gap_handoff_path: .coordination/requests/RW-04-experiment-launch-bff-gap.yaml
 gap_handoff_template: .coordination/requests/RW-04-experiment-launch-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/RW-04-experiment-launch-ui-done.yaml
 completion_handoff_template: .coordination/requests/RW-04-experiment-launch-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/RW-04-experiment-launch-review.md

@@ -1,0 +1,218 @@
+feature_id: RW-04-experiment-launch
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-21T17:26:04Z'
+reviewed_commit: 728a3cb4e670fc060c517f9a9feb6f3d19a79d1c
+ui_done_source_commit: 6e17dd8f233dad31d20b64781f23063e00ddde54
+frontend_feedback_source_commit: 6e17dd8f233dad31d20b64781f23063e00ddde54
+verified_front_workspace_head: 147297bf03707bf05d6fe0aab4a30c8d84599c5b
+verified_remote_publish_commit: 93a4b58891031442133a6966d0354ae216a80b72
+feedback_bundle_transport: >-
+  Local front commit 147297bf03707bf05d6fe0aab4a30c8d84599c5b contains the
+  canonical RW-04 request pair, feedback bundle, and reviewed UI files
+  together, while `git ls-remote --heads origin pkt-004-detail-fix` still
+  resolves to 93a4b58891031442133a6966d0354ae216a80b72. That remote tree
+  contains only src/App.tsx, src/components/AppSidebar.tsx,
+  src/components/WorkbenchBreadcrumb.tsx, and src/lib/bffClient.ts from the
+  RW-04 set, so the current publication is not yet GitHub-visible for
+  coordination replay.
+screen: experiment-launch
+workbench: research-workbench
+screen_id: screen-experiment-launch
+
+disposition: follow-up-required
+review_result: rw04-ui-contract-aligned-runtime-verified-front-push-still-required
+can_close: false
+
+summary: >-
+  Pantheon re-reviewed the mirrored RW-04 ui-done/frontend-feedback handoff
+  against the published experiment-launch contract, canonical example payload,
+  sibling front implementation, local front Git history, the live
+  operator-bff runtime, and a workspace-backed unavailable HTTP probe. The
+  current RW-04 UI is contract-aligned: launch/list/detail/cancel all route
+  through rw04ExperimentApi, detail 404 handling no longer collapses
+  OBJECT_NOT_FOUND into route-not-live, the launch status rail keeps retrying
+  after an initial detail-read failure, history filter changes reset
+  pagination backstack, and targeted eslint, TypeScript, and production build
+  verification all pass. Pantheon also revalidated the runtime:
+  /openapi.json on 18001 advertises the full RW-04 route family, authenticated
+  live probes confirm queued, running, degraded, unavailable, and terminal
+  behavior, and a workspace-backed 18012 probe confirms unavailable list and
+  detail envelopes. Front publication truth is improved but still incomplete:
+  local commit 6e17dd8f233dad31d20b64781f23063e00ddde54 pins the reviewed UI
+  implementation, and local commit 147297bf03707bf05d6fe0aab4a30c8d84599c5b
+  publishes the canonical request pair with immutable
+  source_commit=6e17dd8f233dad31d20b64781f23063e00ddde54, but
+  origin/pkt-004-detail-fix still points at
+  93a4b58891031442133a6966d0354ae216a80b72, whose tree omits the RW-04 request
+  pair, feedback bundle, and experiment pages. The loop cannot close until
+  that front publication is pushed or republished to a GitHub-visible commit.
+
+acceptance_verified:
+  - criterion: launch requests use POST /api/v1/experiments/launch only
+    status: pass
+    note: >-
+      The current sibling publication routes experiment creation only through
+      rw04ExperimentApi.launch() in src/lib/bffClient.ts, which posts to
+      /api/v1/experiments/launch with the published launch body.
+  - criterion: launch and detail polling remain anchored to GET /api/v1/experiments/{experiment_id} and do not synthesize local lifecycle state
+    status: pass
+    note: >-
+      ExperimentLaunch and ExperimentDetail fetch durable state only through
+      rw04ExperimentApi.detail(), and the UI continues polling or refreshing
+      that route instead of inferring progress, terminal state, or cancel
+      authority from timers or artifact presence.
+  - criterion: detail 404 handling distinguishes route-not-live from contract-defined missing experiment ids
+    status: pass
+    note: >-
+      ExperimentRunHelpers classifies route-not-live only when the BFF returns
+      HTTP 404 with code NOT_FOUND or ROUTE_NOT_FOUND. Pantheon's live 18001
+      probe to /api/v1/experiments/does-not-exist returned 404
+      OBJECT_NOT_FOUND, which the current front error rail preserves instead of
+      collapsing into a route placeholder.
+  - criterion: history pagination resets when ticket_id or status filter context changes
+    status: pass
+    note: >-
+      ExperimentHistory clears pageHistory when either ticket_id or status
+      changes, so Previous no longer reuses page tokens from an older filter
+      context.
+  - criterion: cancel CTA visibility is gated by allowedActions.canCancel plus surface degradation semantics only
+    status: pass
+    note: >-
+      ExperimentRunView anchors cancel rendering to allowedActions.canCancel
+      and suppresses the CTA when meta.surfaces.experiment_status is degraded
+      or unavailable.
+  - criterion: npm run build passes
+    status: pass
+    note: >-
+      `npm run build` completed successfully in the sibling front workspace for
+      the reviewed RW-04 slice, with only the existing Browserslist age notice
+      and Vite chunk-size warning.
+  - criterion: publish the RW-04 request pair, feedback bundle, and reviewed UI files to GitHub-visible front history
+    status: fail
+    note: >-
+      Local commit 6e17dd8f233dad31d20b64781f23063e00ddde54 contains the
+      reviewed RW-04 UI files and feedback bundle, and local commit
+      147297bf03707bf05d6fe0aab4a30c8d84599c5b contains the canonical request
+      pair, but `git ls-remote --heads origin pkt-004-detail-fix` still
+      returns 93a4b58891031442133a6966d0354ae216a80b72. `git ls-tree` on that
+      remote-visible commit omits the RW-04 request pair, feedback bundle, and
+      experiment pages, so the current handoff is not yet replayable through
+      GitHub-visible history.
+  - criterion: validate queued, running, degraded, unavailable, and terminal RW-04 behavior against truthful HTTP responses
+    status: pass
+    note: >-
+      Pantheon verified the current active runtime on 18001 plus a
+      workspace-backed unavailable probe on 18012. The active runtime
+      advertises the four RW-04 routes in /openapi.json and returns truthful
+      degraded list/detail payloads, queued launch, running/completed/failed/
+      canceled terminal behavior, and 404 OBJECT_NOT_FOUND. The unavailable
+      probe returns list total 0 with experiment_history unavailable and detail
+      payloads with experiment_status unavailable.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify RW-04 contract test coverage
+    path: services/control-plane/bff/test_rw04_experiment_launch_contract.py
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py`
+      passed with 21 tests.
+  - action: confirm live RW-04 route publication in the active OpenAPI document
+    path: http://127.0.0.1:18001/openapi.json
+    note: >-
+      The active runtime advertises GET /api/v1/experiments,
+      POST /api/v1/experiments/launch,
+      GET /api/v1/experiments/{experiment_id}, and
+      POST /api/v1/experiments/{experiment_id}/cancel.
+  - action: verify operator-auth live degraded RW-04 behavior
+    path: http://127.0.0.1:18001
+    note: >-
+      Authenticated live probes returned 200 degraded list/detail envelopes,
+      including completed exp-20260419-012, running exp-20260418-009, failed
+      exp-20260417-004, queued launch exp-20260421-004, and the terminal
+      canceled state after canceling exp-20260421-004.
+  - action: verify operator-auth live OBJECT_NOT_FOUND behavior
+    path: http://127.0.0.1:18001/api/v1/experiments/does-not-exist
+    note: >-
+      The active runtime returned 404 with
+      detail.error.code = OBJECT_NOT_FOUND for a missing experiment id.
+  - action: verify workspace-backed unavailable RW-04 behavior
+    path: http://127.0.0.1:18012
+    note: >-
+      A local uvicorn probe launched with BFF_READ_SURFACE_STATE=unavailable
+      returned 200 list data [] with meta.surfaces.experiment_history =
+      unavailable and 200 detail with meta.surfaces.experiment_status =
+      unavailable while preserving the backend-owned run snapshot.
+  - action: replay targeted front verification on the sibling RW-04 worktree
+    path: ../front-ai-trading-system
+    note: >-
+      Targeted eslint, `npx tsc --noEmit`, and `npm run build` passed for the
+      reviewed RW-04 slice, with only the existing non-blocking Browserslist
+      age notice and Vite chunk-size warning in the build output.
+  - action: verify local immutable UI and request-pair commits
+    path: ../front-ai-trading-system
+    note: >-
+      `git ls-tree` confirms local commit
+      6e17dd8f233dad31d20b64781f23063e00ddde54 contains the reviewed RW-04 UI
+      files plus feedback bundle, and local commit
+      147297bf03707bf05d6fe0aab4a30c8d84599c5b contains the canonical request
+      pair together with that reviewed slice.
+  - action: verify GitHub-visible front publication truth
+    path: ../front-ai-trading-system
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` still returns
+      93a4b58891031442133a6966d0354ae216a80b72, and `git ls-tree` on that
+      remote-visible commit omits the RW-04 request pair, feedback bundle, and
+      experiment pages. The current publication is local-only and still needs
+      a front push before the coordination bus can replay it.
+
+follow_up_items:
+  - type: publication_replay
+    status: blocking
+    note: >-
+      Front repo must push local commits
+      6e17dd8f233dad31d20b64781f23063e00ddde54 and
+      147297bf03707bf05d6fe0aab4a30c8d84599c5b, or a later equivalent
+      publication chain, to origin/pkt-004-detail-fix so the canonical request
+      pair, feedback bundle, and reviewed RW-04 UI files become
+      GitHub-visible.
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed browser verification against /research/experiments,
+      /research/experiments/launch, and /research/experiments/:experiment_id
+      remains outstanding after the GitHub-visible publication lands.
+
+required_front_repo_updates:
+  - file: .coordination/requests/RW-04-experiment-launch-ui-done.yaml
+    action: >-
+      Push commit 147297bf03707bf05d6fe0aab4a30c8d84599c5b, or a later
+      equivalent publication commit, to origin/pkt-004-detail-fix so the
+      canonical ui-done request becomes GitHub-visible together with the
+      feedback bundle and reviewed RW-04 UI files.
+  - file: .coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml
+    action: >-
+      Push the same publication commit chain to origin/pkt-004-detail-fix so
+      the canonical frontend-feedback request is GitHub-visible alongside the
+      ui-done request, feedback bundle, and reviewed RW-04 UI files.
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  The loop can close once origin/pkt-004-detail-fix advances to a
+  GitHub-visible commit chain that keeps the reviewed RW-04 UI implementation
+  reachable from source_commit 6e17dd8f233dad31d20b64781f23063e00ddde54 and
+  exposes the canonical request pair plus
+  docs/pantheon-feedback/RW-04-experiment-launch/* for coordination replay.
+
+risk_note: >-
+  Pantheon's remaining blocker is front publication transport, not route
+  availability or RW-04 contract drift. The backend route family is live and
+  verified over real HTTP, and the local front commits are internally
+  consistent, but the GitHub-visible branch still points at a pre-RW04 tree.
+
+lovable_ui_task_status: followup-required
+next_action: push-rw04-publication-commit-to-origin
+review_findings_ref: .coordination/reviews/RW-04-experiment-launch-review.md

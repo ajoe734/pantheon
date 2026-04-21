@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-RW04-001",
+  "archived_at": "2026-04-20T04:57:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-RW04-001",
+    "title": "Implement RW-04 experiment launch route family",
+    "summary_zh": "把 RW-04 experiment launch contract 落到 launch history detail cancel route family，補齊 async state machine 對應實作。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "docs/bff/RW-04-experiment-launch.md",
+      "docs/reviews/2026-04-19-rw-04-experiment-launch-review.md"
+    ],
+    "acceptance": [
+      "RW-04 route family 已實作",
+      "State machine 對齊 contract",
+      "測試涵蓋 launch 與 cancel"
+    ],
+    "next": "RW-04 experiment launch route family finalized. Production-path bug fixed at b8756a8: launch/list/detail/cancel route through service-backed research_experiments store (allow_local_snapshot_fallback=False path covered). 21 RW-04 contract tests + 2 non-fallback regression tests pass; RW-01/02/03 adjacent tests unaffected. Acceptance criteria met.",
+    "last_update": "2026-04-20T04:57:28Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已驗證 9789f8b 修正 production-path bug：allow_local_snapshot_fallback=false 時，RW-04 的 launch/list/detail/cancel 皆走 service-backed research_experiments store；21 個 RW-04 contract/regression tests 與 13 個 RW-01/02/03 鄰接 contract tests 全數通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T04:57:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "b8756a85adc287d299d2cef5da86ffdbc07d8b34",
+      "commit_subject": "AUTO-IMPL-RW04-001 fix RW-04 production-path bug: route reads through service adapter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Fix": "introduce _research_experiments_store() that uses the ServiceBackedReadAdapter",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AUTO-IMPL-RW04-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 804,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:09:01Z",
+      "resolved_at": "2026-04-20T03:26:29Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:26:29Z",
+      "resolved_at": "2026-04-20T03:27:07Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:41:09Z",
+      "resolved_at": "2026-04-20T03:42:59Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:42:59Z",
+      "resolved_at": "2026-04-20T03:43:27Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:44:46Z",
+      "resolved_at": "2026-04-20T03:45:49Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:50:51Z",
+      "resolved_at": "2026-04-20T03:51:59Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:51:59Z",
+      "resolved_at": "2026-04-20T03:53:13Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:01:39Z",
+      "resolved_at": "2026-04-20T04:02:43Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:05:56Z",
+      "resolved_at": "2026-04-20T04:07:17Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:07:17Z",
+      "resolved_at": "2026-04-20T04:08:14Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-04 route family implemented at commit 9fb6122. All 4 routes live: POST /api/v1/experiments/launch, GET /api/v1/experiments, GET /api/v1/experiments/{experiment_id}, POST /api/v1/experiments/{experiment_id}/cancel. 19 contract tests pass including canCancel invariants and queued->canceled direct path. State machine aligned to published contract. No regressions in RW-01/02/03.",
+      "status": "done",
+      "created_at": "2026-04-20T04:20:56Z",
+      "resolved_at": "2026-04-20T04:23:32Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review found a production-path bug: RW-04 experiments currently read/write via local fallback only. With allow_local_snapshot_fallback=false, a launched experiment cannot be listed, fetched, or canceled. Rework RW-04 to use the service-backed research_experiments dataset and add a non-fallback regression test before re-review.",
+      "status": "done",
+      "created_at": "2026-04-20T04:23:32Z",
+      "resolved_at": "2026-04-20T04:23:32Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Production-path bug fixed at commit 9789f8b. Root cause: list/get/cancel_research_experiment used _local_fallback() which returns None with allow_local_snapshot_fallback=False. Fix: added _research_experiments_store() routing reads through ServiceBackedReadAdapter (same snapshot file create writes to), cancel uses self._data directly, create uses self._data for ID generation. Added 2 non-fallback regression tests (test_rw04_no_fallback_launch_list_detail_cancel_round_trip, test_rw04_no_fallback_missing_experiment_returns_404). All 21 RW-04 contract tests pass.",
+      "status": "done",
+      "created_at": "2026-04-20T04:33:48Z",
+      "resolved_at": "2026-04-20T04:38:46Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-04 production-path fix verified at 9789f8b. Non-fallback launch/list/detail/cancel now works through the service-backed research_experiments store; RW-04 and adjacent RW-01/02/03 contract tests pass. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T04:38:46Z",
+      "resolved_at": "2026-04-20T04:57:28Z"
+    }
+  ],
+  "blockers": []
+}

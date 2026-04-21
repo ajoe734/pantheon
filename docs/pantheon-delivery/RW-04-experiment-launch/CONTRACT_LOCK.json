@@ -1,0 +1,40 @@
+{
+  "feature_id": "RW-04-experiment-launch",
+  "status": "front-followup-required",
+  "backend_commit": "728a3cb4e670fc060c517f9a9feb6f3d19a79d1c",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@728a3cb4e670fc060c517f9a9feb6f3d19a79d1c",
+  "live_http_runtime_ref": "http://127.0.0.1:18001",
+  "bff_contract_version": "pantheon-bff@728a3cb4e670fc060c517f9a9feb6f3d19a79d1c+working-tree",
+  "source_payload": ".coordination/requests/RW-04-experiment-launch-ui-done.yaml",
+  "source_commit": "HEAD",
+  "source_commit_note": "Both returned RW-04 request bodies still advertise source_commit=HEAD. Pantheon verified that sibling front HEAD 93a4b58891031442133a6966d0354ae216a80b72 does not contain the RW-04 request pair, feedback bundle, or reviewed UI files; those remain working-tree only in ../front-ai-trading-system.",
+  "verified_front_workspace_head": "93a4b58891031442133a6966d0354ae216a80b72",
+  "review_file": ".coordination/reviews/RW-04-experiment-launch-review.md",
+  "feedback_request": ".coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml",
+  "endpoints": [
+    "POST /api/v1/experiments/launch",
+    "GET /api/v1/experiments",
+    "GET /api/v1/experiments/{experiment_id}",
+    "POST /api/v1/experiments/{experiment_id}/cancel"
+  ],
+  "contract_paths": [
+    "docs/bff/RW-04-experiment-launch.md",
+    "docs/examples/RW-04-experiment-launch.json",
+    "docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Targeted Pantheon RW-04 contract tests passed: python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py",
+    "Live OpenAPI on http://127.0.0.1:18001 now advertises GET /api/v1/experiments, POST /api/v1/experiments/launch, GET /api/v1/experiments/{experiment_id}, and POST /api/v1/experiments/{experiment_id}/cancel",
+    "Authenticated live RW-04 probes on 18001 returned degraded list/detail envelopes, completed/running/failed/OBJECT_NOT_FOUND detail variants, queued launch exp-20260421-004, and a terminal canceled state after cancel",
+    "Workspace-backed unavailable probe on http://127.0.0.1:18012 returned experiment_history=unavailable on list and experiment_status=unavailable on detail while preserving the backend-owned snapshot",
+    "Sibling front eslint, npx tsc --noEmit, and npm run build passed for the reviewed RW-04 slice",
+    "Both returned RW-04 request bodies still use source_commit=HEAD, and front HEAD 93a4b58891031442133a6966d0354ae216a80b72 contains only src/App.tsx, src/components/AppSidebar.tsx, src/components/WorkbenchBreadcrumb.tsx, and src/lib/bffClient.ts from the RW-04 set while the canonical request pair, feedback bundle, and experiment pages remain working-tree only"
+  ],
+  "followup_scope": [
+    "Publish the RW-04 request pair, feedback bundle, and reviewed UI files from one immutable front commit that actually contains the full handoff set",
+    "Replace source_commit=HEAD with that exact immutable publication SHA in both returned request bodies",
+    "Run deployed browser QA against /research/experiments, /research/experiments/launch, and /research/experiments/:experiment_id as non-blocking confirmation after publication"
+  ]
+}

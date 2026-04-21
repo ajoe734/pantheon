@@ -1,0 +1,28 @@
+feature_id: RW-04-experiment-launch
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: research-workbench
+screen_id: screen-experiment-launch
+status: loop-complete
+backend_commit: 728a3cb4e670fc060c517f9a9feb6f3d19a79d1c
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@728a3cb4e670fc060c517f9a9feb6f3d19a79d1c
+live_http_runtime_ref: http://127.0.0.1:18001
+bff_contract_version: pantheon-bff@728a3cb4e670fc060c517f9a9feb6f3d19a79d1c+working-tree
+delivery_note_path: docs/pantheon-delivery/RW-04-experiment-launch/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/RW-04-experiment-launch/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned RW-04 ui-done/frontend-feedback pair
+  against the published experiment-launch contract, canonical example payload,
+  the sibling front publication chain, the live operator-bff runtime on
+  http://127.0.0.1:18001, and a workspace-backed unavailable probe on
+  http://127.0.0.1:18012. Transport commit
+  6e17dd8f233dad31d20b64781f23063e00ddde54 contains the RW-04 feedback bundle
+  and reviewed UI files, and current branch head
+  147297bf03707bf05d6fe0aab4a30c8d84599c5b publishes the canonical request pair
+  pinned back to that transport commit. The reviewed UI remains
+  contract-aligned, the live runtime advertises and serves the full RW-04
+  route family, unavailable behavior is verified over HTTP, and no new
+  Pantheon API gap remains for the current packet scope. The loop is complete
+  apart from deferred non-blocking deployed browser QA.
+source_payload: .coordination/requests/RW-04-experiment-launch-ui-done.yaml

@@ -1,0 +1,26 @@
+feature_id: RW-04-experiment-launch
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: experiment-launch
+blocking: false
+
+summary: Experiment Launch UI is implemented and ready for Pantheon follow-up.
+
+changed_files:
+  - src/pages/research/ExperimentLaunch.tsx
+  - src/pages/research/ExperimentHistory.tsx
+  - src/pages/research/ExperimentDetail.tsx
+  - src/lib/bffClient.ts
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - verify cancel CTA gating against allowedActions.canCancel truth
+  - confirm status badge vocabulary matches the published state machine
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
