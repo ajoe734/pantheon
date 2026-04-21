@@ -2,13 +2,12 @@
   "project": "pantheon",
   "sprint": "2026-04-12-blueprint-gap-convergence-planning",
   "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-13T04:25:21Z",
+  "updated_at": "2026-04-21T16:03:19Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
       "ai-status.json",
-      "ai-activity-log.jsonl",
-      "current-work.md"
+      "ai-activity-log.jsonl"
     ],
     "L1 Platform Architecture & Policy": [
       "TARGET_ARCHITECTURE.md",
@@ -45,13 +44,15 @@
       "Pantheon_總索引版系統分析文件.md",
       "Pantheon_資料表_Schema_設計版.md",
       "Pantheon_API_Service_Contract_設計版.md"
+    ],
+    "L0.5 Derived Narrative": [
+      "current-work.md"
     ]
   },
   "canonical_files": [
     "AI_COLLABORATION_GUIDE.md",
     "ai-status.json",
     "ai-activity-log.jsonl",
-    "current-work.md",
     "TARGET_ARCHITECTURE.md",
     "OPENCLAW_RUNTIME_CONTRACT.md",
     "PERSONA_RUNTIME_MODEL.md",
@@ -81,7 +82,8 @@
     "WORK_REBASELINE.md",
     "Pantheon_總索引版系統分析文件.md",
     "Pantheon_資料表_Schema_設計版.md",
-    "Pantheon_API_Service_Contract_設計版.md"
+    "Pantheon_API_Service_Contract_設計版.md",
+    "current-work.md"
   ],
   "agents": [
     {
@@ -91,11 +93,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "EXEC-FRONT-CW01-002",
+        "EXEC-FRONT-TW03-001"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex capacity/429: ./ai-status.json:6689:      \"message\": \"Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: {\\\"type\\\":\\\"user\\\",\\\"uuid\\\":\\\"6df63a68-2266-40e2-bfa0-26377c50bad9\\\",\\\"session_id\\\":\\\"9804307c-5225-40c8-9ea9-34b82c18a979\\\",\\\"parent_tool_use_id\\\":null,\\\"message\\\":{\\\"role\\\":\\\"user\\\",\\\"content\\\":[{\\\"type\\\":\\\"tool_result\\\",\\\"tool_use_id\\\":\\\"call_b6afa5a3650d4c898b3f3faa\\\",\\\"is_error\\\":false,\\\"content\\\":\\\"{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:29:17Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:29:18Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:04Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:05Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:50Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:30:52Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:31:37Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:31:39Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:32:24Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:32:26Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:33:12Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:33:13Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:33:58Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:34:00Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:34:46Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:34:47Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:35:33Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:35:35Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:36:21Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:36:22Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:07Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:08Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:54Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:37:55Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:38:41Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:38:42Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:39:29Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:39:30Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:40:17Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:40:19Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:04Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:06Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:52Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:41:54Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:42:39Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:42:41Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:43:26Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:43:28Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:43:46Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"sidecar_wave_sk\\\\nipped\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"underutilized but no sidecar candidates matched the catalog \\\\nor dynamic fallback\\\\\\\", \\\\\\\"ratio\\\\\\\": 0.0}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:44:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:44:16Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:01Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:03Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:48Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:45:50Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:46:36Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:46:37Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:47:23Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:47:24Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:10Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:12Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:58Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:48:59Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:49:46Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:49:48Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:50:34Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:50:35Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"wake_queued\\\\\\\", \\\\\\\"\\\\ntask_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"delivery_mode\\\\\\\"\\\\n: \\\\\\\"copilot_local\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Wake-up queued for supervisor: owned_in_progress_\\\\ndispatch\\\\\\\", \\\\\\\"queue_event_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-35d2523b\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"wake_queued\\\\\\\", \\\\\\\"\\\\ntask_id\\\\\\\": \\\\\\\"APP-002-W2-CLI-FALLBACK\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Qwen\\\\\\\", \\\\\\\"delivery_mode\\\\\\\": \\\\\\\"q\\\\nwen\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Wake-up queued for supervisor: review_ready_dispatch\\\\\\\", \\\\\\\"queue_\\\\nevent_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-08226684\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"worker_started\\\\\\\"\\\\n, \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\n\\\\\\\"copilot\\\\\\\", \\\\\\\"delivery_mode\\\\\\\": \\\\\\\"copilot_local\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Worker started via copi\\\\nlot_local: owned_in_progress_dispatch\\\\\\\", \\\\\\\"queue_event_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-\\\\n35d2523b\\\\\\\", \\\\\\\"worker_run_id\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\", \\\\\\\"parent_run_id\\\\\\\"\\\\n: null, \\\\\\\"command\\\\\\\": [\\\\\\\"copilot\\\\\\\", \\\\\\\"--autopilot\\\\\\\", \\\\\\\"-p\\\\\\\", \\\\\\\"你被喚醒了。\\\\\\\\n\\\\\\\\n請先閱讀這\\\\n些共享檔案，並以它們作為唯一共同真相：\\\\\\\\n- ai-status.json\\\\\\\\n- current-work.md\\\\\\\\n- a\\\\ni-activity-log.jsonl\\\\\\\\n- docs-site/index.html\\\\\\\\n\\\\\\\\n找出目前分配給你、等待你回應、剛\\\\n交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，\\\\n然後直接繼續工作。\\\\\\\\n\\\\\\\\n狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scri\\\\npts/ai_status.py`。\\\\\\\\n不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current\\\\n-work.md` 或 `ai-activity-log.jsonl`。\\\\\\\\n\\\\\\\\n\\\\\\\\nTask ID: APP-002-W1-FRONT-HANDOFF\\\\\\\\n\\\\n原因: owned_in_progress_dispatch\\\\\\\\n可能相關檔案:\\\\\\\\n- .coordination/responses/\\\\\\\\n- d\\\\nocs/examples/F-042-review-page.json\\\\\\\\n- docs/delivery-coordination-bus.md\\\\\\\\n\\\\\\\", \\\\\\\"--\\\\nmax-autopilot-continues\\\\\\\", \\\\\\\"12\\\\\\\", \\\\\\\"--allow-all-tools\\\\\\\", \\\\\\\"--add-dir\\\\\\\", \\\\\\\"/home/ajoe734\\\\n/code/pantheon\\\\\\\", \\\\\\\"--no-ask-user\\\\\\\"], \\\\\\\"log_path\\\\\\\": \\\\\\\"/home/ajoe734/code/pantheon/.orc\\\\nhestrator/logs/20260411T165114245974Z-copilot-copilot-8a3591.log\\\\\\\", \\\\\\\"payload_path\\\\n\\\\\\\": null}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"progress\\\\\\\", \\\\\\\"task_id\\\\\\\"\\\\n: \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Supervisor re-dispatched APP-002-W1-FR\\\\nONT-HANDOFF; task remains in progress.\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:14Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"task_dispatch_s\\\\nynced\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"dispa\\\\ntch_reason\\\\\\\": \\\\\\\"owned_in_progress_dispatch\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Supervisor re-dispatched \\\\nAPP-002-W1-FRONT-HANDOFF; task remains in progress.\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:16Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"worker_started\\\\\\\"\\\\n, \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W2-CLI-FALLBACK\\\\\\\", \\\\\\\"target_agent\\\\\\\": \\\\\\\"Qwen\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\\\\"qwe\\\\nn\\\\\\\", \\\\\\\"delivery_mode\\\\\\\": \\\\\\\"qwen\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Worker started via qwen: review_ready_d\\\\nispatch\\\\\\\", \\\\\\\"queue_event_id\\\\\\\": \\\\\\\"evt-20260411T165114Z-08226684\\\\\\\", \\\\\\\"worker_run_id\\\\\\\": \\\\\\\"q\\\\nwen-20260411T165116Z-2b1ad933\\\\\\\", \\\\\\\"parent_run_id\\\\\\\": null, \\\\\\\"command\\\\\\\": [\\\\\\\"qwen\\\\\\\", \\\\\\\"-p\\\\\\\",\\\\n \\\\\\\"你被喚醒了。\\\\\\\\n\\\\\\\\n請先閱讀這些共享檔案，並以它們作為唯一共同真相：\\\\\\\\n- ai-status.\\\\njson\\\\\\\\n- current-work.md\\\\\\\\n- ai-activity-log.jsonl\\\\\\\\n- docs-site/index.html\\\\\\\\n\\\\\\\\n找出\\\\n目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你\\\\n正式收尾為 `done` 的 task，然後直接繼續工作。\\\\\\\\n\\\\\\\\n狀態更新請優先使用 `scripts/ai-\\\\nstatus.sh` 或 `python3 scripts/ai_status.py`。\\\\\\\\n不要用臨時 Python/heredoc 直接改\\\\n `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。\\\\\\\\n\\\\\\\\n\\\\\\\\nTask ID: \\\\nAPP-002-W2-CLI-FALLBACK\\\\\\\\n原因: review_ready_dispatch\\\\\\\\n可能相關檔案:\\\\\\\\n- tools/pan\\\\ntheon_admin/cli.py\\\\\\\\n- services/control_plane/internal_api.py\\\\\\\\n- support/sidecars\\\\n/APP-002/APP-002-SECONDARY-CONTROL-PATH.md\\\\\\\\n\\\\\\\", \\\\\\\"--approval-mode\\\\\\\", \\\\\\\"yolo\\\\\\\", \\\\\\\"--out\\\\nput-format\\\\\\\", \\\\\\\"stream-json\\\\\\\", \\\\\\\"--include-directories\\\\\\\", \\\\\\\"/home/ajoe734/code/pantheo\\\\nn\\\\\\\", \\\\\\\"--channel\\\\\\\", \\\\\\\"CI\\\\\\\", \\\\\\\"--auth-type\\\\\\\", \\\\\\\"qwen-oauth\\\\\\\"], \\\\\\\"log_path\\\\\\\": \\\\\\\"/home/ajoe734/\\\\ncode/pantheon/.orchestrator/logs/20260411T165116085521Z-qwen-qwen-9d8e68.log\\\\\\\", \\\\\\\"\\\\npayload_path\\\\\\\": null}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:23Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:24Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:42Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"provider_dispat\\\\nch_paused\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\\\\"copilot\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"worke\\\\nr_run_id\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Paused new dispatche\\\\ns for copilot until 2026-04-11T17:51:42Z after capacity failure: 402 You have no\\\\n quota (Request ID: C132:18DEFE:2FCE21D:3A81A42:69DA7C08)\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:43Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"task_reassigned\\\\n\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"Auto-reassigned ownership \\\\nfrom Copilot to Qwen after repeated Copilot capacity/429: 402 You have no quota \\\\n(Request ID: C132:18DEFE:2FCE21D:3A81A42:69DA7C08)\\\\\\\", \\\\\\\"from_owner\\\\\\\": \\\\\\\"Copilot\\\\\\\", \\\\\\\"t\\\\no_owner\\\\\\\": \\\\\\\"Qwen\\\\\\\", \\\\\\\"from_reviewer\\\\\\\": \\\\\\\"Codex\\\\\\\", \\\\\\\"to_reviewer\\\\\\\": \\\\\\\"Codex\\\\\\\", \\\\\\\"worker_run_\\\\nid\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:51:49Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"worker_supersed\\\\ned\\\\\\\", \\\\\\\"provider\\\\\\\": \\\\\\\"copilot\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"APP-002-W1-FRONT-HANDOFF\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"W\\\\norker superseded after task responsibility moved to another agent.\\\\\\\", \\\\\\\"worker_run\\\\n_id\\\\\\\": \\\\\\\"copilot-20260411T165114Z-a740c5cb\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:52:11Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:52:13Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:52:59Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:53:01Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:53:47Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/pantheon/issues/7: 'coordination-bus' not found failed to update\\\\n 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/pantheon\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T16:53:49Z\\\\\\\", \\\\\\\"agent\\\\\\\": \\\\\\\"Orchestrator\\\\\\\", \\\\\\\"type\\\\\\\": \\\\\\\"github_coordina\\\\ntion_issue_failed\\\\\\\", \\\\\\\"task_id\\\\\\\": \\\\\\\"F-042\\\\\\\", \\\\\\\"message\\\\\\\": \\\\\\\"failed to update https://git\\\\nhub.com/ajoe734/front-ai-trading-system/issues/1: 'pantheon-bus' not found faile\\\\nd to update 1 issue\\\\\\\", \\\\\\\"github_repo\\\\\\\": \\\\\\\"ajoe734/front-ai-trading-system\\\\\\\"}\\\\n{\\\\\\\"ts\\\\\\\": \\\\\\\"2026-04-11T\\\"}]}}\",",
-      "last_update": "2026-04-13T03:45:15Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:08Z"
     },
     {
       "name": "Gemini",
@@ -105,11 +110,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "EXEC-RUNTIME-RW01-001"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor re-dispatched BG-004; task remains in progress.",
-      "last_update": "2026-04-13T04:24:40Z"
+      "next": "Supervisor re-dispatched EXEC-RUNTIME-RW01-001; task remains in progress.",
+      "last_update": "2026-04-21T16:03:17Z"
     },
     {
       "name": "Codex",
@@ -121,11 +128,12 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "BG-006"
+        "BG-006",
+        "EXEC-FRONT-TW01-002"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot capacity/429: 402 You have no quota (Request ID: E3D5:1AE5A7:6887D13:84865FC:69DC7012)",
-      "last_update": "2026-04-13T04:24:57Z"
+      "next": "Supervisor re-dispatched EXEC-FRONT-TW01-002; task remains in progress.",
+      "last_update": "2026-04-21T16:03:19Z"
     },
     {
       "name": "Copilot",
@@ -135,11 +143,13 @@
         "spec-review",
         "critique"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "EXEC-REBASE-RW05-KW23-001"
+      ],
       "branch": "feat/grok-research-critique",
-      "next": "Supervisor re-dispatched BG-006; task remains in progress.",
-      "last_update": "2026-04-13T04:24:42Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:16Z"
     },
     {
       "name": "Qwen",
@@ -3708,6 +3718,222 @@
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-RUNTIME-RW01-001",
+      "title": "Refresh the active RW-01 runtime so research ticket routes are live over HTTP",
+      "summary_zh": "刷新 active operator-bff runtime，讓 RW-01 research ticket route family 對外 live HTTP 與 published contract 一致，解除前端 lane 的 runtime blocker。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/RW-01-research-ticket-needs-runtime.yaml",
+        ".coordination/responses/RW-01-research-ticket-frontend-feedback.yaml",
+        ".coordination/reviews/RW-01-research-ticket-review.md"
+      ],
+      "acceptance": [
+        "active operator-bff runtime exposes the RW-01 route family over live HTTP",
+        "live OpenAPI and probes match published RW-01 field shapes",
+        "EXEC-FRONT-RW01-001 may be unblocked after verification"
+      ],
+      "next": "Supervisor re-dispatched EXEC-RUNTIME-RW01-001; task remains in progress.",
+      "last_update": "2026-04-21T16:03:17Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-FRONT-CW01-002",
+      "title": "Republish the CW-01 consult request UI cycle with truthful feedback and pagination fixes",
+      "summary_zh": "依現有 review / frontend-feedback 結論，重發 CW-01 consult request 的前端 publication cycle，修正 pagination 與 degraded-state truth，並保證 request pair / feedback bundle 指向同一個 Git-visible commit。",
+      "phase": "Execution / Frontend Follow-up",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/CW-01-consult-request-frontend-feedback.yaml",
+        ".coordination/reviews/CW-01-consult-request-review.md",
+        "docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "one Git-visible front commit contains the CW-01 UI files",
+        "review findings on pagination and degraded-state truth are resolved",
+        "request pair points source_commit at the same immutable publication commit"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:08Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-FRONT-TW01-002",
+      "title": "Republish the TW-01 teaching dialog UI cycle from one truthful Git-visible commit",
+      "summary_zh": "把已審過的 TW-01 teaching dialog UI 從 current workspace 正式重發到 Git-visible publication，並保證 ui-done / frontend-feedback / feedback bundle 來自同一個可重播 commit。",
+      "phase": "Execution / Frontend Follow-up",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/TW-01-teaching-dialog-frontend-feedback.yaml",
+        ".coordination/reviews/TW-01-teaching-dialog-review.md",
+        "docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "a Git-visible front commit contains the reviewed TW-01 UI files plus canonical requests",
+        "docs/pantheon-feedback/TW-01-teaching-dialog bundle is published from the same source_commit",
+        "the follow-up no longer depends on unpublished local-only front evidence"
+      ],
+      "next": "Supervisor re-dispatched EXEC-FRONT-TW01-002; task remains in progress.",
+      "last_update": "2026-04-21T16:03:19Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-RUNTIME-TW01-001",
+      "title": "Refresh the active TW-01 runtime so trainer session routes are live over HTTP",
+      "summary_zh": "刷新 active operator-bff runtime，讓 TW-01 trainer session route family 對外 live HTTP 與 published contract 一致，解除 teaching dialog loop 的 runtime freshness blocker。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/TW-01-teaching-dialog-needs-runtime.yaml",
+        ".coordination/responses/TW-01-teaching-dialog-frontend-feedback.yaml",
+        ".coordination/reviews/TW-01-teaching-dialog-review.md"
+      ],
+      "acceptance": [
+        "the active operator-bff runtime exposes the TW-01 route family over live HTTP",
+        "live runtime results match the published TW-01 session and message field shape",
+        "the TW-01 follow-up loop can close once front publication evidence is replayable"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:11Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-FRONT-TW03-001",
+      "title": "Implement the TW-03 before/after compare UI against the live preview routes",
+      "summary_zh": "依已 rebaseline 的 handoff bundle，實作 TW-03 before/after compare production UI，直接使用 live preview route family、warning hierarchy、preview_unavailable 分支與 polling semantics。",
+      "phase": "Execution / Frontend Lane Implementation",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "EXEC-REBASE-TW03-001"
+      ],
+      "artifacts": [
+        ".coordination/responses/TW-03-before-after-compare-contract-ready.yaml",
+        ".coordination/responses/TW-03-before-after-compare-lovable-ui-task.yaml",
+        "docs/pantheon-handoffs/TW-03-before-after-compare/FRONTEND_CHANGE_SPEC.md"
+      ],
+      "acceptance": [
+        "TW-03 compare UI uses only the live preview route family and backend-owned warning hierarchy",
+        "frontend does not invent local compare output or degraded semantics",
+        "a canonical ui-done handoff is emitted when the screen is ready"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:12Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-RUNTIME-TW04-001",
+      "title": "Refresh the active TW-04 runtime and validate live replay route topology",
+      "summary_zh": "刷新 active operator-bff runtime，讓 TW-04 replay route family 對外 live HTTP，並驗證 replay/session links 與 evidence targets 會正確落到已部署 front routes。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/TW-04-teaching-replay-needs-runtime.yaml",
+        ".coordination/responses/TW-04-teaching-replay-frontend-feedback.yaml",
+        ".coordination/reviews/TW-04-teaching-replay-review.md"
+      ],
+      "acceptance": [
+        "the active operator-bff runtime exposes the TW-04 replay route family over live HTTP",
+        "browser-facing replay links match mounted front routes and evidence refs resolve to deployed owner routes",
+        "live runtime truth preserves the published degraded and unavailable replay semantics"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:13Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-RUNTIME-RW04-001",
+      "title": "Refresh the active RW-04 runtime so experiment routes are live over HTTP",
+      "summary_zh": "刷新 active operator-bff runtime，讓 /api/v1/experiments route family 對外 live HTTP，解除 RW-04 loop 的 runtime freshness blocker，並用 live probes 驗證 queued/running/degraded/unavailable semantics。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/RW-04-experiment-launch-needs-runtime.yaml",
+        ".coordination/responses/RW-04-experiment-launch-frontend-feedback.yaml",
+        ".coordination/reviews/RW-04-experiment-launch-review.md"
+      ],
+      "acceptance": [
+        "the active operator-bff runtime exposes the full RW-04 /api/v1/experiments route family over live HTTP",
+        "live runtime returns the published queued running degraded unavailable and terminal semantics",
+        "the existing RW-04 front follow-up no longer waits on runtime freshness"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:15Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "EXEC-REBASE-RW05-KW23-001",
+      "title": "Rebaseline RW-05, KW-02, and KW-03 to route-live truth and open their frontend handoff bundles",
+      "summary_zh": "把 RW-05、KW-02、KW-03 從舊的 pending-BFF / placeholder wording rebaseline 到 route-live truth，並為 research compare 與 knowledge notes/evidence 補齊可交給前端 lane 的 handoff bundle。",
+      "phase": "Execution / Handoff Activation and Rebaseline",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "EXEC-BFF-KW03-001"
+      ],
+      "artifacts": [
+        "docs/bff/RW-05-artifact-compare.md",
+        "docs/bff/KW-02-research-notes.md",
+        "docs/bff/KW-03-evidence-refs.md",
+        "docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md",
+        "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md"
+      ],
+      "acceptance": [
+        "RW-05 KW-02 and KW-03 are no longer described as pending BFF where live routes already exist",
+        "frontend-facing handoff materials for research compare and knowledge notes evidence are published or explicitly opened for the UI lane",
+        "route-live readiness truth is synchronized across packet family and frontend SA surfaces"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-21T16:03:16Z",
+      "task_class": "execution_candidate",
+      "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+      "auto_generated": true,
+      "mutates_canonical": true
     }
   ],
   "handoffs": [
@@ -7689,31 +7915,31 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 6,
+      "total": 8,
       "active": 0,
       "blocked": 0,
       "done": 6,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Gemini": {
-      "total": 3,
-      "active": 0,
+      "total": 7,
+      "active": 1,
       "blocked": 0,
       "done": 3,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 4
     },
     "Codex": {
-      "total": 72,
-      "active": 1,
+      "total": 73,
+      "active": 2,
       "blocked": 0,
       "done": 69,
       "review": 0,
       "review_approved": 1,
-      "todo": 2
+      "todo": 3
     },
     "Qwen": {
       "total": 44,
@@ -7725,13 +7951,13 @@
       "todo": 4
     },
     "Copilot": {
-      "total": 16,
+      "total": 17,
       "active": 0,
       "blocked": 0,
       "done": 16,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     }
   }
 }
