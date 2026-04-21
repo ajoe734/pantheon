@@ -232,9 +232,13 @@
 依 OSS gap analysis，目前仍可視為 unfinished 的 OSS work 有：
 
 - `OSS-NEXT-003` RL path activation gate closure
-- `OSS-NEXT-004` W&B backend parity decision
+- `OSS-NEXT-004` W&B defer / reopen packet decision
 - `OSS-NEXT-007` QuantLib task materialization
 - `OSS-NEXT-008` governed-path regression refresh
+
+其中 `W&B` 這條現在的 truth 不是「進 backend implementation」，而是先把 defer gate 與
+reopen packet 條件鎖定清楚；最早 eligible reopen date 仍是 `2026-05-15`（MLflow
+30-day governed history gate）。
 
 ---
 
@@ -316,7 +320,7 @@
 如果下一輪要擴 research / learning ecosystem，可直接往下做：
 
 1. `RL` path activation decision and first lane
-2. `W&B` backend parity decision
+2. `W&B` defer closeout and reopen-packet definition
 3. `statsmodels` governed-path regression refresh
 4. `QuantLib` task materialization
 5. 其他 governed-path regression refresh

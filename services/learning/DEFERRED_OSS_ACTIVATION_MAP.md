@@ -243,12 +243,14 @@ implementation lane.
 | W&B SDK pin (`wandb>=0.16.0`) | Missing |
 | Network/infrastructure readiness for `api.wandb.ai` | Not verified |
 
-**Executable next step**: W&B implementation work remains blocked on adapter generalization and
-canonical-state migration tasks. The `EXPERIMENT_BACKEND` env-var stub is now in place. The next
-concrete action is for Qwen (gate doc owner) to generalize `RegistryExperimentAdapter` so it
-accepts configurable backends, and migrate canonical `artifact_state` / `deployment_stage`
-support into the experiment bridge — but not before the MLflow 30-day operational history gate
-is met.
+**Executable next step**: No W&B implementation task should open yet. The `EXPERIMENT_BACKEND`
+env-var stub is now in place, but W&B remains formally deferred because the six re-entry
+conditions in `WANDB_ACTIVATION.md §7.3` are still unmet. The next concrete action is to prepare
+a reopen packet once those six conditions are simultaneously satisfied; only then should Pantheon
+materialize separate execution tasks for adapter generalization and W&B backend implementation.
+
+`EXEC-OSS-WANDB-001` closes the execution-slice ambiguity here: the first reviewable follow-up is
+the **reopen packet itself**, not a backend implementation slice.
 
 **OSS-NEXT-004 decision (2026-04-17)**: W&B is **formally deferred** for the current wave. All
 six entry criteria remain unmet. Detailed re-entry gate now in `WANDB_ACTIVATION.md §7`. Earliest

@@ -1,11 +1,11 @@
 # Weights & Biases (W&B) Activation Criteria
 
-**Task**: OSS-003 (W&B path)
-**Owner**: Qwen
-**Reviewer**: Codex
-**Scope**: Define activation criteria for Weights & Biases as an alternative experiment tracking backend to MLflow
-**Status**: APPROVED for OSS-003 activation-gate lock
-**Last Updated**: 2026-04-10
+**Task**: OSS-003 (W&B path), EXEC-OSS-WANDB-001 (execution-slice closeout)
+**Owner**: Qwen (gate), Codex (execution slice)
+**Reviewer**: Claude
+**Scope**: Define activation criteria for Weights & Biases as an alternative experiment tracking backend to MLflow, and record the current defer/reopen truth as a reviewable execution slice
+**Status**: APPROVED gate, DEFER remains in force
+**Last Updated**: 2026-04-21
 
 ---
 
@@ -54,10 +54,10 @@ Today the repo exposes:
 
 - `ExperimentBackend` protocol in `services/registry/experiments/adapter.py`
 - MLflow-specific `RegistryExperimentAdapter`
-- no `EXPERIMENT_BACKEND` switch
+- `EXPERIMENT_BACKEND` selector stub in `services/registry/experiments/config.py` (default `"mlflow"`, rejects unsupported backends)
 - no W&B backend implementation
 
-That means W&B activation criteria must target a **follow-on refactor**, not claim a backend-neutral interface already exists.
+That means W&B activation criteria must target a **follow-on refactor**, not claim a backend-neutral interface already exists. The backend selector ambiguity is closed, but the adapter surface is still MLflow-first.
 
 ### 2.2 Required Target Surface
 
@@ -115,7 +115,13 @@ The W&B path must enforce the same rollback constraints as the MLflow reference 
 
 ### 3.1 Backend Selection
 
-No backend selector exists today. W&B activation requires a follow-on implementation task to add one.
+The repo now has a selector stub in `services/registry/experiments/config.py`, but it does **not**
+yet make W&B selectable. The current state is:
+
+- `EXPERIMENT_BACKEND` exists and defaults to `"mlflow"`.
+- `"wandb"` is intentionally not in `_SUPPORTED_BACKENDS`.
+- no backend factory exists yet to instantiate a non-MLflow backend without changing the
+  registry-facing adapter surface.
 
 The expected target shape is:
 
@@ -191,12 +197,89 @@ The only W&B-specific check is: W&B run/artifact exists and is accessible.
 
 ## 6. Next Steps
 
-1. **W&B Version Selection**: Pin W&B SDK version (`wandb>=0.16.0` recommended).
-2. **Adapter Generalization**: Generalize the current MLflow-first `RegistryExperimentAdapter` surface so a second backend can plug in without forking registry semantics.
-3. **Canonical State Migration**: Land `artifact_state` / `deployment_stage` support in the experiment bridge before any W&B backend is considered active.
-4. **Adapter Implementation**: Build a W&B backend that satisfies the same `ExperimentBackend.record()` and `ExperimentSyncResult` contract.
-5. **Smoke Test**: Run a single registry entry through the W&B path with mocked W&B API to validate metadata equivalence and rollback enforcement.
-6. **Backend Selection Config**: Add `EXPERIMENT_BACKEND` environment variable support to the adapter factory.
+1. **Keep the defer gate explicit**: Do not open adapter or SDK implementation work while any §7.3 re-entry condition remains unmet.
+2. **W&B Version Selection**: Pin W&B SDK version (`wandb>=0.16.0` recommended) only after reopen is authorized.
+3. **Adapter Generalization**: Generalize the current MLflow-first `RegistryExperimentAdapter` surface so a second backend can plug in without forking registry semantics.
+4. **Canonical State Migration**: Land `artifact_state` / `deployment_stage` support in the experiment bridge before any W&B backend is considered active.
+5. **Adapter Implementation**: Build a W&B backend that satisfies the same `ExperimentBackend.record()` and `ExperimentSyncResult` contract.
+6. **Smoke Test**: Run a single registry entry through the W&B path with mocked W&B API to validate metadata equivalence and rollback enforcement.
+7. **Backend Selection Factory**: Extend the existing `EXPERIMENT_BACKEND` selector so the adapter factory can instantiate a W&B backend without changing registry-facing behavior.
+
+---
+
+## 7. OSS-NEXT-004 Decision: Formal Defer (2026-04-17)
+
+**Task**: OSS-NEXT-004
+**Decision date**: 2026-04-17
+**Decision**: **DEFER** — W&B backend parity does not enter the current development wave.
+
+### 7.1 Decision Rationale
+
+All six entry criteria from §1 are unmet as of the decision date:
+
+| Entry criterion | Status | Detail |
+|---|---|---|
+| MLflow ≥30 days operational history | **Not met** | MLflow reached `governed` status on 2026-04-15 — fewer than 2 days of operational history as of this decision. Earliest eligible reopen: 2026-05-15. |
+| Explicit operator preference documented | **Not met** | No operator or team has filed a documented request for W&B over MLflow. |
+| `RegistryExperimentAdapter` generalized for configurable backends | **Not met** | Current adapter exposes `PRIMARY_BACKEND = "mlflow"` with no pluggable backend factory. |
+| Canonical `artifact_state` / `deployment_stage` migration landed | **Not met** | Experiment bridge still uses legacy `lifecycle_state` / `paper` / `live` aliases in the MLflow adapter path. |
+| W&B SDK pin (`wandb>=0.16.0`) | **Not met** | No `wandb` entry in any `requirements.txt`. |
+| Network / infrastructure readiness (`api.wandb.ai`) | **Not verified** | No infrastructure review has been recorded. |
+
+Additional context from OSS ecosystem gap analysis (`docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md §7`):
+- W&B is ranked #5 of 5 in priority for the current wave, after Qlib, TRL, vectorbt/statsmodels/QuantLib materialization, and RL stack.
+- Gap analysis explicitly warns: "W&B have stronger conditionality and should not accidentally balloon the next wave unless explicitly approved."
+- W&B is an **optional alternative backend**, not additive capability — MLflow already covers the governed experiment registry path.
+
+### 7.2 What Is Already In Place
+
+The following work from BP5-OSS-004 and OSS-003 remains intact and does not regress:
+
+- `EXPERIMENT_BACKEND` env-var selector in `services/registry/experiments/config.py` (default `"mlflow"`, raises `EnvironmentError` for unsupported backends — W&B is not in `_SUPPORTED_BACKENDS`).
+- Activation criteria in this document remain approved and authoritative.
+- `DEFERRED_OSS_ACTIVATION_MAP.md §5` documents the concrete blocking conditions.
+
+### 7.3 Re-Entry Gate
+
+W&B backend parity work may reopen **only when all of the following are simultaneously true**:
+
+1. **MLflow 30-day history met**: MLflow has been running in a `governed`-status deployment for at least 30 consecutive days with no critical incidents. Earliest eligible date: 2026-05-15.
+2. **Operator preference on file**: At least one human operator or team has filed a documented request (team name, workflow reason, and W&B workspace investment or visualization requirement) — "W&B is popular" is not sufficient.
+3. **Adapter generalization task completed**: A separate execution task has generalized `RegistryExperimentAdapter` to accept a pluggable backend factory, and that task is in `done` status.
+4. **Canonical state migration completed**: The experiment bridge no longer exposes legacy `lifecycle_state` / `paper` / `live` aliases anywhere in the MLflow or adapter path (or exposes them as compatibility projections only, with canonical `artifact_state` / `deployment_stage` as primary).
+5. **SDK compatibility verified**: `wandb>=0.16.0` pinned and confirmed non-conflicting with `mlflow==3.10.1`, `dspy==2.4.5`, `imitation==1.0.1`, `trl>=0.8.0`, `pyqlib==0.9.6` in a single environment.
+6. **Infrastructure readiness confirmed**: Deployment environment has confirmed outbound access to `api.wandb.ai` (or a self-hosted W&B instance is provisioned and documented).
+
+### 7.4 Re-Entry Trigger
+
+When all six re-entry conditions above are met, the gate doc owner (Qwen) should:
+
+1. File a new execution task referencing this section as the authorization gate.
+2. Update this document's status from `DEFER` to `REOPEN`.
+3. Assign the adapter generalization and W&B backend implementation as separate scoped tasks.
+4. Record the operator preference citation in §1.2 of this document before any implementation begins.
+
+### 7.5 Execution Slice Closeout (EXEC-OSS-WANDB-001)
+
+`EXEC-OSS-WANDB-001` does **not** authorize implementation. It closes the ambiguity about what the next reviewable step actually is.
+
+Current execution-slice conclusion:
+
+- W&B remains formally deferred for the current wave.
+- The repo now has an `EXPERIMENT_BACKEND` selector stub, so the remaining blocker is not "missing config toggle"; it is the combination of unmet re-entry criteria plus an MLflow-first adapter surface.
+- No adapter-generalization, SDK pin, or W&B smoke task should be opened from this slice alone.
+
+Reviewer-ready next-step recommendation:
+
+1. Keep W&B in `deferred` / `decision-held` status until all six §7.3 conditions are simultaneously satisfied.
+2. Treat the first executable follow-up as a **reopen packet**, not as backend implementation:
+   - cite the operator preference record
+   - confirm MLflow's 30-day governed history window has actually passed
+   - point to the completed adapter-generalization task
+   - point to the completed canonical-state migration task
+   - attach SDK compatibility evidence
+   - attach infrastructure/network readiness evidence
+3. Only after that reopen packet is accepted should implementation split into separate adapter-generalization / W&B-backend tasks.
 
 ---
 
@@ -210,7 +293,7 @@ The only W&B-specific check is: W&B run/artifact exists and is accessible.
 
 ---
 
-**Document Status**: Approved for OSS-003 activation-gate lock after Codex reviewer cleanup
+**Document Status**: Approved for OSS-003 activation-gate lock; 2026-04-21 execution-slice truth refreshed for Codex/Claude review handoff
 **Reviewer Verification**:
 - [x] Entry criteria align with `TARGET_ARCHITECTURE.md` and keep W&B optional behind MLflow-first stabilization
 - [x] The document now references the real `RegistryExperimentAdapter` / `ExperimentBackend` split instead of a nonexistent `ExperimentAdapter` API
