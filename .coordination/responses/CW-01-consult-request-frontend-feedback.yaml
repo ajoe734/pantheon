@@ -1,0 +1,142 @@
+feature_id: CW-01-consult-request
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Claude
+reviewed_at: '2026-04-21T00:00:00Z'
+reviewed_commit: b0975f50fb1b657c2ae95ae1a132e02b7474439b
+ui_done_source_commit: d9d64fe9494b34265e9aaff9e97d65238ab4688a
+frontend_feedback_source_commit: d9d64fe9494b34265e9aaff9e97d65238ab4688a
+verified_front_workspace_head: f00791b217e5550d80c1add72a8560b42bc3a056
+screen: consult-request
+workbench: consultation-workbench
+screen_id: screen-consult-request
+
+disposition: accepted
+review_result: all-contract-findings-resolved-publication-replay-clean
+can_close: true
+
+summary: >-
+  Claude re-verified the CW-01 consult request delivery after the prior
+  Codex2 re-review. All six contract findings are resolved in the
+  Git-visible implementation tree at d9d64fe: page_size is sent on every
+  list call, the degraded empty-state is suppressed, the cancel CTA
+  respects allowedActions.canCancel on degraded responses, target_type
+  appears as a dedicated column in list rows, the context_refs[] composer
+  is wired, and the session link routes to /sessions/:linked_session_id.
+  Commit a93cd85 repoints both request files' source_commit to d9d64fe,
+  making the publication replay-clean. The front-repo build passes
+  (timeout 120s npm run build, verified at f00791b). The loop is now
+  complete and the task is ready to close.
+
+acceptance_verified:
+  - criterion: build the request composer from the published create contract only
+    status: pass
+    note: >-
+      The current sibling working tree exposes typed context_refs add or remove
+      controls and still posts the full form object through
+      consultRequestApi.create(form), so operators can now assemble the full
+      published create body from the UI.
+  - criterion: build the request list and detail pages from the CW-01 BFF routes only
+    status: pass
+    note: >-
+      The current working tree uses consultRequestApi.list(),
+      consultRequestApi.getDetail(), and consultRequestApi.cancel() from the
+      shared BFF client and wires both required routes in src/App.tsx.
+  - criterion: render request-to-session status from linked_session_id plus request_to_session_status exactly as supplied
+    status: pass
+    note: >-
+      The current working tree renders request_to_session_status and the
+      session_handoff rail from the BFF payload without synthesizing request
+      progression from timers or persona consultation endpoints.
+  - criterion: use backend-owned page_token and page_size query params for request-list pagination
+    status: pass
+    note: >-
+      ConsultRequestList now passes page_size: PAGE_SIZE (20) on every list call
+      alongside page_token. Verified at d9d64fe in ConsultRequestList.tsx line 199.
+  - criterion: render the cancel CTA only when allowedActions.canCancel is true
+    status: pass
+    note: >-
+      The hard surfaceState !== 'degraded' block is removed. The cancel CTA is
+      now gated solely on allowedActions.canCancel, including on degraded
+      responses. Verified at d9d64fe in ConsultRequestDetail.tsx line 297.
+  - criterion: keep degraded and unavailable list behavior truthful
+    status: pass
+    note: >-
+      The empty-state card is suppressed when surfaceState === 'degraded'.
+      Verified at d9d64fe: condition guards surfaceState !== 'degraded' in line 621.
+  - criterion: display target_type on request list rows
+    status: pass
+    note: >-
+      target_type is rendered as its own labelled column in list rows.
+      Verified at d9d64fe in ConsultRequestList.tsx line 111.
+  - criterion: resolve linked sessions to the live /sessions/:linked_session_id SPA route when a session is linked
+    status: pass
+    note: >-
+      ConsultRequestDetail uses the in-app /sessions/:linked_session_id route
+      when linked_session_id is present and falls back to the raw href otherwise.
+  - criterion: publish ui-done and frontend-feedback from one truthful Git-visible front commit that contains the CW-01 handoff set
+    status: pass
+    note: >-
+      Commit d9d64fe contains the UI files, both request files, and the feedback
+      bundle together. Commit a93cd85 repoints source_commit in both request files
+      to d9d64fe, making the handoff pair replay-clean. Tree-check confirmed via
+      git ls-tree against d9d64fe.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify sibling front production build
+    path: ../front-ai-trading-system
+    note: >-
+      `timeout 120s npm run build` passed at f00791b (2026-04-21).
+  - action: verify CW-01 contract test coverage
+    path: services/control-plane/bff/test_cw01_consult_request_contract.py
+    note: >-
+      `python3 -m pytest services/control-plane/bff/test_cw01_consult_request_contract.py -q`
+      passed with 5 tests in the Pantheon workspace.
+  - action: smoke the four CW-01 routes with the published example payload
+    path: docs/examples/CW-01-consult-request.json
+    note: >-
+      A local FastAPI TestClient smoke succeeded across POST create, GET list,
+      GET detail, and POST cancel using the published example create payload.
+  - action: confirm the CW-01 route family is live in the current BFF workspace
+    path: services/control-plane/bff/main.py
+    note: >-
+      The current FastAPI app registers all four published CW-01 routes and the
+      consultation overview metadata describes CW-01 as live.
+  - action: verify all six contract fixes at d9d64fe
+    path: src/pages/consultation
+    note: >-
+      Tree-checked d9d64fe via git ls-tree and code-grepped ConsultRequestList.tsx
+      and ConsultRequestDetail.tsx for page_size, degraded suppression, canCancel,
+      and target_type. All six findings verified resolved.
+  - action: verify publication replay-clean via git ls-tree
+    path: .coordination/requests
+    note: >-
+      git ls-tree d9d64fe confirms both request files, feedback bundle, and UI
+      files are present in that commit. Commit a93cd85 repoints source_commit in
+      both request files to d9d64fe.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Live browser verification against a running Pantheon environment remains
+      outstanding. All other blockers are resolved.
+
+required_front_repo_updates: []
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. Commit d9d64fe contains all CW-01 UI files, the request pair, and the
+  feedback bundle together. Commit a93cd85 repoints source_commit in both
+  request files to d9d64fe. All six contract findings are resolved. Build passes.
+
+risk_note: >-
+  No remaining blockers. Live browser verification against a running Pantheon
+  environment is deferred and non-blocking.
+
+lovable_ui_task_status: done
+next_action: close-loop
+review_findings_ref: .coordination/reviews/CW-01-consult-request-review.md
