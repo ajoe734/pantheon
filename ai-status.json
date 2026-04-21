@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-21T17:39:23Z",
+  "updated_at": "2026-04-21T18:04:15Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -95,14 +95,13 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "EXEC-FRONT-RW02-001",
         "EXEC-FRONT-RW04-001",
         "EXEC-RUNTIME-TW04-001",
         "EXEC-RUNTIME-RW04-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Runtime refresh verified: all 4 RW-04 routes live on http://127.0.0.1:18001 (/api/v1/experiments, /api/v1/experiments/launch, /api/v1/experiments/{experiment_id}, /api/v1/experiments/{experiment_id}/cancel). Authenticated live probes confirm degraded, unavailable, queued, running, completed, failed, canceled, and OBJECT_NOT_FOUND semantics. needs-runtime.yaml resolved, frontend-feedback.yaml and review.md artifacts complete. All acceptance criteria met.",
-      "last_update": "2026-04-21T17:39:23Z"
+      "next": "Re-review complete: runtime now publishes /api/v1/experiments* and the three frontend logic fixes are present in the sibling front worktree, but the request pair still points at immutable commit 6e17dd8 which omits App/AppSidebar/WorkbenchBreadcrumb/bffClient wiring; publish a truthful RW-04 UI commit, repoint the handoffs if needed, and push pkt-004-detail-fix before resubmitting. See .coordination/reviews/RW-04-experiment-launch-review.md.",
+      "last_update": "2026-04-21T18:01:32Z"
     },
     {
       "name": "Gemini",
@@ -112,11 +111,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "EXEC-FRONT-RW03-001"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "",
-      "last_update": "2026-04-21T17:17:02Z"
+      "next": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "last_update": "2026-04-21T17:51:44Z"
     },
     {
       "name": "Codex",
@@ -128,8 +129,6 @@
       ],
       "status": "reviewing",
       "current_task_ids": [
-        "EXEC-REBASE-TW04-001",
-        "EXEC-OSS-WANDB-001",
         "EXEC-OSS-QUANTLIB-001",
         "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF"
       ],
@@ -145,13 +144,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
+      "status": "reviewing",
       "current_task_ids": [
-        "EXEC-BFF-KW04-001"
+        "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Queued from the 2026-04-20 gap audit; awaiting supervisor dispatch.",
-      "last_update": "2026-04-21T16:51:18Z"
+      "next": "Acceptance packet and dependency map published at support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE.md. Packet isolates parent runtime acceptance from the separate front publication blocker and is ready for sidecar review.",
+      "last_update": "2026-04-21T17:54:09Z"
     },
     {
       "name": "Copilot",
@@ -177,11 +176,13 @@
         "acceptance",
         "code-agent"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/qwen-code-agent",
-      "next": "",
-      "last_update": "2026-04-21T17:25:15Z"
+      "next": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "last_update": "2026-04-21T18:00:40Z"
     }
   ],
   "tasks": [
@@ -270,7 +271,7 @@
       "phase": "Execution / Frontend Lane Implementation",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         ".coordination/responses/RW-02-search-contract-ready.yaml",
@@ -282,8 +283,8 @@
         "empty / degraded state 對齊 published semantics",
         "完成後提交 ui-done handoff"
       ],
-      "next": "Re-submitting for nominal re-approval. Codex review already completed and documented at .coordination/reviews/RW-02-search-review.md (decision: approved). Status was inadvertently moved to in_progress by a progress call. All acceptance criteria confirmed met. No new implementation changes — this is a finalize handoff only.",
-      "last_update": "2026-04-21T16:45:50Z",
+      "next": "Recovering from inadvertent review_approved -> in_progress downgrade caused by progress call. Review was already approved by Codex at .coordination/reviews/RW-02-search-review.md. No new implementation changes.",
+      "last_update": "2026-04-21T18:04:15Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
@@ -298,7 +299,7 @@
       "title": "Implement RW-03 analyze front-end flow against live Pantheon APIs",
       "summary_zh": "在 front-end lane 實作 RW-03 analyze list/detail flow，直接使用已 live 的 analysis routes 與 backend-owned metric aggregation / comparative summary。",
       "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Codex",
+      "owner": "Gemini",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [],
@@ -312,8 +313,8 @@
         "前端不得自行 group metrics 或 client-side 合成 comparative summary",
         "完成後提交 ui-done handoff 並附前端變更摘要"
       ],
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-21T16:44:30Z",
+      "next": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "last_update": "2026-04-21T17:51:44Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
       "auto_generated": true,
@@ -325,8 +326,8 @@
       "summary_zh": "在 front-end lane 實作 RW-04 experiment launch / history / detail flow，依 live route family 與已補齊的前端 handoff bundle 接線。",
       "phase": "Execution / Frontend Lane Implementation",
       "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "review",
+      "reviewer": "Codex2",
+      "status": "in_progress",
       "depends_on": [
         "EXEC-REBASE-RW04-001"
       ],
@@ -340,8 +341,8 @@
         "前端不得假造 progress / run history，也不得覆寫 allowedActions.canCancel truth",
         "完成後提交 ui-done handoff 並附前端變更摘要"
       ],
-      "next": "RW-04 experiment launch UI pages published at immutable front commit 6e17dd8f233dad31d20b64781f23063e00ddde54 (branch pkt-004-detail-fix). Coordination ui-done is now status: published, pantheon_disposition: unblocked. Please review the six experiment files and coordination artifacts against the published RW-04 contract.",
-      "last_update": "2026-04-21T17:22:56Z",
+      "next": "Re-review complete: runtime now publishes /api/v1/experiments* and the three frontend logic fixes are present in the sibling front worktree, but the request pair still points at immutable commit 6e17dd8 which omits App/AppSidebar/WorkbenchBreadcrumb/bffClient wiring; publish a truthful RW-04 UI commit, repoint the handoffs if needed, and push pkt-004-detail-fix before resubmitting. See .coordination/reviews/RW-04-experiment-launch-review.md.",
+      "last_update": "2026-04-21T18:01:32Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
       "auto_generated": true,
@@ -514,8 +515,8 @@
       "summary_zh": "補齊 TW-04 teaching replay 的前端 handoff / coordination bundle，讓 replay list/detail/commit/discard 的 live truth 能被前端 lane 接手。",
       "phase": "Execution / Handoff Activation and Rebaseline",
       "owner": "Codex",
-      "reviewer": "Copilot",
-      "status": "review",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "docs/bff/TW-04-teaching-replay.md",
@@ -527,12 +528,18 @@
         "authority / evidence-link semantics 在 handoff 中正確表達",
         "coordination / backlog truth 同步完成"
       ],
-      "next": "TW-04 teaching replay handoff bundle refreshed for review: BFF/screen/packet truth now mark the route family live, coordination YAML publishes all four replay routes plus action-layer semantics, and handoff wording consistently uses event.evidence_ref instead of evidence_links[]. Verified via targeted rg plus YAML parse for the TW-04 coordination files.",
-      "last_update": "2026-04-21T05:53:49Z",
+      "next": "Review approved: TW-04 handoff bundle complete, authority/evidence-link semantics correctly expressed, backlog truth synced. Evidence route topology gap raised and resolved in workspace. Returning to Codex for finalization.",
+      "last_update": "2026-04-21T17:44:03Z",
       "task_class": "auto_worker_implementation",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
-      "mutates_canonical": true
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "審查通過｜TW-04 handoff bundle 完整，authority/evidence-link 語意正確表達，backlog truth 同步完成",
+        "OPS-TW04-001 runtime refresh 仍 pending，但不 blocking（workspace bff-gap 已解決）",
+        "前端 lane 可解鎖執行 EXEC-FRONT-TW04-001"
+      ],
+      "review_file": "docs/reviews/EXEC-REBASE-TW04-001-claude-review.md"
     },
     {
       "id": "EXEC-OSS-WANDB-001",
@@ -540,8 +547,8 @@
       "summary_zh": "把 W&B backend parity decision 從 deferred gate 文件整理成 reviewable execution slice，精確標記當前阻塞與 reopen 條件。",
       "phase": "Execution / OSS Next Wave",
       "owner": "Codex",
-      "reviewer": "Copilot",
-      "status": "review",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "services/registry/experiments/WANDB_ACTIVATION.md",
@@ -553,12 +560,17 @@
         "execution slice 不越過既有 deferral gate",
         "留下可 review 的 next-step recommendation"
       ],
-      "next": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
-      "last_update": "2026-04-21T06:35:30Z",
+      "next": "Review approved — defer boundary confirmed, six re-entry gate conditions verified as hard conjunctive gates, earliest reopen 2026-05-15 explicit, no implementation authorized. Returning to Codex for finalization.",
+      "last_update": "2026-04-21T18:02:26Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-20-execution-continuation-materialization",
       "auto_generated": true,
-      "mutates_canonical": true
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "審查通過",
+        "defer gate 完整保留，六項 re-entry 條件為硬性並聯關卡，最早 reopen 日期 2026-05-15 明確記錄，next step 限定為 reopen packet 而非實作"
+      ],
+      "review_file": "support/sidecars/EXEC-OSS-WANDB-001/EXEC-OSS-WANDB-001-CLAUDE-REVIEW.md"
     },
     {
       "id": "EXEC-OSS-QUANTLIB-001",
@@ -915,8 +927,8 @@
       "summary_zh": "刷新 active operator-bff runtime，讓 /api/v1/experiments route family 對外 live HTTP，解除 RW-04 loop 的 runtime freshness blocker，並用 live probes 驗證 queued/running/degraded/unavailable semantics。",
       "phase": "Execution / Runtime Refresh and Verification",
       "owner": "Claude",
-      "reviewer": "Gemini",
-      "status": "in_progress",
+      "reviewer": "Codex",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         ".coordination/requests/RW-04-experiment-launch-needs-runtime.yaml",
@@ -930,8 +942,8 @@
         "unavailable",
         "and terminal semantics||the existing RW-04 front follow-up no longer waits on runtime freshness"
       ],
-      "next": "Runtime refresh verified: all 4 RW-04 routes live on http://127.0.0.1:18001 (/api/v1/experiments, /api/v1/experiments/launch, /api/v1/experiments/{experiment_id}, /api/v1/experiments/{experiment_id}/cancel). Authenticated live probes confirm degraded, unavailable, queued, running, completed, failed, canceled, and OBJECT_NOT_FOUND semantics. needs-runtime.yaml resolved, frontend-feedback.yaml and review.md artifacts complete. All acceptance criteria met.",
-      "last_update": "2026-04-21T17:39:23Z",
+      "next": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "last_update": "2026-04-21T17:54:14Z",
       "task_class": "execution_candidate",
       "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
       "auto_generated": true,
@@ -976,9 +988,9 @@
       "title": "Prepare EXEC-RUNTIME-RW04-001 acceptance packet and dependency map",
       "summary_zh": "平行支援 EXEC-RUNTIME-RW04-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "Execution / Runtime Refresh and Verification",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE.md"
@@ -988,8 +1000,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-21T17:21:56Z",
+      "next": "Acceptance packet and dependency map published at support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE.md. Packet isolates parent runtime acceptance from the separate front publication blocker and is ready for sidecar review.",
+      "last_update": "2026-04-21T17:54:09Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "EXEC-RUNTIME-RW04-001",
@@ -1002,7 +1014,7 @@
       "title": "Prepare EXEC-RUNTIME-TW04-001 acceptance packet and dependency map",
       "summary_zh": "平行支援 EXEC-RUNTIME-TW04-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "Execution / Runtime Refresh and Verification",
-      "owner": "Codex",
+      "owner": "Qwen",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [],
@@ -1014,12 +1026,38 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-04-21T17:26:59Z",
+      "next": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "last_update": "2026-04-21T18:00:40Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "EXEC-RUNTIME-TW04-001",
       "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "title": "Prepare EXEC-RUNTIME-RW04-001 review packet and evidence summary",
+      "summary_zh": "平行支援 EXEC-RUNTIME-RW04-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Execution / Runtime Refresh and Verification",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Qwen to Codex after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-04-21T17:55:46Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "EXEC-RUNTIME-RW04-001",
+      "helper_kind": "review_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
     }
@@ -2218,8 +2256,9 @@
       "from": "Codex",
       "to": "Copilot",
       "message": "TW-04 teaching replay handoff bundle refreshed for review: BFF/screen/packet truth now mark the route family live, coordination YAML publishes all four replay routes plus action-layer semantics, and handoff wording consistently uses event.evidence_ref instead of evidence_links[]. Verified via targeted rg plus YAML parse for the TW-04 coordination files.",
-      "status": "pending",
-      "created_at": "2026-04-21T05:53:49Z"
+      "status": "done",
+      "created_at": "2026-04-21T05:53:49Z",
+      "resolved_at": "2026-04-21T17:41:42Z"
     },
     {
       "task_id": "EXEC-OSS-WANDB-001",
@@ -2334,8 +2373,9 @@
       "from": "Claude",
       "to": "Copilot",
       "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
-      "status": "pending",
-      "created_at": "2026-04-21T06:35:30Z"
+      "status": "done",
+      "created_at": "2026-04-21T06:35:30Z",
+      "resolved_at": "2026-04-21T17:58:45Z"
     },
     {
       "task_id": "EXEC-BFF-KW03-001-SIDECAR-BFF-HANDOFF",
@@ -3287,8 +3327,9 @@
       "from": "Claude",
       "to": "Codex",
       "message": "Re-submitting for nominal re-approval. Codex review already completed and documented at .coordination/reviews/RW-02-search-review.md (decision: approved). Status was inadvertently moved to in_progress by a progress call. All acceptance criteria confirmed met. No new implementation changes — this is a finalize handoff only.",
-      "status": "pending",
-      "created_at": "2026-04-21T16:45:50Z"
+      "status": "done",
+      "created_at": "2026-04-21T16:45:50Z",
+      "resolved_at": "2026-04-21T17:45:13Z"
     },
     {
       "task_id": "EXEC-CLOSEOUT-FRONTEND-001",
@@ -3346,8 +3387,9 @@
       "from": "Claude",
       "to": "Codex",
       "message": "RW-04 experiment launch UI pages published at immutable front commit 6e17dd8f233dad31d20b64781f23063e00ddde54 (branch pkt-004-detail-fix). Coordination ui-done is now status: published, pantheon_disposition: unblocked. Please review the six experiment files and coordination artifacts against the published RW-04 contract.",
-      "status": "pending",
-      "created_at": "2026-04-21T17:22:56Z"
+      "status": "done",
+      "created_at": "2026-04-21T17:22:56Z",
+      "resolved_at": "2026-04-21T17:57:11Z"
     },
     {
       "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
@@ -3382,6 +3424,206 @@
       "message": "TW-04 runtime refresh complete. All 4 routes live at 127.0.0.1:18001, links match front router, 32 contract tests pass. Evidence route gap /telemetry/drawdown/:id documented in .coordination/requests/TW-04-teaching-replay-bff-gap.yaml per review instructions. Needs-runtime status updated to verified-with-gap. Ready for Codex review.",
       "status": "pending",
       "created_at": "2026-04-21T17:34:45Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Runtime refresh complete: all 4 RW-04 routes live on 18001, authenticated probes confirm full semantics (degraded/unavailable/queued/running/completed/failed/canceled/OBJECT_NOT_FOUND). Coordination artifacts committed. Ready for formal review.",
+      "status": "done",
+      "created_at": "2026-04-21T17:40:23Z",
+      "resolved_at": "2026-04-21T17:54:14Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T17:41:42Z",
+      "resolved_at": "2026-04-21T17:44:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: TW-04 handoff bundle complete, authority/evidence-link semantics correctly expressed, backlog truth synced. Evidence route topology gap raised and resolved in workspace. Returning to Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-04-21T17:44:03Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:44:23Z",
+      "resolved_at": "2026-04-21T17:51:45Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:44:34Z",
+      "resolved_at": "2026-04-21T17:45:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: prior Codex review packet remains valid, no new implementation changes were introduced after approval, and all acceptance criteria remain met. Returning to owner Claude for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-21T17:45:13Z",
+      "resolved_at": "2026-04-21T18:03:33Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:46:21Z",
+      "resolved_at": "2026-04-21T17:55:35Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:46:32Z",
+      "resolved_at": "2026-04-21T17:48:32Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:47:58Z",
+      "resolved_at": "2026-04-21T17:50:02Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:49:50Z",
+      "resolved_at": "2026-04-21T17:52:03Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:50:02Z",
+      "resolved_at": "2026-04-21T17:52:18Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW03-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-21T17:51:44Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:53:38Z",
+      "resolved_at": "2026-04-21T17:54:03Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:54:03Z",
+      "resolved_at": "2026-04-21T17:55:46Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet and dependency map published at support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE.md. Packet isolates parent runtime acceptance from the separate front publication blocker and is ready for sidecar review.",
+      "status": "pending",
+      "created_at": "2026-04-21T17:54:09Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "pending",
+      "created_at": "2026-04-21T17:54:14Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T17:57:11Z",
+      "resolved_at": "2026-04-21T18:01:32Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T17:58:45Z",
+      "resolved_at": "2026-04-21T18:02:26Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:00:17Z",
+      "resolved_at": "2026-04-21T18:00:40Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "pending",
+      "created_at": "2026-04-21T18:00:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review complete: runtime now publishes /api/v1/experiments* and the three frontend logic fixes are present in the sibling front worktree, but the request pair still points at immutable commit 6e17dd8 which omits App/AppSidebar/WorkbenchBreadcrumb/bffClient wiring; publish a truthful RW-04 UI commit, repoint the handoffs if needed, and push pkt-004-detail-fix before resubmitting. See .coordination/reviews/RW-04-experiment-launch-review.md.",
+      "status": "done",
+      "created_at": "2026-04-21T18:01:32Z",
+      "resolved_at": "2026-04-21T18:01:32Z"
+    },
+    {
+      "task_id": "EXEC-OSS-WANDB-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — defer boundary confirmed, six re-entry gate conditions verified as hard conjunctive gates, earliest reopen 2026-05-15 explicit, no implementation authorized. Returning to Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-04-21T18:02:26Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Recovering from inadvertent review_approved -> in_progress downgrade caused by progress call. Review was already approved by Codex at .coordination/reviews/RW-02-search-review.md. No new implementation changes.",
+      "status": "pending",
+      "created_at": "2026-04-21T18:04:15Z"
     }
   ],
   "blockers": [],
@@ -3396,32 +3638,41 @@
   "workload_summary": {
     "Claude": {
       "total": 5,
-      "active": 4,
+      "active": 3,
       "blocked": 0,
       "done": 0,
-      "review": 3,
-      "review_approved": 0,
+      "review": 2,
+      "review_approved": 1,
       "todo": 2
     },
     "Gemini": {
-      "total": 3,
+      "total": 4,
       "active": 0,
       "blocked": 0,
       "done": 3,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Codex": {
-      "total": 17,
-      "active": 4,
+      "total": 15,
+      "active": 2,
       "blocked": 0,
       "done": 0,
-      "review": 4,
-      "review_approved": 10,
-      "todo": 3
+      "review": 2,
+      "review_approved": 12,
+      "todo": 1
     },
     "Codex2": {
+      "total": 2,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 1,
+      "review_approved": 0,
+      "todo": 1
+    },
+    "Qwen": {
       "total": 1,
       "active": 0,
       "blocked": 0,
@@ -3429,15 +3680,6 @@
       "review": 0,
       "review_approved": 0,
       "todo": 1
-    },
-    "Qwen": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
     },
     "Copilot": {
       "total": 2,

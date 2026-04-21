@@ -2,36 +2,72 @@ feature_id: RW-02-search
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: pkt-004-detail-fix
-source_commit: 09ee64dfe240330ae167c2ff50ffdbaee83cb209
+source_commit: 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4
+source_commit_note: >-
+  UI implementation is present in the current workspace on top of this branch
+  head; no new git commit was created in this task.
 screen: research-search
 blocking: false
+status: acknowledged
+pantheon_disposition: blocked
+acknowledged_at: "2026-04-20T14:03:25Z"
+acknowledged_by: Codex
+review_file: .coordination/reviews/RW-02-search-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the returned RW-02 Search working-tree implementation
+  against the published contract, example payload, current sibling front
+  changes, and the current Pantheon BFF app. The prior client-side contract
+  mismatches are fixed: the screen now sends only published query params,
+  recognizes the documented simple error envelope, suppresses authoritative
+  degraded empty-state messaging, and renders a dedicated 503 unavailable
+  notice. The loop still cannot close. The active operator-bff runtime at
+  http://127.0.0.1:18001 remains stale and returns 404 for
+  GET /api/v1/research/search, the backend-owned drilldown hrefs currently
+  returned by Pantheon (/research/tickets/*, /research/experiments/*,
+  /research/artifacts/*) do not resolve to mounted owner screens in the current
+  front router, and the returned request pair plus feedback bundle are still
+  working-tree only rather than replay-clean from one immutable front commit.
 
-summary: >-
-  RW-02 Research Search UI implemented against live GET /api/v1/research/search.
-  Query bar, filter rail (match_type, status, date_range), paginated result list,
-  degradation banners (stale/degraded/unavailable), and drilldown navigation via
-  BFF-provided links.result_detail and links.linked_ticket_detail are all complete.
-  Build and ESLint passed.
+summary: |
+  Research Search is implemented against the live RW-02 Pantheon route
+  GET /api/v1/research/search through rw02SearchApi. The UI sends the
+  published query params only, renders backend-owned SearchResult rows only,
+  preserves backend ordering and relevance_score, uses links.result_detail and
+  links.linked_ticket_detail for drilldowns, and renders degradation plus
+  corpus-freshness state from meta.surfaces.search_results and
+  meta.index_adapter.*.
 
 changed_files:
   - src/pages/research/ResearchSearch.tsx
   - src/pages/research/types.ts
   - src/lib/bffClient.ts
   - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - src/pages/health/Health.tsx
+
+routes:
+  - /research
+  - /research/search
 
 acceptance_evidence:
-  - search route: GET /api/v1/research/search (live confirmed at services/control-plane/bff/main.py:6195)
-  - filter params sent: q, match_type, status, date_range, page_token, page_size
-  - result rows rendered from SearchResult shape only; no client-side re-ranking
-  - drilldowns via links.result_detail and links.linked_ticket_detail only
-  - degradation banners rendered from meta.surfaces.search_results and meta.index_adapter.adapter_state
-  - bff-gap handoff path configured; no field mocking
-  - npm run build passed; npx eslint on touched files passed
+  - targeted Pantheon RW-02 contract tests passed: python3 -m pytest -q services/control-plane/bff/test_rw02_search_contract.py
+  - current Pantheon app returns 200 degraded RW-02 search payload via local TestClient with ticket, experiment, and artifact links plus meta.index_adapter.*
+  - seeded Pantheon app returns 503 search_unavailable with meta.surfaces.search_results=unavailable
+  - sibling front ESLint passed for the reviewed RW-02 files
+  - sibling front production build passed for the reviewed working-tree slice
 
 follow_up_requested:
-  - review UI against contract and example payload
-  - run integration or acceptance test against live BFF
+  - review the research-search screen against the latest Pantheon contract and example payload
+  - validate degraded and unavailable behavior against a live BFF response
+  - confirm the BFF-provided result_detail and linked_ticket_detail links resolve to the intended owner screens in the deployed environment
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
 
 coordination_updates:
-  contract_ready: .coordination/responses/RW-02-search-contract-ready.yaml (bff_route_live=true, status=live)
-  lovable_ui_task: .coordination/responses/RW-02-search-lovable-ui-task.yaml (status=ready)
+  contract_ready: .coordination/responses/RW-02-search-contract-ready.yaml
+  lovable_ui_task: .coordination/responses/RW-02-search-lovable-ui-task.yaml
+  needs_runtime: .coordination/requests/RW-02-search-needs-runtime.yaml
