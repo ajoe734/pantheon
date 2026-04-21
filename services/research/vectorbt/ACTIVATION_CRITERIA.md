@@ -1,15 +1,15 @@
 # vectorbt Activation Criteria
 
-Last updated: 2026-04-17
-Owner: OSS-NEXT-005 (Codex)
-Reviewer: Claude
-Task: OSS-NEXT-005 — vectorbt task materialization
-Status: source-selected / version-pinned
+Last updated: 2026-04-20
+Owner: EXEC-OSS-VECTORBT-001 (Codex2)
+Reviewer: Codex
+Task: OSS-NEXT-005 baseline + EXEC-OSS-VECTORBT-001 closeout
+Status: governed baseline implemented; smoke path and worker dispatch present
 
 ## Purpose
 
-This file documents the entry gates that must be satisfied before vectorbt
-transitions from `version-pinned` to `smoke-tested` and then to `governed`.
+This file documents the entry gates for vectorbt and records the current
+baseline now that the governed adapter, smoke path, and evidence pack exist.
 
 vectorbt is the primary Pantheon backend for rapid strategy backtesting
 and vectorized portfolio simulation. It does not replace LEAN as the live
@@ -35,9 +35,9 @@ Version pin source: `services/research/vectorbt/requirements.txt`
 
 ## Activation Gates
 
-### Gate 1: Adapter Implementation (blocks `adapter-started` → `smoke-tested`)
+### Gate 1: Adapter Implementation (implemented)
 
-The following components must exist and pass CI before vectorbt is considered `smoke-tested`:
+The following components now exist and define the governed smoke-tested path:
 
 1. `services/research/vectorbt/adapter/vectorbt_adapter.py`
    - `GovernedVectorbtInputAdapter` — validates and normalizes OHLCV input against
@@ -69,13 +69,14 @@ The following components must exist and pass CI before vectorbt is considered `s
 
 5. `services/research/vectorbt/worker.py`
    - wraps `run_vectorbt_workflow()` for container dispatch
+   - defaults to the sample governed dataset when `VECTORBT_DATASET_PATH` is not set
 
 6. `services/research/vectorbt/examples/strategy_dataset_sample.json`
    - minimal governed OHLCV sample matching the StrategySpec input contract
 
-### Gate 2: Evidence Pack (blocks `smoke-tested` → `governed`)
+### Gate 2: Evidence Pack (implemented)
 
-1. `integrations/vectorbt/integration.md` — upstream source and packaging notes (exists)
+1. `integrations/vectorbt/integration.md` — upstream source and packaging notes
 2. `integrations/vectorbt/governance.md` — promotion, rollback, and governance policy
 3. `integrations/vectorbt/smoke_test.md` — procedure and last-known-good result
 
@@ -101,31 +102,32 @@ The smoke test for vectorbt follows the same structure as Qlib and TRL:
 
 | Step | Description |
 |---|---|
-| 1 | Install `services/research/vectorbt/requirements.txt` in an isolated environment |
-| 2 | Run `python services/research/vectorbt/smoke_test.py` with `StubVectorbtBackend` |
+| 1 | Install `services/research/vectorbt/requirements.txt` in an isolated environment when exercising the real backend |
+| 2 | Run `python3 services/research/vectorbt/smoke_test.py` with `StubVectorbtBackend` |
 | 3 | Assert zero exceptions; assert `artifact_state = "draft"` in emitted registry_entry |
-| 4 | Run `python -m pytest services/research/vectorbt/test_adapter.py -v` |
+| 4 | Run `python3 -m pytest services/research/vectorbt/test_adapter.py -v` |
 | 5 | Assert all unit tests pass (target: ≥10 tests) |
 | 6 | Record last-known-good result and commit to `integrations/vectorbt/smoke_test.md` |
+| 7 | Run `python3 services/research/vectorbt/worker.py` to verify container entrypoint and sample dataset path |
 
-CI integration: add to `.github/workflows/syntax-tests.yml` or a new `vectorbt-smoke`
-workflow job under the OSS research matrix.
+CI integration: `.github/workflows/syntax-tests.yml` now contains a `vectorbt-smoke`
+job that runs the stub smoke script and adapter tests on Python 3.11.
 
 ---
 
 ## Activation Owner
 
 - Materialization owner: Codex
-- Follow-on implementation owner: to be assigned
-- Reviewer: Claude
-- Task family: OSS-NEXT-005 (this document) + follow-on implementation task
+- Governed baseline closeout owner: Codex2
+- Reviewer: Codex
+- Task family: OSS-NEXT-005 baseline + EXEC-OSS-VECTORBT-001 closeout
 
 ---
 
 ## What This Document Does Not Cover
 
-This document covers the materialization gate (source selection, version pin, adapter
-design, smoke-test plan). It does not cover:
+This document covers the governed baseline gate (source selection, version pin,
+adapter, smoke path, worker entrypoint, and evidence pack). It does not cover:
 
 - Production activation criteria (no equivalent to Qlib's 50-instrument / 2-year gate,
   since vectorbt is a prototyping tool, not a production data pipeline)

@@ -1,0 +1,641 @@
+{
+  "dataset_id": "dataset:vectorbt-sample-001",
+  "strategy_id": "sample-ma-crossover",
+  "source_dataset_refs": [
+    "dataset:sample-source-001"
+  ],
+  "source_strategy_spec_id": "strategy-spec:sample-ma-crossover-v1",
+  "data_frequency": "daily",
+  "records": [
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-01",
+      "open": 99.6984,
+      "high": 100.3982,
+      "low": 99.399,
+      "close": 99.8982,
+      "volume": 1000000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-02",
+      "open": 100.1969,
+      "high": 100.9006,
+      "low": 99.8963,
+      "close": 100.3977,
+      "volume": 1010000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-03",
+      "open": 100.6979,
+      "high": 101.405,
+      "low": 100.3953,
+      "close": 100.8997,
+      "volume": 1020000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-04",
+      "open": 99.8923,
+      "high": 100.5934,
+      "low": 99.5926,
+      "close": 100.0925,
+      "volume": 1030000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-05",
+      "open": 100.3918,
+      "high": 101.0974,
+      "low": 100.0899,
+      "close": 100.5929,
+      "volume": 1040000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-06",
+      "open": 100.8938,
+      "high": 101.6033,
+      "low": 100.5904,
+      "close": 101.0959,
+      "volume": 1050000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-07",
+      "open": 100.0867,
+      "high": 100.7897,
+      "low": 99.7864,
+      "close": 100.2873,
+      "volume": 1060000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-08",
+      "open": 100.5871,
+      "high": 101.2949,
+      "low": 100.2847,
+      "close": 100.7887,
+      "volume": 1070000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-09",
+      "open": 101.09,
+      "high": 101.8012,
+      "low": 100.7864,
+      "close": 101.2926,
+      "volume": 1080000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-10",
+      "open": 100.2813,
+      "high": 100.987,
+      "low": 99.9801,
+      "close": 100.4822,
+      "volume": 1090000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-11",
+      "open": 100.7827,
+      "high": 101.4925,
+      "low": 100.4798,
+      "close": 100.9847,
+      "volume": 1100000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-12",
+      "open": 101.2866,
+      "high": 101.9991,
+      "low": 100.9822,
+      "close": 101.4897,
+      "volume": 1110000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-13",
+      "open": 100.4763,
+      "high": 101.1834,
+      "low": 100.1747,
+      "close": 100.6776,
+      "volume": 1120000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-14",
+      "open": 100.9787,
+      "high": 101.6897,
+      "low": 100.6752,
+      "close": 101.181,
+      "volume": 1130000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-15",
+      "open": 101.4836,
+      "high": 102.1981,
+      "low": 101.1788,
+      "close": 101.6869,
+      "volume": 1140000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-16",
+      "open": 100.6718,
+      "high": 101.3802,
+      "low": 100.3694,
+      "close": 100.8735,
+      "volume": 1150000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-17",
+      "open": 101.1751,
+      "high": 101.8872,
+      "low": 100.8716,
+      "close": 101.3778,
+      "volume": 1160000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-18",
+      "open": 101.6809,
+      "high": 102.3962,
+      "low": 101.3752,
+      "close": 101.8847,
+      "volume": 1170000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-19",
+      "open": 100.8675,
+      "high": 101.5762,
+      "low": 100.5644,
+      "close": 101.0688,
+      "volume": 1180000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-20",
+      "open": 101.3718,
+      "high": 102.0841,
+      "low": 101.0674,
+      "close": 101.5749,
+      "volume": 1190000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-21",
+      "open": 101.8787,
+      "high": 102.5944,
+      "low": 101.5727,
+      "close": 102.0828,
+      "volume": 1200000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-22",
+      "open": 101.0637,
+      "high": 101.7742,
+      "low": 100.7603,
+      "close": 101.2663,
+      "volume": 1210000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-23",
+      "open": 101.569,
+      "high": 102.2831,
+      "low": 101.2644,
+      "close": 101.7725,
+      "volume": 1220000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-24",
+      "open": 102.0768,
+      "high": 102.7947,
+      "low": 101.7707,
+      "close": 102.2814,
+      "volume": 1230000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-25",
+      "open": 101.2602,
+      "high": 101.9723,
+      "low": 100.9563,
+      "close": 101.4631,
+      "volume": 1240000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-26",
+      "open": 101.7665,
+      "high": 102.4821,
+      "low": 101.4616,
+      "close": 101.9705,
+      "volume": 1250000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-27",
+      "open": 102.2754,
+      "high": 102.9947,
+      "low": 101.9682,
+      "close": 102.4804,
+      "volume": 1260000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-28",
+      "open": 101.4565,
+      "high": 102.169,
+      "low": 101.1515,
+      "close": 101.66,
+      "volume": 1270000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-29",
+      "open": 101.9637,
+      "high": 102.6802,
+      "low": 101.6579,
+      "close": 102.168,
+      "volume": 1280000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-01-30",
+      "open": 102.4735,
+      "high": 103.1937,
+      "low": 102.1666,
+      "close": 102.6788,
+      "volume": 1290000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-02-01",
+      "open": 101.6524,
+      "high": 102.3669,
+      "low": 101.3469,
+      "close": 101.8561,
+      "volume": 1300000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-02-02",
+      "open": 102.1607,
+      "high": 102.878,
+      "low": 101.8543,
+      "close": 102.3654,
+      "volume": 1310000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-02-03",
+      "open": 102.6714,
+      "high": 103.3929,
+      "low": 102.3643,
+      "close": 102.8771,
+      "volume": 1320000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-02-04",
+      "open": 101.848,
+      "high": 102.5645,
+      "low": 101.5421,
+      "close": 102.0521,
+      "volume": 1330000
+    },
+    {
+      "instrument": "ALPHA",
+      "date": "2024-02-05",
+      "open": 102.3573,
+      "high": 103.0786,
+      "low": 102.0501,
+      "close": 102.5625,
+      "volume": 1340000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-01",
+      "open": 49.8492,
+      "high": 50.1991,
+      "low": 49.6995,
+      "close": 49.9491,
+      "volume": 1000000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-02",
+      "open": 50.0984,
+      "high": 50.4503,
+      "low": 49.9481,
+      "close": 50.1989,
+      "volume": 1010000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-03",
+      "open": 50.3489,
+      "high": 50.7025,
+      "low": 50.1977,
+      "close": 50.4498,
+      "volume": 1020000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-04",
+      "open": 49.9461,
+      "high": 50.2967,
+      "low": 49.7963,
+      "close": 50.0462,
+      "volume": 1030000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-05",
+      "open": 50.1959,
+      "high": 50.5487,
+      "low": 50.0449,
+      "close": 50.2965,
+      "volume": 1040000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-06",
+      "open": 50.4469,
+      "high": 50.8017,
+      "low": 50.2954,
+      "close": 50.5482,
+      "volume": 1050000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-07",
+      "open": 50.0434,
+      "high": 50.3948,
+      "low": 49.8932,
+      "close": 50.1436,
+      "volume": 1060000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-08",
+      "open": 50.2935,
+      "high": 50.6476,
+      "low": 50.1423,
+      "close": 50.3943,
+      "volume": 1070000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-09",
+      "open": 50.544,
+      "high": 50.8995,
+      "low": 50.3924,
+      "close": 50.6467,
+      "volume": 1080000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-10",
+      "open": 50.1399,
+      "high": 50.4924,
+      "low": 49.9893,
+      "close": 50.2404,
+      "volume": 1090000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-11",
+      "open": 50.3906,
+      "high": 50.7453,
+      "low": 50.2395,
+      "close": 50.4915,
+      "volume": 1100000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-12",
+      "open": 50.6426,
+      "high": 50.9994,
+      "low": 50.4908,
+      "close": 50.7443,
+      "volume": 1110000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-13",
+      "open": 50.2378,
+      "high": 50.5912,
+      "low": 50.087,
+      "close": 50.3385,
+      "volume": 1120000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-14",
+      "open": 50.4893,
+      "high": 50.8444,
+      "low": 50.3381,
+      "close": 50.5904,
+      "volume": 1130000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-15",
+      "open": 50.7417,
+      "high": 51.0987,
+      "low": 50.5898,
+      "close": 50.8439,
+      "volume": 1140000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-16",
+      "open": 50.3359,
+      "high": 50.6901,
+      "low": 50.1851,
+      "close": 50.4367,
+      "volume": 1150000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-17",
+      "open": 50.5876,
+      "high": 50.9436,
+      "low": 50.4363,
+      "close": 50.6889,
+      "volume": 1160000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-18",
+      "open": 50.8405,
+      "high": 51.1983,
+      "low": 50.6881,
+      "close": 50.9423,
+      "volume": 1170000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-19",
+      "open": 50.4337,
+      "high": 50.7893,
+      "low": 50.2823,
+      "close": 50.5348,
+      "volume": 1180000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-20",
+      "open": 50.6859,
+      "high": 51.043,
+      "low": 50.5341,
+      "close": 50.7873,
+      "volume": 1190000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-21",
+      "open": 50.9393,
+      "high": 51.298,
+      "low": 50.7867,
+      "close": 51.0419,
+      "volume": 1200000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-22",
+      "open": 50.5318,
+      "high": 50.8875,
+      "low": 50.3799,
+      "close": 50.6331,
+      "volume": 1210000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-23",
+      "open": 50.7844,
+      "high": 51.1414,
+      "low": 50.6325,
+      "close": 50.8862,
+      "volume": 1220000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-24",
+      "open": 51.0383,
+      "high": 51.3974,
+      "low": 50.8853,
+      "close": 51.1408,
+      "volume": 1230000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-25",
+      "open": 50.6301,
+      "high": 50.9859,
+      "low": 50.4784,
+      "close": 50.7325,
+      "volume": 1240000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-26",
+      "open": 50.8832,
+      "high": 51.2413,
+      "low": 50.7305,
+      "close": 50.9861,
+      "volume": 1250000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-27",
+      "open": 51.1376,
+      "high": 51.4972,
+      "low": 50.9837,
+      "close": 51.2411,
+      "volume": 1260000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-28",
+      "open": 50.7283,
+      "high": 51.0854,
+      "low": 50.576,
+      "close": 50.8319,
+      "volume": 1270000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-29",
+      "open": 50.9819,
+      "high": 51.3412,
+      "low": 50.829,
+      "close": 51.086,
+      "volume": 1280000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-01-30",
+      "open": 51.237,
+      "high": 51.5983,
+      "low": 51.0832,
+      "close": 51.3416,
+      "volume": 1290000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-02-01",
+      "open": 50.8271,
+      "high": 51.1844,
+      "low": 50.6744,
+      "close": 50.9289,
+      "volume": 1300000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-02-02",
+      "open": 51.0813,
+      "high": 51.4406,
+      "low": 50.928,
+      "close": 51.1836,
+      "volume": 1310000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-02-03",
+      "open": 51.3367,
+      "high": 51.6975,
+      "low": 51.1825,
+      "close": 51.4396,
+      "volume": 1320000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-02-04",
+      "open": 50.9253,
+      "high": 51.2838,
+      "low": 50.7723,
+      "close": 51.0274,
+      "volume": 1330000
+    },
+    {
+      "instrument": "BETA",
+      "date": "2024-02-05",
+      "open": 51.1799,
+      "high": 51.5404,
+      "low": 51.0264,
+      "close": 51.2824,
+      "volume": 1340000
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ STUB_BACKEND = "stub_backtest"
 REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
 MIN_INSTRUMENTS = 2
 MIN_BARS = 30
+ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def utc_now() -> str:
@@ -124,7 +126,7 @@ class GovernedVectorbtInputAdapter:
         if not isinstance(records, Sequence) or not records:
             raise VectorbtWorkflowError("dataset.records must be a non-empty list of OHLCV dicts")
 
-        # Collect (date_str, ohlcv_tuple) pairs per instrument so we can sort chronologically.
+        # Collect normalized ISO dates plus OHLCV tuples so sorting does not depend on input order.
         instrument_pairs: dict[
             str, list[tuple[str, tuple[float, float, float, float, float]]]
         ] = {}
@@ -132,8 +134,7 @@ class GovernedVectorbtInputAdapter:
             if not isinstance(rec, Mapping):
                 raise VectorbtWorkflowError("Each record must be a mapping")
             instrument = self._req_str(rec, "instrument")
-            date_raw = rec.get("date", "")
-            date_val: str = str(date_raw).strip() if date_raw is not None else ""
+            date_val = self._req_iso_date(rec, "date", instrument)
             bar: list[float] = []
             for f in REQUIRED_OHLCV_FIELDS:
                 v = rec.get(f)
@@ -155,7 +156,7 @@ class GovernedVectorbtInputAdapter:
         bars_per_instrument: dict[str, int] = {}
         ohlcv_by_instrument: dict[str, tuple[tuple[float, float, float, float, float], ...]] = {}
         for inst in instruments:
-            # Sort chronologically by ISO date string; empty strings sort before dated records.
+            # Dates are normalized to YYYY-MM-DD, so lexical order matches chronological order.
             sorted_pairs = sorted(instrument_pairs[inst], key=lambda p: p[0])
             bars = [p[1] for p in sorted_pairs]
             if len(bars) < MIN_BARS:
@@ -195,6 +196,21 @@ class GovernedVectorbtInputAdapter:
         if not value:
             raise VectorbtWorkflowError(f"'{key}' must be a non-empty string")
         return value
+
+    def _req_iso_date(self, payload: Mapping[str, Any], key: str, instrument: str) -> str:
+        value = self._opt_str(payload.get(key))
+        if not value:
+            raise VectorbtWorkflowError(f"record for {instrument} missing non-empty '{key}'")
+        if not ISO_DATE_PATTERN.fullmatch(value):
+            raise VectorbtWorkflowError(
+                f"record for {instrument} has invalid '{key}'; expected YYYY-MM-DD"
+            )
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
+        except ValueError as exc:
+            raise VectorbtWorkflowError(
+                f"record for {instrument} has invalid '{key}'; expected YYYY-MM-DD"
+            ) from exc
 
     def _opt_str(self, value: Any) -> str:
         if value is None:

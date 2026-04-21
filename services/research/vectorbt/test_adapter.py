@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import sys
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 SERVICE_DIR = Path(__file__).resolve().parent
@@ -23,12 +24,13 @@ from adapter.vectorbt_adapter import (
 def _make_records(instrument: str, base: float = 100.0, n: int = 35) -> list[dict]:
     records = []
     price = base
+    start_date = date(2024, 1, 1)
     for i in range(n):
         price = price * (1.0 + (0.005 if i % 3 != 0 else -0.008))
         records.append(
             {
                 "instrument": instrument,
-                "date": f"2024-01-{i + 1:02d}",
+                "date": (start_date + timedelta(days=i)).isoformat(),
                 "open": round(price * 0.998, 4),
                 "high": round(price * 1.005, 4),
                 "low": round(price * 0.995, 4),
@@ -108,6 +110,30 @@ class TestGovernedVectorbtInputAdapter(unittest.TestCase):
     def test_non_numeric_ohlcv_raises(self) -> None:
         bad = copy.deepcopy(MINIMAL_DATASET)
         bad["records"][0]["close"] = "not-a-number"
+        with self.assertRaises(VectorbtWorkflowError):
+            GovernedVectorbtInputAdapter().prepare(bad)
+
+    def test_missing_date_raises(self) -> None:
+        bad = copy.deepcopy(MINIMAL_DATASET)
+        del bad["records"][0]["date"]
+        with self.assertRaises(VectorbtWorkflowError):
+            GovernedVectorbtInputAdapter().prepare(bad)
+
+    def test_invalid_date_format_raises(self) -> None:
+        bad = copy.deepcopy(MINIMAL_DATASET)
+        bad["records"][0]["date"] = "not-a-date"
+        with self.assertRaises(VectorbtWorkflowError):
+            GovernedVectorbtInputAdapter().prepare(bad)
+
+    def test_non_zero_padded_month_rejected(self) -> None:
+        bad = copy.deepcopy(MINIMAL_DATASET)
+        bad["records"][0]["date"] = "2024-1-1"
+        with self.assertRaises(VectorbtWorkflowError):
+            GovernedVectorbtInputAdapter().prepare(bad)
+
+    def test_non_zero_padded_day_rejected(self) -> None:
+        bad = copy.deepcopy(MINIMAL_DATASET)
+        bad["records"][0]["date"] = "2024-01-1"
         with self.assertRaises(VectorbtWorkflowError):
             GovernedVectorbtInputAdapter().prepare(bad)
 

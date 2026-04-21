@@ -1,10 +1,10 @@
-# vectorbt Integration — Source Selection and Adapter Design
+# vectorbt Integration — Governed Rapid Strategy Backtesting
 
-Last updated: 2026-04-17
-Owner: OSS-NEXT-005 (Codex)
-Reviewer: Claude
-Status: version-pinned — execution-ready task family materialized
-Implementation home (planned): `services/research/vectorbt/`
+Last updated: 2026-04-21
+Owner: OSS-GATE2-001 (Codex2)
+Reviewer: Codex
+Status: governed — smoke and governance evidence committed
+Implementation home: `services/research/vectorbt/`
 
 ## 1. Locked Upstream Selection
 
@@ -15,7 +15,7 @@ Implementation home (planned): `services/research/vectorbt/`
 | Selected package | `vectorbt==0.26.2` |
 | Version pin source | `services/research/vectorbt/requirements.txt` |
 | Service dependency file | `services/research/vectorbt/requirements.txt` |
-| Worker image (planned) | `services/research/vectorbt/Dockerfile` |
+| Worker image | `services/research/vectorbt/Dockerfile` |
 | License | Apache 2.0 (open-source OSS edition) |
 
 Why `vectorbt==0.26.2` and not `vectorbt-pro`:
@@ -56,35 +56,37 @@ Type: rapid strategy prototyping / backtesting) as documented in
 - Passing raw market data frames that bypass `GovernedVectorbtInputAdapter` schema
   validation.
 
-## 3. Planned Adapter Surface
+## 3. Governed Adapter Surface
 
-The following adapter components are to be implemented in the follow-on task.
-This section serves as the canonical design target for the implementation owner.
+These adapter components are now implemented and define the governed surface.
 
 ### `services/research/vectorbt/adapter/vectorbt_adapter.py`
 
 ```
 GovernedVectorbtInputAdapter
-  - accepts a StrategySpec + OHLCV data block
-  - validates: instrument list non-empty, bar count ≥ 30, OHLCV fields present
-  - rejects: NaN-heavy frames, missing close column, invalid date index
-  - output: normalized signals dict ready for vbt.Portfolio.from_signals()
+  - accepts a governed dataset payload with dataset_id, strategy_id, source_dataset_refs,
+    optional source_strategy_spec_id, data_frequency, and records[]
+  - validates: dataset/source ids present, instrument list non-empty, bar count ≥ 30,
+    OHLCV fields present and numeric, and every record.date is a valid YYYY-MM-DD value
+  - rejects: missing dataset refs, empty strategy id, non-numeric OHLCV fields,
+    missing dates, malformed dates, and underfilled instrument histories
+  - output: PreparedVectorbtDataset with normalized chronological OHLCV tuples per instrument
 
 StubVectorbtBackend
-  - accepts normalized signals dict
-  - returns a deterministic dict of performance metrics (no real computation)
+  - accepts PreparedVectorbtDataset plus BacktestConfig
+  - runs deterministic MA-crossover logic in pure Python
+  - returns per-instrument metrics plus aggregate metrics (no vectorbt install required)
   - safe for CI and local smoke tests without the full vectorbt install
 
 VectorbtBackend
-  - wraps vbt.Portfolio.from_signals() or from_order_func()
+  - wraps vbt.Portfolio.from_signals()
   - activated when PANTHEON_VECTORBT_BACKEND=real
-  - returns dict of performance metrics: total_return, sharpe_ratio, max_drawdown,
-    win_rate, num_trades
+  - returns the same governed metric shape as the stub backend
 
-run_vectorbt_workflow(strategy_spec, ohlcv_data, backend=None)
+run_vectorbt_workflow(dataset, backend=None, config=None)
   - governed entry point
   - calls GovernedVectorbtInputAdapter → backend.run() → output normalization
-  - returns (artifact_bundle, registry_entry)
+  - returns VectorbtRunResult(prepared_dataset, backtest_result, artifact_bundle, registry_entry)
 ```
 
 ### Output Contract
@@ -92,20 +94,63 @@ run_vectorbt_workflow(strategy_spec, ohlcv_data, backend=None)
 `artifact_bundle`:
 ```json
 {
+  "schema_version": "1.0",
   "artifact_family": "vectorbt_backtest",
   "framework": "vectorbt",
   "framework_version": "0.26.2",
-  "strategy_id": "<from StrategySpec>",
-  "metrics": {
-    "total_return": <float>,
-    "sharpe_ratio": <float>,
-    "max_drawdown": <float>,
-    "win_rate": <float>,
-    "num_trades": <int>
+  "created_at": "<UTC iso timestamp>",
+  "created_by": "<requested_by>",
+  "dataset_summary": {
+    "dataset_id": "<dataset_id>",
+    "strategy_id": "<strategy_id>",
+    "source_dataset_refs": ["<dataset ref>"],
+    "source_strategy_spec_id": "<optional strategy spec ref>",
+    "num_instruments": 2,
+    "total_bars": 70,
+    "bars_per_instrument": {
+      "AAA": 35,
+      "BBB": 35
+    },
+    "data_frequency": "daily",
+    "instruments": ["AAA", "BBB"]
+  },
+  "backtest_config": {
+    "version": "1.0.0",
+    "short_window": 5,
+    "long_window": 20,
+    "init_cash": 100000.0,
+    "fees": 0.001,
+    "requested_by": "<requested_by>"
+  },
+  "per_instrument_metrics": {
+    "AAA": {
+      "total_return": <float>,
+      "sharpe_ratio": <float>,
+      "max_drawdown": <float>,
+      "final_portfolio_value": <float>,
+      "trade_count": <int>,
+      "num_bars": <int>
+    }
+  },
+  "aggregate_metrics": {
+    "num_instruments": <int>,
+    "mean_total_return": <float>,
+    "mean_sharpe_ratio": <float>,
+    "mean_max_drawdown": <float>,
+    "total_trades": <int>
   },
   "governance": {
+    "required_ohlcv_fields": ["open", "high", "low", "close", "volume"],
     "direct_live_influence": false,
-    "lean_consumption": "scoring_only_not_direct_action"
+    "output_type": "backtest_result",
+    "lean_consumption": "scoring_only_not_direct_action",
+    "notes": ["<backend note>"]
+  },
+  "registry_hints": {
+    "artifact_type": "backtest_result",
+    "artifact_state": "draft",
+    "deployment_stage": "none",
+    "source_dataset_refs": ["<dataset ref>"]
   }
 }
 ```
@@ -114,15 +159,45 @@ run_vectorbt_workflow(strategy_spec, ohlcv_data, backend=None)
 ```json
 {
   "artifact_type": "backtest_result",
+  "strategy_id": "<strategy_id>",
+  "version": "1.0.0",
   "artifact_state": "draft",
   "deployment_summary": {
     "current_stage": "none"
   },
+  "created_at": "<artifact created_at>",
   "lineage": {
-    "strategy_spec_ref": "<strategy_id>",
+    "source_run_ids": ["<backend run id>"],
+    "source_dataset_refs": ["<dataset ref>"],
+    "source_strategy_spec_id": "<optional strategy spec ref>"
+  },
+  "storage_ref": {
+    "backend": "object_store",
+    "path": "research/vectorbt/<strategy_id>/<version>/artifact.json"
+  },
+  "checksum": "sha256:<artifact hash>",
+  "producer_run_id": "<backend run id>",
+  "aggregate_metrics": {
+    "num_instruments": <int>,
+    "mean_total_return": <float>,
+    "mean_sharpe_ratio": <float>,
+    "mean_max_drawdown": <float>,
+    "total_trades": <int>
+  },
+  "metadata": {
     "framework": "vectorbt",
-    "framework_version": "0.26.2"
-  }
+    "framework_version": "0.26.2",
+    "backtest_backend": "stub_backtest | vectorbt_portfolio",
+    "strategy": "ma_crossover",
+    "short_window": <int>,
+    "long_window": <int>,
+    "num_instruments": <int>,
+    "total_bars": <int>,
+    "data_frequency": "daily"
+  },
+  "approved_at": null,
+  "approver": null,
+  "rollback_target": null
 }
 ```
 
@@ -138,10 +213,10 @@ Two execution modes are intentionally supported:
 1. Stub backend for deterministic CI and local smoke tests
 2. Real `VectorbtBackend` for dedicated research workers (`PANTHEON_VECTORBT_BACKEND=real`)
 
-## 5. Smoke-Test Plan
+## 5. Smoke-Test Evidence
 
 See `services/research/vectorbt/ACTIVATION_CRITERIA.md §Smoke-Test Plan` for the
-full procedure. Summary:
+full procedure. Current governed evidence summary:
 
 | Step | Command | Pass Condition |
 |---|---|---|
@@ -149,6 +224,7 @@ full procedure. Summary:
 | 2 | `python services/research/vectorbt/smoke_test.py` | zero exceptions; `artifact_state=draft` |
 | 3 | `pytest services/research/vectorbt/test_adapter.py -v` | ≥10 tests pass |
 | 4 | Record result in `integrations/vectorbt/smoke_test.md` | committed |
+| 5 | Refresh Gate 2 evidence | `integrations/vectorbt/governance.md` committed |
 
 ## 6. What Advances the Status
 
@@ -163,6 +239,6 @@ full procedure. Summary:
 
 - version pin: `services/research/vectorbt/requirements.txt`
 - activation criteria: `services/research/vectorbt/ACTIVATION_CRITERIA.md`
-- governance overlay (planned): `integrations/vectorbt/governance.md`
-- smoke procedure (planned): `integrations/vectorbt/smoke_test.md`
+- governance overlay: `integrations/vectorbt/governance.md`
+- smoke evidence: `integrations/vectorbt/smoke_test.md`
 - maturity matrix: `RESEARCH_BACKEND_MATURITY_MATRIX.md`
