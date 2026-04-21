@@ -2,7 +2,7 @@ feature_id: RW-04-experiment-launch
 type: frontend-feedback
 source_repo: ajoe734/front-ai-trading-system
 source_branch: pkt-004-detail-fix
-source_commit: 6e17dd8f233dad31d20b64781f23063e00ddde54
+source_commit: f672af2c0019618ce05cf07c7ed50c65897e9fbb
 workbench: research-workbench
 screen_id: screen-experiment-launch
 status: completed
@@ -12,12 +12,11 @@ api_gap_requests_path: docs/pantheon-feedback/RW-04-experiment-launch/API_GAP_RE
 ui_decisions_path: docs/pantheon-feedback/RW-04-experiment-launch/UI_DECISIONS.md
 qa_status_path: docs/pantheon-feedback/RW-04-experiment-launch/QA_STATUS.md
 blocking_summary: >-
-  Static front-end verification is complete, but operator-auth live HTTP
-  acceptance remains blocked by Pantheon runtime drift. On 2026-04-21,
-  http://127.0.0.1:18001/health returned 200, an unauthenticated probe to
-  GET /api/v1/experiments?page_size=5 returned 401 INVALID_TOKEN, and the live
-  /openapi.json document still omitted /api/v1/experiments* paths, so the
-  active runtime has not yet been re-verified as a truthful RW-04 publication.
+  No remaining blockers. Runtime blocker resolved: /openapi.json lists all four
+  /api/v1/experiments* routes and unauthenticated probes return 401.
+  Wiring commit f672af2c (App.tsx, AppSidebar.tsx, WorkbenchBreadcrumb.tsx,
+  bffClient.ts) is committed and pushed. Full chain is GitHub-visible at
+  origin/pkt-004-detail-fix HEAD f00791b.
 changed_files:
   - .coordination/requests/RW-04-experiment-launch-ui-done.yaml
   - .coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml

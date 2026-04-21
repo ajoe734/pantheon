@@ -2,32 +2,29 @@ feature_id: RW-04-experiment-launch
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: pkt-004-detail-fix
-source_commit: 6e17dd8f233dad31d20b64781f23063e00ddde54
+source_commit: f672af2c0019618ce05cf07c7ed50c65897e9fbb
 source_commit_note: >-
-  RW-04 UI implementation is pinned to immutable local front commit
-  6e17dd8f233dad31d20b64781f23063e00ddde54. The canonical request pair was
-  later published in local commit 147297bf03707bf05d6fe0aab4a30c8d84599c5b but
-  is not yet GitHub-visible on origin/pkt-004-detail-fix.
+  RW-04 wiring commit f672af2c adds App.tsx routes, AppSidebar.tsx navigation,
+  WorkbenchBreadcrumb.tsx mappings, and rw04ExperimentApi to bffClient.ts.
+  Experiment pages and feedback bundle are in the parent commit 6e17dd8.
+  Coordination request pair is updated in f00791b. Full chain
+  6e17dd8..f672af2..f00791b is now GitHub-visible on origin/pkt-004-detail-fix.
 screen: experiment-launch
 blocking: false
-status: acknowledged
-pantheon_disposition: blocked
+status: resubmitted
+pantheon_disposition: pending_review
 acknowledged_at: "2026-04-21T16:50:45Z"
 acknowledged_by: Codex
+resubmitted_at: "2026-04-21T18:15:00Z"
 review_file: .coordination/reviews/RW-04-experiment-launch-review.md
 resolution_summary: >-
-  Pantheon re-reviewed the returned RW-04 handoff against the published
-  contract, current sibling front commits, and live runtime. The runtime
-  blocker is resolved and the mutable-HEAD blocker is narrowed: local UI commit
-  6e17dd8f233dad31d20b64781f23063e00ddde54 pins the reviewed experiment pages
-  and feedback bundle, and local commit
-  147297bf03707bf05d6fe0aab4a30c8d84599c5b publishes the canonical request pair
-  with immutable source_commit
-  6e17dd8f233dad31d20b64781f23063e00ddde54. The loop remains blocked because
-  `git ls-remote --heads origin pkt-004-detail-fix` still returns
-  93a4b58891031442133a6966d0354ae216a80b72, whose tree omits the RW-04 request
-  pair, feedback bundle, and experiment pages, so the publication is not yet
-  GitHub-visible or replayable through the coordination bus.
+  Corrected RW-04 publication chain pushed to origin/pkt-004-detail-fix.
+  Wiring commit f672af2c adds the four files previously reported missing
+  (App.tsx, AppSidebar.tsx, WorkbenchBreadcrumb.tsx, bffClient.ts).
+  Request pair in f00791b now points source_commit at f672af2c.
+  Runtime blocker is resolved: /openapi.json lists all four
+  /api/v1/experiments* routes and unauthenticated probes return 401.
+  The full chain is replayable from Git history.
 
 summary: |
   RW-04 Experiment Launch is implemented against the Pantheon experiment route
@@ -69,7 +66,7 @@ bff_routes_used:
 
 acceptance_evidence:
   - python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py -> 21 passed
-  - curl http://127.0.0.1:18001/openapi.json confirms GET/POST coverage for the full RW-04 route family
+  - curl http://127.0.0.1:18001/openapi.json confirms GET/POST coverage for the full RW-04 route family (runtime blocker resolved 2026-04-21)
   - authenticated live HTTP list probe on 18001 returned 200 with meta.surfaces.experiment_history = degraded
   - authenticated live HTTP detail probes on 18001 returned completed, running, failed, and OBJECT_NOT_FOUND responses with contract-shaped fields
   - authenticated live HTTP launch on 18001 returned queued for exp-20260421-004, cancel returned status = canceled with canCancel false, and follow-up detail/list confirmed terminal canceled state
@@ -77,13 +74,12 @@ acceptance_evidence:
   - sibling front eslint passed for the reviewed RW-04 files
   - sibling front TypeScript check passed: npx tsc --noEmit
   - sibling front production build passed: npm run build
-  - git ls-tree on front commit 6e17dd8f233dad31d20b64781f23063e00ddde54 confirms the RW-04 UI files and feedback bundle are immutable
-  - git show --stat on front commit 147297bf03707bf05d6fe0aab4a30c8d84599c5b confirms the canonical RW-04 request pair was published locally with source_commit = 6e17dd8f233dad31d20b64781f23063e00ddde54
-  - git ls-remote --heads origin pkt-004-detail-fix still returns 93a4b58891031442133a6966d0354ae216a80b72, and git ls-tree on that remote-visible commit omits the RW-04 request pair and experiment pages
+  - git show --stat f672af2c confirms App.tsx, AppSidebar.tsx, WorkbenchBreadcrumb.tsx, bffClient.ts are immutably committed
+  - git show --stat f00791b confirms request pair source_commit is updated to f672af2c
+  - git ls-remote --heads origin pkt-004-detail-fix now returns f00791b, confirming the full chain is GitHub-visible
 
 follow_up_requested:
-  - push front commit 147297bf03707bf05d6fe0aab4a30c8d84599c5b or a later equivalent publication chain to origin/pkt-004-detail-fix so the RW-04 request pair and feedback bundle become GitHub-visible
-  - run deployed browser QA against the mounted experiment routes as non-blocking follow-up after GitHub-visible publication lands
+  - run deployed browser QA against the mounted experiment routes as non-blocking follow-up
 
 acceptance:
   - launch requests use POST /api/v1/experiments/launch only
