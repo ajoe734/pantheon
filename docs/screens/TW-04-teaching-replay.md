@@ -5,14 +5,14 @@
 - Workbench: Trainer Workbench
 - Screen ID: `screen-teaching-replay`
 - Feature ID: `TW-04-teaching-replay`
-- Packet status: **contract-published** — replay routes, replay-grade `TeachingEvent` semantics, evidence-link resolution, and commit/discard authority are defined; live BFF implementation is still the gate before UI work starts
+- Packet status: **route-live** — replay list/detail routes and commit/discard write routes are live, and the frontend handoff bundle is published for production UI activation
 - Task: `TW-04-REPLAY-001`
 
 ## Contract Note
 
-The Trainer Workbench now has a published replay slice for browsing finished trainer sessions, replaying ordered teaching history, and recording commit/discard decisions against a completed candidate state. UI implementation must not start until Pantheon confirms the replay list/detail routes and the commit/discard write routes are live and returning the published field shape.
+The Trainer Workbench now has a route-live replay slice for browsing finished trainer sessions, replaying ordered teaching history, and recording commit/discard decisions against a completed candidate state. Pantheon has confirmed the replay list/detail routes and the commit/discard write routes are live and returning the published field shape, so production UI may proceed against this route family.
 
-The UI must not substitute Persona teaching history, reconstruct evidence navigation from raw refs, or infer commit/discard authority locally. All replay truth comes from the Pantheon BFF replay surface.
+The UI must not substitute Persona teaching history, reconstruct evidence navigation from raw refs, or infer commit/discard authority locally. All replay truth comes from the Pantheon BFF replay surface. If the live payload diverges from the synced contract, emit the canonical TW-04 `bff-gap` handoff instead of inventing a fallback.
 
 ## User Goal
 
@@ -27,7 +27,7 @@ Primary routes:
 
 ## Readiness Gate
 
-Do not open the production pages until Pantheon confirms:
+Pantheon has already confirmed the following production gate for TW-04:
 
 1. `GET /api/v1/trainer/replay` is live with the published replay list row shape, `replay_resolution.state`, and `meta.surfaces.trainer_replay`.
 2. `GET /api/v1/trainer/replay/{session_id}` is live with ordered replay-grade `events[]`, `artifacts`, `event_summary`, and `allowedActions.canCommit` / `allowedActions.canDiscard`.
@@ -35,7 +35,7 @@ Do not open the production pages until Pantheon confirms:
 4. `POST /api/v1/trainer/sessions/{session_id}/commit` is live with the published request guard (`expected_candidate_snapshot_at`) and append-only `commit` event behavior.
 5. `POST /api/v1/trainer/sessions/{session_id}/discard` is live with the published request guard (`expected_candidate_snapshot_at`) and append-only `discard` event behavior.
 
-Until those gates are met, render a pending-BFF placeholder on both replay routes. No fake replay timeline, no local evidence drawer links, and no commit/discard buttons driven by mock session state.
+The production pages may open against this route family now. If the live payload diverges from the synced contract, emit a `bff-gap` handoff instead of reintroducing a pending-BFF placeholder or local fallback state.
 
 ## Page Sections
 
@@ -151,7 +151,7 @@ The replay route owns degradation truth. Do not infer it from empty `events[]`, 
 - Do not derive evidence drawer links from raw IDs or artifact refs.
 - Do not infer commit/discard authority from session `status`, preview state, or artifact presence alone.
 - Do not mutate local timeline state after commit/discard without the backend-recorded `event`.
-- Do not start production UI until Pantheon confirms the replay routes and decision routes are live.
+- Do not reintroduce a pending-BFF placeholder now that Pantheon has confirmed the replay routes and decision routes are live.
 - If any required field is missing, emit a `bff-gap` handoff instead of inventing a fallback.
 
 ## Acceptance
@@ -167,5 +167,6 @@ The replay route owns degradation truth. Do not infer it from empty `events[]`, 
 
 - BFF contract: `docs/bff/TW-04-teaching-replay.md`
 - Example payload: `docs/examples/TW-04-teaching-replay.json`
+- Frontend handoff: `docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md`
 - Packet family: `docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md`
 - Frontend SA: `docs/lovable/PANTHEON_FRONTEND_SA.md`

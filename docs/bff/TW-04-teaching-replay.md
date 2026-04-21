@@ -2,7 +2,7 @@
 
 ## Status
 
-**Contract published** — the trainer replay list/detail routes, replay-grade `TeachingEvent` schema, BFF-resolved evidence links, commit/discard authority model, and artifact-ref semantics are now the definitive implementation target for the Pantheon BFF. UI work must not start until Pantheon confirms the routes are live and returning this field shape.
+**Routes live** — the trainer replay list/detail routes (`GET /api/v1/trainer/replay`, `GET /api/v1/trainer/replay/{session_id}`) and commit/discard write routes (`POST /api/v1/trainer/sessions/{session_id}/commit`, `POST /api/v1/trainer/sessions/{session_id}/discard`) are confirmed live as of `2026-04-20T12:45:00Z` and return the published replay list/detail, replay-grade `TeachingEvent`, evidence-link, and artifact-ref field shape. Frontend handoff bundle published at `docs/pantheon-handoffs/TW-04-teaching-replay/`. UI implementation may proceed.
 
 Task: `TW-04-REPLAY-001`
 
