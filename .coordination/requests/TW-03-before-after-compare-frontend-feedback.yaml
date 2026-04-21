@@ -1,0 +1,31 @@
+feature_id: TW-03-before-after-compare
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: d1fe9917deef22cfd0c656e1210eff06abd1cd83
+workbench: trainer-workbench
+screen_id: screen-before-after-compare
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/TW-03-before-after-compare
+feedback_path: docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - .coordination/requests/TW-03-before-after-compare-ui-done.yaml
+  - .coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml
+  - docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md
+  - src/pages/trainer/TrainerBeforeAfterCompare.tsx
+  - src/pages/trainer/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+pantheon_review_hint: review-ui
+summary: >
+  TW-03 Before/After Compare implemented against the live preview route family.
+  Metric deltas, warning hierarchy, control diff, surface degradation, polling,
+  preview_unavailable branch, and refresh authority are all backend-owned.
+  No open API gaps from this pass.

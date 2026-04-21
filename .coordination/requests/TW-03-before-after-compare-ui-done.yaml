@@ -1,0 +1,57 @@
+feature_id: TW-03-before-after-compare
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: d1fe9917deef22cfd0c656e1210eff06abd1cd83
+screen: before-after-compare
+screen_id: screen-before-after-compare
+blocking: false
+
+summary: |
+  Before/After Compare is implemented against the live TW-03 Pantheon preview route family:
+  GET /api/v1/trainer/sessions/{session_id}/preview and
+  POST /api/v1/trainer/sessions/{session_id}/preview. Metric deltas, warning hierarchy,
+  control diff, refresh authority, polling semantics, preview_unavailable branch, and
+  all four surface degradation states are driven exclusively by the backend preview response.
+  No client-side preview math, warning inference, control-diff reconstruction, or polling
+  heuristics were introduced.
+
+implemented_paths:
+  - /trainer/sessions/:session_id/compare
+
+used_endpoints:
+  - GET /api/v1/trainer/sessions/{session_id}/preview
+  - POST /api/v1/trainer/sessions/{session_id}/preview
+
+changed_files:
+  - .coordination/requests/TW-03-before-after-compare-ui-done.yaml
+  - .coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml
+  - docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md
+  - src/pages/trainer/TrainerBeforeAfterCompare.tsx
+  - src/pages/trainer/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+
+feedback_paths:
+  - docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md
+
+acceptance:
+  - compare UI uses only GET and POST preview route family
+  - metric deltas rendered from backend metric_delta[] without local recomputation
+  - warning hierarchy rendered from backend warnings[] in backend order
+  - warning_count_by_level used only for summary chips
+  - control diff rendered from backend control_diff[] without re-fetching TW-02
+  - refresh CTA visible only when allowedActions.canRefreshPreview is true
+  - POST called with refresh_mode=manual only
+  - polling uses GET preview with eval_id and poll_interval_ms exactly
+  - polling stops on status resolve, degraded/unavailable surface, or deadline_at
+  - preview_unavailable renders backend degraded_copy as canonical degraded state, not loading
+  - all four surface degradation states handled per BFF contract
+  - BFF contract gap triggers alert with gap handoff path, no local fallback
+  - npm run build passes
