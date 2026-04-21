@@ -2,218 +2,157 @@
 
 ## Status
 
-`delivered`
+`loop-complete`
 
 ## Summary
 
-Pantheon re-reviewed the returned `ui-done` handoff
-`.coordination/requests/RW-04-experiment-launch-ui-done.yaml` plus the paired
-frontend-feedback response against the current RW-04 contract, canonical
-example payload, coordination replay rules, the sibling front implementation,
-the live operator-bff runtime, and a workspace-backed unavailable probe.
+Pantheon synced the accepted `RW-04-experiment-launch` `ui-done` handoff and
+paired `frontend-feedback` bundle from `ajoe734/front-ai-trading-system`
+against the canonical experiment-launch contract, example payload, the sibling
+front publication chain, and the current Pantheon BFF/runtime evidence.
 
-The RW-04 route family is now verified over truthful HTTP:
+The earlier RW-04 publication blocker is now resolved:
+
+- reviewed UI transport commit:
+  `f672af2c0019618ce05cf07c7ed50c65897e9fbb`
+- current request-pair publish commit:
+  `f00791b217e5550d80c1add72a8560b42bc3a056`
+- `git ls-remote --heads origin pkt-004-detail-fix` now resolves to
+  `f00791b217e5550d80c1add72a8560b42bc3a056`
+- the publish commit republishes the canonical request pair with
+  `source_commit: f672af2c0019618ce05cf07c7ed50c65897e9fbb`
+
+Pantheon also reconfirmed that the RW-04 route family remains live and
+contract-shaped:
 
 - `POST /api/v1/experiments/launch`
 - `GET /api/v1/experiments`
 - `GET /api/v1/experiments/{experiment_id}`
 - `POST /api/v1/experiments/{experiment_id}/cancel`
 
-Targeted RW-04 contract tests pass, `/openapi.json` on
-`http://127.0.0.1:18001` advertises all four routes, authenticated live probes
-return truthful queued, running, completed, failed, canceled, degraded, and
-`OBJECT_NOT_FOUND` behavior, and a workspace-backed probe on
-`http://127.0.0.1:18012` returns truthful unavailable list/detail envelopes.
+`python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py`
+still passes (`21 passed`), and the live OpenAPI document on
+`http://127.0.0.1:18001/openapi.json` still advertises the full
+`/api/v1/experiments*` route family.
 
-The reviewed front working tree is also contract-aligned now: the detail 404
-branch preserves `OBJECT_NOT_FOUND`, the launch status view keeps retrying
-after an initial detail-read failure, history filter changes reset pagination
-backstack, and the targeted sibling front eslint, TypeScript, and production
-build checks pass.
-
-Pantheon does not need a new RW-04 endpoint or any shadow-state workaround in
-this cycle. Pantheon's runtime follow-up is complete. The remaining blocker is
-front-owned publication replay only.
+No new Pantheon endpoint, contract expansion, or client-side shadow state is
+authorized or required in this cycle. The current RW-04 loop is complete apart
+from deferred browser QA.
 
 ## Delivered Findings
 
-### 1. Pantheon RW-04 routes are live and contract-shaped over real HTTP
+### 1. The request pair is now replay-clean and Git-visible
 
-Published RW-04 contract:
+Observed in the sibling front repo:
 
-- `POST /api/v1/experiments/launch`
-- `GET /api/v1/experiments`
-- `GET /api/v1/experiments/{experiment_id}`
-- `POST /api/v1/experiments/{experiment_id}/cancel`
+- `git show f00791b217e5550d80c1add72a8560b42bc3a056:.coordination/requests/RW-04-experiment-launch-ui-done.yaml`
+  publishes
+  `source_commit: f672af2c0019618ce05cf07c7ed50c65897e9fbb`
+- the matching
+  `.coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml`
+  publishes the same real `source_commit`
+- `git branch -r --contains f00791b217e5550d80c1add72a8560b42bc3a056`
+  returns `origin/pkt-004-detail-fix`
+- `git ls-tree -r --name-only f672af2c0019618ce05cf07c7ed50c65897e9fbb -- ...`
+  returns the canonical request pair, the
+  `docs/pantheon-feedback/RW-04-experiment-launch/*` bundle,
+  `src/App.tsx`, `src/components/AppSidebar.tsx`,
+  `src/components/WorkbenchBreadcrumb.tsx`, `src/lib/bffClient.ts`, and the
+  six experiment files
 
-Observed live runtime results at `http://127.0.0.1:18001`:
+Impact:
 
-- `GET /openapi.json` advertises the full RW-04 route family
-- authenticated `GET /api/v1/experiments?page_size=5` returns `200 OK` with
-  `meta.surfaces.experiment_history = degraded`
-- authenticated `GET /api/v1/experiments/exp-20260419-012` returns a completed
-  payload with `allowedActions.canCancel = false`
-- authenticated `GET /api/v1/experiments/exp-20260418-009` returns a running
-  payload with `allowedActions.canCancel = true`
-- authenticated `GET /api/v1/experiments/exp-20260417-004` returns a failed
-  payload with populated `failure.reason_code` and `failure.message`
-- authenticated `GET /api/v1/experiments/does-not-exist` returns
-  `404 OBJECT_NOT_FOUND`
-- authenticated `POST /api/v1/experiments/launch` returned queued
-  `exp-20260421-004`; authenticated
-  `POST /api/v1/experiments/exp-20260421-004/cancel` returned
-  `status = canceled` with `allowedActions.canCancel = false`; follow-up
-  detail/list reads confirmed the durable canceled state
+- Pantheon can now replay the returned RW-04 cycle from a truthful remote
+  branch head
+- the closeout record no longer points at the stale `6e17dd8`/`147297b`
+  intermediate publication tuple
 
-Observed unavailable verification at `http://127.0.0.1:18012`:
+### 2. The reviewed UI transport commit remains contract-aligned
 
-- list route returns `200 OK`, `data = []`, and
-  `meta.surfaces.experiment_history = unavailable`
-- detail route returns `200 OK`,
-  `meta.surfaces.experiment_status = unavailable`, while preserving the
-  backend-owned experiment snapshot
+Observed in the accepted review packet:
 
-Observed automated verification:
+- `ExperimentLaunch.tsx` continues to poll durable status through
+  `GET /api/v1/experiments/{experiment_id}` and preserves a retry path after an
+  initial detail-read failure
+- `ExperimentRunHelpers.ts` only classifies route-not-live for
+  `404 NOT_FOUND` and `404 ROUTE_NOT_FOUND`, preserving
+  `404 OBJECT_NOT_FOUND` for missing experiment ids
+- `ExperimentHistory.tsx` clears pagination history when `ticket_id` or
+  `status` changes
+- `ExperimentRunView.tsx` still gates cancel visibility on
+  `allowedActions.canCancel` plus degradation semantics only
+- the accepted front verification still records targeted eslint,
+  `npx tsc --noEmit`, and `npm run build` passing on 2026-04-21
+
+Impact:
+
+- the reviewed RW-04 UI behavior remains aligned to the published acceptance
+  rules
+- the final publish commit only replay-cleans the request pair; it does not
+  introduce a new UI divergence
+
+### 3. Pantheon RW-04 routes remain live and contract-shaped
+
+Observed in the current Pantheon workspace/runtime:
 
 - `python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py`
-- Result: `21 passed`
+  returned `21 passed`
+- the live OpenAPI document on `http://127.0.0.1:18001/openapi.json` still
+  lists:
+  - `POST /api/v1/experiments/launch`
+  - `GET /api/v1/experiments`
+  - `GET /api/v1/experiments/{experiment_id}`
+  - `POST /api/v1/experiments/{experiment_id}/cancel`
+- the accepted review packet already captured live HTTP proof for queued,
+  running, completed, failed, canceled, degraded, unavailable, and
+  `OBJECT_NOT_FOUND` behavior on the published route family
 
 Impact:
 
-- Pantheon's live HTTP route publication is no longer the blocker for RW-04
-- the resolved runtime follow-up in
-  `.coordination/requests/RW-04-experiment-launch-needs-runtime.yaml` can stay
-  completed
-
-### 2. The reviewed RW-04 front working tree is now contract-aligned
-
-Observed front behavior in the sibling working tree:
-
-- `ExperimentLaunch.tsx` keeps polling after an initial failed detail read and
-  exposes a retry path while waiting for the first durable snapshot
-- `ExperimentRunHelpers.ts` only classifies route-not-live for
-  `404 NOT_FOUND` or `404 ROUTE_NOT_FOUND`, preserving
-  `404 OBJECT_NOT_FOUND` from the live detail route
-- `ExperimentHistory.tsx` clears `pageHistory` when either `ticket_id` or
-  `status` changes
-- `ExperimentRunView.tsx` still gates cancel rendering on
-  `allowedActions.canCancel` plus surface degradation semantics only
-- the reviewed front app still mounts:
-  - `/research/experiments`
-  - `/research/experiments/launch`
-  - `/research/experiments/:experiment_id`
-
-Observed sibling front verification:
-
-- targeted eslint for the RW-04 slice passed
-- `npx tsc --noEmit` passed
-- `npm run build` passed with only the existing non-blocking Browserslist age
-  notice and Vite chunk-size warning
-
-Impact:
-
-- the earlier front-owned RW-04 correctness findings are resolved in the
-  current working tree
-- Pantheon's remaining RW-04 blocker is publication truth, not UI behavior
-
-### 3. The Git-visible front publication is still incomplete
-
-Current front publication state:
-
-- both returned request bodies still advertise `source_commit: HEAD`
-- sibling front `HEAD` is
-  `93a4b58891031442133a6966d0354ae216a80b72` on branch
-  `pkt-004-detail-fix`
-- `git -C ../front-ai-trading-system ls-tree -r --name-only HEAD -- ...`
-  shows only:
-  - `src/App.tsx`
-  - `src/components/AppSidebar.tsx`
-  - `src/components/WorkbenchBreadcrumb.tsx`
-  - `src/lib/bffClient.ts`
-- `git -C ../front-ai-trading-system status --short -- ...` still shows the
-  canonical request pair, feedback bundle, and RW-04 experiment pages as
-  working-tree-only artifacts
-
-Impact:
-
-- replay still cannot reconstruct the reviewed RW-04 cycle from a truthful
-  immutable front commit tuple
-- supervisor-visible closeout still cannot proceed until the front repo
-  republishes the request pair, feedback bundle, and reviewed UI files from
-  one Git-visible commit and points both request bodies at that exact SHA
+- no additional Pantheon runtime or contract follow-up remains for the current
+  RW-04 packet scope
 
 ## Pantheon-Side Outcome
 
 - Pantheon contract: unchanged
-- Published endpoint family: live and verified over real HTTP
+- Pantheon runtime route family: still live and verified
 - Pantheon delivery completed:
-  - revalidated the full RW-04 route family through live authenticated HTTP
-  - confirmed truthful unavailable RW-04 list/detail envelopes through a
-    workspace-backed HTTP probe
-  - reran the targeted RW-04 contract slice (`21 passed`)
-  - confirmed the current sibling RW-04 working tree matches the published
-    contract and acceptance rules
+  - re-confirmed the replay-clean `f672af2c -> f00791b` front publication chain
+  - re-ran the targeted RW-04 contract slice in the current workspace
+  - re-confirmed live OpenAPI route publication for the full
+    `/api/v1/experiments*` family
 - Front follow-up still required:
-  - publish the canonical `ui-done` request, canonical `frontend-feedback`
-    request, feedback bundle, and reviewed RW-04 UI files from one immutable
-    front commit
-  - replace `source_commit: HEAD` with that exact immutable publication SHA in
-    both returned request bodies
-  - run deployed browser QA against `/research/experiments`,
-    `/research/experiments/launch`, and
-    `/research/experiments/:experiment_id` as non-blocking confirmation after
-    publication
-- Current loop outcome: `delivered` on the Pantheon backend-delivery record;
-  packet replay remains front-blocked until the canonical front publication
-  tuple is truthful
+  - none for the current packet scope
+- Current loop outcome: `loop-complete`
 
 ## Verification Performed
 
-- Reviewed the returned Pantheon-local request and response artifacts:
+- Reviewed Pantheon-visible request artifacts:
   - `.coordination/requests/RW-04-experiment-launch-ui-done.yaml`
-  - `.coordination/responses/RW-04-experiment-launch-frontend-feedback.yaml`
-- Reviewed the canonical packet:
+  - `.coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml`
+- Reviewed the accepted Pantheon review packet:
+  - `.coordination/reviews/RW-04-experiment-launch-review.md`
+- Re-checked the canonical packet:
   - `docs/bff/RW-04-experiment-launch.md`
   - `docs/examples/RW-04-experiment-launch.json`
   - `docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md`
-- Re-reviewed the sibling front implementation:
-  - `src/pages/research/ExperimentLaunch.tsx`
-  - `src/pages/research/ExperimentDetail.tsx`
-  - `src/pages/research/ExperimentHistory.tsx`
-  - `src/pages/research/ExperimentRunHelpers.ts`
-  - `src/pages/research/ExperimentRunView.tsx`
-  - `src/pages/research/ExperimentTypes.ts`
-  - `src/lib/bffClient.ts`
-  - `src/App.tsx`
-  - `src/components/AppSidebar.tsx`
-  - `src/components/WorkbenchBreadcrumb.tsx`
-- Ran sibling front verification:
-  - targeted eslint for the RW-04 slice
-  - `npx tsc --noEmit`
-  - `npm run build`
+- Verified the remote-visible request-pair publish commit:
+  - `git -C ../front-ai-trading-system ls-remote --heads origin pkt-004-detail-fix`
+  - `git -C ../front-ai-trading-system branch -r --contains f00791b217e5550d80c1add72a8560b42bc3a056`
+  - `git -C ../front-ai-trading-system show f00791b217e5550d80c1add72a8560b42bc3a056:.coordination/requests/RW-04-experiment-launch-ui-done.yaml`
+  - `git -C ../front-ai-trading-system show f00791b217e5550d80c1add72a8560b42bc3a056:.coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml`
+- Verified the reviewed UI transport commit contents:
+  - `git -C ../front-ai-trading-system ls-tree -r --name-only f672af2c0019618ce05cf07c7ed50c65897e9fbb -- .coordination/requests/RW-04-experiment-launch-ui-done.yaml .coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml docs/pantheon-feedback/RW-04-experiment-launch src/pages/research/ExperimentLaunch.tsx src/pages/research/ExperimentDetail.tsx src/pages/research/ExperimentHistory.tsx src/pages/research/ExperimentRunHelpers.ts src/pages/research/ExperimentRunView.tsx src/pages/research/ExperimentTypes.ts src/lib/bffClient.ts src/App.tsx src/components/AppSidebar.tsx src/components/WorkbenchBreadcrumb.tsx`
 - Re-ran targeted Pantheon verification:
   - `python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py`
-- Probed the live operator-bff runtime:
-  - `GET http://127.0.0.1:18001/openapi.json`
-  - authenticated `GET http://127.0.0.1:18001/api/v1/experiments?page_size=5`
-  - authenticated `GET http://127.0.0.1:18001/api/v1/experiments/exp-20260419-012`
-  - authenticated `GET http://127.0.0.1:18001/api/v1/experiments/exp-20260418-009`
-  - authenticated `GET http://127.0.0.1:18001/api/v1/experiments/exp-20260417-004`
-  - authenticated `GET http://127.0.0.1:18001/api/v1/experiments/does-not-exist`
-  - authenticated `POST http://127.0.0.1:18001/api/v1/experiments/launch`
-  - authenticated
-    `POST http://127.0.0.1:18001/api/v1/experiments/exp-20260421-004/cancel`
-- Verified unavailable behavior through a workspace-backed probe:
-  - `GET http://127.0.0.1:18012/api/v1/experiments?page_size=5`
-  - `GET http://127.0.0.1:18012/api/v1/experiments/exp-20260418-009`
-- Re-checked sibling front publication truth:
-  - `git -C ../front-ai-trading-system rev-parse HEAD`
-  - `git -C ../front-ai-trading-system ls-tree -r --name-only HEAD -- ...`
-  - `git -C ../front-ai-trading-system status --short -- ...`
+  - Result: `21 passed`
+- Re-checked live OpenAPI publication:
+  - `curl -s http://127.0.0.1:18001/openapi.json | tr ',' '\n' | rg '"/api/v1/experiments(/launch|/\{experiment_id\}|/\{experiment_id\}/cancel)?"'`
+- Accepted review evidence retained:
+  - sibling front targeted eslint, `npx tsc --noEmit`, and `npm run build`
+    passed on 2026-04-21 for the reviewed RW-04 slice
 
 ## Not Completed
 
 - No deployed browser QA against a shared Pantheon environment was performed in
-  this review cycle
-- The front repo still has not published one immutable Git-visible commit that
-  contains the RW-04 request pair, feedback bundle, and reviewed UI files
+  this closeout sync
