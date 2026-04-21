@@ -1,4 +1,5 @@
 from .statsmodels_adapter import (
+    GovernedDataset,
     GovernedStatsmodelsInputAdapter,
     StubStatsmodelsBackend,
     StatsmodelsBackend,
@@ -7,6 +8,7 @@ from .statsmodels_adapter import (
 )
 
 __all__ = [
+    "GovernedDataset",
     "GovernedStatsmodelsInputAdapter",
     "StubStatsmodelsBackend",
     "StatsmodelsBackend",

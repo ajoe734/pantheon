@@ -39,6 +39,7 @@ def valid_dataset() -> GovernedDataset:
         factor_series={
             "X": [0.01 * i for i in range(N)],
         },
+        metadata={"governed": True},
     )
 
 
@@ -85,8 +86,49 @@ def test_reject_too_few_observations(adapter):
     ds = GovernedDataset(
         price_series={"A": [1.0] * 5, "B": [2.0] * 5},  # only 5 obs
         factor_series={"X": [0.1] * 5},
+        metadata={"governed": True},
     )
     with pytest.raises(StatsmodelsWorkflowError, match="observations"):
+        adapter.validate(ds)
+
+
+def test_reject_non_numeric_series_values(adapter):
+    ds = GovernedDataset(
+        price_series={"A": [1.0] * N, "B": ["x"] * N},
+        factor_series={"X": [0.1] * N},
+        metadata={"governed": True},
+    )
+    with pytest.raises(StatsmodelsWorkflowError, match="numeric observations only"):
+        adapter.validate(ds)
+
+
+def test_reject_misaligned_series_lengths(adapter):
+    ds = GovernedDataset(
+        price_series={"A": [1.0] * 12, "B": [2.0] * 10},
+        factor_series={"X": [0.1] * 10},
+        metadata={"governed": True},
+    )
+    with pytest.raises(StatsmodelsWorkflowError, match="misaligned"):
+        adapter.validate(ds)
+
+
+def test_reject_nan_values(adapter):
+    ds = GovernedDataset(
+        price_series={"A": [1.0] * N, "B": [2.0] * N},
+        factor_series={"X": [float("nan")] * N},
+        metadata={"governed": True},
+    )
+    with pytest.raises(StatsmodelsWorkflowError, match="non-finite"):
+        adapter.validate(ds)
+
+
+def test_reject_ungoverned_metadata(adapter):
+    ds = GovernedDataset(
+        price_series={"A": [1.0] * N, "B": [2.0] * N},
+        factor_series={"X": [0.1] * N},
+        metadata={"governed": False},
+    )
+    with pytest.raises(StatsmodelsWorkflowError, match="metadata.governed=True"):
         adapter.validate(ds)
 
 

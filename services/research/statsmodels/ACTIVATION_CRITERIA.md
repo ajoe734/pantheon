@@ -1,15 +1,16 @@
 # statsmodels Activation Criteria
 
-Last updated: 2026-04-17
-Owner: OSS-NEXT-006 (Codex2)
+Last updated: 2026-04-21
+Owner: EXEC-OSS-STATSMODELS-001 (Codex2)
 Reviewer: Codex
-Task: OSS-NEXT-006 — statsmodels task materialization
-Status: source-selected / version-pinned
+Task: EXEC-OSS-STATSMODELS-001 — statsmodels execution readiness closeout
+Status: governed / evidence-complete
 
 ## Purpose
 
-This file documents the entry gates that must be satisfied before statsmodels
-transitions from `version-pinned` to `smoke-tested` and then to `governed`.
+This file documents the entry gates that were required to move statsmodels from
+`version-pinned` to `smoke-tested` and then to `governed`, plus the concrete
+surface that now satisfies those gates.
 
 statsmodels is the primary Pantheon backend for econometrics and regime
 research inside the Research Plane. It is used to test market structure
@@ -62,14 +63,16 @@ Rejected role:
 
 ## Activation Gates
 
-### Gate 1: Adapter Implementation (blocks `version-pinned` → `smoke-tested`)
+### Gate 1: Adapter Implementation (completed: `version-pinned` → `smoke-tested`)
 
-The following components must exist and pass CI before statsmodels is
-considered `smoke-tested`:
+The following components now exist repo-locally and support the smoke-tested
+baseline:
 
 1. `services/research/statsmodels/adapter/statsmodels_adapter.py`
    - `GovernedStatsmodelsInputAdapter` — validates governed time-series and
-     factor datasets before they reach statsmodels
+     factor datasets before they reach statsmodels, including numeric-only
+     observations, equal-length alignment, non-finite-value rejection, and
+     `metadata.governed=True`
    - `StubStatsmodelsBackend` — deterministic CI-safe backend with no external
      data dependency
    - `StatsmodelsBackend` — real backend wrapping the first approved model set
@@ -104,7 +107,7 @@ considered `smoke-tested`:
 6. `services/research/statsmodels/examples/regime_dataset_sample.json`
    - minimal governed sample covering cointegration and regime-analysis inputs
 
-### Gate 2: Evidence Pack (blocks `smoke-tested` → `governed`)
+### Gate 2: Evidence Pack (completed: `smoke-tested` → `governed`)
 
 1. `integrations/statsmodels/integration.md` — upstream source and packaging
    notes (exists)
@@ -139,16 +142,17 @@ considered `smoke-tested`:
 | 5 | Assert all unit tests pass (target: ≥10 tests) |
 | 6 | Record last-known-good result in `integrations/statsmodels/smoke_test.md` |
 
-CI integration: add a `statsmodels-smoke` job to the OSS research matrix after
-the adapter baseline exists.
+CI integration next step: add a `statsmodels-smoke` job to the OSS research
+matrix when the shared OSS research matrix refresh runs. The local governed
+baseline and evidence pack already exist.
 
 ---
 
 ## Activation Owner
 
-- Implementation owner: to be assigned
+- Implementation owner: Codex2
 - Reviewer: Codex
-- Task family: OSS-NEXT-006 (this document) + follow-on implementation task
+- Task family: EXEC-OSS-STATSMODELS-001
 
 ---
 
@@ -159,4 +163,5 @@ selection, version pin, adapter design, smoke-test plan). It does not cover:
 
 - production approval criteria for any regime-driven artifact consumer
 - real-time econometric execution or online state estimation
-- OpenClaw orchestration for statsmodels jobs before the adapter baseline exists
+- OpenClaw orchestration for statsmodels jobs before a dedicated runtime
+  contract is added

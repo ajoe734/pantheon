@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import uuid
 import datetime
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,6 +51,7 @@ class GovernedStatsmodelsInputAdapter:
     MIN_PRICE_SERIES = 2
     MIN_FACTOR_SERIES = 1
     MIN_OBSERVATIONS = 10
+    REQUIRED_METADATA_GOVERNED = True
 
     def validate(self, dataset: GovernedDataset) -> GovernedDataset:
         if not isinstance(dataset, GovernedDataset):
@@ -69,13 +71,44 @@ class GovernedStatsmodelsInputAdapter:
                 f"got {len(dataset.factor_series)}."
             )
 
+        if dataset.metadata.get("governed") is not self.REQUIRED_METADATA_GOVERNED:
+            raise StatsmodelsWorkflowError(
+                "Dataset metadata must declare governed historical inputs with metadata.governed=True."
+            )
+
         all_series = {**dataset.price_series, **dataset.factor_series}
+        expected_length: int | None = None
         for name, values in all_series.items():
+            if not isinstance(values, list):
+                raise StatsmodelsWorkflowError(
+                    f"Series '{name}' must be a list of numeric observations."
+                )
+
             if len(values) < self.MIN_OBSERVATIONS:
                 raise StatsmodelsWorkflowError(
                     f"Series '{name}' has only {len(values)} observations; "
                     f"minimum is {self.MIN_OBSERVATIONS}."
                 )
+
+            if expected_length is None:
+                expected_length = len(values)
+            elif len(values) != expected_length:
+                raise StatsmodelsWorkflowError(
+                    f"Series '{name}' is misaligned with the governed dataset; "
+                    f"expected {expected_length} observations, got {len(values)}."
+                )
+
+            for index, value in enumerate(values):
+                if not isinstance(value, (int, float)):
+                    raise StatsmodelsWorkflowError(
+                        f"Series '{name}' must contain numeric observations only; "
+                        f"found {type(value).__name__} at position {index}."
+                    )
+                if not math.isfinite(float(value)):
+                    raise StatsmodelsWorkflowError(
+                        f"Series '{name}' contains non-finite observations; "
+                        f"found {value!r} at position {index}."
+                    )
 
         return dataset
 
@@ -92,7 +125,9 @@ def _build_artifact_bundle(
     framework: str = "statsmodels",
 ) -> dict[str, Any]:
     artifact_id = str(uuid.uuid4())
-    now = datetime.datetime.utcnow().isoformat() + "Z"
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
 
     return {
         "artifact_id": artifact_id,

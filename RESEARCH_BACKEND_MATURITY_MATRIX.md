@@ -64,8 +64,8 @@ For production-path classification, three tiers apply:
 | **RLlib** | Multi-agent / scalable RL policy training; PPO/SAC via Ray | `criteria-defined` | **Activation-Ready** | Copilot | Multi-agent portfolio optimization | Current wave explicitly deferred on 2026-04-17; stays behind the RL gate and the FinRL first-lane proof; then add governed training/eval loop + smoke test |
 | **Ray Tune** | Hyperparameter search over RL/learning experiments; PBT/grid/Bayesian search | `version-pinned` | **Activation-Ready** | Copilot | RL hyperparameter optimization | Current wave explicitly deferred on 2026-04-17; remains coupled to the RLlib follow-on lane after the FinRL first-lane proof; governed search-output adapter still missing |
 | **W&B** | Optional alternative experiment registry backend to MLflow; SaaS metrics visualization | `criteria-defined` | **Activation-Ready** | Qwen | All research families (optional) | **OSS-NEXT-004 (2026-04-17): formally deferred**; re-entry gate in `WANDB_ACTIVATION.md §7`; requires MLflow ≥30-day history (earliest 2026-05-15), documented operator preference, adapter generalization, canonical state migration, SDK pin, and infrastructure readiness |
-| **vectorbt** | Backtesting and portfolio optimization prototyping; fast vectorized backtest engine | `version-pinned` | **Activation-Ready** | Codex | Rapid strategy prototyping | Governed input adapter; stub/real backend split; smoke test; governance evidence |
-| **statsmodels** | Econometrics and regime analysis; cointegration, VAR, ARIMA, regime-switching models | `version-pinned` | **Activation-Ready** | Codex2 | Regime inference / macro research | Governed input adapter; stub/real backend split; smoke test; governance evidence |
+| **vectorbt** | Backtesting and portfolio optimization prototyping; fast vectorized backtest engine | `governed` | **Production Research Path** | Codex2 | Rapid strategy prototyping | Keep stub smoke, worker entrypoint, and governance evidence refreshed when the pin or adapter changes |
+| **statsmodels** | Econometrics and regime analysis; cointegration, VAR, ARIMA, regime-switching models | `governed` | **Production Research Path** | Codex2 | Regime inference / macro research | Keep smoke evidence, worker entrypoint, and governance docs refreshed when the pin or adapter changes |
 | **QuantLib** | Derivatives pricing and risk; options pricing, fixed income analytics, Greeks | `version-pinned` | **Activation-Ready** | Claude | Derivatives strategy research | Governed input adapter; stub/real backend split; smoke test; evidence pack |
 
 ---
@@ -107,10 +107,8 @@ The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Pr
 2. Qlib        — first learning framework to activate (supervised alpha path)
 3. TRL         — preference learning after imitation baseline established
 4. FinRL first, then RLlib/Ray Tune — deferred until Qlib plateaus for **3 months** and the RL gate is reopened
-5. vectorbt    — rapid prototyping path (adapter and smoke path needed)
-6. statsmodels — regime research path (adapter and smoke path needed)
-7. QuantLib    — derivatives path (adapter and smoke path needed)
-8. W&B         — optional after MLflow generalization
+5. QuantLib    — derivatives path (adapter and smoke path needed)
+6. W&B         — optional after MLflow generalization
 ```
 
 ### Research Problem Type → Primary Backend Mapping
@@ -123,8 +121,8 @@ The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Pr
 | Supervised alpha signal discovery | Qlib (LightGBM-first) | vectorbt (prototyping) | Activation-ready |
 | Preference learning / RLHF | TRL | — | Activation-ready |
 | Sequential RL policy | FinRL (first executable lane after RL re-entry) | RLlib + Ray Tune (follow-on scalable lane) | Activation-ready |
-| Rapid strategy backtesting | vectorbt | — | Activation-ready |
-| Econometrics / regime analysis | statsmodels | — | Activation-ready |
+| Rapid strategy backtesting | vectorbt | — | Production research path |
+| Econometrics / regime analysis | statsmodels | — | Production research path |
 | Derivatives pricing / risk | QuantLib | — | Activation-ready |
 | Experiment orchestration | OpenClaw | — | Activation-ready |
 
@@ -164,13 +162,11 @@ For activation-ready backends (Qlib, TRL, RL stack):
 
 ### Inconsistency Risks
 
-1. **vectorbt is now materialized but still not executable**: The upstream source, version pin, adapter boundary, and smoke-test plan now exist repo-locally, but no governed adapter, smoke path, or governance evidence has been implemented yet.
+1. **QuantLib remains materialized but still not executable**: The upstream source, version pin, and use-case binding exist repo-locally, but no governed adapter, smoke path, or governance evidence has been implemented yet.
 
-2. **statsmodels is now materialized but still not executable**: The upstream source, version pin, and use-case binding now exist repo-locally, but no governed adapter, smoke path, or governance evidence has been implemented yet.
+2. **OpenClaw adapter is in progress but not smoke-tested end-to-end**: OpenClaw affects orchestration semantics for all backends. Its baseline is pinned, but the real gateway adapter and full workflow execution path still need closure.
 
-3. **OpenClaw adapter is in progress but not smoke-tested end-to-end**: OpenClaw affects orchestration semantics for all backends. Its baseline is pinned, but the real gateway adapter and full workflow execution path still need closure.
-
-4. **RL stack is activation-ready on paper but explicitly deferred in the accepted session**: the 2026-04-17 human gate keeps RL closed for the current wave. FinRL is the chosen first executable lane once re-entry criteria are met, while RLlib/Ray Tune remain a follow-on path. Without recording that decision in canonical summaries, the matrix overstates near-term readiness.
+3. **RL stack is activation-ready on paper but explicitly deferred in the accepted session**: the 2026-04-17 human gate keeps RL closed for the current wave. FinRL is the chosen first executable lane once re-entry criteria are met, while RLlib/Ray Tune remain a follow-on path. Without recording that decision in canonical summaries, the matrix overstates near-term readiness.
 
 ---
 
@@ -178,7 +174,7 @@ For activation-ready backends (Qlib, TRL, RL stack):
 
 ### Current Status
 
-Research Plane has three governed backends on the production path (DSPy, imitation, MLflow), plus multiple activation-ready backends with explicit entry gates or pinned execution baselines (OpenClaw, Qlib, TRL, FinRL/RLlib/Tune, W&B, vectorbt, statsmodels, QuantLib). The remaining research gap is no longer missing task cuts; it is the absence of runnable adapters and smoke evidence for these deferred backends.
+Research Plane has five governed backends on the production path (DSPy, imitation, MLflow, vectorbt, statsmodels), plus multiple activation-ready backends with explicit entry gates or pinned execution baselines (OpenClaw, Qlib, TRL, FinRL/RLlib/Tune, W&B, QuantLib). The remaining research gap is no longer missing task cuts; it is the absence of runnable adapters and smoke evidence for the still-deferred backends.
 
 ### Existing Evidence
 
@@ -188,10 +184,15 @@ Research Plane has three governed backends on the production path (DSPy, imitati
 - `services/learning/trl/ACTIVATION_CRITERIA.md`: TRL entry gate (OSS-003)
 - `services/learning/rl/PATH_DEFINITION.md`: RL path definition (LP-005)
 - `services/registry/experiments/WANDB_ACTIVATION.md`: W&B activation criteria (OSS-003)
-- `services/research/vectorbt/ACTIVATION_CRITERIA.md`: vectorbt materialization gate (OSS-NEXT-005)
+- `services/research/vectorbt/ACTIVATION_CRITERIA.md`: vectorbt governed baseline gate and closeout
 - `services/research/vectorbt/requirements.txt`: vectorbt version pin
+- `services/research/vectorbt/worker.py`: vectorbt container entrypoint
+- `services/research/vectorbt/examples/strategy_dataset_sample.json`: governed sample dataset
 - `integrations/openclaw/`: OpenClaw adapter work in progress
-- `integrations/vectorbt/integration.md`: vectorbt source selection and adapter baseline
+- `integrations/statsmodels/`: statsmodels governed evidence pack
+- `integrations/vectorbt/integration.md`: vectorbt source selection and governed adapter baseline
+- `integrations/vectorbt/governance.md`: vectorbt governance boundary
+- `integrations/vectorbt/smoke_test.md`: vectorbt smoke evidence
 - `integrations/oss-002/regrade_report.md`: DSPy/imitation/MLflow regrade evidence
 - `integrations/dspy/`: DSPy canonical evidence pack
 - `integrations/imitation/`: imitation canonical evidence pack
@@ -202,15 +203,15 @@ Research Plane has three governed backends on the production path (DSPy, imitati
 
 ### Why It Is a Real Gap
 
-The gap is real but scoped: the platform has a valid production research path for behavior cloning and persona optimization, but has no production research path for supervised alpha discovery (Qlib), preference learning (TRL), sequential RL, or quantitative research tools beyond the initial vectorbt / statsmodels / QuantLib materialization baselines. This directly limits the Research Plane's coverage of the complete Blueprint's research problem types.
+The gap is real but scoped: the platform has a valid production research path for behavior cloning, persona optimization, rapid strategy backtesting, and econometrics/regime analysis, but has no production research path for supervised alpha discovery (Qlib), preference learning (TRL), sequential RL, or derivatives pricing/risk (QuantLib). This directly limits the Research Plane's coverage of the complete Blueprint's research problem types.
 
 ### Proposed Owner
 
 - Production-path backends: Codex (registry) + Copilot (research ingestion)
 - Qlib activation: Qwen
 - TRL / RL stack activation: Copilot
-- vectorbt: Codex owns the materialized baseline (OSS-NEXT-005); follow-on implementation owner still needed
-- statsmodels: Codex2 owns the materialized baseline; follow-on implementation owner still needed
+- vectorbt: Codex2 owns the governed baseline closeout and smoke path refresh
+- statsmodels: Codex2 owns the governed baseline and regression refresh
 - QuantLib: Claude owns the materialized baseline (OSS-NEXT-007); follow-on implementation owner still needed
 
 ### Source of Truth
@@ -225,8 +226,8 @@ The gap is real but scoped: the platform has a valid production research path fo
 | OpenClaw gateway adapter + smoke test | Implement and test | Near-term |
 | Qlib version pin + data adapter + smoke test | Activate per OSS-003 criteria | Mid-term |
 | TRL version pin + pair-construction pipeline + smoke test | Activate after imitation baseline | Mid-term |
-| vectorbt task materialization | OSS-NEXT-005 materialized baseline complete | Follow-on implementation wave |
-| statsmodels task materialization | OSS-NEXT-006 materialized baseline complete | Follow-on implementation wave |
+| vectorbt governed baseline closeout | Adapter, smoke path, worker entrypoint, and evidence pack committed | Regression refresh when pin or adapter changes |
+| statsmodels governed baseline | Worker entrypoint, sample dataset, smoke path, and evidence pack committed | Regression refresh when pin or adapter changes |
 | QuantLib task materialization | OSS-NEXT-007 materialized baseline complete | Follow-on implementation wave |
 | RL stack approval gate | After Qlib reaches approved status and stays stable for **3 months**; FinRL is the first executable lane when reopened | Long-term |
 
@@ -240,8 +241,8 @@ The gap is real but scoped: the platform has a valid production research path fo
 - [x] GAP-02 response in blueprint format
 - [x] `integration.md` + `governance.md` for DSPy, imitation, MLflow
 - [ ] Qlib smoke test (activation-gated on OSS-003 entry criteria)
-- [x] vectorbt task materialization
-- [x] statsmodels task materialization
+- [x] vectorbt governed smoke path and evidence pack
+- [x] statsmodels governed smoke path and evidence pack
 - [x] QuantLib task materialization
 
 ### Target Wave / Date
@@ -251,7 +252,7 @@ Follow-on activation work: P1 continuation and P2 wave.
 
 ### Production Sign-off Impact
 
-**Medium-high.** The production research path for persona optimization and behavior cloning is now governed. However, the supervised alpha path (Qlib) and the quantitative research tool set are still only partially available: vectorbt, statsmodels, and QuantLib are now materialized but not smoke-tested. This limits the Research Plane's ability to cover all complete-blueprint research problem types before production sign-off.
+**Medium.** The production research path for persona optimization, behavior cloning, rapid strategy backtesting, and econometrics/regime analysis is now governed. However, the supervised alpha path (Qlib) and the derivatives path (QuantLib) are still not smoke-tested. This still limits the Research Plane's ability to cover all complete-blueprint research problem types before production sign-off.
 
 ---
 
