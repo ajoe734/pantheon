@@ -1,0 +1,155 @@
+{
+  "_note": "Ratified example payload for CW-02 Debate Transcript after the 2026-04-22 follow-up architecture response.",
+  "_task": "CW-02-TRANSCRIPT-001",
+  "transcript_response": {
+    "object_ref": {
+      "type": "ConsultTranscript",
+      "id": "tr-20260419-081"
+    },
+    "transcript_id": "tr-20260419-081",
+    "session_id": "cs-20260419-081",
+    "linked_request_id": "cr-20260419-014",
+    "events": [
+      {
+        "transcript_id": "tr-20260419-081",
+        "session_id": "cs-20260419-081",
+        "event_id": "te-001",
+        "sequence_no": 1,
+        "parent_event_id": null,
+        "event_type": "message",
+        "event_time": "2026-04-19T17:06:00Z",
+        "ingest_time": "2026-04-19T17:06:01Z",
+        "actor": {
+          "actor_type": "persona",
+          "actor_id": "sp-requester-001",
+          "display_name": "Risk Chief",
+          "role": "requester"
+        },
+        "content": {
+          "format": "markdown",
+          "text": "Regime volatility has diverged significantly from the training window. Requesting committee review before deployment proceeds."
+        },
+        "evidence_refs": [],
+        "visibility": "committee",
+        "redaction": {
+          "is_redacted": false,
+          "reason": null
+        },
+        "meta": {
+          "source": "openclaw",
+          "hash": "sha256:te-001"
+        }
+      },
+      {
+        "transcript_id": "tr-20260419-081",
+        "session_id": "cs-20260419-081",
+        "event_id": "te-002",
+        "sequence_no": 2,
+        "parent_event_id": null,
+        "event_type": "evidence_attachment",
+        "event_time": "2026-04-19T17:07:30Z",
+        "ingest_time": "2026-04-19T17:07:31Z",
+        "actor": {
+          "actor_type": "persona",
+          "actor_id": "sp-committee-001",
+          "display_name": "Macro Observer",
+          "role": "committee_participant"
+        },
+        "content": {
+          "format": "plaintext",
+          "text": null
+        },
+        "evidence_refs": [
+          "telemetry-vol-spike-20260419"
+        ],
+        "visibility": "committee",
+        "redaction": {
+          "is_redacted": false,
+          "reason": null
+        },
+        "meta": {
+          "source": "openclaw",
+          "hash": "sha256:te-002"
+        }
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "page_size": 50,
+      "total": 2
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T17:20:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T17:20:00Z",
+        "max_age_seconds": 30
+      },
+      "surfaces": {
+        "transcript": {
+          "state": "ok"
+        }
+      }
+    }
+  },
+  "transcript_partial_response": {
+    "_note": "Partial transcript means enrichment is incomplete, but the append-only event stream remains intact.",
+    "object_ref": {
+      "type": "ConsultTranscript",
+      "id": "tr-20260419-081"
+    },
+    "transcript_id": "tr-20260419-081",
+    "session_id": "cs-20260419-081",
+    "linked_request_id": "cr-20260419-014",
+    "events": [
+      {
+        "transcript_id": "tr-20260419-081",
+        "session_id": "cs-20260419-081",
+        "event_id": "te-001",
+        "sequence_no": 1,
+        "parent_event_id": null,
+        "event_type": "message",
+        "event_time": "2026-04-19T17:06:00Z",
+        "ingest_time": "2026-04-19T17:06:01Z",
+        "actor": {
+          "actor_type": "persona",
+          "actor_id": "sp-requester-001",
+          "display_name": null,
+          "role": "requester"
+        },
+        "content": {
+          "format": "markdown",
+          "text": "Regime volatility has diverged significantly from the training window. Requesting committee review before deployment proceeds."
+        },
+        "evidence_refs": [],
+        "visibility": "committee",
+        "redaction": {
+          "is_redacted": false,
+          "reason": null
+        },
+        "meta": {
+          "source": "openclaw",
+          "hash": "sha256:te-001"
+        }
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "page_size": 50,
+      "total": 1
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T17:08:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T17:08:00Z",
+        "max_age_seconds": 30
+      },
+      "surfaces": {
+        "transcript": {
+          "state": "partial"
+        }
+      }
+    }
+  }
+}

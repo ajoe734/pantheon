@@ -1,0 +1,146 @@
+{
+  "workbench_id": "knowledge-workbench",
+  "label": "Knowledge Workbench",
+  "route_href": "/knowledge",
+  "overall_status": "overview_ready",
+  "headline": "Overview route is live; knowledge delivery remains module-gated",
+  "summary": "This overview is a truthful landing surface for the Knowledge Workbench. KW-01 is route-live, KW-02 to KW-04 have published downstream contracts, and KW-05 is now contract-ready instead of architecture-blocked.",
+  "packet_family": {
+    "family_id": "KW-006",
+    "path": "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+    "lovable_readiness": "partial",
+    "note": "KW-01 is ready, downstream Knowledge modules all have published contracts, and KW-05 now joins the implementation lane as contract-ready."
+  },
+  "module_counts": {
+    "total": 5,
+    "ready": 1,
+    "not_ready": 4
+  },
+  "modules": [
+    {
+      "module_id": "KW-01",
+      "label": "Institutional Memory",
+      "status": "ready",
+      "wave_order": 1,
+      "summary": "Browse/list/detail projection published. Identity, lifecycle state machine, filter rail, and degradation semantics are all locked via docs/bff/KW-01-institutional-memory.md.",
+      "missing_contracts": [],
+      "module_href": "/knowledge/memory",
+      "bff_contract": "docs/bff/KW-01-institutional-memory.md",
+      "example_payloads": [
+        "docs/examples/KW-01-institutional-memory-list.json",
+        "docs/examples/KW-01-institutional-memory.json"
+      ],
+      "next_gate": "KW-02 note ownership and attachment contract must be published before Research Notes UI can open.",
+      "upstream_dependencies": []
+    },
+    {
+      "module_id": "KW-02",
+      "label": "Research Notes",
+      "status": "contract_ready",
+      "wave_order": 2,
+      "summary": "Research Notes contract is published and ratified. Remaining work is BFF implementation of the note create/list/detail route family.",
+      "missing_contracts": [],
+      "next_gate": "Implement the published KW-02 routes and attachment taxonomy in the BFF before opening the production UI.",
+      "upstream_dependencies": [
+        "KW-01"
+      ]
+    },
+    {
+      "module_id": "KW-03",
+      "label": "Evidence Refs",
+      "status": "contract_ready",
+      "wave_order": 3,
+      "summary": "Evidence Refs contract is published and ratified. Remaining work is BFF implementation of the evidence browse/detail routes and resolved-link projection.",
+      "missing_contracts": [],
+      "next_gate": "Implement the published KW-03 evidence routes so downstream insight and citation surfaces can rely on live resolved links.",
+      "upstream_dependencies": [
+        "KW-01",
+        "KW-02"
+      ]
+    },
+    {
+      "module_id": "KW-04",
+      "label": "Insight Cards",
+      "status": "contract_ready",
+      "wave_order": 4,
+      "summary": "Insight Cards contract is published and ratified. Remaining work is BFF implementation of aggregation/detail routes using the published filter taxonomy.",
+      "missing_contracts": [],
+      "next_gate": "Implement the published KW-04 aggregation and detail routes after KW-02 and KW-03 are live upstream inputs.",
+      "upstream_dependencies": [
+        "KW-01",
+        "KW-03"
+      ]
+    },
+    {
+      "module_id": "KW-05",
+      "label": "Strategy Spec",
+      "status": "contract_ready",
+      "wave_order": 5,
+      "summary": "Strategy Spec contract is now published and ratified. Remaining work is BFF implementation of the browse/detail/history/compare route family against the versioned spec model.",
+      "missing_contracts": [],
+      "next_gate": "Implement the published KW-05 routes against the ratified version identity, lifecycle, ancestry, and compare semantics.",
+      "upstream_dependencies": [
+        "KW-01",
+        "KW-03"
+      ]
+    }
+  ],
+  "support_refs": [
+    {
+      "ref_id": "kw-01-bff-contract",
+      "label": "KW-01 Institutional Memory BFF Contract",
+      "ref_type": "document",
+      "value": "docs/bff/KW-01-institutional-memory.md",
+      "note": "Canonical list/detail routes, lifecycle state machine, filter rail, degradation semantics, and identity contract for the Institutional Memory browse module."
+    },
+    {
+      "ref_id": "memory-design-note",
+      "label": "Memory Layer Design Note",
+      "ref_type": "document",
+      "value": "services/memory/MEMORY_LAYER_DESIGN_NOTE.md",
+      "note": "Canonical Memory Plane split and retrieval-facade rules."
+    },
+    {
+      "ref_id": "institutional-memory-schema",
+      "label": "InstitutionalMemoryEntry schema",
+      "ref_type": "document",
+      "value": "services/memory/institutional_memory_entry.schema.json",
+      "note": "Canonical shared-memory object shape; not a workbench browse contract."
+    },
+    {
+      "ref_id": "strategy-spec-schema",
+      "label": "StrategySpec schema",
+      "ref_type": "document",
+      "value": "services/control-plane/specs/strategy_spec.schema.json",
+      "note": "Canonical StrategySpec object schema; version browsing, ancestry, lifecycle, and compare semantics are now ratified in docs/bff/KW-05-strategy-spec.md."
+    },
+    {
+      "ref_id": "memory-retrieval-facade",
+      "label": "Memory retrieval facade",
+      "ref_type": "endpoint",
+      "value": "/memory/retrieve",
+      "note": "Session-facing retrieval API; not a substitute for workbench list/detail surfaces."
+    }
+  ],
+  "next_steps": [
+    "KW-01 Institutional Memory is ready — Lovable may open the browse/detail UI task against docs/bff/KW-01-institutional-memory.md.",
+    "Implement KW-02 Research Notes routes and attachment taxonomy in the BFF.",
+    "Implement KW-03 Evidence Refs and KW-04 Insight Cards on top of the published contracts.",
+    "Implement the published KW-05 Strategy Spec routes against the ratified version model before opening the production UI.",
+    "Keep the Knowledge Workbench payload-owned; do not synthesize registry joins from raw schemas in the browser.",
+    "Use this overview to track which module is next, not to imply that Insight Cards or Strategy Spec browse already exist."
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-22T00:00:00Z",
+    "surfaces": {
+      "overview": {
+        "status": "ok",
+        "source": "bff_static"
+      },
+      "packet_family": {
+        "status": "ok",
+        "source": "canonical"
+      }
+    }
+  }
+}
