@@ -2,7 +2,7 @@ feature_id: TW-03-before-after-compare
 type: frontend-feedback
 source_repo: ajoe734/front-ai-trading-system
 source_branch: pkt-004-detail-fix
-source_commit: d1fe9917deef22cfd0c656e1210eff06abd1cd83
+source_commit: ed8db5db794202659c5a377d2939df580585ccbb
 workbench: trainer-workbench
 screen_id: screen-before-after-compare
 status: completed
@@ -11,7 +11,16 @@ feedback_path: docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_
 api_gap_requests_path: docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
 ui_decisions_path: docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
 qa_status_path: docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md
-blocking_summary: ""
+blocking_summary: >-
+  Front publication truth is resolved: implementation commit
+  ed8db5db794202659c5a377d2939df580585ccbb and publish commit
+  dbc4a16dc0e9f0b8d33e1576908341ea056c660d are Git-visible on
+  `origin/pkt-004-detail-fix`, clean archive builds now pass for both
+  snapshots, `validatePreviewResponse()` now enforces the required per-item
+  metric, warning, and control-diff fields, and live 18001 still advertises
+  the TW-03 preview route family with stale and `preview_unavailable` success
+  bodies. Remaining follow-up is non-blocking browser QA plus Pantheon's
+  expired pending-preview proof fixture dated `2026-04-20T19:50:45Z`.
 changed_files:
   - .coordination/requests/TW-03-before-after-compare-ui-done.yaml
   - .coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml
@@ -25,7 +34,18 @@ changed_files:
   - src/App.tsx
 pantheon_review_hint: review-ui
 summary: >
-  TW-03 Before/After Compare implemented against the live preview route family.
-  Metric deltas, warning hierarchy, control diff, surface degradation, polling,
-  preview_unavailable branch, and refresh authority are all backend-owned.
-  No open API gaps from this pass.
+  TW-03 Before/After Compare is now replay-clean and contract-aligned through
+  implementation commit ed8db5db794202659c5a377d2939df580585ccbb and publish
+  commit dbc4a16dc0e9f0b8d33e1576908341ea056c660d on
+  origin/pkt-004-detail-fix. The compare screen stays on the live preview route
+  family, renders backend-owned metric deltas, warning hierarchy, control
+  diff, degradation, polling, and refresh authority only, and now fails closed
+  when required per-item compare fields are absent. Pantheon found no new API
+  gaps in this closeout pass.
+
+api_gaps: []
+
+coordination_updates:
+  ui_done: .coordination/requests/TW-03-before-after-compare-ui-done.yaml
+  contract_ready: .coordination/responses/TW-03-before-after-compare-contract-ready.yaml
+  frontend_feedback_response: .coordination/responses/TW-03-before-after-compare-frontend-feedback.yaml
