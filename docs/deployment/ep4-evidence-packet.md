@@ -152,4 +152,10 @@ This packet does **not** claim EP5. The following remain deferred:
 | Final JWT/issuer runtime auth hardening | Post-EP4 |
 | Canary/live rollback drill | EP5-001 |
 
+Prepared prerequisite artifacts for `EP5-001` now live at
+`docs/deployment/ep5-canary-ready/`, with the runnable entrypoints
+`scripts/run_ep5_canary_readiness.py` and `env/canary-exec.env.example`.
+These artifacts prepare the path only; they do not change the proof boundary of
+this packet beyond stable `EP4`.
+
 The repo can truthfully claim stable EP4. It cannot truthfully claim EP5.

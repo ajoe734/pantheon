@@ -66,7 +66,9 @@ EP4 is stable as of 2026-04-19. The next proof-raising steps are:
 
 1. `EP5-001` — prepare the canary-ready execution path: real broker/venue config, scaled capital
    gate, operator approval checklist, and rollback drill harness; this is a downstream prerequisite
-   slice gated on stable EP4
+   slice gated on stable EP4. The prepared repo-local entry bundle lives at
+   `docs/deployment/ep5-canary-ready/`, with runnable tooling at
+   `scripts/run_ep5_canary_readiness.py` and `env/canary-exec.env.example`
 2. `EP5-002` — execute and archive the first canary/live proof packet, including rollback drill and
    operator signoff; this requires a separate human-approved gate and is not part of the current
    EP4 materialization batch
