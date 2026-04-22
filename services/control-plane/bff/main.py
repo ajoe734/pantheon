@@ -3535,6 +3535,79 @@ def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
     return refresh_mode
 
 
+def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    allowed_fields = {"patches"}
+    unknown_fields = sorted(set(payload.keys()) - allowed_fields)
+    if unknown_fields:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer control patch payload",
+            f"Unsupported top-level fields: {unknown_fields}",
+            precondition_failed="payload_shape",
+        )
+
+    patches = payload.get("patches")
+    if not isinstance(patches, list) or not patches:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer control patch payload",
+            "patches must be a non-empty array of { parameter_key, proposed_value } objects",
+            precondition_failed="patches",
+        )
+
+    normalized: List[Dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for index, patch in enumerate(patches):
+        if not isinstance(patch, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch entry",
+                "Each patches[] entry must be an object",
+                precondition_failed=f"patches[{index}]",
+            )
+
+        unknown_patch_fields = sorted(set(patch.keys()) - {"parameter_key", "proposed_value"})
+        if unknown_patch_fields:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch entry",
+                f"Unsupported patch fields: {unknown_patch_fields}",
+                precondition_failed=f"patches[{index}]",
+            )
+
+        parameter_key = str(patch.get("parameter_key") or "").strip()
+        if not parameter_key:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch entry",
+                "parameter_key must be a non-empty string",
+                precondition_failed=f"patches[{index}].parameter_key",
+            )
+        if parameter_key in seen_keys:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch payload",
+                f"Duplicate parameter_key is not allowed: {parameter_key}",
+                precondition_failed=f"patches[{index}].parameter_key",
+            )
+
+        normalized.append(
+            {
+                "parameter_key": parameter_key,
+                "proposed_value": patch.get("proposed_value"),
+            }
+        )
+        seen_keys.add(parameter_key)
+
+    return normalized
+
+
 _CW01_TARGET_TYPES = {"persona", "committee", "red_team"}
 _CW01_PRIORITIES = {"low", "normal", "high", "critical"}
 _CW01_CONSULTATION_TYPES = {
@@ -5725,6 +5798,75 @@ async def cancel_consult_request(
         "request_to_session_status": canceled["request_to_session_status"],
         "allowedActions": canceled["allowedActions"],
     }
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}/controls")
+async def get_trainer_controls(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
+    if not controls:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    return controls
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/patch")
+async def patch_trainer_controls(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    patches = _tw02_validate_patch_payload(payload)
+
+    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
+    if not controls:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    if str(controls.get("status") or "").strip().lower() != "active":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot patch controls",
+            "POST /patch is only allowed while the trainer session status is active",
+            precondition_failed="status",
+        )
+    if not (controls.get("allowedActions") or {}).get("canPatchControls"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Trainer control patch unavailable",
+            "allowedActions.canPatchControls is false for this trainer session",
+            precondition_failed="allowedActions.canPatchControls",
+        )
+
+    result = read_store.patch_trainer_controls(
+        session_id,
+        patches=patches,
+        patched_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer control store unavailable",
+            "Trainer control patch store is unavailable.",
+        )
+    return result
 
 
 @app.get("/api/v1/committees")

@@ -2,11 +2,11 @@
 
 ## Status
 
-**Contract ratified — pending BFF implementation.** The `2026-04-22`
-follow-up architecture response closes the remaining patch, validation, and
-diff-shape questions. `TW-02` is no longer blocked on system design; the
-remaining gap is implementing the route family against the ratified
-partial-patch contract.
+**Route-live.** The `2026-04-22` follow-up architecture response closed the
+remaining patch, validation, and diff-shape questions, and the current BFF now
+implements the `GET /controls` and `POST /patch` route family on that ratified
+partial-patch contract. Remaining work is frontend activation and delivery
+closeout against the live surface.
 
 Task: `TW-02-CONTROLS-001`
 

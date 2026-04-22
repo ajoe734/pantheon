@@ -397,6 +397,13 @@ class ServiceBackedReadAdapter:
             "keys": ["request_id", "id"],
             "snapshot_key": "consult_requests",
         },
+        "trainer_controls": {
+            "env": "PANTHEON_BFF_TRAINER_CONTROL_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["session_id", "id"],
+            "snapshot_key": "trainer_controls",
+        },
     }
 
     def __init__(self, *, snapshot_path: Optional[Path] = None) -> None:
@@ -2246,6 +2253,44 @@ def _default_read_data() -> Dict[str, Any]:
                 ],
             }
         },
+        # TW-02: Trainer control state records keyed by session_id
+        "trainer_controls": {
+            "trn-20260419-001": {
+                "session_id": "trn-20260419-001",
+                "controls": [
+                    {
+                        "control_id": "ctrl-reversal-threshold",
+                        "parameter_key": "reversal_threshold",
+                        "display_label": "Reversal Threshold",
+                        "control_type": "number",
+                        "current_value": 0.55,
+                        "allowed_range": {
+                            "kind": "number",
+                            "min": 0.1,
+                            "max": 1.0,
+                            "step": 0.05,
+                        },
+                        "unit": "score",
+                        "last_modified_at": "2026-04-19T19:31:04Z",
+                    },
+                    {
+                        "control_id": "ctrl-hold-bars",
+                        "parameter_key": "minimum_hold_bars",
+                        "display_label": "Minimum Hold Bars",
+                        "control_type": "integer",
+                        "current_value": 3,
+                        "allowed_range": {
+                            "kind": "integer",
+                            "min": 1,
+                            "max": 8,
+                            "step": 1,
+                        },
+                        "unit": "bars",
+                        "last_modified_at": "2026-04-19T19:31:04Z",
+                    },
+                ],
+            },
+        },
         "research_tickets": {
             "rt-20260419-007": {
                 "ticket_id": "rt-20260419-007",
@@ -2889,6 +2934,7 @@ class ReadSurfaceStore:
         "capability_snapshots": "capability_snapshots",
         "teaching_sessions": "teaching_sessions",
         "trainer_previews": "trainer_previews",
+        "trainer_controls": "trainer_controls",
         "consultation_sessions": "consultation_sessions",
         "consult_policies": "consult_policies",
         "incidents": "incidents",
@@ -3149,6 +3195,17 @@ class ReadSurfaceStore:
             for session_id, default_preview in default_trainer_previews.items():
                 if session_id not in trainer_previews:
                     trainer_previews[session_id] = json.loads(json.dumps(default_preview))
+                    changed = True
+
+        trainer_controls = self._data.get("trainer_controls")
+        default_trainer_controls = default_data.get("trainer_controls", {})
+        if trainer_controls is None:
+            self._data["trainer_controls"] = json.loads(json.dumps(default_trainer_controls))
+            changed = True
+        elif isinstance(trainer_controls, dict):
+            for session_id, default_ctrl in default_trainer_controls.items():
+                if session_id not in trainer_controls:
+                    trainer_controls[session_id] = json.loads(json.dumps(default_ctrl))
                     changed = True
 
         return changed
@@ -6477,6 +6534,302 @@ class ReadSurfaceStore:
             self._data.setdefault(local_key, {})[request_id] = req
             self._save()
         return self._project_consult_request_detail(req)
+
+    # -------------------------------------------------------------------------
+    # TW-02 Parameter Controls
+    # -------------------------------------------------------------------------
+
+    _TW02_CONTROL_TYPES = {"number", "integer", "enum", "boolean"}
+
+    def _tw02_control_surface_state(self, *, has_record: bool) -> str:
+        if not has_record:
+            return "unavailable"
+        source = self.dataset_source("trainer_controls")
+        if source == "local_snapshot":
+            return "degraded"
+        if source == "missing":
+            return "unavailable"
+        return "ok"
+
+    @staticmethod
+    def _tw02_control_staleness(surface_state: str, as_of: str) -> Dict[str, Any]:
+        return {
+            "status": "stale" if surface_state == "degraded" else "fresh",
+            "as_of": as_of,
+        }
+
+    def _tw02_validate_control_patch(
+        self,
+        ctrl: Dict[str, Any],
+        value: Any,
+    ) -> Optional[Dict[str, Any]]:
+        allowed = ctrl.get("allowed_range") or {}
+        ctrl_type = str(ctrl.get("control_type") or "number").strip().lower()
+        allowed_range = json.loads(json.dumps(allowed)) if isinstance(allowed, dict) else None
+
+        if ctrl_type not in self._TW02_CONTROL_TYPES:
+            return {
+                "field": ctrl.get("parameter_key"),
+                "reason": "unsupported_control_type",
+                "current_value": ctrl.get("current_value"),
+                "requested_value": value,
+                "allowed_range": allowed_range,
+            }
+
+        if value is None:
+            return {
+                "field": ctrl.get("parameter_key"),
+                "reason": "invalid_control_type",
+                "current_value": ctrl.get("current_value"),
+                "requested_value": value,
+                "allowed_range": allowed_range,
+            }
+
+        if ctrl_type == "boolean":
+            if not isinstance(value, bool):
+                return {
+                    "field": ctrl.get("parameter_key"),
+                    "reason": "invalid_control_type",
+                    "current_value": ctrl.get("current_value"),
+                    "requested_value": value,
+                    "allowed_range": allowed_range,
+                }
+            return None
+
+        if ctrl_type == "enum":
+            allowed_values = allowed.get("allowed_values") or allowed.get("options") or allowed.get("values") or []
+            if allowed_values and value not in allowed_values:
+                return {
+                    "field": ctrl.get("parameter_key"),
+                    "reason": "invalid_enum_value",
+                    "current_value": ctrl.get("current_value"),
+                    "requested_value": value,
+                    "allowed_range": {"allowed_values": list(allowed_values)},
+                }
+            return None
+
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return {
+                "field": ctrl.get("parameter_key"),
+                "reason": "invalid_control_type",
+                "current_value": ctrl.get("current_value"),
+                "requested_value": value,
+                "allowed_range": allowed_range,
+            }
+
+        if ctrl_type == "integer" and not numeric_value.is_integer():
+            return {
+                "field": ctrl.get("parameter_key"),
+                "reason": "invalid_control_type",
+                "current_value": ctrl.get("current_value"),
+                "requested_value": value,
+                "allowed_range": allowed_range,
+            }
+
+        range_min = allowed.get("min")
+        range_max = allowed.get("max")
+        out_of_range = False
+        if range_min is not None and numeric_value < float(range_min):
+            out_of_range = True
+        if range_max is not None and numeric_value > float(range_max):
+            out_of_range = True
+        if out_of_range:
+            return {
+                "field": ctrl.get("parameter_key"),
+                "reason": "exceeds_allowed_range",
+                "current_value": ctrl.get("current_value"),
+                "requested_value": value,
+                "allowed_range": {
+                    "min": range_min,
+                    "max": range_max,
+                },
+            }
+
+        return None
+
+    def _trainer_control_records(self) -> Dict[str, Dict[str, Any]]:
+        available, records = self._service.list_records("trainer_controls")
+        if available:
+            return {
+                str(session_id): record
+                for record in records
+                if isinstance(record, dict)
+                for session_id in [record.get("session_id") or record.get("id")]
+                if session_id
+            }
+        return self._local_fallback("trainer_controls") or {}
+
+    def get_trainer_controls(
+        self,
+        session_id: Optional[str],
+        *,
+        snapshot_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        session = self.get_trainer_session(session_id)
+        if session is None:
+            return None
+
+        records = self._trainer_control_records()
+        record = records.get(session_id)
+
+        now = snapshot_at or _utc_now_rfc3339()
+        status = str(session.get("status") or "").strip().lower()
+        surface_state = self._tw02_control_surface_state(has_record=record is not None)
+        controls = list(record.get("controls") or []) if record is not None else []
+        can_patch = status == "active" and surface_state == "ok"
+
+        return {
+            "object_ref": {
+                "type": "TrainerControlState",
+                "id": session_id,
+            },
+            "session_id": session_id,
+            "status": session.get("status"),
+            "controls": controls,
+            "allowedActions": {
+                "canPatchControls": can_patch,
+            },
+            "meta": {
+                "snapshot_at": now,
+                "staleness": self._tw02_control_staleness(surface_state, now),
+                "surfaces": {
+                    "trainer_controls": {
+                        "state": surface_state,
+                    },
+                },
+            },
+        }
+
+    def patch_trainer_controls(
+        self,
+        session_id: str,
+        patches: List[Dict[str, Any]],
+        *,
+        patched_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = patched_at or _utc_now_rfc3339()
+
+        service_store_path = self._service._resolve_path("trainer_controls")
+        persist_service_store = service_store_path is not None
+
+        if persist_service_store:
+            available, service_records = self._service.list_records("trainer_controls")
+            if not available and service_store_path.exists():
+                all_records: Dict[str, Any] = {}
+            else:
+                all_records = {
+                    str(r.get("session_id") or r.get("id") or ""): json.loads(json.dumps(r))
+                    for r in service_records
+                    if isinstance(r, dict)
+                    and str(r.get("session_id") or r.get("id") or "").strip()
+                }
+        else:
+            local_key = self._LOCAL_DATA_KEYS.get("trainer_controls", "trainer_controls")
+            local_payload = self._data.get(local_key)
+            all_records = json.loads(json.dumps(local_payload)) if isinstance(local_payload, dict) else {}
+
+        record = all_records.get(session_id) or {}
+        controls = list(record.get("controls") or [])
+
+        controls_by_key: Dict[str, Dict[str, Any]] = {
+            str(c.get("parameter_key") or ""): c
+            for c in controls
+            if isinstance(c, dict) and c.get("parameter_key")
+        }
+
+        field_errors: List[Dict[str, Any]] = []
+        valid_patches: List[Dict[str, Any]] = []
+
+        for patch in patches:
+            key = str(patch.get("parameter_key") or "").strip()
+            value = patch.get("proposed_value")
+            if not key:
+                continue
+            ctrl = controls_by_key.get(key)
+            if ctrl is None:
+                field_errors.append({
+                    "field": key,
+                    "reason": "unknown_parameter_key",
+                    "current_value": None,
+                    "requested_value": value,
+                    "allowed_range": None,
+                })
+                continue
+
+            validation_error = self._tw02_validate_control_patch(ctrl, value)
+            if validation_error is not None:
+                field_errors.append(validation_error)
+                continue
+            valid_patches.append({"key": key, "value": value})
+
+        session = self.get_trainer_session(session_id)
+        status = str((session or {}).get("status") or "").strip().lower()
+        surface_state = self._tw02_control_surface_state(has_record=record is not None)
+        can_patch = status == "active" and surface_state == "ok"
+
+        if field_errors:
+            return {
+                "session_id": session_id,
+                "status": "rejected",
+                "error_code": "CONTROL_PATCH_VALIDATION_FAILED",
+                "message": "Patch contains invalid control updates.",
+                "field_errors": field_errors,
+                "rejected_changes": [],
+                "current_controls": controls,
+                "allowedActions": {"canPatchControls": can_patch},
+                "meta": {
+                    "snapshot_at": now,
+                    "staleness": self._tw02_control_staleness(surface_state, now),
+                    "surfaces": {"trainer_controls": {"state": surface_state}},
+                },
+            }
+
+        updated_controls_diff: List[Dict[str, Any]] = []
+        for p in valid_patches:
+            key = p["key"]
+            value = p["value"]
+            ctrl = controls_by_key[key]
+            before = ctrl.get("current_value")
+            ctrl["current_value"] = value
+            ctrl["last_modified_at"] = now
+            updated_controls_diff.append({
+                "field": key,
+                "before": before,
+                "after": value,
+                "validation_status": "accepted",
+            })
+
+        if record:
+            record["controls"] = controls
+        else:
+            record = {"session_id": session_id, "controls": controls}
+        all_records[session_id] = record
+
+        if persist_service_store:
+            self._service.write_records("trainer_controls", all_records)
+        else:
+            local_key = self._LOCAL_DATA_KEYS.get("trainer_controls", "trainer_controls")
+            self._data[local_key] = all_records
+            self._save()
+
+        return {
+            "session_id": session_id,
+            "status": "accepted",
+            "message": "Patch applied successfully.",
+            "warnings": [],
+            "diff": {"updated_controls": updated_controls_diff},
+            "current_controls": controls,
+            "allowedActions": {"canPatchControls": can_patch},
+            "meta": {
+                "snapshot_at": now,
+                "staleness": self._tw02_control_staleness("ok", now),
+                "surfaces": {"trainer_controls": {"state": "ok"}},
+            },
+        }
 
     def cancel_consult_request(
         self,
