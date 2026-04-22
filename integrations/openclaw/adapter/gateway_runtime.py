@@ -230,6 +230,45 @@ class OpenClawDockerGatewayRuntime:
             command.extend(["--params", json.dumps(params, separators=(",", ":"), sort_keys=True)])
         return self.exec_json(command)
 
+    def agent_turn(
+        self,
+        *,
+        message: str,
+        session_id: str,
+        agent_id: str = "main",
+        timeout_seconds: int = 30,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        command = [
+            "agent",
+            "--agent",
+            agent_id,
+            "--session-id",
+            session_id,
+            "--message",
+            message,
+            "--json",
+            "--timeout",
+            str(timeout_seconds),
+        ]
+        if model:
+            command.extend(["--model", model])
+
+        result = self._run_command(self._build_exec_command(command))
+        stdout = _strip_output(result.stdout)
+        if not stdout:
+            return {}
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError:
+            # Some successful command paths still return plain text. Keep the raw
+            # payload so callers can surface a truthful degraded message instead
+            # of fabricating a structured success.
+            return {"text": stdout}
+
+    def sessions_overview(self) -> dict[str, Any]:
+        return self.exec_json(["sessions", "--json"])
+
     def probe(self) -> dict[str, Any]:
         http_health = self.wait_until_healthy()
         return {
@@ -239,16 +278,7 @@ class OpenClawDockerGatewayRuntime:
         }
 
     def exec_json(self, args: Sequence[str]) -> dict[str, Any]:
-        command = [
-            "docker",
-            "exec",
-            self.config.container_name,
-            "env",
-            f"OPENCLAW_GATEWAY_TOKEN={self.config.gateway_token}",
-            "node",
-            "dist/index.js",
-            *args,
-        ]
+        command = self._build_exec_command(args)
         result = self._run_command(command)
         try:
             return json.loads(result.stdout)
@@ -264,6 +294,20 @@ class OpenClawDockerGatewayRuntime:
                     "stderr": result.stderr,
                 },
             ) from exc
+
+    def _build_exec_command(self, args: Sequence[str]) -> list[str]:
+        return [
+            "docker",
+            "exec",
+            self.config.container_name,
+            "env",
+            f"OPENCLAW_GATEWAY_TOKEN={self.config.gateway_token}",
+            "OPENCLAW_HIDE_BANNER=1",
+            "OPENCLAW_SUPPRESS_NOTES=1",
+            "node",
+            "dist/index.js",
+            *args,
+        ]
 
     def _container_exists(self) -> bool:
         result = self._run_command(
@@ -303,12 +347,18 @@ class OpenClawDockerGatewayRuntime:
             ) from exc
         except subprocess.CalledProcessError as exc:
             stderr = _strip_output(exc.stderr)
+            stdout = _strip_output(exc.stdout)
+            combined_output = "\n".join(part for part in (stdout, stderr) if part)
             error_code = "UPSTREAM_UNAVAILABLE"
             error_layer = "transport"
             retryable = True
-            if "ECONNREFUSED" in stderr or "Connection refused" in stderr:
+            if "ECONNREFUSED" in combined_output or "Connection refused" in combined_output:
                 error_code = "CONNECTION_REFUSED"
-            elif "timed out" in stderr.lower():
+            elif "No API key found for provider" in combined_output:
+                error_code = "AUTH_UNAVAILABLE"
+                error_layer = "known"
+                retryable = False
+            elif "timed out" in combined_output.lower():
                 error_code = "TIMEOUT"
                 error_layer = "known"
             raise OpenClawGatewayTransportError(
