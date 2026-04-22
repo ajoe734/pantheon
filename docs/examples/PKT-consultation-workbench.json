@@ -2,50 +2,44 @@
   "workbench_id": "consultation-workbench",
   "label": "Consultation Workbench",
   "route_href": "/consultation",
-  "overall_status": "overview_ready",
-  "headline": "Overview route is live; consultation delivery remains module-gated",
-  "summary": "This overview is a truthful landing surface for the Consultation Workbench. It exposes existing support surfaces and the remaining module-level BFF gaps without claiming that consult requests, committee boards, or red-team memo flows are already live.",
+  "overall_status": "partial_ready",
+  "headline": "CW-01 is live, CW-03 may partial-activate, and CW-02/CW-04 are now contract-ready",
+  "summary": "CW-01 request create/list/detail/cancel routes are live and implement the published ConsultRequest lifecycle. CW-03 committee list/detail routes are also live for partial activation, while CW-02 (Debate Transcript) and CW-04 (Red-team Memo) have now moved from architecture-blocked to contract-ready pending BFF implementation.",
   "packet_family": {
     "family_id": "CW-008",
     "path": "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
-    "lovable_readiness": "not_ready",
-    "note": "All four Consultation Workbench modules remain blocked on net-new BFF routes or lifecycle contracts."
+    "lovable_readiness": "partial_ready",
+    "note": "CW-01 is live, CW-03 may partial-activate, and full Consultation closure still depends on CW-02 transcript truth."
   },
   "module_counts": {
     "total": 4,
-    "ready": 0,
-    "not_ready": 4
+    "ready": 1,
+    "not_ready": 3
   },
   "modules": [
     {
       "module_id": "CW-01",
       "label": "Consult Request",
-      "status": "not_ready",
+      "status": "ready",
       "wave_order": 1,
-      "summary": "Request create/list/detail/cancel flows and the request-to-session lifecycle are still missing.",
-      "missing_contracts": [
+      "summary": "Request create/list/detail/cancel routes are live. Request-to-session lifecycle and linked_session_id contract are implemented.",
+      "live_routes": [
         "POST /api/v1/consult/requests",
         "GET /api/v1/consult/requests",
         "GET /api/v1/consult/requests/{request_id}",
-        "POST /api/v1/consult/requests/{request_id}/cancel",
-        "ConsultRequest lifecycle and linked_session_id contract"
+        "POST /api/v1/consult/requests/{request_id}/cancel"
       ],
-      "next_gate": "Publish request identity, lifecycle, and request-to-session handoff truth.",
+      "next_gate": "CW-01 is live. CW-02 (Debate Transcript) may proceed.",
       "upstream_dependencies": []
     },
     {
       "module_id": "CW-02",
       "label": "Debate Transcript",
-      "status": "not_ready",
+      "status": "contract_ready",
       "wave_order": 2,
-      "summary": "The ordered transcript route, actor resolution, and evidence-link semantics are not yet packetized.",
-      "missing_contracts": [
-        "GET /api/v1/consultations/{session_id}/transcript",
-        "TranscriptEvent schema",
-        "Actor labeling contract",
-        "Evidence attachment inline behavior"
-      ],
-      "next_gate": "Lock transcript ordering and actor-label truth after CW-01 is live.",
+      "summary": "Debate Transcript contract is now published and ratified. Remaining work is BFF implementation of the ordered transcript route family against the append-only event model.",
+      "missing_contracts": [],
+      "next_gate": "Implement the published CW-02 transcript route so CW-03 can promote from partial activation to full transcript-linked production handoff.",
       "upstream_dependencies": [
         "CW-01"
       ]
@@ -53,17 +47,13 @@
     {
       "module_id": "CW-03",
       "label": "Committee Board",
-      "status": "not_ready",
+      "status": "partial_ready",
       "wave_order": 3,
-      "summary": "Committee queue/detail projections, sponsor decisions, and synthesis semantics are still missing.",
+      "summary": "Committee list/detail routes and sponsor-decision authority are live. Partial activation is allowed, but full production handoff still waits on CW-02 transcript truth.",
       "missing_contracts": [
-        "GET /api/v1/committees",
-        "GET /api/v1/committees/{committee_id}",
-        "Committee board projection",
-        "POST /api/v1/operator/commands RecordSponsorDecision",
-        "Synthesis summary shape"
+        "CW-02 Debate Transcript live event ordering"
       ],
-      "next_gate": "Publish committee state and sponsor decision authority after CW-01 and CW-02 settle.",
+      "next_gate": "Open the partial committee board UI against the live routes now; reserve full transcript-linked production handoff for the point when CW-02 is live.",
       "upstream_dependencies": [
         "CW-01",
         "CW-02"
@@ -72,17 +62,11 @@
     {
       "module_id": "CW-04",
       "label": "Red-team Memo",
-      "status": "not_ready",
+      "status": "contract_ready",
       "wave_order": 4,
-      "summary": "Memo browse/detail routes and the downstream governance handoff authority signal are still absent.",
-      "missing_contracts": [
-        "GET /api/v1/consult/memos",
-        "GET /api/v1/consult/memos/{memo_id}",
-        "ConsultMemo read model",
-        "Red-team session-to-memo mapping",
-        "allowedActions.canInitiateGovernanceReview"
-      ],
-      "next_gate": "Publish memo lifecycle and evidence rail truth after request identity and session evidence semantics are stable.",
+      "summary": "Red-team Memo contract is now published and ratified. Remaining work is BFF implementation of the memo list/detail surfaces and governance handoff behavior.",
+      "missing_contracts": [],
+      "next_gate": "Implement the published CW-04 memo routes after the transcript and request identities they depend on are live in the BFF.",
       "upstream_dependencies": [
         "CW-01",
         "CW-02"
@@ -120,12 +104,14 @@
     }
   ],
   "next_steps": [
-    "Land CW-01 request create/list/detail/cancel routes and lifecycle truth.",
-    "Publish the ordered transcript event contract before opening Committee Board or Red-team Memo UI packets.",
+    "Keep CW-01 on the live route family and close the current frontend follow-up loop.",
+    "Open CW-03 as a partial committee board UI against the live routes without inventing transcript drill-down.",
+    "Implement the published CW-02 transcript route before promoting CW-03 to full production handoff.",
+    "Implement the published CW-04 memo routes and governance handoff after the upstream request and transcript identities are live.",
     "Keep this overview read-only; do not invent request forms or memo state in the browser."
   ],
   "meta": {
-    "snapshot_at": "2026-04-18T12:00:00Z",
+    "snapshot_at": "2026-04-22T00:00:00Z",
     "surfaces": {
       "overview": {
         "status": "ok",

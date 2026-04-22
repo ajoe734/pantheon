@@ -1,159 +1,154 @@
 {
-  "_note": "Contract-published example payload for CW-02 Debate Transcript. Use as the implementation target for the BFF and frontend integration. Do not use as mock production state.",
-  "_packet_status": "contract-published",
+  "_note": "Ratified example payload for CW-02 Debate Transcript after the 2026-04-22 follow-up architecture response.",
   "_task": "CW-02-TRANSCRIPT-001",
   "transcript_response": {
+    "object_ref": {
+      "type": "ConsultTranscript",
+      "id": "tr-20260419-081"
+    },
+    "transcript_id": "tr-20260419-081",
     "session_id": "cs-20260419-081",
     "linked_request_id": "cr-20260419-014",
     "events": [
       {
+        "transcript_id": "tr-20260419-081",
+        "session_id": "cs-20260419-081",
         "event_id": "te-001",
-        "session_id": "cs-20260419-081",
-        "sequence_number": 1,
-        "actor_id": "persona-risk-chief",
-        "actor_label": "Risk Chief",
-        "actor_role": "requester",
-        "actor_role_badge": "Requester",
+        "sequence_no": 1,
+        "parent_event_id": null,
         "event_type": "message",
-        "body": "Regime volatility has diverged significantly from the training window. Requesting committee review before deployment proceeds.",
-        "evidence_ref": null,
-        "evidence_link": null,
-        "emitted_at": "2026-04-19T17:06:00Z"
+        "event_time": "2026-04-19T17:06:00Z",
+        "ingest_time": "2026-04-19T17:06:01Z",
+        "actor": {
+          "actor_type": "persona",
+          "actor_id": "sp-requester-001",
+          "display_name": "Risk Chief",
+          "role": "requester"
+        },
+        "content": {
+          "format": "markdown",
+          "text": "Regime volatility has diverged significantly from the training window. Requesting committee review before deployment proceeds."
+        },
+        "evidence_refs": [],
+        "visibility": "committee",
+        "redaction": {
+          "is_redacted": false,
+          "reason": null
+        },
+        "meta": {
+          "source": "openclaw",
+          "hash": "sha256:te-001"
+        }
       },
       {
+        "transcript_id": "tr-20260419-081",
+        "session_id": "cs-20260419-081",
         "event_id": "te-002",
-        "session_id": "cs-20260419-081",
-        "sequence_number": 2,
-        "actor_id": "persona-macro-observer",
-        "actor_label": "Macro Observer",
-        "actor_role": "committee_participant",
-        "actor_role_badge": "Committee",
+        "sequence_no": 2,
+        "parent_event_id": null,
         "event_type": "evidence_attachment",
-        "body": null,
-        "evidence_ref": "telemetry-vol-spike-20260419",
-        "evidence_link": {
-          "href": "/telemetry/events/telemetry-vol-spike-20260419",
-          "label": "Volatility spike — 2026-04-19",
-          "surface_type": "telemetry"
+        "event_time": "2026-04-19T17:07:30Z",
+        "ingest_time": "2026-04-19T17:07:31Z",
+        "actor": {
+          "actor_type": "persona",
+          "actor_id": "sp-committee-001",
+          "display_name": "Macro Observer",
+          "role": "committee_participant"
         },
-        "emitted_at": "2026-04-19T17:07:30Z"
-      },
-      {
-        "event_id": "te-003",
-        "session_id": "cs-20260419-081",
-        "sequence_number": 3,
-        "actor_id": "persona-macro-observer",
-        "actor_label": "Macro Observer",
-        "actor_role": "committee_participant",
-        "actor_role_badge": "Committee",
-        "event_type": "message",
-        "body": "Confirmed: realized volatility is 2.4 sigma above the trailing 30-day mean. Attached telemetry event corroborates. Recommending deployment pause.",
-        "evidence_ref": null,
-        "evidence_link": null,
-        "emitted_at": "2026-04-19T17:08:00Z"
-      },
-      {
-        "event_id": "te-004",
-        "session_id": "cs-20260419-081",
-        "sequence_number": 4,
-        "actor_id": "persona-execution-lead",
-        "actor_label": "Execution Lead",
-        "actor_role": "committee_participant",
-        "actor_role_badge": "Committee",
-        "event_type": "message",
-        "body": "Agree on the volatility signal but the deployment plan already includes a vol-adjusted position cap. Attaching the deployment plan for committee review.",
-        "evidence_ref": null,
-        "evidence_link": null,
-        "emitted_at": "2026-04-19T17:09:15Z"
-      },
-      {
-        "event_id": "te-005",
-        "session_id": "cs-20260419-081",
-        "sequence_number": 5,
-        "actor_id": "persona-execution-lead",
-        "actor_label": "Execution Lead",
-        "actor_role": "committee_participant",
-        "actor_role_badge": "Committee",
-        "event_type": "evidence_attachment",
-        "body": null,
-        "evidence_ref": "dp-20260419-014",
-        "evidence_link": {
-          "href": "/deployments/plans/dp-20260419-014",
-          "label": "Deployment plan dp-20260419-014",
-          "surface_type": "deployment_plan"
+        "content": {
+          "format": "plaintext",
+          "text": null
         },
-        "emitted_at": "2026-04-19T17:09:20Z"
-      },
-      {
-        "event_id": "te-006",
-        "session_id": "cs-20260419-081",
-        "sequence_number": 6,
-        "actor_id": "persona-compliance-sponsor",
-        "actor_label": "Compliance Sponsor",
-        "actor_role": "sponsor",
-        "actor_role_badge": "Sponsor",
-        "event_type": "escalation_signal",
-        "body": "Divergent views on vol-adjusted cap adequacy. Escalating to sponsor decision. Committee has not reached consensus.",
-        "evidence_ref": null,
-        "evidence_link": null,
-        "emitted_at": "2026-04-19T17:11:00Z"
-      },
-      {
-        "event_id": "te-007",
-        "session_id": "cs-20260419-081",
-        "sequence_number": 7,
-        "actor_id": "system",
-        "actor_label": "System",
-        "actor_role": "system",
-        "actor_role_badge": "System",
-        "event_type": "outcome_signal",
-        "body": "Committee session escalated to sponsor. Awaiting RecordSponsorDecision command.",
-        "evidence_ref": null,
-        "evidence_link": null,
-        "emitted_at": "2026-04-19T17:11:01Z"
+        "evidence_refs": [
+          "telemetry-vol-spike-20260419"
+        ],
+        "visibility": "committee",
+        "redaction": {
+          "is_redacted": false,
+          "reason": null
+        },
+        "meta": {
+          "source": "openclaw",
+          "hash": "sha256:te-002"
+        }
       }
     ],
-    "last_event_at": "2026-04-19T17:11:01Z",
     "page_info": {
       "next_page_token": null,
-      "total": 7
+      "page_size": 50,
+      "total": 2
     },
     "meta": {
       "snapshot_at": "2026-04-19T17:20:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T17:20:00Z",
+        "max_age_seconds": 30
+      },
       "surfaces": {
-        "transcript": "ok"
+        "transcript": {
+          "state": "ok"
+        }
       }
     }
   },
   "transcript_partial_response": {
-    "_note": "Example showing partial surface state — some events may not yet be replicated to the read replica. The UI must show the non-dismissable partial banner with last_event_at.",
+    "_note": "Partial transcript means enrichment is incomplete, but the append-only event stream remains intact.",
+    "object_ref": {
+      "type": "ConsultTranscript",
+      "id": "tr-20260419-081"
+    },
+    "transcript_id": "tr-20260419-081",
     "session_id": "cs-20260419-081",
     "linked_request_id": "cr-20260419-014",
     "events": [
       {
-        "event_id": "te-001",
+        "transcript_id": "tr-20260419-081",
         "session_id": "cs-20260419-081",
-        "sequence_number": 1,
-        "actor_id": "persona-risk-chief",
-        "actor_label": "Risk Chief",
-        "actor_role": "requester",
-        "actor_role_badge": "Requester",
+        "event_id": "te-001",
+        "sequence_no": 1,
+        "parent_event_id": null,
         "event_type": "message",
-        "body": "Regime volatility has diverged significantly from the training window. Requesting committee review before deployment proceeds.",
-        "evidence_ref": null,
-        "evidence_link": null,
-        "emitted_at": "2026-04-19T17:06:00Z"
+        "event_time": "2026-04-19T17:06:00Z",
+        "ingest_time": "2026-04-19T17:06:01Z",
+        "actor": {
+          "actor_type": "persona",
+          "actor_id": "sp-requester-001",
+          "display_name": null,
+          "role": "requester"
+        },
+        "content": {
+          "format": "markdown",
+          "text": "Regime volatility has diverged significantly from the training window. Requesting committee review before deployment proceeds."
+        },
+        "evidence_refs": [],
+        "visibility": "committee",
+        "redaction": {
+          "is_redacted": false,
+          "reason": null
+        },
+        "meta": {
+          "source": "openclaw",
+          "hash": "sha256:te-001"
+        }
       }
     ],
-    "last_event_at": "2026-04-19T17:06:00Z",
     "page_info": {
       "next_page_token": null,
+      "page_size": 50,
       "total": 1
     },
     "meta": {
       "snapshot_at": "2026-04-19T17:08:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T17:08:00Z",
+        "max_age_seconds": 30
+      },
       "surfaces": {
-        "transcript": "partial"
+        "transcript": {
+          "state": "partial"
+        }
       }
     }
   }

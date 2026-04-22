@@ -5,8 +5,8 @@
 - Packet family ID: `CW-008`
 - Workbench: Consultation Workbench
 - Phase origin: `BP5-WB-008`
-- Lovable readiness: **partially opened** — `CW-01` is contract-published and pending BFF implementation; `CW-02` is contract-published and pending BFF implementation; `CW-03` is contract-published and pending BFF implementation; `CW-04` is contract-published and pending BFF implementation
-- Overview packet status: `PKT-consultation-workbench` remains the truthful landing surface; `CW-01-FOUNDATION-001` adds the first module-level contract bundle without claiming the routes are live
+- Lovable readiness: **partially opened** — `CW-01` routes are live and the returned UI cycle is under Pantheon follow-up review; `CW-03` list/detail routes are live and may partial-activate; `CW-02` Debate Transcript and `CW-04` Red-team Memo are now contract-ready with pending BFF implementation
+- Overview packet status: `PKT-consultation-workbench` remains the truthful landing surface; `CW-01-FOUNDATION-001` now has a route-live contract bundle for the request lifecycle, while later modules still depend on additional Consultation BFF surfaces
 - Recommended wave: Wave 4 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
 - Reviewer: Codex
@@ -38,10 +38,10 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `CW-01` | Consult Request | request composer, request detail, target selector, lifecycle state, request-to-session status | contract-published; pending-bff | Wave 4 — 1st |
-| `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | contract-published; pending-bff | Wave 4 — 2nd |
-| `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | contract-published; pending-bff | Wave 4 — 3rd |
-| `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | contract-published; pending-bff | Wave 4 — 4th |
+| `CW-01` | Consult Request | request composer, request detail, target selector, lifecycle state, request-to-session status | contract-ready; BFF route live; current UI cycle under review | Wave 4 — 1st |
+| `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | contract-ready; pending BFF | Wave 4 — 2nd |
+| `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | partial-ready; route-live with transcript-dependent full handoff gate | Wave 4 — 3rd |
+| `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | contract-ready; pending BFF | Wave 4 — 4th |
 
 ---
 
@@ -61,11 +61,11 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 
 | Route | Status | Notes |
 |---|---|---|
-| `POST /api/v1/consult/requests` | **missing** | create route; request body anchored to L3 design intent: `from_persona_id`, `target_type`, `target_ref`, `task`, `context_refs`, `priority`; net-new addition: `consultation_type` (from `PERSONA_RUNTIME_MODEL.md` session metadata — explicit BFF contract extension); must return `request_id` and initial `status: created` |
-| `GET /api/v1/consult/requests` | **missing** | list route; must support `status`, `target_type`, `consultation_type`, `page_token`, `page_size` query params; must include `meta.surfaces.consult_request_list` |
-| `GET /api/v1/consult/requests/:request_id` | **missing** | detail route; must expose `linked_session_id` (nullable until Persona Plane creates the session), `allowedActions.canCancel`, and `meta.surfaces.consult_request_detail` |
-| `POST /api/v1/consult/requests/:request_id/cancel` | **missing** | cancel command; must be backed by `allowedActions.canCancel`; must not be invocable when `status` is already `completed` |
-| `ConsultRequest` lifecycle contract | **missing** | the lifecycle states (`created → running → completed | canceled`) and the request-to-session handoff semantics must be promoted from L3 design intent to canonical BFF truth; the `linked_session_id` field must be explicitly defined |
+| `POST /api/v1/consult/requests` | **live** | create route is implemented and verified against the published body/response shape, including `consultation_type`, `status: created`, and `request_to_session_status: pending_session` |
+| `GET /api/v1/consult/requests` | **live** | list route is implemented with the published filters, pagination envelope, and `meta.surfaces.consult_request_list` |
+| `GET /api/v1/consult/requests/:request_id` | **live** | detail route is implemented with `linked_session_id`, `request_to_session_status`, `session_handoff`, `allowedActions.canCancel`, and `meta.surfaces.consult_request_detail` |
+| `POST /api/v1/consult/requests/:request_id/cancel` | **live** | cancel route is implemented and returns the published canceled envelope with `allowedActions.canCancel: false` |
+| `ConsultRequest` lifecycle contract | **live** | the `created → running → completed | canceled` lifecycle, request-to-session handoff semantics, `linked_session_id`, and `session_handoff` fields are now served by the current BFF implementation |
 
 ### Packetization prerequisite
 
@@ -82,7 +82,7 @@ The `ConsultRequest` lifecycle (`created → running → completed | canceled`),
 
 ### Lovable readiness gate
 
-`pending-bff` — the request lifecycle, request-to-session handoff semantics, screen spec, example payload, and frontend handoff bundle now exist. The remaining gate is Pantheon BFF implementation of the four published routes.
+`ready` — the request lifecycle, request-to-session handoff semantics, screen spec, example payload, and frontend handoff bundle are aligned with the live BFF implementation. The current CW-01 frontend return is still under Pantheon follow-up review, so any further front loop must republish a truthful `ui-done` + `frontend-feedback` bundle instead of reopening route-live truth.
 
 ---
 
@@ -90,25 +90,25 @@ The `ConsultRequest` lifecycle (`created → running → completed | canceled`),
 
 ### Surface scope
 
-- **Ordered conversation timeline**: chronological list of transcript events for a given `session_id`. Each event row shows `event_id`, `actor_id` (with a resolved actor label from the participant roster), `actor_role` (`requester`, `responder`, `committee_participant`), `event_type` (`message`, `evidence_attachment`, `outcome_signal`, `escalation_signal`), `body`, `emitted_at`, and inline evidence links if `event_type = evidence_attachment`.
-- **Actor badges**: colored or labeled identity markers derived from the BFF-resolved participant roles — do not derive actor identity or role from the raw event stream client-side.
-- **Inline evidence links**: when an event carries an `evidence_ref`, show a tappable link that navigates to the canonical evidence surface (telemetry, lineage, incident detail). The evidence link target is BFF-provided, not client-constructed.
+- **Ordered conversation timeline**: chronological list of transcript events for a given `session_id`. Each event row shows `event_id`, `sequence_no`, `event_type`, `event_time`, `actor.display_name`, `actor.role`, `content.text`, and attached `evidence_refs[]`. Replay and ordering must follow `sequence_no`, not guessed timestamp order.
+- **Actor badges**: colored or labeled identity markers derived from the BFF-provided `actor.actor_type`, `actor.actor_id`, `actor.display_name`, and `actor.role` tuple — do not derive actor identity or role from the raw event stream client-side.
+- **Inline evidence links**: when an event carries `evidence_refs[]`, the transcript surface may render backend-resolved evidence navigation metadata or delegated links from the canonical evidence surface. The client must not construct evidence URLs from storage refs or guessed path templates.
 - **Transcript replay**: a replay mode that steps through events in chronological order; pause, resume, and scrub controls. Replay state is ephemeral client state — the event sequence itself comes from the BFF.
-- **Degraded partial-state handling**: when `meta.surfaces.transcript` is `partial` or `degraded`, show a non-dismissable partial-transcript banner with `last_event_at` and a note explaining that the transcript may be incomplete. Do not show a truncated transcript as if it were complete.
+- **Degraded partial-state handling**: when `meta.surfaces.transcript` is `partial`, show a non-dismissable partial-transcript banner explaining that enrichment is incomplete while the append-only event stream remains trustworthy. If ordering integrity, event continuity, or transcript completeness fails, the surface must move to `degraded` rather than pretending a trustworthy partial replay exists.
 - **Degradation**: when `meta.surfaces.transcript` is `unavailable`, show the canonical unavailable banner. The transcript list must not render at all when the surface is unavailable.
 
 ### Backend gaps
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/consultations/:session_id/transcript` | **missing** | ordered event-stream read route; must return events sorted by `sequence_number`; must expose `meta.surfaces.transcript` with `ok | partial | degraded | unavailable` states; must include `last_event_at` for degraded-partial copy |
-| Append-only transcript schema | **missing** | the `TranscriptEvent` object must be canonically defined: `event_id`, `session_id`, `actor_id`, `actor_role`, `event_type`, `body`, `evidence_ref` (nullable), `emitted_at`, `sequence_number`; the schema must guarantee strict append-only ordering via `sequence_number` |
-| Actor labeling contract | **missing** | the BFF must resolve `actor_id` to a display label and role badge before serving the transcript; do not push this resolution to the client |
-| Evidence attachment inline behavior | **missing** | when `event_type = evidence_attachment`, the BFF must provide a pre-resolved `evidence_link` in the event payload pointing to the canonical evidence surface (not a raw ref that the client must resolve) |
+| `GET /api/v1/consultations/:session_id/transcript` | **contract-published** | ordered transcript route, pagination, `from_sequence_no`, `meta.staleness`, and `meta.surfaces.transcript.state` are now ratified in `docs/bff/CW-02-debate-transcript.md`; BFF implementation is still pending |
+| Append-only transcript schema | **ratified** | the canonical `TranscriptEvent` object now defines `sequence_no`, nested `actor`, nested `content`, `evidence_refs[]`, append-only ordering, and transcript integrity rules |
+| Actor labeling contract | **ratified** | canonical actor identity comes from upstream transcript truth via `actor.actor_type` and `actor.actor_id`; the BFF may enrich only `actor.display_name` |
+| Evidence attachment inline behavior | **ratified** | transcript events now carry canonical `evidence_refs[]`; any display-link enrichment must preserve backend-owned evidence identity and may not be fabricated client-side |
 
 ### Packetization prerequisite
 
-The append-only `TranscriptEvent` schema, actor labeling contract, event ordering guarantee (`sequence_number`), and the degraded partial-transcript semantics must all be defined as canonical BFF truth before a transcript screen can be packet-defined. Depends on stable `ConsultRequest` and `SessionPersona` identity from `CW-01`.
+The append-only `TranscriptEvent` schema, actor identity rule, event ordering guarantee (`sequence_no`), and the partial-vs-degraded transcript semantics are now ratified as canonical BFF truth. The remaining gate is implementing the published transcript route family against stable `ConsultRequest` and `SessionPersona` identity from `CW-01`.
 
 ### Published contract bundle
 
@@ -117,7 +117,7 @@ The append-only `TranscriptEvent` schema, actor labeling contract, event orderin
 
 ### Lovable readiness gate
 
-`pending-bff` — the transcript route, `TranscriptEvent` schema, actor labeling contract, and inline evidence behavior are now contract-defined. The remaining gate is Pantheon BFF implementation of the published route.
+`pending-bff` — the transcript contract bundle is now ratified and implementation may proceed, but Lovable should wait until the transcript route is live.
 
 ---
 
@@ -137,15 +137,15 @@ The append-only `TranscriptEvent` schema, actor labeling contract, event orderin
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/committees` | **missing** | committee board list route; must support `quorum_state`, `consensus_state`, `page_token`, `page_size`; must include `meta.surfaces.committee_board` |
-| `GET /api/v1/committees/:committee_id` | **missing** | committee board detail route; must expose `committee_ref`, `participant_roster[]`, `escalation_reason`, `quorum_state`, `consensus_state`, `synthesis_summary`, `linked_request_id`, `allowedActions.canRecordSponsorDecision` |
-| Committee board projection | **missing** | canonical board projection for committee membership, referral state, `committee_ref` identity, sponsor selection, and conflict-resolution evidence linkage; currently defined only as policy in `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md` — must be promoted to BFF contract |
-| `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | **missing** | sponsor decision write path; must be backed by `allowedActions.canRecordSponsorDecision`; must accept `committee_id`, `sponsor_decision` (`approved` | `rejected` | `conditional`), and `rationale_ref` |
-| Synthesis summary shape | **missing** | the `synthesis_summary` object (`outcome`, `rationale_ref`, `evidence_refs[]`, `dissent_refs[]`) must be defined as a canonical BFF field; do not derive from raw participant outcomes client-side |
+| `GET /api/v1/committees` | **live** | committee board list route is implemented and returns `meta.surfaces.committee_board`; partial activation may consume it now |
+| `GET /api/v1/committees/:committee_id` | **live** | committee board detail route is implemented with participant roster, escalation context, synthesis summary, and `allowedActions.canRecordSponsorDecision` |
+| Committee board projection | **live** | canonical board projection for committee membership, referral state, `committee_ref` identity, sponsor selection, and conflict-resolution evidence linkage is now served by the BFF |
+| `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | **live** | sponsor decision write path is implemented and gated by `allowedActions.canRecordSponsorDecision` |
+| CW-02 transcript dependency | **blocking full handoff** | `CW-03` may partial-activate now, but full transcript-linked production handoff still waits on `CW-02` ordered transcript truth |
 
 ### Packetization prerequisite
 
-The committee lifecycle states, participant and referral semantics, `committee_ref` identity, sponsor-selection flow, synthesis summary shape, and the evidence linkage contract must all be promoted from `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md` policy into canonical BFF-facing truth before a committee board screen can be packet-defined. Depends on `CW-01` request identity and `CW-02` transcript event ordering.
+The committee lifecycle states, participant and referral semantics, `committee_ref` identity, sponsor-selection flow, synthesis summary shape, and the evidence linkage contract are now live in the BFF. `CW-03` may partial-activate before `CW-02` is fully live, but full transcript-linked production handoff still depends on `CW-02` ordered transcript truth.
 
 ### Published contract bundle
 
@@ -154,7 +154,7 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 
 ### Lovable readiness gate
 
-`pending-bff` — the committee board list/detail routes, board projection, `RecordSponsorDecision` command, and synthesis summary shape are now contract-defined. The remaining gate is Pantheon BFF implementation of the two published routes and the operator command.
+`partial-ready` — the committee board list/detail routes, board projection, `RecordSponsorDecision` command, and synthesis summary shape are live. Partial activation is allowed now; full production handoff still waits on `CW-02`.
 
 ---
 
@@ -162,11 +162,12 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 
 ### Surface scope
 
-- **Findings summary**: top-level view of a published red-team memo. Shows `memo_id`, `memo_type` (`red_team_findings`), `status` (`draft` | `published`, anchored to L3 schema `§6.10`), `author_ref`, `linked_request_id` (the originating `ConsultRequest`; corresponds to L3 FK field `request_id`), and a findings count badge. Note: `archived` is **not** present in the current L3 design intent; if `archived` lifecycle is needed it must be introduced as an explicit net-new contract decision and cannot be assumed as promoted L3 truth.
-- **Recommendation list**: paginated list of recommendations from the red-team memo. Anchored to the L3 design intent (`recommendations_json`), the list is a plain string array in the current L3 shape. The recommendation display uses the L3-anchored plain recommendation list; per-recommendation severity tiers or workflow-status fields are not part of the current CW-04 scope and must not be added without an explicit net-new contract decision.
+- **Findings summary**: top-level view of a red-team memo. Shows `memo_id`, `memo_type` (`red_team`), `status`, `lifecycle_state`, `author_ref`, `linked_request_id`, `linked_session_id`, and a findings count badge. The v1 lifecycle remains `draft -> published`; supersession is modeled by relationship metadata instead of a new primary lifecycle state.
+- **Recommendation list**: paginated list of recommendations from the red-team memo. `recommendations[]` remains a plain string array in v1. Per-recommendation severity tiers or workflow-status fields are still out of scope unless a later explicit contract decision adds them.
 - **Status indicator**: reflects the `status` field from the BFF (L3 field name). When `draft`, show a draft watermark. When `published`, show publish date.
 - **Evidence drawer**: expandable drawer for each recommendation showing the linked evidence objects (telemetry, lineage, consult session, incident case). Evidence links are BFF-resolved — do not construct evidence URLs client-side.
-- **Downstream review handoff**: when the memo is published, the surface shows a downstream handoff CTA if `allowedActions.canInitiateGovernanceReview` is `true`. This navigates the operator to the Governance Workbench review queue with the memo pre-filtered. The CTA is hidden unless the `allowedActions` signal is present and truthy.
+- **Downstream review handoff**: when the memo is published and governance routing is valid, the surface shows a downstream handoff CTA if `allowedActions.canInitiateGovernanceReview` is `true`. This signal is backend-owned and depends on memo lifecycle, target validity, authority, duplicate-review suppression, and evidence availability.
+- **Session-to-memo mapping**: memo detail must expose an explicit `session_to_memo_mapping` object tying the source consultation session and transcript to the published memo. The UI must not derive this mapping from raw session data.
 - **Memo list**: paginated list of all red-team memos filterable by `status`. Each row shows `memo_id`, `status`, `linked_request_id`, `author_ref`, and a recommendation count.
 - **Degradation**: when `meta.surfaces.redteam_memo` is `degraded`, show the last-known memo state with a staleness banner. When `unavailable`, show the canonical unavailable banner with no memo content.
 
@@ -174,15 +175,15 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/consult/memos` | **missing** | red-team memo list route; must support `status` filter (`draft | published`), `page_token`, `page_size`; must include `meta.surfaces.redteam_memo`; `consultation_type` filter and severity-tier summary are net-new additions and must not be treated as promoted L3 truth |
-| `GET /api/v1/consult/memos/:memo_id` | **missing** | memo detail route; L3-anchored fields: `memo_id`, `linked_request_id` (L3: `request_id`), `memo_type`, `author_ref`, `summary`, `recommendations` (plain list per L3 `recommendations_json`), `evidence_refs`, `status`; must expose `allowedActions.canInitiateGovernanceReview`, `linked_session_id`, and `meta.surfaces.redteam_memo` |
-| `ConsultMemo` read model | **missing** | the memo lifecycle (`draft → published`, anchored to L3 schema `§6.10`), the L3-defined recommendation and evidence-ref shapes, and the evidence-link contract must be promoted from L3 design intent to canonical BFF truth; `archived` state and per-recommendation severity or workflow status are **not** in the current L3 shape and must be introduced as explicit net-new contract decisions before appearing in BFF truth |
-| Red-team session-to-memo mapping | **missing** | the relationship between a `red_team` session type, the originating `ConsultRequest`, and the published `ConsultMemo` must be defined as an explicit BFF contract — the UI cannot derive it from raw session data |
-| `allowedActions.canInitiateGovernanceReview` signal | **missing** | backend-shaped authority signal that enables the downstream review handoff CTA; must be falsy unless the memo is published and governance routing is available |
+| `GET /api/v1/consult/memos` | **contract-published** | memo list route, pagination envelope, `status` filter, `items[]`, `meta.staleness`, and `meta.surfaces.redteam_memo.state` are now ratified in `docs/bff/CW-04-redteam-memo.md`; BFF implementation is still pending |
+| `GET /api/v1/consult/memos/:memo_id` | **contract-published** | memo detail route, lifecycle metadata, plain-string `recommendations[]`, evidence refs, and downstream handoff signal are now ratified; BFF implementation is still pending |
+| `ConsultMemo` read model | **ratified** | v1 lifecycle (`draft -> published`), recommendation shape, optional supersession metadata, and degradation rules are now canonical BFF truth |
+| Red-team session-to-memo mapping | **ratified** | the `session_to_memo_mapping` object now defines how source session, transcript, and memo identities relate |
+| `allowedActions.canInitiateGovernanceReview` signal | **ratified** | governance-handoff authority now has an explicit seven-condition backend-owned gate |
 
 ### Packetization prerequisite
 
-The `ConsultMemo` read model (published memo lifecycle, recommendation shape, and evidence-link contract), the red-team session-to-memo mapping, and the `allowedActions.canInitiateGovernanceReview` authority signal must all be defined as canonical BFF truth before a red-team memo screen can be packet-defined. Per-recommendation severity taxonomy is a future contract extension and is not a prerequisite for the current CW-04 packetization. Depends on `CW-01` request identity and `CW-02` transcript or session evidence semantics.
+The `ConsultMemo` read model, `session_to_memo_mapping`, and the `allowedActions.canInitiateGovernanceReview` authority signal are now defined as canonical BFF truth. The remaining gate is implementing the published memo route family against stable `CW-01` request identity and `CW-02` transcript or session evidence semantics. Per-recommendation severity taxonomy remains a future extension and is not required for the current CW-04 packetization.
 
 ### Published contract bundle
 
@@ -191,7 +192,7 @@ The `ConsultMemo` read model (published memo lifecycle, recommendation shape, an
 
 ### Lovable readiness gate
 
-`pending-bff` — the memo list and detail routes, `ConsultMemo` read model, session-to-memo mapping, and `allowedActions.canInitiateGovernanceReview` signal are now contract-defined. The remaining gate is Pantheon BFF implementation of the two published routes.
+`pending-bff` — the memo contract bundle is now ratified and implementation may proceed, but Lovable should wait until the memo route family is live.
 
 ---
 
@@ -201,25 +202,25 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `POST /api/v1/consult/requests` | CW-01 | contract published — BFF implementation pending | request creation form and lifecycle foundation; body and initial response shape defined in `docs/bff/CW-01-consult-request.md` |
-| `GET /api/v1/consult/requests` | CW-01, CW-02, CW-03, CW-04 | contract published for request identity — BFF implementation pending | request list and cross-module request identity |
-| `GET /api/v1/consult/requests/:request_id` | CW-01 | contract published — BFF implementation pending | request detail, `linked_session_id`, `request_to_session_status`, and `allowedActions.canCancel` |
-| `POST /api/v1/consult/requests/:request_id/cancel` | CW-01 | contract published — BFF implementation pending | cancel command; gated by `allowedActions.canCancel` |
-| `ConsultRequest` lifecycle contract | CW-01 | published lifecycle contract — runtime wiring pending | `created → running → completed | canceled` states; request-to-session handoff semantics; `linked_session_id` and `session_handoff` field definition |
-| `GET /api/v1/consultations/:session_id/transcript` | CW-02 | contract published — BFF implementation pending | entire Debate Transcript module; route shape defined in `docs/bff/CW-02-debate-transcript.md` |
-| `TranscriptEvent` schema | CW-02 | contract published — BFF implementation pending | `event_id`, `sequence_number`, actor resolution, `event_type`, `evidence_ref`; schema locked in `docs/bff/CW-02-debate-transcript.md` |
-| Actor labeling contract | CW-02 | contract published — BFF implementation pending | actor display labels and role badges; labeling rules locked in `docs/bff/CW-02-debate-transcript.md` |
-| Evidence attachment inline behavior | CW-02 | contract published — BFF implementation pending | pre-resolved `evidence_link` in event payload; resolution contract locked in `docs/bff/CW-02-debate-transcript.md` |
-| `GET /api/v1/committees` | CW-03 | contract published — BFF implementation pending | committee board list and filter surface; route shape and query params defined in `docs/bff/CW-03-committee-board.md` |
-| `GET /api/v1/committees/:committee_id` | CW-03 | contract published — BFF implementation pending | committee board detail, participant roster, escalation reason, `allowedActions.canRecordSponsorDecision`; field shapes locked in `docs/bff/CW-03-committee-board.md` |
-| Committee board projection | CW-03 | contract published — BFF implementation pending | `committee_ref` identity, quorum state, consensus state, and referral semantics promoted to BFF contract in `docs/bff/CW-03-committee-board.md`; example payload in `docs/examples/CW-03-committee-board.json` |
-| `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | CW-03 | contract published — BFF implementation pending | sponsor decision command wired to canonical operator authority; command vocabulary and gating rules locked in `docs/bff/CW-03-committee-board.md` |
-| Synthesis summary shape | CW-03 | contract published — BFF implementation pending | `outcome`, `rationale_ref`, `evidence_refs[]`, `dissent_refs[]` shape locked in `docs/bff/CW-03-committee-board.md`; client must not derive from participant signals |
-| `GET /api/v1/consult/memos` | CW-04 | contract published — BFF implementation pending | red-team memo list and filter surface; route shape and query params defined in `docs/bff/CW-04-redteam-memo.md` |
-| `GET /api/v1/consult/memos/:memo_id` | CW-04 | contract published — BFF implementation pending | memo detail, recommendations, `allowedActions.canInitiateGovernanceReview`; field shapes locked in `docs/bff/CW-04-redteam-memo.md` |
-| `ConsultMemo` read model | CW-04 | contract published — BFF implementation pending | L3-anchored lifecycle `draft → published`, recommendation object, evidence-link contract, and `session_to_memo_mapping` shape locked in `docs/bff/CW-04-redteam-memo.md`; `archived` state and per-recommendation severity remain explicitly out of scope |
-| Red-team session-to-memo mapping | CW-04 | contract published — BFF implementation pending | `session_to_memo_mapping` object with `session_id`, `request_id`, `session_type`, `mapped_at` locked in `docs/bff/CW-04-redteam-memo.md` |
-| `allowedActions.canInitiateGovernanceReview` | CW-04 | contract published — BFF implementation pending | authority rules and falsy conditions locked in `docs/bff/CW-04-redteam-memo.md`; example payloads in `docs/examples/CW-04-redteam-memo.json` |
+| `POST /api/v1/consult/requests` | CW-01 | contract-ready — BFF route live | request creation form and lifecycle foundation; body and initial response shape defined in `docs/bff/CW-01-consult-request.md` are now implemented |
+| `GET /api/v1/consult/requests` | CW-01, CW-02, CW-03, CW-04 | contract-ready — BFF route live for request identity | request list and cross-module request identity |
+| `GET /api/v1/consult/requests/:request_id` | CW-01 | contract-ready — BFF route live | request detail, `linked_session_id`, `request_to_session_status`, and `allowedActions.canCancel` are now implemented |
+| `POST /api/v1/consult/requests/:request_id/cancel` | CW-01 | contract-ready — BFF route live | cancel command; gated by `allowedActions.canCancel` |
+| `ConsultRequest` lifecycle contract | CW-01 | contract-ready — runtime wiring live | `created → running → completed | canceled` states; request-to-session handoff semantics; `linked_session_id` and `session_handoff` field definition |
+| `GET /api/v1/consultations/:session_id/transcript` | CW-02 | contract published — BFF implementation pending | transcript route, pagination, and surface-state semantics are now ratified and ready for implementation |
+| `TranscriptEvent` schema | CW-02 | ratified | event ordering, actor identity, nested content, and evidence-ref semantics are locked |
+| Actor labeling contract | CW-02 | ratified | actor identity is upstream-owned; BFF may only enrich display labels |
+| Evidence attachment inline behavior | CW-02 | ratified | transcript evidence refs and enrichment boundaries are now locked |
+| `GET /api/v1/committees` | CW-03 | live | committee board list and filter surface are implemented |
+| `GET /api/v1/committees/:committee_id` | CW-03 | live | committee board detail, participant roster, escalation reason, and `allowedActions.canRecordSponsorDecision` are implemented |
+| Committee board projection | CW-03 | live | `committee_ref` identity, quorum state, consensus state, and referral semantics are served by the current BFF |
+| `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | CW-03 | live | sponsor decision command is wired to canonical operator authority |
+| CW-02 ordered transcript truth | CW-03 | blocking full handoff | `CW-03` may partial-activate now, but transcript drill-down and full production handoff still depend on `CW-02` |
+| `GET /api/v1/consult/memos` | CW-04 | contract published — BFF implementation pending | memo list route is now ratified and ready for implementation |
+| `GET /api/v1/consult/memos/:memo_id` | CW-04 | contract published — BFF implementation pending | memo detail route and review-handoff surface are now ratified and ready for implementation |
+| `ConsultMemo` read model | CW-04 | ratified | lifecycle, recommendation, supersession, and degradation semantics are locked |
+| Red-team session-to-memo mapping | CW-04 | ratified | mapping semantics are locked |
+| `allowedActions.canInitiateGovernanceReview` | CW-04 | ratified | governance-handoff authority rules are locked |
 
 ---
 
@@ -236,7 +237,7 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 ## Promotion Criteria
 
-A Consultation Workbench module moves from **not ready** to **ready** (and may be handed to Lovable) when all of the following are true:
+A Consultation Workbench module moves from **contract-ready / pending-bff** or **partial-ready** to **ready** (and may be handed to Lovable) when all of the following are true:
 
 1. All BFF routes listed in that module's Backend Gaps table are implemented and have agreed field shapes.
 2. The module's `meta.surfaces.*` staleness signals are defined and wired through to the canonical degradation banner (`PKT-005`).
@@ -245,6 +246,8 @@ A Consultation Workbench module moves from **not ready** to **ready** (and may b
 5. All upstream prerequisite modules are already Lovable-ready (per the dependency chain above).
 
 No Consultation Workbench module should be handed to Lovable before its own criteria and all upstream criteria are met.
+
+`CW-03` special rule: partial activation is allowed before `CW-02` is fully live, but only for read-only / sponsor-status / outcome-summary surfaces that do not invent transcript drill-down.
 
 ---
 
@@ -259,7 +262,7 @@ The BFF must not maintain its own consultation state machine or synthesize outco
 3. `SessionPersona.metadata.consultation.*` values written by the Persona Plane
 4. Evidence references pointing to canonical objects (TelemetryEvent, LineageEdge, IncidentCase)
 5. `ConsultRequest` objects (once promoted from L3 to canonical BFF truth)
-6. `ConsultMemo` objects (once promoted from L3 to canonical BFF truth)
+6. `ConsultMemo` objects (now promoted to canonical BFF truth via `docs/bff/CW-04-redteam-memo.md`)
 
 ### No client-side synthesis
 
@@ -300,7 +303,7 @@ All four modules must inherit the canonical degradation banner from `PKT-005`. T
 When authoring packet language for these modules:
 
 - Put request-composer copy, transcript timeline layouts, board widget copy, memo presentation wording, degraded-state copy, and CTA label work in `Missing screen-spec work`.
-- Put absent write routes, transcript or event-stream contracts, committee board projections, `ConsultMemo` lifecycle contract, red-team session-to-memo mapping, and `allowedActions` authority signals in `Backend or contract dependencies`.
+- Put pending route implementations, transcript delivery behavior, committee board production handoff limits, memo read-model wiring, and `allowedActions` authority signals in `Backend or contract dependencies`.
 
 ---
 

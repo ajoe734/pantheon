@@ -1,72 +1,75 @@
 {
-  "_note": "Contract-published example payloads for CW-04 Red-team Memo. Use as the implementation target for the BFF and frontend integration.",
+  "_note": "Ratified example payloads for CW-04 Red-team Memo after the 2026-04-22 follow-up architecture response.",
   "_task": "CW-04-REDTEAM-MEMO-001",
   "memo_list_response": {
-    "data": [
+    "items": [
       {
+        "object_ref": {
+          "type": "ConsultMemo",
+          "id": "memo-rt-20260419-007"
+        },
         "memo_id": "memo-rt-20260419-007",
-        "memo_type": "red_team_findings",
+        "memo_type": "red_team",
         "status": "published",
-        "author_ref": "p-risk-analyst",
         "linked_request_id": "cr-20260419-011",
         "recommendation_count": 3,
         "published_at": "2026-04-19T15:42:00Z",
         "created_at": "2026-04-19T13:10:00Z",
         "route_href": "/consultation/memos/memo-rt-20260419-007"
-      },
-      {
-        "memo_id": "memo-rt-20260419-003",
-        "memo_type": "red_team_findings",
-        "status": "draft",
-        "author_ref": "p-adversarial-tester",
-        "linked_request_id": "cr-20260418-009",
-        "recommendation_count": 2,
-        "published_at": null,
-        "created_at": "2026-04-18T22:05:00Z",
-        "route_href": "/consultation/memos/memo-rt-20260419-003"
       }
     ],
     "page_info": {
       "next_page_token": null,
-      "total": 2
+      "page_size": 25,
+      "total": 1
     },
     "meta": {
       "snapshot_at": "2026-04-19T16:00:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T16:00:00Z"
+      },
       "surfaces": {
-        "redteam_memo": "ok"
+        "redteam_memo": {
+          "state": "ok"
+        }
       }
     }
   },
-  "memo_detail_published_response": {
+  "memo_detail_response": {
+    "object_ref": {
+      "type": "ConsultMemo",
+      "id": "memo-rt-20260419-007"
+    },
     "memo_id": "memo-rt-20260419-007",
-    "memo_type": "red_team_findings",
+    "memo_type": "red_team",
     "status": "published",
+    "lifecycle_state": "published",
     "author_ref": "p-risk-analyst",
     "linked_request_id": "cr-20260419-011",
     "linked_session_id": "cs-20260419-rt-007",
     "session_to_memo_mapping": {
-      "session_id": "cs-20260419-rt-007",
-      "request_id": "cr-20260419-011",
-      "session_type": "red_team",
-      "mapped_at": "2026-04-19T15:38:00Z"
+      "mapping_id": "map-20260419-007",
+      "source_session_id": "cs-20260419-rt-007",
+      "transcript_id": "tr-20260419-rt-007",
+      "transcript_version": "v1",
+      "memo_id": "memo-rt-20260419-007",
+      "memo_type": "red_team",
+      "created_by": {
+        "actor_type": "persona",
+        "actor_id": "skeptic-red-team"
+      },
+      "evidence_refs": [
+        "ev-telemetry-atr-spike-20260419"
+      ],
+      "mapping_status": "active",
+      "created_at": "2026-04-19T15:38:00Z"
     },
-    "summary": "Red-team review of proposed macro-regime deployment detected three execution-path risks: insufficient circuit-breaker thresholds under spike conditions, missing volatility guard in the rebalance loop, and unvalidated rollback sequencing when position limits are breached.",
+    "summary": "Red-team review identified execution-path risks around volatility protection, rollback sequencing, and degraded-mode control handoff.",
     "recommendations": [
-      {
-        "index": 1,
-        "body": "Raise circuit-breaker threshold from 2.5x to 3.5x ATR before enabling live deployment under macro-regime conditions. Backtest under 2022-Q1 and 2023-Q4 stress scenarios first.",
-        "evidence_refs": ["ev-telemetry-atr-spike-20260419", "ev-lineage-persona-bt-042"]
-      },
-      {
-        "index": 2,
-        "body": "Add explicit volatility guard in the rebalance loop. Current implementation delegates guard logic to the execution persona without a BFF-enforced check, creating a blind spot when the persona is in degraded mode.",
-        "evidence_refs": ["ev-lineage-persona-bt-042"]
-      },
-      {
-        "index": 3,
-        "body": "Validate rollback sequencing against position-limit breach scenarios. The current red-team replay identified a case where rollback proceeded before all open positions were confirmed flat.",
-        "evidence_refs": ["ev-incident-rollback-20260419", "ev-telemetry-atr-spike-20260419"]
-      }
+      "Raise circuit-breaker threshold from 2.5x to 3.5x ATR before enabling live deployment under macro-regime conditions.",
+      "Add explicit volatility guard in the rebalance loop and do not rely on degraded-mode persona behavior alone.",
+      "Validate rollback sequencing against position-limit breach scenarios before promotion."
     ],
     "evidence_refs": [
       {
@@ -75,103 +78,55 @@
         "artifact_ref": "artifact-atr-042",
         "description": "ATR spike event — 2026-04-19 macro window",
         "link": "/telemetry/events/ev-telemetry-atr-spike-20260419"
-      },
-      {
-        "id": "ev-lineage-persona-bt-042",
-        "evidence_type": "lineage",
-        "artifact_ref": "artifact-persona-bt-042",
-        "description": "Persona backtest lineage edge — strategy-042 rebalance path",
-        "link": "/lineage/edges/ev-lineage-persona-bt-042"
-      },
-      {
-        "id": "ev-incident-rollback-20260419",
-        "evidence_type": "incident",
-        "artifact_ref": null,
-        "description": "Incident case — rollback sequencing gap 2026-04-19",
-        "link": "/incidents/ev-incident-rollback-20260419"
       }
     ],
     "published_at": "2026-04-19T15:42:00Z",
     "created_at": "2026-04-19T13:10:00Z",
+    "supersedes_memo_id": null,
+    "superseded_by_memo_id": null,
     "allowedActions": {
       "canInitiateGovernanceReview": true
     },
     "meta": {
       "snapshot_at": "2026-04-19T16:00:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T16:00:00Z"
+      },
       "surfaces": {
-        "redteam_memo": "ok"
+        "redteam_memo": {
+          "state": "ok"
+        }
       }
     }
   },
-  "memo_detail_draft_response": {
-    "memo_id": "memo-rt-20260419-003",
-    "memo_type": "red_team_findings",
-    "status": "draft",
-    "author_ref": "p-adversarial-tester",
-    "linked_request_id": "cr-20260418-009",
-    "linked_session_id": "cs-20260418-rt-003",
-    "session_to_memo_mapping": {
-      "session_id": "cs-20260418-rt-003",
-      "request_id": "cr-20260418-009",
-      "session_type": "red_team",
-      "mapped_at": "2026-04-18T22:01:00Z"
+  "memo_degraded_response": {
+    "object_ref": {
+      "type": "ConsultMemo",
+      "id": "memo-rt-20260419-007"
     },
-    "summary": "Red-team review in progress. Preliminary findings indicate concentration risk in the overnight hold window.",
+    "memo_id": "memo-rt-20260419-007",
+    "memo_type": "red_team",
+    "status": "published",
+    "lifecycle_state": "published",
+    "summary": "Last-known memo snapshot while memo surface is degraded.",
     "recommendations": [
-      {
-        "index": 1,
-        "body": "Review overnight hold concentration limits for strategies with >15% single-asset exposure.",
-        "evidence_refs": ["ev-lineage-overnight-hold-003"]
-      },
-      {
-        "index": 2,
-        "body": "Confirm kill-switch propagation reaches the overnight rebalance gate before live approval.",
-        "evidence_refs": []
-      }
+      "Raise circuit-breaker threshold from 2.5x to 3.5x ATR before enabling live deployment under macro-regime conditions."
     ],
-    "evidence_refs": [
-      {
-        "id": "ev-lineage-overnight-hold-003",
-        "evidence_type": "lineage",
-        "artifact_ref": "artifact-overnight-003",
-        "description": "Lineage edge — overnight hold window strategy-003",
-        "link": "/lineage/edges/ev-lineage-overnight-hold-003"
-      }
-    ],
-    "published_at": null,
-    "created_at": "2026-04-18T22:05:00Z",
+    "evidence_refs": [],
     "allowedActions": {
       "canInitiateGovernanceReview": false
     },
     "meta": {
-      "snapshot_at": "2026-04-19T16:00:00Z",
+      "snapshot_at": "2026-04-19T15:55:00Z",
+      "staleness": {
+        "status": "stale",
+        "as_of": "2026-04-19T15:55:00Z"
+      },
       "surfaces": {
-        "redteam_memo": "ok"
-      }
-    }
-  },
-  "memo_list_degraded_response": {
-    "data": [
-      {
-        "memo_id": "memo-rt-20260419-007",
-        "memo_type": "red_team_findings",
-        "status": "published",
-        "author_ref": "p-risk-analyst",
-        "linked_request_id": "cr-20260419-011",
-        "recommendation_count": 3,
-        "published_at": "2026-04-19T15:42:00Z",
-        "created_at": "2026-04-19T13:10:00Z",
-        "route_href": "/consultation/memos/memo-rt-20260419-007"
-      }
-    ],
-    "page_info": {
-      "next_page_token": null,
-      "total": 1
-    },
-    "meta": {
-      "snapshot_at": "2026-04-19T14:55:00Z",
-      "surfaces": {
-        "redteam_memo": "degraded"
+        "redteam_memo": {
+          "state": "degraded"
+        }
       }
     }
   }

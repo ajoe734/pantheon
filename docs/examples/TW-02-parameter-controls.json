@@ -1,0 +1,151 @@
+{
+  "_note": "Ratified example payloads for TW-02 Parameter Controls after the 2026-04-22 follow-up architecture response.",
+  "_task": "TW-02-CONTROLS-001",
+  "controls_response": {
+    "object_ref": {
+      "type": "TrainerControlState",
+      "id": "trn-20260419-001"
+    },
+    "session_id": "trn-20260419-001",
+    "status": "active",
+    "controls": [
+      {
+        "control_id": "ctrl-reversal-threshold",
+        "parameter_key": "reversal_threshold",
+        "display_label": "Reversal Threshold",
+        "control_type": "number",
+        "current_value": 0.55,
+        "allowed_range": {
+          "kind": "number",
+          "min": 0.1,
+          "max": 1.0,
+          "step": 0.05
+        },
+        "unit": "score",
+        "last_modified_at": "2026-04-19T19:31:04Z"
+      }
+    ],
+    "allowedActions": {
+      "canPatchControls": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T19:42:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T19:42:00Z"
+      },
+      "surfaces": {
+        "trainer_controls": {
+          "state": "ok"
+        }
+      }
+    }
+  },
+  "patch_request": {
+    "patches": [
+      {
+        "parameter_key": "reversal_threshold",
+        "proposed_value": 0.65
+      }
+    ]
+  },
+  "patch_success_response": {
+    "session_id": "trn-20260419-001",
+    "status": "accepted",
+    "message": "Patch applied successfully.",
+    "warnings": [],
+    "diff": {
+      "updated_controls": [
+        {
+          "field": "reversal_threshold",
+          "before": 0.55,
+          "after": 0.65,
+          "validation_status": "accepted"
+        }
+      ]
+    },
+    "current_controls": [
+      {
+        "control_id": "ctrl-reversal-threshold",
+        "parameter_key": "reversal_threshold",
+        "display_label": "Reversal Threshold",
+        "control_type": "number",
+        "current_value": 0.65,
+        "allowed_range": {
+          "kind": "number",
+          "min": 0.1,
+          "max": 1.0,
+          "step": 0.05
+        },
+        "unit": "score",
+        "last_modified_at": "2026-04-19T19:43:30Z"
+      }
+    ],
+    "allowedActions": {
+      "canPatchControls": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T19:43:30Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T19:43:30Z"
+      },
+      "surfaces": {
+        "trainer_controls": {
+          "state": "ok"
+        }
+      }
+    }
+  },
+  "patch_rejected_response": {
+    "session_id": "trn-20260419-001",
+    "status": "rejected",
+    "error_code": "CONTROL_PATCH_VALIDATION_FAILED",
+    "message": "Patch contains invalid control updates.",
+    "field_errors": [
+      {
+        "field": "minimum_hold_bars",
+        "reason": "exceeds_allowed_range",
+        "current_value": 3,
+        "requested_value": 12,
+        "allowed_range": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    ],
+    "rejected_changes": [],
+    "current_controls": [
+      {
+        "control_id": "ctrl-hold-bars",
+        "parameter_key": "minimum_hold_bars",
+        "display_label": "Minimum Hold Bars",
+        "control_type": "integer",
+        "current_value": 3,
+        "allowed_range": {
+          "kind": "integer",
+          "min": 1,
+          "max": 8,
+          "step": 1
+        },
+        "unit": "bars",
+        "last_modified_at": "2026-04-19T19:31:04Z"
+      }
+    ],
+    "allowedActions": {
+      "canPatchControls": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T19:46:41Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T19:46:41Z"
+      },
+      "surfaces": {
+        "trainer_controls": {
+          "state": "ok"
+        }
+      }
+    }
+  }
+}

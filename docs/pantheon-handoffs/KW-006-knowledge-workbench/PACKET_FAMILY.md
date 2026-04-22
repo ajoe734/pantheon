@@ -5,7 +5,7 @@
 - Packet family ID: `KW-006`
 - Workbench: Knowledge Workbench
 - Phase origin: `BP5-WB-006`
-- Lovable readiness: **partially opened** — `KW-01` is route-live; `KW-02` Research Notes routes live (handoff bundle published 2026-04-21); `KW-03` Evidence Refs routes live (handoff bundle published 2026-04-21); `KW-04` Insight Cards contract-ready with pending BFF implementation; `KW-05` remains blocked pending architecture ratification
+- Lovable readiness: **partially opened** — `KW-01` is route-live; `KW-02` Research Notes routes live (handoff bundle published 2026-04-21); `KW-03` Evidence Refs routes live (handoff bundle published 2026-04-21); `KW-04` Insight Cards contract-ready with pending BFF implementation; `KW-05` Strategy Spec is now contract-ready with pending BFF implementation
 - Overview packet status: `PKT-knowledge-workbench` is published as a truthful overview surface; `KW-01` now provides the first truthful browse module anchoring the family
 - Recommended wave: Wave 3 — after Operator Console (Waves 1-2) and Persona Workbench (Waves 1-2) packetization are settled
 - Owner: Claude
@@ -45,7 +45,7 @@ These artifacts define object- and storage-level truth. They do **not** define a
 | `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | **route-live — ready for Lovable implementation** | Wave 3 — 2nd |
 | `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | **route-live — ready for Lovable implementation** | Wave 3 — 3rd |
 | `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | contract-ready; pending BFF | Wave 3 — 4th |
-| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | blocked | Wave 3 — 5th |
+| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | contract-ready; pending BFF | Wave 3 — 5th |
 
 ---
 
@@ -170,29 +170,29 @@ Insight-card identity, display contract, and filter semantics must be locked bef
 
 ### Surface scope
 
-- **Spec list**: paginated list of canonical strategy specs showing `strategy_id`, `title`, `spec_version`, provenance source, and a workbench lifecycle state (`draft`, `approved`, `deprecated`). The current canonical schema does not define lifecycle state, so this field must come from a BFF or registry projection.
-- **Versioned spec viewer**: full viewer over the canonical `StrategySpec` object, including `hypothesis`, `objective`, `market_scope`, `data_dependencies`, `execution_profile`, `evaluation_plan`, `governance`, and `provenance`.
-- **Evidence citation panel**: shows the evidence and provenance chain backing the current spec version. This includes `data_dependencies`, `provenance.source_refs`, and any linked knowledge evidence refs. The UI must not flatten raw ids or storage refs into ad hoc citation strings.
-- **Diff or compare surface**: backend-composed field diff between two versions of the same strategy spec. The UI renders the provided diff shape rather than comparing raw JSON locally.
+- **Spec list**: paginated list of canonical strategy specs showing `strategy_id`, `current_spec_version_id`, `current_spec_version`, title, source metadata, and lifecycle state (`draft`, `candidate`, `approved`, `retired`). Lifecycle state and version identity are BFF-owned truth, not guessed from raw schema fields.
+- **Versioned spec viewer**: full viewer over one immutable strategy-spec version using `spec_version_id`, `spec_version`, `parent_spec_version_id`, and the canonical `StrategySpec` body such as `hypothesis`, `objective`, `market_scope`, `execution_profile`, `evaluation_plan`, and `governance`.
+- **Evidence citation panel**: shows the backend-composed evidence and provenance chain backing the current spec version. This includes `derived_from_source_refs[]`, evidence refs, memory anchors, and any linked knowledge citations. The UI must not flatten raw ids or storage refs into ad hoc citation strings.
+- **Diff or compare surface**: backend-composed compare output between `left_spec_version_id` and `right_spec_version_id`. The UI renders `changed_sections[]` and `breaking_changes[]` rather than comparing raw JSON locally.
 - **Degradation**: when `meta.surfaces.strategy_spec_list` or `meta.surfaces.strategy_spec_detail` is `degraded` or `unavailable`, show the canonical degradation banner. Never treat the latest locally cached spec as authoritative when the version surface is stale.
 
 ### Backend gaps
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| Strategy-spec list route | **blocked** | draft contract material exists in `docs/bff/KW-05-strategy-spec.md`, but canonical ratification is still open and implementation must not proceed |
-| Versioned strategy-spec detail route | **blocked** | versioned browse semantics remain architecture-sensitive; do not treat the draft contract as implementation-ready |
-| Version history route | **blocked** | ancestry and history surface remain blocked pending final versioning semantics |
-| Strategy-spec versioning and lifecycle contract | **blocked** | `draft \| approved \| deprecated` lifecycle and ancestry semantics are not yet fully ratified for implementation |
-| Strategy-spec diff or compare contract | **blocked** | compare semantics remain blocked until the versioned strategy-spec contract is fully ratified |
+| Strategy-spec list route | **contract-published** | `docs/bff/KW-05-strategy-spec.md` now ratifies the browse route, pagination envelope, and list projection; BFF implementation is still pending |
+| Versioned strategy-spec detail route | **contract-published** | detail route, version selector semantics, and object projection are now ratified; the remaining gap is BFF implementation |
+| Version history route | **contract-published** | history route, ancestry projection, and version row shape are now ratified; the remaining gap is BFF implementation |
+| Strategy-spec versioning and lifecycle contract | **ratified** | canonical identity is now `strategy_id + spec_version_id`; lifecycle is `draft | candidate | approved | retired`; ancestry and immutability rules are locked |
+| Strategy-spec diff or compare contract | **ratified** | compare semantics are now locked around backend-generated `left_spec_version_id`, `right_spec_version_id`, `changed_sections[]`, `breaking_changes[]`, and `evidence_refs[]` |
 
 ### Packetization prerequisite
 
-Draft contract material exists in `docs/bff/KW-05-strategy-spec.md`, but KW-05 remains architecture-blocked. The versioned browse and compare semantics are not yet ratified for implementation.
+The KW-05 version model, lifecycle, ancestry, and compare semantics are now ratified in `docs/bff/KW-05-strategy-spec.md`. The remaining gate is BFF implementation of the published browse/detail/history/compare route family.
 
 ### Lovable readiness gate
 
-`blocked` — KW-05 remains in the architecture lane. Do not treat the draft contract bundle as sufficient for production UI or BFF implementation.
+`pending-bff` — the KW-05 contract bundle is now ratified and implementation may proceed, but Lovable should wait until the BFF route family is live.
 
 ---
 
@@ -217,10 +217,11 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | Insight card detail endpoint | KW-04 | contract published — BFF implementation pending | card detail and linked-source drilldown |
 | Card-surface read model | KW-04 | ratified | card identity, scope, summary, confidence, and aggregation provenance are locked |
 | Filter taxonomy and aggregation contract | KW-04 | ratified | tag, linked-entity, and recency filters are locked; implementation remains pending |
-| Strategy-spec list route | KW-05 | blocked | strategy-spec browse remains architecture-blocked |
-| Versioned strategy-spec detail route | KW-05 | blocked | strategy-spec viewer and citation panel remain architecture-blocked |
-| Strategy-spec versioning and lifecycle contract | KW-05 | blocked | version ancestry and lifecycle semantics are still open |
-| Strategy-spec diff or compare contract | KW-05 | blocked | compare surface remains blocked until KW-05 ratification completes |
+| Strategy-spec list route | KW-05 | contract published — BFF implementation pending | strategy-spec browse route may now be implemented against the ratified version model |
+| Versioned strategy-spec detail route | KW-05 | contract published — BFF implementation pending | strategy-spec viewer and citation panel are contract-ready, but route implementation is still pending |
+| Version history route | KW-05 | contract published — BFF implementation pending | version-history surface is defined and ready for implementation |
+| Strategy-spec versioning and lifecycle contract | KW-05 | ratified | version identity, ancestry, lifecycle, and immutability semantics are locked |
+| Strategy-spec diff or compare contract | KW-05 | ratified | backend-generated compare semantics are locked; route implementation remains pending |
 
 ---
 

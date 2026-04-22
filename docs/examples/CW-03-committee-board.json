@@ -1,0 +1,126 @@
+{
+  "_note": "Contract-published example payload for CW-03 Committee Board. Use as the implementation target for the BFF and frontend integration.",
+  "_task": "CW-03-COMMITTEE-001",
+  "committee_list_response": {
+    "data": [
+      {
+        "committee_id": "committee-regime-risk-20260419-081",
+        "committee_ref": "committee-regime-risk-20260419-081",
+        "escalation_reason": {
+          "trigger_rule": "macro_regime_shift",
+          "forbidden_solo_action": "approve_live_deployment",
+          "escalation_path": "committee_override"
+        },
+        "quorum_state": "quorum_met",
+        "consensus_state": "sponsor_required",
+        "linked_request_id": "cr-20260419-014",
+        "started_at": "2026-04-19T17:07:00Z",
+        "surface_state": "ok",
+        "route_href": "/consultation/committees/committee-regime-risk-20260419-081"
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "total": 1
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T17:20:00Z",
+      "surfaces": {
+        "committee_board": "ok"
+      }
+    }
+  },
+  "committee_detail_response": {
+    "committee_id": "committee-regime-risk-20260419-081",
+    "committee_ref": "committee-regime-risk-20260419-081",
+    "linked_request_id": "cr-20260419-014",
+    "linked_session_id": "cs-20260419-081",
+    "started_at": "2026-04-19T17:07:00Z",
+    "escalation_reason": {
+      "trigger_rule": "macro_regime_shift",
+      "forbidden_solo_action": "approve_live_deployment",
+      "escalation_path": "committee_override"
+    },
+    "quorum_state": "quorum_met",
+    "consensus_state": "sponsor_required",
+    "participant_roster": [
+      {
+        "participant_id": "cm-20260419-081-001",
+        "persona_id": "p-macro-observer",
+        "persona_label": "Macro Observer",
+        "role": "committee_participant",
+        "status": "voted",
+        "outcome_signal": "approved",
+        "rationale_ref": "workspace://consultation-rationales/cs-20260419-081/macro-observer"
+      },
+      {
+        "participant_id": "cm-20260419-081-002",
+        "persona_id": "p-execution-lead",
+        "persona_label": "Execution Lead",
+        "role": "committee_participant",
+        "status": "voted",
+        "outcome_signal": "conditional",
+        "rationale_ref": "workspace://consultation-dissent/cs-20260419-081/execution-lead"
+      },
+      {
+        "participant_id": "cm-20260419-081-003",
+        "persona_id": "p-compliance-sponsor",
+        "persona_label": "Compliance Sponsor",
+        "role": "sponsor",
+        "status": "active",
+        "outcome_signal": null,
+        "rationale_ref": "workspace://consultation-rationales/cs-20260419-081/sponsor"
+      }
+    ],
+    "sponsor_assignment": {
+      "participant_id": "cm-20260419-081-003",
+      "persona_id": "p-compliance-sponsor",
+      "persona_label": "Compliance Sponsor",
+      "role": "sponsor",
+      "status": "active",
+      "outcome_signal": null,
+      "rationale_ref": "workspace://consultation-rationales/cs-20260419-081/sponsor"
+    },
+    "sponsor_decision": null,
+    "sponsor_decided_at": null,
+    "sponsor_decided_by": null,
+    "synthesis_summary": {
+      "outcome": "pending",
+      "rationale_ref": "workspace://consultation-rationales/cs-20260419-081",
+      "evidence_refs": [
+        "telemetry-vol-spike-20260419",
+        "dp-20260419-014"
+      ],
+      "dissent_refs": [
+        "workspace://consultation-dissent/cs-20260419-081/execution-lead"
+      ]
+    },
+    "linked_evidence": [
+      {
+        "id": "telemetry-vol-spike-20260419",
+        "type": "evidence_link",
+        "evidence_type": "telemetry",
+        "artifact_ref": "artifact-042",
+        "description": "Volatility spike - 2026-04-19",
+        "link": "/telemetry/events/telemetry-vol-spike-20260419"
+      },
+      {
+        "id": "dp-20260419-014",
+        "type": "evidence_link",
+        "evidence_type": "deployment_plan",
+        "artifact_ref": "dp-20260419-014",
+        "description": "Deployment plan dp-20260419-014",
+        "link": "/deployments/plans/dp-20260419-014"
+      }
+    ],
+    "allowedActions": {
+      "canRecordSponsorDecision": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T17:20:00Z",
+      "surfaces": {
+        "committee_board": "ok"
+      }
+    }
+  }
+}
