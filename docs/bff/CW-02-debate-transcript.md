@@ -2,10 +2,12 @@
 
 ## Status
 
-**Contract ratified — pending BFF implementation.** The `2026-04-22`
-follow-up architecture response closes the remaining transcript contract
-questions. `CW-02` is no longer blocked on system design; the remaining gap is
-implementing the route family against the ratified append-only event model.
+**Route-live.** The `2026-04-22` follow-up architecture response closes the
+remaining transcript contract questions. The `CW-02` transcript route family is
+now implemented in the current BFF, and the frontend activation packet is
+published at
+`docs/pantheon-handoffs/CW-02-debate-transcript/FRONTEND_CHANGE_SPEC.md`.
+Remaining work is UI activation against the live append-only event model.
 
 Task: `CW-02-TRANSCRIPT-001`
 

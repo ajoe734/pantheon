@@ -2,11 +2,13 @@
 
 ## Status
 
-**Contract ratified — pending BFF implementation.** The `2026-04-22`
-follow-up architecture response closes the minimum versioning, lifecycle, and
-compare-semantics questions for `KW-05`. The module is no longer blocked on
-system design; the remaining gap is implementing the route family against the
-ratified versioned-spec contract.
+**Route-live.** The `2026-04-22` follow-up architecture response closes the
+minimum versioning, lifecycle, and compare-semantics questions for `KW-05`.
+The module is no longer blocked on system design. The browse/detail/history and
+compare route family is now implemented in the current BFF, and the frontend
+activation packet is published at
+`docs/pantheon-handoffs/KW-05-strategy-spec/FRONTEND_CHANGE_SPEC.md`.
+Remaining work is UI activation against the live versioned-spec contract.
 
 Task: `KW-05-STRATEGY-SPEC-001`
 

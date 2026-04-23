@@ -5,8 +5,8 @@
 - Packet family ID: `KW-006`
 - Workbench: Knowledge Workbench
 - Phase origin: `BP5-WB-006`
-- Lovable readiness: **partially opened** — `KW-01` is route-live; `KW-02` Research Notes routes live (handoff bundle published 2026-04-21); `KW-03` Evidence Refs routes live (handoff bundle published 2026-04-21); `KW-04` Insight Cards contract-ready with pending BFF implementation; `KW-05` Strategy Spec is now contract-ready with pending BFF implementation
-- Overview packet status: `PKT-knowledge-workbench` is published as a truthful overview surface; `KW-01` now provides the first truthful browse module anchoring the family
+- Lovable readiness: **partially opened** — `KW-01` is route-live; `KW-02` Research Notes routes live (handoff bundle published 2026-04-21); `KW-03` Evidence Refs routes live (handoff bundle published 2026-04-21); `KW-04` Insight Cards routes live (handoff bundle published 2026-04-22); `KW-05` Strategy Spec routes live (handoff bundle published 2026-04-22) and ready for frontend activation against backend-owned version identity and compare semantics
+- Overview packet status: `PKT-knowledge-workbench` is published as a truthful overview surface; all five Knowledge Workbench modules are now on the live-route side of the boundary
 - Recommended wave: Wave 3 — after Operator Console (Waves 1-2) and Persona Workbench (Waves 1-2) packetization are settled
 - Owner: Claude
 - Reviewer: Codex2
@@ -44,8 +44,8 @@ These artifacts define object- and storage-level truth. They do **not** define a
 | `KW-01` | Institutional Memory | memory entry list, entry detail, lifecycle state machine, tag/type filters | ready | Wave 3 — 1st |
 | `KW-02` | Research Notes | note list, note detail, attach-to-entity selector, ownership view | **route-live — ready for Lovable implementation** | Wave 3 — 2nd |
 | `KW-03` | Evidence Refs | evidence reference list, reference detail, linked-decision panel, source-document link | **route-live — ready for Lovable implementation** | Wave 3 — 3rd |
-| `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | contract-ready; pending BFF | Wave 3 — 4th |
-| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | contract-ready; pending BFF | Wave 3 — 5th |
+| `KW-04` | Insight Cards | browsable card grid, card detail panel, filter rail (tag, entity, recency), linked-source drilldown | route-live — handoff bundle at `docs/pantheon-handoffs/KW-04-insight-cards/` | Wave 3 — 4th |
+| `KW-05` | Strategy Spec | spec list, versioned spec viewer, lifecycle state, evidence citation panel, diff or compare surface | route-live — handoff bundle at `docs/pantheon-handoffs/KW-05-strategy-spec/` | Wave 3 — 5th |
 
 ---
 
@@ -151,18 +151,24 @@ Both evidence routes are live and returning the published field shape. Upstream 
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| Insight aggregation endpoint | **contract-published** | `GET /api/v1/knowledge/insights` is defined in `docs/bff/KW-04-insight-cards.md`; BFF implementation is still pending |
-| Insight card detail endpoint | **contract-published** | `GET /api/v1/knowledge/insights/{insight_id}` is defined in `docs/bff/KW-04-insight-cards.md`; BFF implementation is still pending |
+| Insight aggregation endpoint | **live** | `GET /api/v1/knowledge/insights` is implemented and returning the published card-grid, filter-metadata, pagination, and `meta.surfaces.insight_cards` shape |
+| Insight card detail endpoint | **live** | `GET /api/v1/knowledge/insights/{insight_id}` is implemented and returning scope context, supersession, supporting evidence refs, linked sources, and per-panel surface state |
 | Card-surface read model | **ratified** | canonical `ins-{UUID}` identity, card lifecycle (`active | superseded | archived`), confidence scale, aggregation provenance, and linked-source drilldown contract are locked |
-| Filter taxonomy and aggregation contract | **ratified** | tag, linked-entity, and recency filters are defined as backend truth; route implementation is still pending |
+| Filter taxonomy and aggregation contract | **implemented** | tag, linked-entity, and recency filters are backend-owned in the live BFF response; the remaining gap is publishing the frontend handoff bundle |
 
 ### Packetization prerequisite
 
-Insight-card identity, display contract, and filter semantics must be locked before Lovable can render a real card surface. The existing L3 table is a storage hint only; it does not define how the BFF groups, ranks, or explains cards.
+Insight-card identity, display contract, and filter semantics are now locked and served by the live BFF routes. The module-local frontend handoff bundle is published, so UI activation may consume the current route-live truth without re-synthesizing cards or filters client-side.
+
+### Published contract bundle
+
+- BFF contract: `docs/bff/KW-04-insight-cards.md`
+- Example payload: `docs/examples/KW-04-insight-cards.json`
+- Frontend change spec: `docs/pantheon-handoffs/KW-04-insight-cards/FRONTEND_CHANGE_SPEC.md`
 
 ### Lovable readiness gate
 
-`pending-bff` — the aggregation/detail contracts, card-surface read model, filter taxonomy, and example payloads are published, but the BFF implementation is still pending.
+`route-live` — the aggregation/detail routes are live, the frontend change spec is published, and UI activation may proceed without client-side filter synthesis.
 
 ---
 
@@ -180,19 +186,25 @@ Insight-card identity, display contract, and filter semantics must be locked bef
 
 | Route / contract | Status | Notes |
 |---|---|---|
-| Strategy-spec list route | **contract-published** | `docs/bff/KW-05-strategy-spec.md` now ratifies the browse route, pagination envelope, and list projection; BFF implementation is still pending |
-| Versioned strategy-spec detail route | **contract-published** | detail route, version selector semantics, and object projection are now ratified; the remaining gap is BFF implementation |
-| Version history route | **contract-published** | history route, ancestry projection, and version row shape are now ratified; the remaining gap is BFF implementation |
+| Strategy-spec list route | **live** | `docs/bff/KW-05-strategy-spec.md` ratifies the browse route, pagination envelope, and list projection; the current BFF now serves the live route family |
+| Versioned strategy-spec detail route | **live** | detail route, version selector semantics, and object projection are ratified and implemented in the current BFF |
+| Version history route | **live** | history route, ancestry projection, and version row shape are ratified and implemented in the current BFF |
 | Strategy-spec versioning and lifecycle contract | **ratified** | canonical identity is now `strategy_id + spec_version_id`; lifecycle is `draft | candidate | approved | retired`; ancestry and immutability rules are locked |
-| Strategy-spec diff or compare contract | **ratified** | compare semantics are now locked around backend-generated `left_spec_version_id`, `right_spec_version_id`, `changed_sections[]`, `breaking_changes[]`, and `evidence_refs[]` |
+| Strategy-spec diff or compare contract | **live** | compare semantics are locked around backend-generated `left_spec_version_id`, `right_spec_version_id`, `changed_sections[]`, `breaking_changes[]`, and `evidence_refs[]`; the compare route is implemented in the current BFF |
 
 ### Packetization prerequisite
 
-The KW-05 version model, lifecycle, ancestry, and compare semantics are now ratified in `docs/bff/KW-05-strategy-spec.md`. The remaining gate is BFF implementation of the published browse/detail/history/compare route family.
+The KW-05 version model, lifecycle, ancestry, and compare semantics are ratified in `docs/bff/KW-05-strategy-spec.md` and are now served by the live browse/detail/history/compare route family. The module-local frontend activation packet is published; remaining work is UI activation against the backend-owned route truth.
+
+### Published contract bundle
+
+- BFF contract: `docs/bff/KW-05-strategy-spec.md`
+- Example payload: `docs/examples/KW-05-strategy-spec.json`
+- Frontend change spec: `docs/pantheon-handoffs/KW-05-strategy-spec/FRONTEND_CHANGE_SPEC.md`
 
 ### Lovable readiness gate
 
-`pending-bff` — the KW-05 contract bundle is now ratified and implementation may proceed, but Lovable should wait until the BFF route family is live.
+`route-live` — the browse/detail/version-history/compare routes are live, the frontend change spec is published, and Lovable UI activation may proceed against the backend-owned version identity, ancestry, lifecycle, and compare semantics.
 
 ---
 
@@ -213,15 +225,15 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/knowledge/evidence/{ref_id}` | KW-03, KW-04, KW-05 | **resolved** — `docs/bff/KW-03-evidence-refs.md`; evidence detail with `resolved_link`, `linked_decisions`, source contexts, and per-panel surface state live | evidence detail, card drilldown, and citation drilldown |
 | Evidence reference read model | KW-03, KW-04, KW-05 | ratified | source-document identity, link taxonomy, linked-object refs, and credibility metadata are locked |
 | Evidence link resolution contract | KW-03, KW-04, KW-05 | **resolved** — BFF-owned `resolved_link` with `available | unavailable | external` states is implemented; no client-side URL construction | canonical evidence links with availability state |
-| Insight aggregation endpoint | KW-04 | contract published — BFF implementation pending | entire Insight Cards module |
-| Insight card detail endpoint | KW-04 | contract published — BFF implementation pending | card detail and linked-source drilldown |
+| Insight aggregation endpoint | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md`; list route and backend-owned filter metadata are live | insight card grid and filter rail |
+| Insight card detail endpoint | KW-04 | **resolved** — `docs/bff/KW-04-insight-cards.md`; detail route and linked-source drilldown are live | card detail and linked-source drilldown |
 | Card-surface read model | KW-04 | ratified | card identity, scope, summary, confidence, and aggregation provenance are locked |
-| Filter taxonomy and aggregation contract | KW-04 | ratified | tag, linked-entity, and recency filters are locked; implementation remains pending |
-| Strategy-spec list route | KW-05 | contract published — BFF implementation pending | strategy-spec browse route may now be implemented against the ratified version model |
-| Versioned strategy-spec detail route | KW-05 | contract published — BFF implementation pending | strategy-spec viewer and citation panel are contract-ready, but route implementation is still pending |
-| Version history route | KW-05 | contract published — BFF implementation pending | version-history surface is defined and ready for implementation |
+| Filter taxonomy and aggregation contract | KW-04 | **resolved** — backend-owned tag, linked-entity, and recency filters are live in the list response | trustworthy filter rail for the card grid |
+| Strategy-spec list route | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md`; browse route, pagination envelope, and list projection are live in the current BFF | strategy-spec browse surface |
+| Versioned strategy-spec detail route | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md`; detail route, version selector semantics, and citation panel are live in the current BFF | strategy-spec viewer and citation panel |
+| Version history route | KW-05 | **resolved** — `docs/bff/KW-05-strategy-spec.md`; version-history route and ancestry projection are live in the current BFF | version-history surface |
 | Strategy-spec versioning and lifecycle contract | KW-05 | ratified | version identity, ancestry, lifecycle, and immutability semantics are locked |
-| Strategy-spec diff or compare contract | KW-05 | ratified | backend-generated compare semantics are locked; route implementation remains pending |
+| Strategy-spec diff or compare contract | KW-05 | **resolved** — compare route is live and backend-generated compare semantics are implemented in the current BFF | compare surface |
 
 ---
 

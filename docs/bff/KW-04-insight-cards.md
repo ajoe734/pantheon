@@ -1,5 +1,7 @@
 # KW-04 Insight Cards BFF Contract
 
+**Status:** route-live — BFF list/detail routes implemented; frontend handoff bundle published at `docs/pantheon-handoffs/KW-04-insight-cards/FRONTEND_CHANGE_SPEC.md`
+
 ## Purpose
 
 Provide the fourth browse module for the Knowledge Workbench. This contract defines the insight card aggregation endpoint, per-card detail route, card-surface read model, filter taxonomy, and aggregation provenance semantics for the Insight Cards module. It eliminates client-side synthesis of memory, notes, and evidence into insight cards.

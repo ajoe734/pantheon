@@ -5,8 +5,8 @@
 - Packet family ID: `CW-008`
 - Workbench: Consultation Workbench
 - Phase origin: `BP5-WB-008`
-- Lovable readiness: **partially opened** — `CW-01` routes are live and the returned UI cycle is under Pantheon follow-up review; `CW-03` list/detail routes are live and may partial-activate; `CW-02` Debate Transcript and `CW-04` Red-team Memo are now contract-ready with pending BFF implementation
-- Overview packet status: `PKT-consultation-workbench` remains the truthful landing surface; `CW-01-FOUNDATION-001` now has a route-live contract bundle for the request lifecycle, while later modules still depend on additional Consultation BFF surfaces
+- Lovable readiness: **partially opened** — `CW-01` routes are live and the returned UI cycle is under Pantheon follow-up review; `CW-02` ordered transcript route is live with a published frontend activation packet; `CW-03` list/detail routes and sponsor-decision authority are fully live; `CW-04` Red-team Memo routes are live with a published module-local frontend activation packet
+- Overview packet status: `PKT-consultation-workbench` remains the truthful landing surface; `CW-01` through `CW-04` now have live Consultation BFF surfaces, and the remaining follow-up is UI activation / closeout against the published module-local packets rather than backend route implementation
 - Recommended wave: Wave 4 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
 - Reviewer: Codex
@@ -39,9 +39,9 @@ The existing consultation read surfaces (CS-01 to CS-06) cover outcome and evide
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
 | `CW-01` | Consult Request | request composer, request detail, target selector, lifecycle state, request-to-session status | contract-ready; BFF route live; current UI cycle under review | Wave 4 — 1st |
-| `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | contract-ready; pending BFF | Wave 4 — 2nd |
-| `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | partial-ready; route-live with transcript-dependent full handoff gate | Wave 4 — 3rd |
-| `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | contract-ready; pending BFF | Wave 4 — 4th |
+| `CW-02` | Debate Transcript | ordered conversation timeline, actor badges, inline evidence links, transcript replay, degraded partial-state handling | route-live — handoff bundle at `docs/pantheon-handoffs/CW-02-debate-transcript/` | Wave 4 — 2nd |
+| `CW-03` | Committee Board | committee queue or board view, participant roster, escalation reason, sponsor decision, synthesis summary, linked evidence | route-live | Wave 4 — 3rd |
+| `CW-04` | Red-team Memo | findings summary, recommendation list, publish state, evidence drawer, downstream review handoff | route-live — handoff bundle at `docs/pantheon-handoffs/CW-04-redteam-memo/` | Wave 4 — 4th |
 
 ---
 
@@ -101,23 +101,24 @@ The `ConsultRequest` lifecycle (`created → running → completed | canceled`),
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/consultations/:session_id/transcript` | **contract-published** | ordered transcript route, pagination, `from_sequence_no`, `meta.staleness`, and `meta.surfaces.transcript.state` are now ratified in `docs/bff/CW-02-debate-transcript.md`; BFF implementation is still pending |
+| `GET /api/v1/consultations/:session_id/transcript` | **live** | ordered transcript route is implemented and returning pagination, `from_sequence_no`, `meta.staleness`, and `meta.surfaces.transcript.state` against the ratified append-only event model |
 | Append-only transcript schema | **ratified** | the canonical `TranscriptEvent` object now defines `sequence_no`, nested `actor`, nested `content`, `evidence_refs[]`, append-only ordering, and transcript integrity rules |
 | Actor labeling contract | **ratified** | canonical actor identity comes from upstream transcript truth via `actor.actor_type` and `actor.actor_id`; the BFF may enrich only `actor.display_name` |
 | Evidence attachment inline behavior | **ratified** | transcript events now carry canonical `evidence_refs[]`; any display-link enrichment must preserve backend-owned evidence identity and may not be fabricated client-side |
 
 ### Packetization prerequisite
 
-The append-only `TranscriptEvent` schema, actor identity rule, event ordering guarantee (`sequence_no`), and the partial-vs-degraded transcript semantics are now ratified as canonical BFF truth. The remaining gate is implementing the published transcript route family against stable `ConsultRequest` and `SessionPersona` identity from `CW-01`.
+The append-only `TranscriptEvent` schema, actor identity rule, event ordering guarantee (`sequence_no`), and the partial-vs-degraded transcript semantics are now ratified and served by the live BFF route. The module-local frontend activation packet is published; remaining work is UI implementation against the live transcript surface.
 
 ### Published contract bundle
 
 - BFF contract: `docs/bff/CW-02-debate-transcript.md`
 - Example payload: `docs/examples/CW-02-debate-transcript.json`
+- Frontend change spec: `docs/pantheon-handoffs/CW-02-debate-transcript/FRONTEND_CHANGE_SPEC.md`
 
 ### Lovable readiness gate
 
-`pending-bff` — the transcript contract bundle is now ratified and implementation may proceed, but Lovable should wait until the transcript route is live.
+`route-live` — the transcript route is live, the frontend change spec is published, and UI implementation may proceed against the backend-owned transcript truth.
 
 ---
 
@@ -141,11 +142,11 @@ The append-only `TranscriptEvent` schema, actor identity rule, event ordering gu
 | `GET /api/v1/committees/:committee_id` | **live** | committee board detail route is implemented with participant roster, escalation context, synthesis summary, and `allowedActions.canRecordSponsorDecision` |
 | Committee board projection | **live** | canonical board projection for committee membership, referral state, `committee_ref` identity, sponsor selection, and conflict-resolution evidence linkage is now served by the BFF |
 | `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | **live** | sponsor decision write path is implemented and gated by `allowedActions.canRecordSponsorDecision` |
-| CW-02 transcript dependency | **blocking full handoff** | `CW-03` may partial-activate now, but full transcript-linked production handoff still waits on `CW-02` ordered transcript truth |
+| CW-02 transcript dependency | **resolved** | `CW-02` ordered transcript truth is now live, so committee transcript drill-down and full production handoff may consume the upstream route directly |
 
 ### Packetization prerequisite
 
-The committee lifecycle states, participant and referral semantics, `committee_ref` identity, sponsor-selection flow, synthesis summary shape, and the evidence linkage contract are now live in the BFF. `CW-03` may partial-activate before `CW-02` is fully live, but full transcript-linked production handoff still depends on `CW-02` ordered transcript truth.
+The committee lifecycle states, participant and referral semantics, `committee_ref` identity, sponsor-selection flow, synthesis summary shape, and the evidence linkage contract are now live in the BFF. `CW-02` ordered transcript truth is also live, so `CW-03` is no longer limited to partial activation.
 
 ### Published contract bundle
 
@@ -154,7 +155,7 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 
 ### Lovable readiness gate
 
-`partial-ready` — the committee board list/detail routes, board projection, `RecordSponsorDecision` command, and synthesis summary shape are live. Partial activation is allowed now; full production handoff still waits on `CW-02`.
+`route-live` — the committee board list/detail routes, board projection, `RecordSponsorDecision` command, and transcript dependency are live. Frontend activation may proceed against the current BFF truth.
 
 ---
 
@@ -175,24 +176,25 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 
 | Route | Status | Notes |
 |---|---|---|
-| `GET /api/v1/consult/memos` | **contract-published** | memo list route, pagination envelope, `status` filter, `items[]`, `meta.staleness`, and `meta.surfaces.redteam_memo.state` are now ratified in `docs/bff/CW-04-redteam-memo.md`; BFF implementation is still pending |
-| `GET /api/v1/consult/memos/:memo_id` | **contract-published** | memo detail route, lifecycle metadata, plain-string `recommendations[]`, evidence refs, and downstream handoff signal are now ratified; BFF implementation is still pending |
+| `GET /api/v1/consult/memos` | **live** | memo list route is implemented with pagination, `status` filter, `items[]`, `meta.staleness`, and backend-owned `meta.surfaces.redteam_memo.state` |
+| `GET /api/v1/consult/memos/:memo_id` | **live** | memo detail route is implemented with lifecycle metadata, plain-string `recommendations[]`, evidence refs, and downstream governance handoff signal |
 | `ConsultMemo` read model | **ratified** | v1 lifecycle (`draft -> published`), recommendation shape, optional supersession metadata, and degradation rules are now canonical BFF truth |
 | Red-team session-to-memo mapping | **ratified** | the `session_to_memo_mapping` object now defines how source session, transcript, and memo identities relate |
 | `allowedActions.canInitiateGovernanceReview` signal | **ratified** | governance-handoff authority now has an explicit seven-condition backend-owned gate |
 
 ### Packetization prerequisite
 
-The `ConsultMemo` read model, `session_to_memo_mapping`, and the `allowedActions.canInitiateGovernanceReview` authority signal are now defined as canonical BFF truth. The remaining gate is implementing the published memo route family against stable `CW-01` request identity and `CW-02` transcript or session evidence semantics. Per-recommendation severity taxonomy remains a future extension and is not required for the current CW-04 packetization.
+The `ConsultMemo` read model, `session_to_memo_mapping`, and the `allowedActions.canInitiateGovernanceReview` authority signal are now defined as canonical BFF truth, served by the live memo routes, and paired with a published module-local frontend handoff bundle. Remaining work is UI activation against the live memo route family. Per-recommendation severity taxonomy remains a future extension and is not required for the current CW-04 packetization.
 
 ### Published contract bundle
 
 - BFF contract: `docs/bff/CW-04-redteam-memo.md`
 - Example payload: `docs/examples/CW-04-redteam-memo.json`
+- Frontend change spec: `docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md`
 
 ### Lovable readiness gate
 
-`pending-bff` — the memo contract bundle is now ratified and implementation may proceed, but Lovable should wait until the memo route family is live.
+`route-live` — the memo route family is live, the module-local frontend handoff bundle is published, and frontend work should consume the backend-owned memo payloads directly.
 
 ---
 
@@ -207,7 +209,7 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/consult/requests/:request_id` | CW-01 | contract-ready — BFF route live | request detail, `linked_session_id`, `request_to_session_status`, and `allowedActions.canCancel` are now implemented |
 | `POST /api/v1/consult/requests/:request_id/cancel` | CW-01 | contract-ready — BFF route live | cancel command; gated by `allowedActions.canCancel` |
 | `ConsultRequest` lifecycle contract | CW-01 | contract-ready — runtime wiring live | `created → running → completed | canceled` states; request-to-session handoff semantics; `linked_session_id` and `session_handoff` field definition |
-| `GET /api/v1/consultations/:session_id/transcript` | CW-02 | contract published — BFF implementation pending | transcript route, pagination, and surface-state semantics are now ratified and ready for implementation |
+| `GET /api/v1/consultations/:session_id/transcript` | CW-02 | live | transcript route, pagination, and surface-state semantics are implemented and available to downstream Consultation surfaces |
 | `TranscriptEvent` schema | CW-02 | ratified | event ordering, actor identity, nested content, and evidence-ref semantics are locked |
 | Actor labeling contract | CW-02 | ratified | actor identity is upstream-owned; BFF may only enrich display labels |
 | Evidence attachment inline behavior | CW-02 | ratified | transcript evidence refs and enrichment boundaries are now locked |
@@ -215,9 +217,9 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 | `GET /api/v1/committees/:committee_id` | CW-03 | live | committee board detail, participant roster, escalation reason, and `allowedActions.canRecordSponsorDecision` are implemented |
 | Committee board projection | CW-03 | live | `committee_ref` identity, quorum state, consensus state, and referral semantics are served by the current BFF |
 | `POST /api/v1/operator/commands` (`RecordSponsorDecision`) | CW-03 | live | sponsor decision command is wired to canonical operator authority |
-| CW-02 ordered transcript truth | CW-03 | blocking full handoff | `CW-03` may partial-activate now, but transcript drill-down and full production handoff still depend on `CW-02` |
-| `GET /api/v1/consult/memos` | CW-04 | contract published — BFF implementation pending | memo list route is now ratified and ready for implementation |
-| `GET /api/v1/consult/memos/:memo_id` | CW-04 | contract published — BFF implementation pending | memo detail route and review-handoff surface are now ratified and ready for implementation |
+| CW-02 ordered transcript truth | CW-03 | resolved | transcript drill-down and full production handoff may now consume the live CW-02 route |
+| `GET /api/v1/consult/memos` | CW-04 | live | memo list route is implemented and available for frontend activation |
+| `GET /api/v1/consult/memos/:memo_id` | CW-04 | live | memo detail route and review-handoff surface are implemented and available for frontend activation |
 | `ConsultMemo` read model | CW-04 | ratified | lifecycle, recommendation, supersession, and degradation semantics are locked |
 | Red-team session-to-memo mapping | CW-04 | ratified | mapping semantics are locked |
 | `allowedActions.canInitiateGovernanceReview` | CW-04 | ratified | governance-handoff authority rules are locked |
