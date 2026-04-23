@@ -151,7 +151,12 @@ class CanonicalSnapshotAdapter:
                 candidates.append(Path(base) / filename)
         return _first_existing(candidates)
 
-    def _load_dataset(self, dataset: str) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+    def _load_dataset(
+        self,
+        dataset: str,
+        *,
+        include_snapshot_fallback: bool = True,
+    ) -> tuple[bool, Dict[str, Dict[str, Any]]]:
         path = self._resolve_path(dataset)
         if path is not None and path.exists():
             stat = path.stat().st_mtime_ns
@@ -167,7 +172,7 @@ class CanonicalSnapshotAdapter:
             return True, normalized
 
         snapshot_key = self._DATASETS[dataset].get("snapshot_key")
-        if snapshot_key:
+        if include_snapshot_fallback and snapshot_key:
             available, normalized, cache_meta = _load_snapshot_dataset(
                 self._snapshot_path,
                 str(snapshot_key),
@@ -458,15 +463,35 @@ class ServiceBackedReadAdapter:
 
         return False, {}
 
-    def list_records(self, dataset: str) -> tuple[bool, List[Dict[str, Any]]]:
-        available, records = self._load_dataset(dataset)
+    def list_records(
+        self,
+        dataset: str,
+        *,
+        include_snapshot_fallback: bool = True,
+    ) -> tuple[bool, List[Dict[str, Any]]]:
+        available, records = self._load_dataset(
+            dataset,
+            include_snapshot_fallback=include_snapshot_fallback,
+        )
         return available, list(records.values())
 
-    def record(self, dataset: str, record_id: Optional[str]) -> tuple[bool, Optional[Dict[str, Any]]]:
+    def record(
+        self,
+        dataset: str,
+        record_id: Optional[str],
+        *,
+        include_snapshot_fallback: bool = True,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
         if not record_id:
-            available, _ = self._load_dataset(dataset)
+            available, _ = self._load_dataset(
+                dataset,
+                include_snapshot_fallback=include_snapshot_fallback,
+            )
             return available, None
-        available, records = self._load_dataset(dataset)
+        available, records = self._load_dataset(
+            dataset,
+            include_snapshot_fallback=include_snapshot_fallback,
+        )
         return available, records.get(str(record_id))
 
     def write_records(self, dataset: str, records: Dict[str, Dict[str, Any]]) -> bool:
@@ -3223,21 +3248,31 @@ class ReadSurfaceStore:
             return None
         return self._local_dataset(dataset)
 
-    def dataset_source(self, dataset: str) -> str:
+    def dataset_source(
+        self,
+        dataset: str,
+        *,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
+    ) -> str:
         if dataset in CanonicalSnapshotAdapter._DATASETS:
             available, _ = self._canonical.list_records(dataset)
             if available:
                 return "canonical"
         if dataset in ServiceBackedReadAdapter._DATASETS:
-            available, _ = self._service.list_records(dataset)
+            available, _ = self._service.list_records(
+                dataset,
+                include_snapshot_fallback=include_snapshot_fallback,
+            )
             if available:
                 if (
-                    self._allow_local_snapshot_fallback
+                    include_snapshot_fallback
+                    and self._allow_local_snapshot_fallback
                     and self._service._resolve_path(dataset) is None
                 ):
                     return "local_snapshot"
                 return "service_store"
-        local_payload = self._local_fallback(dataset)
+        local_payload = self._local_fallback(dataset) if include_local_fallback else None
         if local_payload not in (None, "", [], {}):
             return "local_snapshot"
         return "missing"
@@ -4147,8 +4182,14 @@ class ReadSurfaceStore:
         experiment_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         date_range: Optional[str] = None,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
     ) -> List[Dict[str, Any]]:
-        analyses = self._read_dataset_records("research_analyses")
+        analyses = self._read_dataset_records(
+            "research_analyses",
+            include_snapshot_fallback=include_snapshot_fallback,
+            include_local_fallback=include_local_fallback,
+        )
         if ticket_id:
             analyses = [
                 analysis
@@ -4186,11 +4227,21 @@ class ReadSurfaceStore:
         )
         return [self._project_research_analysis_summary(analysis) for analysis in analyses]
 
-    def get_research_analysis(self, analysis_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_analysis(
+        self,
+        analysis_id: Optional[str],
+        *,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
+    ) -> Optional[Dict[str, Any]]:
         if not analysis_id:
             return None
-        available, analysis = self._service.record("research_analyses", analysis_id)
-        if not available:
+        available, analysis = self._service.record(
+            "research_analyses",
+            analysis_id,
+            include_snapshot_fallback=include_snapshot_fallback,
+        )
+        if not available and include_local_fallback:
             analysis = (self._local_fallback("research_analyses") or {}).get(analysis_id)
         if not analysis:
             return None
@@ -4394,12 +4445,21 @@ class ReadSurfaceStore:
         self._save()
         return self._project_research_experiment_detail(record)
 
-    def _read_dataset_records(self, dataset: str) -> List[Dict[str, Any]]:
+    def _read_dataset_records(
+        self,
+        dataset: str,
+        *,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
+    ) -> List[Dict[str, Any]]:
         if dataset in ServiceBackedReadAdapter._DATASETS:
-            available, records = self._service.list_records(dataset)
+            available, records = self._service.list_records(
+                dataset,
+                include_snapshot_fallback=include_snapshot_fallback,
+            )
             if available:
                 return list(records)
-        local_payload = self._local_fallback(dataset)
+        local_payload = self._local_fallback(dataset) if include_local_fallback else None
         if isinstance(local_payload, dict):
             return [record for record in local_payload.values() if isinstance(record, dict)]
         if isinstance(local_payload, list):

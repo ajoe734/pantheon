@@ -1439,9 +1439,10 @@ def _dataset_surface_status(
     snapshot_at: Optional[str] = None,
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> Dict[str, Any]:
     surface = dict(_surface_status())
-    source = read_store.dataset_source(dataset)
+    source = source or read_store.dataset_source(dataset)
     surface["source"] = source
 
     if source == "local_snapshot":
@@ -3428,12 +3429,14 @@ def _rw01_surface_state(
     snapshot_at: str,
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> str:
     surface = _dataset_surface_status(
         dataset,
         snapshot_at=snapshot_at,
         has_data=has_data,
         missing_message=missing_message,
+        source=source,
     )
     if surface.get("status") == "unavailable":
         return "unavailable"
@@ -6202,14 +6205,25 @@ async def list_research_analysis(
     if date_range is not None:
         date_range = _rw03_validate_date_range(date_range)
 
+    source = read_store.dataset_source(
+        "research_analyses",
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
     items = read_store.list_research_analyses(
         ticket_id=ticket_id,
         experiment_id=experiment_id,
         statuses=statuses,
         date_range=date_range,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
     )
     total = len(items)
-    surface_state = _rw01_surface_state("research_analyses", snapshot_at=snapshot_at)
+    surface_state = _rw01_surface_state(
+        "research_analyses",
+        snapshot_at=snapshot_at,
+        source=source,
+    )
     if surface_state == "unavailable":
         page_items = []
         next_page_token = None
@@ -6248,7 +6262,16 @@ async def get_research_analysis(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    analysis = read_store.get_research_analysis(analysis_id)
+    source = read_store.dataset_source(
+        "research_analyses",
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
+    analysis = read_store.get_research_analysis(
+        analysis_id,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
     if not analysis:
         raise _bff_error(
             404,
@@ -6276,6 +6299,7 @@ async def get_research_analysis(
                 "research_analyses",
                 snapshot_at=snapshot_at,
                 has_data=True,
+                source=source,
             ),
         },
     }
