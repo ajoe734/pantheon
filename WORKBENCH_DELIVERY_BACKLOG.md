@@ -1,6 +1,6 @@
 # Workbench Delivery Backlog
 
-Last updated: 2026-04-22
+Last updated: 2026-04-23
 Status: canonical module-level backlog for remaining product and workbench delivery
 Tier: L2 Planning & Execution
 Scope: remaining workbench modules, truthful delivery gates, and the order required to close productization gaps
@@ -13,12 +13,16 @@ This file tracks the remaining productization backlog after the Wave 1 operator 
 A module stays on this backlog until one of these is true:
 
 - its BFF route and packet contract are live and the current frontend loop is `loop-complete`
+- its route-live frontend activation packet publication lane is archive-done and no Pantheon-owned implementation gap remains
 - it is explicitly deferred by a newer canonical planning decision
 
 Closure-record sync by itself does not keep a module on the remaining backlog.
 If a surface is already contract-live, frontend-reviewed, and only needs canonical
 closeout bookkeeping, track that work in `ai-status.json` closeout tasks instead
 of keeping the module listed here as unfinished product backlog.
+The same rule applies when Pantheon has already published the module-local
+frontend activation packet and the remaining work is front-owned delivery rather
+than a Pantheon route or contract gap.
 
 Use `DELIVERY_CLOSURE_AND_LOOP_STATES.md` for status semantics.
 
@@ -47,56 +51,66 @@ These surfaces are not part of the remaining backlog:
 The reviewed Operator Console Wave 2 and governance follow-on packet loops are no
 longer treated as remaining module backlog in this file. Their residual work is
 canonical closeout bookkeeping only and is tracked separately in
-`ai-status.json` via `APP-003-CLOSEOUT-001`.
+`ai-status.json` closeout tasks instead of this remaining module backlog.
 
 ### Evolution Workbench
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `EW-04 Inspiration Graph` | route-live — frontend handoff active | route spec, composed object, `meta.surfaces.inspiration`, and handoff bundle published via `EW-04-OPEN-001`; `GET /api/v1/lineage/inspiration/{artifact_id}` is now implemented with contract coverage, so UI work can consume the live BFF response instead of the placeholder gate | Activate Lovable UI task against the live EW-04 route |
-| `EW-05 Mutation Review` | contract-ready — BFF route and command vocabulary live | route spec, composed `MutationReviewProjection` object, `ApproveMutation` / `RejectMutation` command vocabulary, `allowedActions` authority signals (`canApproveMutation` / `canRejectMutation`), `meta.surfaces.mutation_review` staleness signal, and frontend handoff bundle are now aligned with the live BFF implementation | Lovable implements the production screen against the live handoff bundle |
+| `EW-04 Inspiration Graph` | loop-complete — inspiration route live and current frontend loop closed | route spec, composed object, `meta.surfaces.inspiration`, handoff bundle, and the accepted frontend feedback chain are aligned with the live BFF inspiration route for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later inspiration-graph revision or regression triggers a new delivery loop |
+| `EW-05 Mutation Review` | loop-complete — mutation-review route and current frontend loop closed | mutation-review projection, command vocabulary, authority signals, handoff bundle, and the accepted frontend feedback chain are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later mutation-review revision or regression triggers a new delivery loop |
 
 ### Research Workbench
 
+Route-live activation note: `APP-003-ROUTE-LIVE-FRONTEND-002` is archive-done for
+`RW-02`, `RW-04`, and `RW-05`. Those modules no longer remain on this Pantheon
+backlog purely because front-end activation proceeds downstream from already
+published module-local handoff packets.
+
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `RW-01 Research Ticket` | contract-live — create/list/detail/patch routes implemented | the route family is live, but the module still carries truth-hardening work because reads can still fall back to local snapshot data instead of fully service-owned truth | close `AUTO-HARDEN-RW01-001` and activate the Lovable UI task against the live routes |
-| `RW-02 Search` | contract-live — search route and index-adapter payload implemented | BFF route, pagination, and adapter metadata are live; remaining work is UI activation and keeping adapter truth/degradation semantics aligned with the published contract | activate the Lovable UI task against the live RW-02 route |
-| `RW-03 Analyze` | contract-live — analysis list/detail routes implemented | the route family is live, but the module remains backlog-open until analysis reads move off local fallback and onto service-owned truth | close `AUTO-HARDEN-RW03-001` and then activate the Lovable UI task against the live routes |
-| `RW-04 Experiment Launch` | contract-live — launch/history/detail/cancel routes implemented | all four routes live and returning published field shape; frontend handoff bundle published at `docs/pantheon-handoffs/RW-04-experiment-launch/`; `allowedActions.canCancel` and async state machine live | activate the Lovable UI task against the live RW-04 route family |
-| `RW-05 Artifact Compare` | contract-ready — pending BFF implementation | route and versioning semantics are ratified in `docs/bff/RW-05-artifact-compare.md`; the remaining gap is implementing artifact registry/detail/compare routes against the published contract | start BFF implementation of the ratified artifact list/detail/compare route family |
+| `RW-01 Research Ticket` | loop-complete — route family live, current frontend loop closed, and hardening follow-up closed for the current wave | ticket list/detail/create/patch truth, degraded behavior, and the archived hardening follow-up are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later ticket-contract revision or runtime regression triggers a new delivery loop |
+| `RW-03 Analyze` | loop-complete — route family live, current frontend loop closed, and hardening follow-up closed for the current wave | analysis list/detail truth, backend-owned metric grouping, degraded behavior, and the archived hardening follow-up are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later analysis-contract revision or runtime regression triggers a new delivery loop |
 
 ### Knowledge Workbench
 
-Overview packet note: `PKT-knowledge-workbench` now publishes a truthful overview route and handoff bundle. The module backlog below remains open until the remaining BFF implementations and frontend activation loops close.
+Overview packet note: `PKT-knowledge-workbench` now publishes a truthful overview route and handoff bundle. The module backlog below remains open only for modules whose current frontend activation loop has not yet closed.
+
+Route-live activation note: `APP-003-ROUTE-LIVE-FRONTEND-001` and
+`APP-003-ROUTE-LIVE-FRONTEND-002` are archive-done for `KW-02`, `KW-03`,
+`KW-04`, and `KW-05`. Those modules no longer remain on this Pantheon backlog
+purely because front-end activation proceeds downstream from already published
+module-local handoff packets.
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `KW-01 Institutional Memory` | contract-live — list/detail routes implemented | identity and browse projection are live, but the module remains backlog-open until KW-01 finishes truth-hardening from example/local snapshot behavior to service-owned truth | close `AUTO-HARDEN-KW01-001` and activate the Lovable UI task against the live routes |
-| `KW-02 Research Notes` | contract-ready — pending BFF implementation | ownership, attachment taxonomy, referential integrity, and degradation semantics are ratified; remaining gap is implementing note create/list/detail routes | start BFF implementation of the published KW-02 route family |
-| `KW-03 Evidence Refs` | contract-ready — pending BFF implementation | link taxonomy, credibility metadata, resolved-link semantics, and detail projection are ratified; remaining gap is implementing evidence browse/detail routes | start BFF implementation of the published KW-03 route family |
-| `KW-04 Insight Cards` | contract-ready — pending BFF implementation | aggregation/detail contract and backend-owned filter taxonomy are ratified; remaining gap is implementing insight list/detail routes | start BFF implementation of the published KW-04 route family |
-| `KW-05 Strategy Spec` | contract-ready — versioning and compare semantics ratified; pending BFF implementation | version identity, ancestry, lifecycle, immutability, and compare semantics are now ratified in the canonical contract; remaining gap is implementing the browse/detail/history/compare route family | start BFF implementation of the published KW-05 route family against the ratified version model |
+| `KW-01 Institutional Memory` | loop-complete — list/detail routes live, current frontend loop closed, and hardening follow-up closed for the current wave | institutional-memory browse/detail truth, degraded behavior, and the archived hardening follow-up are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later institutional-memory contract revision or runtime regression triggers a new delivery loop |
 
 ### Consultation Workbench
 
-Overview packet note: `PKT-consultation-workbench` now publishes a truthful overview route and handoff bundle. The module backlog below remains open until the remaining transcript and memo route implementations, plus the current frontend follow-up loops, close.
+Overview packet note: `PKT-consultation-workbench` now publishes a truthful overview route and handoff bundle. The module backlog below only remains open for still-active frontend activations and packet-family sync against the now-live `CW-04` routes.
+
+Route-live activation note: `APP-003-ROUTE-LIVE-FRONTEND-001` is archive-done
+for `CW-02`. That module no longer remains on this Pantheon backlog purely
+because front-end activation proceeds downstream from the published transcript
+handoff packet.
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `CW-01 Consult Request` | contract-ready — BFF routes live; current UI return needs follow-up | Pantheon's create/list/detail/cancel route family is live and contract-verified; remaining work is front-owned publication replay plus the current CW-01 review fixes | republish the CW-01 ui-done + frontend-feedback bundle from one truthful front commit and resolve the current review findings |
-| `CW-02 Debate Transcript` | contract-ready — append-only transcript contract ratified; pending BFF implementation | transcript event schema, actor identity rule, and `partial` enrichment semantics are ratified; remaining gap is implementing the ordered transcript route family | start BFF implementation of the published CW-02 route family |
-| `CW-03 Committee Board` | partial-live — committee list/detail routes and sponsor-decision authority are implemented | committee projections are live and partial activation is ratified now; the remaining gap is transcript-linked production handoff, which still depends on CW-02 route-live transcript truth | open the partial committee board UI against the live routes now, and reserve transcript-dependent surfaces for the point when CW-02 is live |
-| `CW-04 Red-team Memo` | contract-ready — memo and governance-handoff contract ratified; pending BFF implementation | memo lifecycle, mapping object, and governance-review initiation gate are ratified; remaining gap is implementing list/detail surfaces and review handoff behavior | start BFF implementation of the published CW-04 route family |
+| `CW-01 Consult Request` | loop-complete — request routes live and current frontend loop closed | Pantheon's create/list/detail/cancel route family, handoff bundle, and accepted frontend feedback chain are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later consult-request revision or regression triggers a new delivery loop |
+| `CW-03 Committee Board` | loop-complete — committee routes live and current frontend loop closed | committee list/detail routes, sponsor-decision authority, transcript-linked projection, and the accepted frontend feedback chain are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later committee-board revision, transcript dependency change, or regression triggers a new delivery loop |
+| `CW-04 Red-team Memo` | route-live — memo list/detail routes and the module-local frontend handoff bundle are published | memo lifecycle, session-to-memo mapping, evidence links, governance-review initiation gating, and the published handoff bundle are aligned for the current wave; remaining follow-up is frontend activation / replay-clean publication rather than missing BFF work | activate the Lovable UI task against the published live route family; reopen Pantheon implementation only if a UI-facing contract gap appears |
 
 ### Trainer Workbench
 
+Route-live activation note: `APP-003-ROUTE-LIVE-FRONTEND-002` is archive-done
+for `TW-01`, `TW-02`, and `TW-04`. Those modules no longer remain on this
+Pantheon backlog purely because front-end activation proceeds downstream from
+already published module-local handoff packets.
+
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `TW-01 Teaching Dialog` | contract-live — create/list/detail/message routes implemented | the TW-01 route family is live and aligns with the published contract; remaining work is frontend activation rather than route implementation | activate the Lovable UI task against the live TW-01 routes |
-| `TW-02 Parameter Controls` | contract-ready — partial patch and diff semantics ratified; pending BFF implementation | control-state read route, patch route, rejected response shape, and canonical `diff.updated_controls[]` semantics are now ratified; remaining gap is implementing the route family | start BFF implementation of the published TW-02 route family |
-| `TW-03 Before/After Compare` | route-live — frontend handoff active | preview read/refresh routes, warning hierarchy, `preview_unavailable` degraded branch, and polling semantics are already live via `TW-03-COMPARE-001`; frontend handoff bundle published at `docs/pantheon-handoffs/TW-03-before-after-compare/`; `allowedActions.canRefreshPreview` and polling semantics are backend-owned | activate Lovable UI task against the live preview routes |
-| `TW-04 Teaching Replay` | route-live — frontend handoff ready | replay list/detail routes, replay-grade `TeachingEvent` schema, BFF-resolved evidence links, commit/discard authority, and before/candidate/after artifact refs live via `TW-04-REPLAY-001`; frontend handoff bundle published at `docs/pantheon-handoffs/TW-04-teaching-replay/` | activate Lovable UI task against the live TW-04 route family |
+| `TW-03 Before/After Compare` | loop-complete — preview routes live and current frontend loop closed | preview read/refresh routes, warning hierarchy, `preview_unavailable` degraded branch, polling semantics, handoff bundle, and accepted frontend feedback are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later preview-contract revision or runtime regression triggers a new delivery loop |
 
 ## 4. Cross-Family Order
 

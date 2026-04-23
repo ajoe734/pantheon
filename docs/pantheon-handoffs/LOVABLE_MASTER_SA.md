@@ -1,6 +1,6 @@
 # Pantheon Lovable Master Solution Architecture
 
-Last updated: 2026-04-22
+Last updated: 2026-04-23
 Status: master frontend IA and solution-architecture brief for Lovable
 Audience: Lovable and any frontend implementation lane working from Pantheon handoff packets
 Authority: implementation guide derived from canonical blueprint and packet-family documents; this file does not override L1 or L2 canonical policy
@@ -136,10 +136,10 @@ Use this section order:
 | `Governance` | review, approval, promotion, rollback, audit | queue and decision work |
 | `Personas` | persona, binding, capital, deployment context | read-heavy Wave 1 workbench |
 | `Evolution` | post-incident, evolution decisions, lineage, mutation | EW-01–05 live; EW-04 and EW-05 current loops already closed |
-| `Research` | tickets, search, analysis, experiments, artifact compare | RW-01–05 route-live; RW-01 and RW-03 still carry Pantheon-side truth-hardening follow-up |
-| `Knowledge` | memory, notes, evidence, insights, specs | KW-01–05 route-live; KW-04 and KW-05 frontend handoff bundles published |
-| `Consultation` | consult request, transcript, committee, red-team memo | CW-01–04 on the live-route side; CW-01 and CW-03 current loops closed; CW-02 and CW-04 activation packets published |
-| `Trainer` | teaching dialog, controls, compare, replay | TW-01–04 route-live; TW-02 handoff bundle published; TW-03 current loop closed |
+| `Research` | tickets, search, analysis, experiments, artifact compare | RW-01–05 are on the live-route side; RW-01 and RW-03 current loops are closed, and route-live activation packets are already published for RW-02, RW-04, and RW-05 |
+| `Knowledge` | memory, notes, evidence, insights, specs | KW-01–05 are on the live-route side; KW-01 current loop is closed, and route-live activation packets are already published for KW-02, KW-03, KW-04, and KW-05 |
+| `Consultation` | consult request, transcript, committee, red-team memo | CW-01–04 are on the live-route side; CW-01 and CW-03 current loops are closed, CW-02 activation packet is published, and CW-04 remains a front-owned replay-clean closeout |
+| `Trainer` | teaching dialog, controls, compare, replay | TW-01–04 are on the live-route side; TW-03 current loop is closed, and route-live activation packets are already published for TW-01, TW-02, and TW-04 |
 
 ### 4.4 Recommended shared page anatomy
 
@@ -359,17 +359,18 @@ Research Workbench is for creating and moving research work through a governed r
 
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
-| `RW-01 Research Ticket` | ticket list, detail, lifecycle | list-detail | route-live — current frontend loop closed; Pantheon-side truth-hardening remains in `APP-003-RW01-HARDEN-001` |
-| `RW-02 Search` | backend-owned search corpus | search page with filter rail | **route-live** — handoff bundle at `docs/pantheon-handoffs/RW-02-search/` |
-| `RW-03 Analyze` | analysis results and grouped metrics | detail plus compare panels | route-live — current frontend loop closed; Pantheon-side truth-hardening remains in `APP-003-RW03-HARDEN-001` |
-| `RW-04 Experiment Launch` | launch async runs and inspect status | wizard or form plus status board | **route-live** — handoff bundle at `docs/pantheon-handoffs/RW-04-experiment-launch/` |
-| `RW-05 Artifact Compare` | compare versioned artifacts | compare surface | **route-live** — handoff bundle at `docs/pantheon-handoffs/RW-05-artifact-compare/` |
+| `RW-01 Research Ticket` | ticket list, detail, lifecycle | list-detail | route-live — current frontend loop closed; no open Pantheon hardening blocker remains for the current wave |
+| `RW-02 Search` | backend-owned search corpus | search page with filter rail | route-live — frontend activation packet already published at `docs/pantheon-handoffs/RW-02-search/`; treat the module as ready for front implementation, not pending-BFF |
+| `RW-03 Analyze` | analysis results and grouped metrics | detail plus compare panels | route-live — current frontend loop closed; no open Pantheon hardening blocker remains for the current wave |
+| `RW-04 Experiment Launch` | launch async runs and inspect status | wizard or form plus status board | route-live — frontend activation packet already published at `docs/pantheon-handoffs/RW-04-experiment-launch/`; treat the module as ready for front implementation, not pending-BFF |
+| `RW-05 Artifact Compare` | compare versioned artifacts | compare surface | route-live — frontend activation packet already published at `docs/pantheon-handoffs/RW-05-artifact-compare/`; treat the module as ready for front implementation, not pending-BFF |
 
 ### Design intent
 
 Do not let Lovable invent this IA from generic "research app" intuition.
 RW-01 through RW-05 are route-live.
-`RW-01` and `RW-03` still carry Pantheon-side truth-hardening follow-up, but Lovable should not treat either module as blocked or pending-BFF.
+`RW-02`, `RW-04`, and `RW-05` already have archive-done route-live frontend activation publication lanes, so Lovable should not read those modules as generic remaining Pantheon backlog.
+`RW-01` and `RW-03` are both on the live-route side of the boundary and their current-wave Pantheon hardening follow-up is already closed. Lovable should not treat either module as blocked or pending-BFF.
 
 ## 6.6 Knowledge Workbench
 
@@ -387,17 +388,17 @@ Knowledge Workbench is the durable memory and evidence browsing surface.
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
 | `PKT-knowledge-workbench` | overview shell only | overview dashboard shell | overview ready |
-| `KW-01 Institutional Memory` | memory browse and detail | list-detail | **route-live** — handoff bundle at `docs/pantheon-handoffs/KW-01-institutional-memory/` |
-| `KW-02 Research Notes` | notes with ownership and attachments | registry plus detail | **route-live** — handoff bundle at `docs/pantheon-handoffs/KW-02-research-notes/` |
-| `KW-03 Evidence Refs` | evidence reference browser | ledger plus detail drawer | **route-live** — handoff bundle at `docs/pantheon-handoffs/KW-03-evidence-refs/` |
-| `KW-04 Insight Cards` | synthesized insight cards | card grid plus detail inspector | route-live — handoff bundle at `docs/pantheon-handoffs/KW-04-insight-cards/`; do not re-synthesize filters client-side |
-| `KW-05 Strategy Spec` | versioned strategy spec browser | list-detail plus compare | route-live — handoff bundle at `docs/pantheon-handoffs/KW-05-strategy-spec/`; activate against the live browse/detail/version-history/compare routes |
+| `KW-01 Institutional Memory` | memory browse and detail | list-detail | loop-complete for the current wave — the live memory routes and accepted closeout record already closed the current frontend loop |
+| `KW-02 Research Notes` | notes with ownership and attachments | registry plus detail | route-live — frontend activation packet already published at `docs/pantheon-handoffs/KW-02-research-notes/`; treat the module as ready for front implementation, not pending-BFF |
+| `KW-03 Evidence Refs` | evidence reference browser | ledger plus detail drawer | route-live — frontend activation packet already published at `docs/pantheon-handoffs/KW-03-evidence-refs/`; treat the module as ready for front implementation, not pending-BFF |
+| `KW-04 Insight Cards` | synthesized insight cards | card grid plus detail inspector | route-live — frontend activation packet already published at `docs/pantheon-handoffs/KW-04-insight-cards/`; do not re-synthesize filters client-side |
+| `KW-05 Strategy Spec` | versioned strategy spec browser | list-detail plus compare | route-live — frontend activation packet already published at `docs/pantheon-handoffs/KW-05-strategy-spec/`; treat the module as ready for front implementation, not pending-BFF |
 
 ### Design intent
 
 This workbench should feel more library-like and evidence-oriented than operational.
 Use calm information density and strong inspectability.
-`KW-01` through `KW-05` are already on the live-route side of the boundary. `KW-04` and `KW-05` now both carry module-local frontend handoff packets, so Lovable must not treat either module as pending-BFF work.
+`KW-01` through `KW-05` are already on the live-route side of the boundary. `KW-02` through `KW-05` now all carry archive-done route-live frontend activation packet publication, so Lovable must not treat those modules as pending-BFF work or as generic remaining Pantheon backlog.
 
 ## 6.7 Consultation Workbench
 
@@ -416,7 +417,7 @@ Consultation Workbench is for structured consult flows, committee review, and re
 |---|---|---|---|
 | `PKT-consultation-workbench` | overview shell only | overview dashboard shell | overview ready |
 | `CW-01 Consult Request` | request composer and request lifecycle | list-detail plus composer | loop-complete for the current wave — live request routes exist and the current frontend loop is already closed |
-| `CW-02 Debate Transcript` | ordered consultation transcript | transcript timeline plus evidence inspector | route-live — handoff bundle at `docs/pantheon-handoffs/CW-02-debate-transcript/`; do not treat this module as missing-BFF work |
+| `CW-02 Debate Transcript` | ordered consultation transcript | transcript timeline plus evidence inspector | route-live — frontend activation packet already published at `docs/pantheon-handoffs/CW-02-debate-transcript/`; do not treat this module as missing-BFF work |
 | `CW-03 Committee Board` | committee state and sponsor outcome | board plus detail | loop-complete for the current wave — live committee routes exist and the current frontend loop is already closed |
 | `CW-04 Red-team Memo` | published memo and recommendations | document-like detail surface | route-live — memo route family is live and the module-local frontend handoff bundle is published |
 
@@ -424,7 +425,7 @@ Consultation Workbench is for structured consult flows, committee review, and re
 
 This workbench should feel like a structured deliberation system, not chat UI.
 Chronology, actor identity, and evidence traceability matter more than conversational flair.
-`CW-01` through `CW-04` are already on the live-route side of the boundary. `CW-04` now also has its module-local frontend handoff bundle, so front activation should proceed against the published packet rather than being treated as pending-BFF work.
+`CW-01` through `CW-04` are already on the live-route side of the boundary. `CW-02` and `CW-04` both have published module-local activation packets, but only `CW-04` still carries an active front-owned replay-clean closeout follow-up.
 
 ## 6.8 Trainer Workbench
 
@@ -442,10 +443,10 @@ Trainer Workbench is for persona coaching and controlled parameter adjustment.
 
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
-| `TW-01 Teaching Dialog` | training-session chat and status | transcript plus control sidebar | route-live — implement against the live BFF route family |
-| `TW-02 Parameter Controls` | inspect and patch controls | form plus diff rail | route-live — handoff bundle at `docs/pantheon-handoffs/TW-02-parameter-controls/`; implement against the live controls and patch route family |
+| `TW-01 Teaching Dialog` | training-session chat and status | transcript plus control sidebar | route-live — frontend activation packet already published; implement against the live BFF route family rather than treating it as pending-BFF |
+| `TW-02 Parameter Controls` | inspect and patch controls | form plus diff rail | route-live — frontend activation packet already published at `docs/pantheon-handoffs/TW-02-parameter-controls/`; implement against the live controls and patch route family |
 | `TW-03 Before/After Compare` | preview deltas and warnings | compare page | loop-complete for the current wave — the live preview route family and published handoff bundle already closed the current frontend loop |
-| `TW-04 Teaching Replay` | replay finished session and commit or discard | timeline plus evidence drawer | route-live — implement against the live replay route family and published handoff bundle |
+| `TW-04 Teaching Replay` | replay finished session and commit or discard | timeline plus evidence drawer | route-live — frontend activation packet already published; implement against the live replay route family and published handoff bundle |
 
 ### Design intent
 
@@ -465,8 +466,8 @@ Lovable should work in this order:
    `PKT-006`, `PKT-007`
 5. overview shells:
    `PKT-consultation-workbench`, `PKT-knowledge-workbench`
-6. modules still pending frontend activation or frontend-local closeout:
-   `CW-04`, `TW-02`
+6. front-owned closeout or implementation work that still remains active after packet publication:
+   `CW-04` replay-clean publication follow-up; otherwise consume the already-published route-live activation packets for `RW-02`, `RW-04`, `RW-05`, `KW-02`, `KW-03`, `KW-04`, `KW-05`, `CW-02`, `TW-01`, `TW-02`, and `TW-04`
 
 ## 8. What Lovable Should Build As A System, Not As Isolated Pages
 
