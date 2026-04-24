@@ -2,34 +2,114 @@ feature_id: F-042
 type: frontend-feedback
 source_repo: ajoe734/pantheon
 reviewed_by: Codex
+reviewed_at: '2026-04-24T12:08:13Z'
+reviewed_commit: 0ee754bf0228a6998ace115f3277fdc30bcb15e1
+reviewed_source_commit: 8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f
+request_pair_commit: 68fc766daf6f7d0eecafed38b965894de35a42e6
+ui_done_source_commit: 8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f
+frontend_feedback_source_commit: 8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f
+verified_remote_publish_commit: 68fc766daf6f7d0eecafed38b965894de35a42e6
+feedback_bundle_transport: >-
+  Git-visible `origin/main` head `68fc766daf6f7d0eecafed38b965894de35a42e6`
+  now publishes the canonical F-042 request pair and
+  `docs/pantheon-feedback/F-042/*`, both pinned to the same reviewed UI
+  snapshot `8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f`.
 screen: promotion-review
 workbench: governance-workbench
+screen_id: screen-governance-promotion-review
 
+status: loop-complete
 disposition: close
-review_result: loop-complete
+review_result: route-auth-contract-drift-resolved
 can_close: true
 
 summary: >-
-  Pantheon's latest F-042 closeout review approves loop closure for the current
-  packet scope. The mirrored Promotion Review implementation is now replayable,
-  contract-aligned, and no additional Pantheon or front-end follow-up is
-  required for this cycle beyond non-blocking live QA.
+  Pantheon re-reviewed F-042 against the current Git-visible front `main`
+  publication. The previous front-owned follow-up is resolved: the mounted
+  route now supplies a deployment plan identifier, the shared
+  `pantheon_operator_token` bridge is restored, surface status uses the
+  canonical `unavailable` union, nullable `latestRun.progress` is accepted,
+  and optional `review.*` echoes no longer trigger false contract gaps. The
+  request pair plus feedback bundle now describe that same reviewed main-branch
+  snapshot truthfully. No new Pantheon route, BFF aggregation, or runtime gap
+  is required for this loop.
+
+acceptance_verified:
+  - criterion: request pair and feedback bundle are replay-clean on the Git-visible default branch
+    status: pass
+    note: >-
+      `origin/main@68fc766daf6f7d0eecafed38b965894de35a42e6` contains
+      `.coordination/requests/F-042-ui-done.yaml`,
+      `.coordination/requests/F-042-frontend-feedback.yaml`, and
+      `docs/pantheon-feedback/F-042/*`, all pointing to
+      `8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f`.
+  - criterion: mounted route supplies the deployment plan id required by the published F-042 read surface
+    status: pass
+    note: >-
+      `src/App.tsx` now mounts the live review route with `:planId`, and
+      `PromotionReview.tsx` consumes route context first while preserving the
+      legacy `?plan=` fallback.
+  - criterion: shared auth bridge persists the Pantheon operator token expected by the BFF client
+    status: pass
+    note: >-
+      `src/auth/AuthProvider.tsx` again synchronizes
+      `pantheon_operator_token` into `localStorage`, matching the existing
+      Bearer-auth behavior in `src/lib/bffClient.ts`.
+  - criterion: published F-042 render logic matches the canonical contract shape
+    status: pass
+    note: >-
+      `SurfaceStatus.status` now accepts `unavailable`, `latestRun.progress`
+      is nullable, and `review.*` echoes are optional while canonical summary
+      metadata renders from `approval_decision.*`.
+  - criterion: front TypeScript compile passes on the current publication tuple
+    status: pass
+    note: >-
+      `cd /tmp/front-prompt-publish-main && /home/edna/code/front-ai-trading-system/node_modules/.bin/tsc --noEmit`
+      completed successfully at `origin/main@68fc766daf6f7d0eecafed38b965894de35a42e6`.
 
 api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify Git-visible default-branch publication for F-042
+    path: /tmp/front-prompt-publish-main
+    note: >-
+      Confirmed current `origin/main` publishes the corrected request pair,
+      feedback bundle, and live Promotion Review files from one replay-clean
+      tuple.
+  - action: re-check route, auth, and contract-shape drift against the published front implementation
+    path: /tmp/front-prompt-publish-main/src/pages/promotion/PromotionReview.tsx
+    note: >-
+      Verified route-to-plan-id wiring, nullable progress handling, optional
+      review echoes, and canonical decision rendering on the reviewed source
+      snapshot.
+  - action: verify the shared auth bridge
+    path: /tmp/front-prompt-publish-main/src/auth/AuthProvider.tsx
+    note: >-
+      Confirmed `pantheon_operator_token` is restored for authenticated BFF
+      requests on the reviewed main-branch snapshot.
+
 follow_up_items:
   - type: qa
     status: deferred_non_blocking
-    note: Live browser and runtime verification remain non-blocking after closeout.
+    note: >-
+      Live browser exercise against a running Pantheon BFF remains
+      non-blocking after this closeout.
+
 required_front_repo_updates: []
 required_pantheon_updates: []
 
 loop_close_condition: >-
-  Satisfied. The current F-042 packet loop is closed on the Pantheon side.
+  Met. The current Git-visible front `main` publication resolves the earlier
+  route, auth, and contract-shape drift, and the canonical request pair plus
+  feedback bundle now point to the same reviewed source snapshot
+  `8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f`.
 
 risk_note: >-
-  Residual risk is limited to non-blocking live QA unless a later cycle reports
-  a new divergence.
+  Remaining risk is limited to non-blocking deployed browser QA and future
+  regressions outside this approved publication tuple, not an open Pantheon
+  endpoint, BFF, or replay-truth defect.
 
+blocking: false
 lovable_ui_task_status: closed
 next_action: none
 review_findings_ref: .coordination/reviews/F-042-review.md
