@@ -113,11 +113,14 @@ class EvidenceRef:
     ref_type: EvidenceRefType | str
     ref_id: str
     storage_ref: Optional[Dict[str, str]] = None
+    note: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {"ref_type": self.ref_type, "ref_id": self.ref_id}
         if self.storage_ref:
             result["storage_ref"] = self.storage_ref
+        if self.note:
+            result["note"] = self.note
         return result
 
     @classmethod
@@ -126,6 +129,7 @@ class EvidenceRef:
             ref_type=data["ref_type"],
             ref_id=data["ref_id"],
             storage_ref=data.get("storage_ref"),
+            note=data.get("note"),
         )
 
 

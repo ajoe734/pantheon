@@ -21,7 +21,7 @@ from services.memory.institutional_memory_store import (
 
 def make_entry(**overrides) -> InstitutionalMemoryEntry:
     payload = {
-        "entry_id": "inst-001",
+        "entry_id": "mem-00000000-0000-0000-0000-000000000001",
         "knowledge_type": KnowledgeType.INCIDENT_LESSON.value,
         "content": {
             "headline": "Momentum strategies should widen buffers during regime shifts.",
@@ -119,10 +119,10 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
 
     def test_list_filters_and_sorts_by_reuse_then_timestamp(self) -> None:
         store = InstitutionalMemoryStore()
-        older = make_entry(entry_id="inst-older", written_at="2026-04-17T07:00:00Z", reuse_count=2)
-        newer = make_entry(entry_id="inst-newer", written_at="2026-04-17T09:00:00Z", reuse_count=4)
+        older = make_entry(entry_id="mem-00000000-0000-0000-0000-000000000002", written_at="2026-04-17T07:00:00Z", reuse_count=2)
+        newer = make_entry(entry_id="mem-00000000-0000-0000-0000-000000000003", written_at="2026-04-17T09:00:00Z", reuse_count=4)
         other_scope = make_entry(
-            entry_id="inst-other",
+            entry_id="mem-00000000-0000-0000-0000-000000000004",
             scope=Scope.INSTRUMENT_CLASS.value,
             scope_filter="equity_futures",
             knowledge_type=KnowledgeType.RESEARCH_FINDING.value,
@@ -137,43 +137,64 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
             scope_filter="momentum",
             knowledge_type=KnowledgeType.INCIDENT_LESSON.value,
         )
-        self.assertEqual([entry.entry_id for entry in filtered], ["inst-newer", "inst-older"])
+        self.assertEqual(
+            [entry.entry_id for entry in filtered],
+            ["mem-00000000-0000-0000-0000-000000000003", "mem-00000000-0000-0000-0000-000000000002"],
+        )
 
     def test_list_sorts_by_normalized_utc_instant(self) -> None:
         store = InstitutionalMemoryStore()
-        earlier = make_entry(entry_id="inst-earlier", written_at="2026-04-17T07:30:00Z")
-        later = make_entry(entry_id="inst-later", written_at="2026-04-17T08:00:00+00:00")
+        earlier = make_entry(entry_id="mem-00000000-0000-0000-0000-000000000005", written_at="2026-04-17T07:30:00Z")
+        later = make_entry(entry_id="mem-00000000-0000-0000-0000-000000000006", written_at="2026-04-17T08:00:00+00:00")
         store.create(earlier)
         store.create(later)
 
-        self.assertEqual([entry.entry_id for entry in store.list()], ["inst-later", "inst-earlier"])
+        self.assertEqual(
+            [entry.entry_id for entry in store.list()],
+            ["mem-00000000-0000-0000-0000-000000000006", "mem-00000000-0000-0000-0000-000000000005"],
+        )
 
     def test_mark_reused_updates_count_without_deadlock(self) -> None:
         store = InstitutionalMemoryStore()
         store.create(make_entry())
-        updated = store.mark_reused("inst-001", count=3)
+        updated = store.mark_reused("mem-00000000-0000-0000-0000-000000000001", count=3)
         self.assertEqual(updated.reuse_count, 3)
-        self.assertEqual(store.require("inst-001").reuse_count, 3)
+        self.assertEqual(store.require("mem-00000000-0000-0000-0000-000000000001").reuse_count, 3)
 
     def test_supersede_marks_entry_inactive_without_deadlock(self) -> None:
         store = InstitutionalMemoryStore()
-        original = make_entry(entry_id="inst-original")
-        replacement = make_entry(entry_id="inst-replacement", source_event_id="PM-2026-099")
+        original = make_entry(entry_id="mem-00000000-0000-0000-0000-000000000007")
+        replacement = make_entry(
+            entry_id="mem-00000000-0000-0000-0000-000000000008",
+            source_event_id="PM-2026-099",
+        )
         store.create(original)
         store.create(replacement)
 
-        updated = store.supersede("inst-original", "inst-replacement")
-        self.assertEqual(updated.superseded_by, "inst-replacement")
-        self.assertEqual([entry.entry_id for entry in store.list()], ["inst-replacement"])
+        updated = store.supersede(
+            "mem-00000000-0000-0000-0000-000000000007",
+            "mem-00000000-0000-0000-0000-000000000008",
+        )
+        self.assertEqual(updated.superseded_by, "mem-00000000-0000-0000-0000-000000000008")
+        self.assertEqual(
+            [entry.entry_id for entry in store.list()],
+            ["mem-00000000-0000-0000-0000-000000000008"],
+        )
         all_entries = {entry.entry_id: entry for entry in store.list(active_only=False)}
-        self.assertEqual(set(all_entries), {"inst-original", "inst-replacement"})
-        self.assertEqual(all_entries["inst-original"].superseded_by, "inst-replacement")
+        self.assertEqual(
+            set(all_entries),
+            {"mem-00000000-0000-0000-0000-000000000007", "mem-00000000-0000-0000-0000-000000000008"},
+        )
+        self.assertEqual(
+            all_entries["mem-00000000-0000-0000-0000-000000000007"].superseded_by,
+            "mem-00000000-0000-0000-0000-000000000008",
+        )
 
     def test_retrieve_ranks_query_and_tag_matches(self) -> None:
         store = InstitutionalMemoryStore()
-        incident = make_entry(entry_id="inst-incident", reuse_count=2)
+        incident = make_entry(entry_id="mem-00000000-0000-0000-0000-000000000009", reuse_count=2)
         research = make_entry(
-            entry_id="inst-research",
+            entry_id="mem-00000000-0000-0000-0000-00000000000a",
             knowledge_type=KnowledgeType.RESEARCH_FINDING.value,
             source_event_type=SourceEventType.RESEARCH_TASK_COMPLETED.value,
             source_event_id="RS-001",
@@ -188,7 +209,10 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
         store.create(research)
 
         hits = store.retrieve(query="momentum lag", tags=["breakout"], limit=2)
-        self.assertEqual([hit.entry.entry_id for hit in hits], ["inst-research", "inst-incident"])
+        self.assertEqual(
+            [hit.entry.entry_id for hit in hits],
+            ["mem-00000000-0000-0000-0000-00000000000a", "mem-00000000-0000-0000-0000-000000000009"],
+        )
         self.assertGreater(hits[0].relevance_score, hits[1].relevance_score)
 
     def test_persistence_round_trip(self) -> None:
@@ -196,12 +220,15 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
             path = Path(tmpdir) / "institutional-memory.json"
             store = InstitutionalMemoryStore(path=path)
             store.create(make_entry())
-            store.mark_reused("inst-001", count=2)
+            store.mark_reused("mem-00000000-0000-0000-0000-000000000001", count=2)
 
             reloaded = InstitutionalMemoryStore(path=path)
-            self.assertEqual(reloaded.require("inst-001").reuse_count, 2)
+            self.assertEqual(
+                reloaded.require("mem-00000000-0000-0000-0000-000000000001").reuse_count,
+                2,
+            )
             persisted = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted[0]["entry_id"], "inst-001")
+            self.assertEqual(persisted[0]["entry_id"], "mem-00000000-0000-0000-0000-000000000001")
 
     def test_load_rejects_invalid_persisted_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -210,7 +237,7 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
                 json.dumps(
                     [
                         {
-                            "entry_id": "inst-bad",
+                            "entry_id": "mem-00000000-0000-0000-0000-00000000000b",
                             "knowledge_type": KnowledgeType.INCIDENT_LESSON.value,
                             "content": {"headline": "Bad timestamp", "body": "Missing timezone"},
                             "source_event_type": SourceEventType.POSTMORTEM_PUBLISHED.value,
@@ -233,7 +260,7 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
                 json.dumps(
                     [
                         {
-                            "entry_id": "inst-bad-schema",
+                            "entry_id": "mem-00000000-0000-0000-0000-00000000000c",
                             "knowledge_type": KnowledgeType.INCIDENT_LESSON.value,
                             "content": {
                                 "headline": "Bad content shape",

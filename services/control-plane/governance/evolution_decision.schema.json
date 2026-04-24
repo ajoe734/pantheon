@@ -132,6 +132,9 @@
           },
           "storage_ref": {
             "type": "object"
+          },
+          "note": {
+            "type": "string"
           }
         }
       }

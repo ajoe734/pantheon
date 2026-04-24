@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -572,6 +573,10 @@ class KillSwitchDurabilityTests(unittest.TestCase):
     def _svc(self) -> RuntimeManagerService:
         return RuntimeManagerService(store_path=self.store_path, single_runtime_enforced=True)
 
+    @property
+    def ks_store_path(self) -> Path:
+        return self.store_path.parent / "kill_switch.json"
+
     def test_safe_mode_survives_restart(self):
         svc1 = self._svc()
         svc1.execute_kill_switch({
@@ -625,6 +630,31 @@ class KillSwitchDurabilityTests(unittest.TestCase):
         )
         # Two audit entries: dispatch + manual advance
         self.assertEqual(len(svc2.get_kill_switch_audit_log()), 2)
+
+    def test_corrupt_kill_switch_snapshot_is_quarantined_on_boot(self):
+        self.ks_store_path.write_text("{bad json")
+
+        svc = self._svc()
+
+        self.assertEqual(
+            svc.get_safe_mode("pool-corrupt"),
+            SafeModeState.NORMAL.value,
+            "service should start with empty kill-switch state when snapshot is corrupt",
+        )
+        self.assertFalse(self.ks_store_path.exists(), "corrupt snapshot should be moved aside")
+        quarantined = list(self.store_path.parent.glob("kill_switch.json.corrupt.*.json"))
+        self.assertEqual(len(quarantined), 1)
+
+        svc.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-corrupt",
+            "actor_id": "op",
+        })
+        restored = json.loads(self.ks_store_path.read_text())
+        self.assertEqual(
+            restored["safe_mode"]["pool-corrupt"],
+            SafeModeState.PAUSED.value,
+        )
 
 
 class KillSwitchLatencyBenchmarkTests(unittest.TestCase):

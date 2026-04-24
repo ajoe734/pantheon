@@ -11,6 +11,7 @@ full audit trail persisted to the command state store.
 from flask import Flask, request, jsonify
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 import re
 import json
 import os
@@ -148,6 +149,105 @@ def _record_command(command_id: str, record: dict):
     _save_commands(state)
 
 
+def _consultation_session_store_target() -> tuple[Path, str]:
+    explicit = (
+        os.getenv("PANTHEON_CONSULTATION_SESSION_STORE", "").strip()
+        or os.getenv("PANTHEON_BFF_CONSULTATION_SESSION_STORE", "").strip()
+    )
+    if explicit:
+        return Path(explicit), "records"
+    return Path(os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")) / "read_surfaces.json", "snapshot"
+
+
+def _load_consultation_sessions() -> tuple[dict, Path, str]:
+    path, mode = _consultation_session_store_target()
+    if not path.exists():
+        return {}, path, mode
+
+    try:
+        payload = json.loads(path.read_text() or "{}")
+    except (json.JSONDecodeError, OSError):
+        payload = {}
+
+    if mode == "records":
+        return payload if isinstance(payload, dict) else {}, path, mode
+
+    if not isinstance(payload, dict):
+        return {}, path, mode
+    sessions = payload.get("consultation_sessions", {})
+    return sessions if isinstance(sessions, dict) else {}, path, mode
+
+
+def _save_consultation_sessions(sessions: dict, path: Path, mode: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if mode == "records":
+        path.write_text(json.dumps(sessions, indent=2))
+        return
+
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text() or "{}")
+        except (json.JSONDecodeError, OSError):
+            payload = {}
+    else:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["consultation_sessions"] = sessions
+    path.write_text(json.dumps(payload, indent=2))
+
+
+def _record_committee_sponsor_decision(
+    committee_id: str,
+    *,
+    sponsor_decision: str,
+    rationale_ref: str,
+    actor_id: str,
+    recorded_at: str,
+) -> dict:
+    sessions, path, mode = _load_consultation_sessions()
+    root_session_id = None
+    for session_id, session in sessions.items():
+        if not isinstance(session, dict):
+            continue
+        consult = (session.get("metadata") or {}).get("consultation", {})
+        if (
+            session.get("session_type") == "consult"
+            and str(consult.get("committee_ref") or "").strip() == committee_id
+        ):
+            root_session_id = session_id
+            break
+
+    if root_session_id is None:
+        raise KeyError(committee_id)
+
+    root_session = sessions[root_session_id]
+    consult = root_session.setdefault("metadata", {}).setdefault("consultation", {})
+    consult["sponsor_decision"] = sponsor_decision
+    consult["sponsor_decided_at"] = recorded_at
+    consult["sponsor_decided_by"] = actor_id
+    consult["consensus_state"] = "reached"
+    consult["outcome"] = sponsor_decision
+    synthesis_summary = dict(consult.get("synthesis_summary") or {})
+    synthesis_summary["outcome"] = sponsor_decision
+    synthesis_summary["rationale_ref"] = rationale_ref
+    consult["synthesis_summary"] = synthesis_summary
+    consult["rationale_ref"] = rationale_ref
+
+    _save_consultation_sessions(sessions, path, mode)
+    return {
+        "committee_id": committee_id,
+        "committee_ref": consult.get("committee_ref") or committee_id,
+        "linked_session_id": root_session.get("session_id") or root_session_id,
+        "sponsor_decision": consult.get("sponsor_decision"),
+        "sponsor_decided_at": consult.get("sponsor_decided_at"),
+        "sponsor_decided_by": consult.get("sponsor_decided_by"),
+        "consensus_state": consult.get("consensus_state"),
+        "rationale_ref": (consult.get("synthesis_summary") or {}).get("rationale_ref"),
+        "outcome": (consult.get("synthesis_summary") or {}).get("outcome"),
+    }
+
+
 def _add_seconds(iso_ts: str, seconds: int) -> str:
     """Add seconds to an ISO-8601 UTC timestamp."""
     from datetime import timedelta
@@ -230,6 +330,73 @@ def approve_deployment(plan_id):
         ),
         202,
     )
+
+
+@app.route("/api/internal/v1/consultations/committees/<committee_id>/sponsor-decision", methods=["POST"])
+@require_bearer_token()
+@require_mfa_if_present
+def record_committee_sponsor_decision(committee_id):
+    body = request.get_json() or {}
+    sponsor_decision = str(body.get("sponsor_decision") or "").strip().lower()
+    rationale_ref = str(body.get("rationale_ref") or "").strip()
+    if sponsor_decision not in {"approved", "rejected", "conditional"}:
+        return jsonify({
+            "error": {
+                "code": "INVALID_SPONSOR_DECISION",
+                "message": "sponsor_decision must be one of approved, rejected, or conditional",
+            }
+        }), 400
+    if not rationale_ref:
+        return jsonify({
+            "error": {
+                "code": "INVALID_RATIONALE_REF",
+                "message": "rationale_ref must be a non-empty string",
+            }
+        }), 400
+
+    actor_id = str(body.get("actor_id") or "").strip()
+    token_actor = str(getattr(request, "_validated_token", "")).split(":", 1)[0].strip()
+    if not actor_id:
+        actor_id = token_actor or "internal-api-operator"
+
+    recorded_at = body.get("recorded_at") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    command_id = f"cmd-committee-{committee_id}-{int(datetime.now(timezone.utc).timestamp())}"
+
+    try:
+        result = _record_committee_sponsor_decision(
+            committee_id,
+            sponsor_decision=sponsor_decision,
+            rationale_ref=rationale_ref,
+            actor_id=actor_id,
+            recorded_at=recorded_at,
+        )
+    except KeyError:
+        return jsonify({
+            "error": {
+                "code": "COMMITTEE_NOT_FOUND",
+                "message": f"Committee {committee_id} was not found in the consultation authority store",
+            }
+        }), 404
+
+    record = {
+        "command_id": command_id,
+        "type": "RecordSponsorDecision",
+        "target": {"type": "CommitteeBoard", "id": committee_id},
+        "status": "executed",
+        "submitted_at": recorded_at,
+        "result": {
+            **result,
+            "command_id": command_id,
+            "status": "executed",
+        },
+        "error": None,
+    }
+    _record_command(command_id, record)
+    return jsonify({
+        **result,
+        "command_id": command_id,
+        "status": "executed",
+    }), 202
 
 
 @app.route("/api/internal/v1/runtimes/<binding_id>/pause", methods=["POST"])

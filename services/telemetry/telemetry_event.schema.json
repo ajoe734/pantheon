@@ -105,6 +105,53 @@
       "type": "string",
       "description": "RuntimeBinding.persona_capital_binding_id — links the event back through the binding to the persona registry. (Evidence E-3)"
     },
+    "authority_refs": {
+      "type": "object",
+      "description": "Explicit runtime authority and isolation references carried alongside binding evidence to show which runtime context emitted the event.",
+      "properties": {
+        "write_owner": {
+          "type": "string",
+          "description": "Authoritative owner of binding-derived write context."
+        },
+        "authority_source": {
+          "type": "string",
+          "description": "Source of authority projection, e.g. runtime_binding."
+        },
+        "runtime_role": {
+          "type": "string",
+          "description": "Runtime role that emitted the event."
+        },
+        "runtime_mode": {
+          "type": "string",
+          "description": "Runtime mode that emitted the event."
+        },
+        "workspace_ref": {
+          "type": "string",
+          "description": "Persona-scoped workspace reference proving filesystem isolation."
+        },
+        "auth_profile_ref": {
+          "type": "string",
+          "description": "Persona-scoped auth profile reference proving secret isolation."
+        },
+        "persona_id": {
+          "type": "string",
+          "description": "Persona identifier bound to the runtime session."
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Runtime session identifier for audit continuity."
+        },
+        "trace_id": {
+          "type": "string",
+          "description": "Trace identifier propagated from runtime session audit context."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Request identifier propagated from runtime session audit context."
+        }
+      },
+      "additionalProperties": false
+    },
     "rollback_parent": {
       "type": "string",
       "format": "uuid",

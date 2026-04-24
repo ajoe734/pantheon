@@ -55,6 +55,10 @@ def _utc_now_rfc3339() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
+_TW04_DRAWDOWN_EVIDENCE_REF_ID = "tel-drawdown-2026-04-18"
+_TW04_DRAWDOWN_EVIDENCE_ROUTE = "/operator/paper-live-drift/runtime-042"
+
+
 def _default_bff_snapshot_path() -> Path:
     return Path(os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")) / "read_surfaces.json"
 
@@ -288,6 +292,13 @@ class ServiceBackedReadAdapter:
             "keys": ["session_id", "id"],
             "snapshot_key": "consultation_sessions",
         },
+        "consult_transcripts": {
+            "env": "PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["session_id", "transcript_id"],
+            "snapshot_key": "consult_transcripts",
+        },
         "consult_policies": {
             "env": "PANTHEON_BFF_CONSULT_POLICY_STORE",
             "dirs": (),
@@ -367,6 +378,20 @@ class ServiceBackedReadAdapter:
             "keys": ["experiment_id", "id"],
             "snapshot_key": "research_experiments",
         },
+        "research_artifacts": {
+            "env": "PANTHEON_BFF_RESEARCH_ARTIFACT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["artifact_id", "id"],
+            "snapshot_key": "research_artifacts",
+        },
+        "research_notes": {
+            "env": "PANTHEON_BFF_RESEARCH_NOTES_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["note_id", "id"],
+            "snapshot_key": "research_notes",
+        },
         "research_analyses": {
             "env": "PANTHEON_BFF_RESEARCH_ANALYSIS_STORE",
             "dirs": (),
@@ -374,12 +399,33 @@ class ServiceBackedReadAdapter:
             "keys": ["analysis_id", "id"],
             "snapshot_key": "research_analyses",
         },
+        "evidence_refs": {
+            "env": "PANTHEON_BFF_EVIDENCE_REF_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["ref_id", "id"],
+            "snapshot_key": "evidence_refs",
+        },
+        "insight_cards": {
+            "env": "PANTHEON_BFF_INSIGHT_CARD_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["insight_id", "id"],
+            "snapshot_key": "insight_cards",
+        },
         "institutional_memory_entries": {
             "env": "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE",
             "dirs": ("PANTHEON_MEMORY_DATA_DIR",),
             "filenames": ("institutional_memory_entries.json", "institutional_memory.json"),
             "keys": ["entry_id", "id"],
             "snapshot_key": "institutional_memory_entries",
+        },
+        "strategy_specs": {
+            "env": "PANTHEON_BFF_STRATEGY_SPEC_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["strategy_id", "id"],
+            "snapshot_key": "strategy_specs",
         },
         "research_search_documents": {
             "env": "PANTHEON_BFF_RESEARCH_SEARCH_DOCUMENT_STORE",
@@ -401,6 +447,20 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["request_id", "id"],
             "snapshot_key": "consult_requests",
+        },
+        "consult_memos": {
+            "env": "PANTHEON_BFF_CONSULT_MEMO_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["memo_id", "id"],
+            "snapshot_key": "consult_memos",
+        },
+        "trainer_replays": {
+            "env": "PANTHEON_BFF_TRAINER_REPLAY_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["session_id", "id"],
+            "snapshot_key": "trainer_replays",
         },
         "trainer_controls": {
             "env": "PANTHEON_BFF_TRAINER_CONTROL_STORE",
@@ -430,7 +490,12 @@ class ServiceBackedReadAdapter:
                 candidates.append(Path(base) / filename)
         return _first_existing(candidates)
 
-    def _load_dataset(self, dataset: str) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+    def _load_dataset(
+        self,
+        dataset: str,
+        *,
+        include_snapshot_fallback: bool = True,
+    ) -> tuple[bool, Dict[str, Dict[str, Any]]]:
         path = self._resolve_path(dataset)
         if path is not None and path.exists():
             stat = path.stat().st_mtime_ns
@@ -449,7 +514,7 @@ class ServiceBackedReadAdapter:
             return True, normalized
 
         snapshot_key = self._DATASETS[dataset].get("snapshot_key")
-        if snapshot_key:
+        if include_snapshot_fallback and snapshot_key:
             available, normalized, cache_meta = _load_snapshot_dataset(
                 self._snapshot_path,
                 str(snapshot_key),
@@ -526,6 +591,7 @@ def _default_read_data() -> Dict[str, Any]:
                 "status": "approved",
                 "artifact_id": "artifact-042",
                 "artifact_version": "v1.4.2",
+                "submitted_at": "2026-04-11T07:45:00Z",
                 "transition_type": "activate",
                 "approval_decision_id": "approval-042",
                 "capital_pool_id": "pool-main",
@@ -1068,6 +1134,8 @@ def _default_read_data() -> Dict[str, Any]:
         },
         "allowed_actions": {
             "plan-F-042": {
+                "canApprove": False,
+                "canReject": False,
                 "canPromoteToPaper": True
             }
         },
@@ -2068,6 +2136,268 @@ def _default_read_data() -> Dict[str, Any]:
                 ],
             },
         },
+        # CW-02: Consult transcript records keyed by session_id
+        "consult_transcripts": {
+            "cs-20260419-081": {
+                "transcript_id": "tr-cs-20260419-081",
+                "session_id": "cs-20260419-081",
+                "linked_request_id": "cr-20260419-014",
+                "events": [
+                    {
+                        "transcript_id": "tr-cs-20260419-081",
+                        "session_id": "cs-20260419-081",
+                        "event_id": "evt-tr-cs-20260419-081-001",
+                        "sequence_no": 1,
+                        "parent_event_id": None,
+                        "event_type": "message",
+                        "event_time": "2026-04-19T17:06:30Z",
+                        "ingest_time": "2026-04-19T17:06:31Z",
+                        "actor": {
+                            "actor_type": "persona",
+                            "actor_id": "persona-alpha",
+                            "display_name": "Alpha Trader",
+                            "role": "requester",
+                        },
+                        "content": {
+                            "format": "markdown",
+                            "text": "Requesting risk review for macro regime shift scenario before approving live deployment.",
+                        },
+                        "evidence_refs": [],
+                        "visibility": "committee",
+                        "redaction": {
+                            "is_redacted": False,
+                            "reason": None,
+                        },
+                        "meta": {
+                            "source": "consultation-service",
+                            "hash": None,
+                        },
+                    },
+                    {
+                        "transcript_id": "tr-cs-20260419-081",
+                        "session_id": "cs-20260419-081",
+                        "event_id": "evt-tr-cs-20260419-081-002",
+                        "sequence_no": 2,
+                        "parent_event_id": "evt-tr-cs-20260419-081-001",
+                        "event_type": "evidence_attachment",
+                        "event_time": "2026-04-19T17:07:00Z",
+                        "ingest_time": "2026-04-19T17:07:01Z",
+                        "actor": {
+                            "actor_type": "persona",
+                            "actor_id": "p-macro-observer",
+                            "display_name": "Macro Observer",
+                            "role": "committee_participant",
+                        },
+                        "content": {
+                            "format": "plaintext",
+                            "text": None,
+                        },
+                        "evidence_refs": ["telemetry-vol-spike-20260419"],
+                        "visibility": "committee",
+                        "redaction": {
+                            "is_redacted": False,
+                            "reason": None,
+                        },
+                        "meta": {
+                            "source": "consultation-service",
+                            "hash": None,
+                        },
+                    },
+                    {
+                        "transcript_id": "tr-cs-20260419-081",
+                        "session_id": "cs-20260419-081",
+                        "event_id": "evt-tr-cs-20260419-081-003",
+                        "sequence_no": 3,
+                        "parent_event_id": "evt-tr-cs-20260419-081-001",
+                        "event_type": "outcome_signal",
+                        "event_time": "2026-04-19T17:08:30Z",
+                        "ingest_time": "2026-04-19T17:08:31Z",
+                        "actor": {
+                            "actor_type": "persona",
+                            "actor_id": "p-execution-lead",
+                            "display_name": "Execution Lead",
+                            "role": "committee_participant",
+                        },
+                        "content": {
+                            "format": "markdown",
+                            "text": "Conditional approval — deployment must reduce capital allocation by 20% pending regime confirmation.",
+                        },
+                        "evidence_refs": ["dp-20260419-014"],
+                        "visibility": "committee",
+                        "redaction": {
+                            "is_redacted": False,
+                            "reason": None,
+                        },
+                        "meta": {
+                            "source": "consultation-service",
+                            "hash": None,
+                        },
+                    },
+                ],
+            },
+        },
+        # CW-04: Red-team memo records keyed by memo_id
+        "consult_memos": {
+            "memo-rt-20260419-081": {
+                "memo_id": "memo-rt-20260419-081",
+                "memo_type": "red_team",
+                "status": "published",
+                "lifecycle_state": "published",
+                "author_ref": "p-risk-analyst",
+                "linked_request_id": "cr-20260419-014",
+                "linked_session_id": "cs-20260419-081",
+                "session_to_memo_mapping": {
+                    "mapping_id": "map-20260419-081",
+                    "source_session_id": "cs-20260419-081",
+                    "transcript_id": "tr-cs-20260419-081",
+                    "transcript_version": "v1",
+                    "memo_id": "memo-rt-20260419-081",
+                    "memo_type": "red_team",
+                    "created_by": {
+                        "actor_type": "persona",
+                        "actor_id": "p-risk-analyst",
+                    },
+                    "evidence_refs": [
+                        "telemetry-vol-spike-20260419",
+                        "dp-20260419-014",
+                    ],
+                    "mapping_status": "active",
+                    "created_at": "2026-04-19T17:18:00Z",
+                },
+                "summary": (
+                    "Red-team memo flags volatility-guard gaps, rollback sequencing risk, "
+                    "and missing governance handoff proof before paper-to-live promotion."
+                ),
+                "recommendations": [
+                    "Raise the ATR-based circuit-breaker threshold before approving macro-regime deployment promotion.",
+                    "Add an explicit volatility guard in the rebalance path instead of relying on degraded-mode persona behavior.",
+                    "Run a rollback drill for position-limit breach scenarios before any live promotion decision.",
+                ],
+                "evidence_refs": [
+                    {
+                        "id": "telemetry-vol-spike-20260419",
+                        "evidence_type": "telemetry",
+                        "artifact_ref": "artifact-042",
+                        "description": "Volatility spike - 2026-04-19",
+                        "link": "/telemetry/events/telemetry-vol-spike-20260419",
+                    },
+                    {
+                        "id": "dp-20260419-014",
+                        "evidence_type": "deployment_plan",
+                        "artifact_ref": "plan-F-042",
+                        "description": "Deployment plan plan-F-042",
+                        "link": "/deployments/plans/plan-F-042",
+                    },
+                ],
+                "published_at": "2026-04-19T17:22:00Z",
+                "created_at": "2026-04-19T17:15:00Z",
+                "supersedes_memo_id": None,
+                "superseded_by_memo_id": None,
+                "surface_state": "ok",
+                "governance_target": {
+                    "target_type": "deployment_plan",
+                    "target_id": "plan-F-042",
+                    "deployment_plan_id": "plan-F-042",
+                    "artifact_id": None,
+                    "strategy_id": None,
+                },
+                "suppressed": False,
+                "withdrawn": False,
+                "active_governance_review_id": None,
+            },
+            "memo-rt-20260420-002": {
+                "memo_id": "memo-rt-20260420-002",
+                "memo_type": "red_team",
+                "status": "draft",
+                "lifecycle_state": "draft",
+                "author_ref": "p-execution-lead",
+                "linked_request_id": "cr-20260419-014",
+                "linked_session_id": "cs-20260419-081",
+                "session_to_memo_mapping": {
+                    "mapping_id": "map-20260420-002",
+                    "source_session_id": "cs-20260419-081",
+                    "transcript_id": "tr-cs-20260419-081",
+                    "transcript_version": "v2",
+                    "memo_id": "memo-rt-20260420-002",
+                    "memo_type": "red_team",
+                    "created_by": {
+                        "actor_type": "persona",
+                        "actor_id": "p-execution-lead",
+                    },
+                    "evidence_refs": [
+                        "telemetry-vol-spike-20260419",
+                    ],
+                    "mapping_status": "active",
+                    "created_at": "2026-04-20T08:45:00Z",
+                },
+                "summary": "Draft follow-up memo awaiting rollback drill evidence before publication.",
+                "recommendations": [
+                    "Attach rollback-drill evidence before promoting this follow-up memo to published.",
+                ],
+                "evidence_refs": [
+                    {
+                        "id": "telemetry-vol-spike-20260419",
+                        "evidence_type": "telemetry",
+                        "artifact_ref": "artifact-042",
+                        "description": "Volatility spike - 2026-04-19",
+                        "link": "/telemetry/events/telemetry-vol-spike-20260419",
+                    },
+                ],
+                "published_at": None,
+                "created_at": "2026-04-20T08:40:00Z",
+                "supersedes_memo_id": "memo-rt-20260419-081",
+                "superseded_by_memo_id": None,
+                "surface_state": "ok",
+                "governance_target": {
+                    "target_type": "artifact",
+                    "target_id": "artifact-042",
+                    "deployment_plan_id": None,
+                    "artifact_id": "artifact-042",
+                    "strategy_id": None,
+                },
+                "suppressed": False,
+                "withdrawn": False,
+                "active_governance_review_id": None,
+            },
+        },
+        # TW-02: Trainer control state records keyed by session_id
+        "trainer_controls": {
+            "trn-20260419-001": {
+                "session_id": "trn-20260419-001",
+                "controls": [
+                    {
+                        "control_id": "ctrl-reversal-threshold",
+                        "parameter_key": "reversal_threshold",
+                        "display_label": "Reversal Threshold",
+                        "control_type": "number",
+                        "current_value": 0.55,
+                        "allowed_range": {
+                            "kind": "number",
+                            "min": 0.1,
+                            "max": 1.0,
+                            "step": 0.05,
+                        },
+                        "unit": "score",
+                        "last_modified_at": "2026-04-19T19:31:04Z",
+                    },
+                    {
+                        "control_id": "ctrl-hold-bars",
+                        "parameter_key": "minimum_hold_bars",
+                        "display_label": "Minimum Hold Bars",
+                        "control_type": "integer",
+                        "current_value": 3,
+                        "allowed_range": {
+                            "kind": "integer",
+                            "min": 1,
+                            "max": 8,
+                            "step": 1,
+                        },
+                        "unit": "bars",
+                        "last_modified_at": "2026-04-19T19:31:04Z",
+                    },
+                ],
+            },
+        },
         # TL-03: Telemetry performance by artifact
         "telemetry_performance": {
             "artifact-042": {
@@ -2278,45 +2608,35 @@ def _default_read_data() -> Dict[str, Any]:
                 ],
             }
         },
-        # TW-02: Trainer control state records keyed by session_id
-        "trainer_controls": {
-            "trn-20260419-001": {
-                "session_id": "trn-20260419-001",
-                "controls": [
+        "research_tickets": {
+            "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789": {
+                "ticket_id": "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+                "title": "RW-Ticket: MOM-v3 slippage investigation (Apr 14)",
+                "description": "Ticket aligned with the KW-02 contract example payload.",
+                "status": "closed",
+                "priority": "high",
+                "owner": "op-001",
+                "created_at": "2026-04-14T10:30:00Z",
+                "updated_at": "2026-04-16T14:22:00Z",
+                "closed_at": "2026-04-16T13:55:00Z",
+                "archived_at": None,
+                "lifecycle_history": [
                     {
-                        "control_id": "ctrl-reversal-threshold",
-                        "parameter_key": "reversal_threshold",
-                        "display_label": "Reversal Threshold",
-                        "control_type": "number",
-                        "current_value": 0.55,
-                        "allowed_range": {
-                            "kind": "number",
-                            "min": 0.1,
-                            "max": 1.0,
-                            "step": 0.05,
-                        },
-                        "unit": "score",
-                        "last_modified_at": "2026-04-19T19:31:04Z",
+                        "from_status": None,
+                        "to_status": "open",
+                        "transitioned_at": "2026-04-14T10:30:00Z",
+                        "transitioned_by": "op-001",
                     },
                     {
-                        "control_id": "ctrl-hold-bars",
-                        "parameter_key": "minimum_hold_bars",
-                        "display_label": "Minimum Hold Bars",
-                        "control_type": "integer",
-                        "current_value": 3,
-                        "allowed_range": {
-                            "kind": "integer",
-                            "min": 1,
-                            "max": 8,
-                            "step": 1,
-                        },
-                        "unit": "bars",
-                        "last_modified_at": "2026-04-19T19:31:04Z",
+                        "from_status": "open",
+                        "to_status": "closed",
+                        "transitioned_at": "2026-04-16T13:55:00Z",
+                        "transitioned_by": "op-001",
                     },
                 ],
+                "linked_experiments": [],
+                "linked_artifacts": [],
             },
-        },
-        "research_tickets": {
             "rt-20260419-007": {
                 "ticket_id": "rt-20260419-007",
                 "title": "Evaluate momentum factor decay in high-volatility regime",
@@ -2435,7 +2755,7 @@ def _default_read_data() -> Dict[str, Any]:
                 "source_event": {
                     "type": "postmortem_published",
                     "id": "pm-2026-04-05-btc-drift",
-                    "href": "/operator/incidents/inc-2026-04-05-001/review",
+                    "href": "/operator/post-incident-review?incident=inc-2026-04-05-001",
                 },
                 "contributing_persona_ids": ["Alpha-Momentum"],
                 "written_at": "2026-04-07T14:30:00Z",
@@ -2464,7 +2784,7 @@ def _default_read_data() -> Dict[str, Any]:
                 "source_event": {
                     "type": "evolution_decision_published",
                     "id": "evo-2026-04-10-regime-001",
-                    "href": "/operator/mutation-review?decision=evo-2026-04-10-regime-001",
+                    "href": "/evolution/mutation-review/evo-2026-04-10-regime-001",
                 },
                 "contributing_persona_ids": ["persona-alpha", "p-macro-observer"],
                 "written_at": "2026-04-10T09:15:00Z",
@@ -2502,6 +2822,241 @@ def _default_read_data() -> Dict[str, Any]:
                     "superseded_by": "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
                 },
                 "usage": {"reuse_count": 41, "last_cited_at": "2026-04-11T10:00:00Z"},
+            },
+            "mem-e5f6a7b8-c9d0-1234-efab-234567890123": {
+                "entry_id": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                "knowledge_type": "regime_pattern",
+                "content": {
+                    "headline": "High-volatility momentum slippage - pattern observed Q1 2026",
+                    "body": "Reference pattern used by KW-02 contract fallback data.",
+                    "structured_payload": {"confidence": "medium"},
+                    "tags": ["momentum", "slippage", "regime"],
+                },
+                "source_event": {
+                    "type": "research_ticket_closed",
+                    "id": "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+                    "href": "/research/tickets/tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+                },
+                "contributing_persona_ids": ["persona-HAWK-001"],
+                "written_at": "2026-04-15T12:00:00Z",
+                "write_authority": "research-svc",
+                "scope": {"type": "strategy_family", "filter": "momentum"},
+                "lifecycle": {"status": "active", "superseded_by": None},
+                "usage": {"reuse_count": 3, "last_cited_at": "2026-04-17T09:05:00Z"},
+            },
+        },
+        "strategy_specs": {
+            "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a": {
+                "strategy_id": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                "current_spec_version_id": "specver-0a1b2c3d-0003-0003-0003-000000000003",
+                "title": "Momentum Regime Response",
+                "source_kind": "paper",
+                "persona_ids": ["persona-HAWK-001"],
+                "updated_at": "2026-04-18T09:00:00Z",
+                "versions": [
+                    {
+                        "spec_version_id": "specver-0a1b2c3d-0001-0001-0001-000000000001",
+                        "spec_version": "v1",
+                        "lifecycle_state": "retired",
+                        "title": "Momentum Regime Response v1",
+                        "hypothesis": "Baseline momentum response loses edge when the volatility regime breaks.",
+                        "objective": "Establish the baseline regime-aware momentum behavior.",
+                        "market_scope": {
+                            "symbols": ["ES", "NQ"],
+                            "frequency": "daily",
+                            "asset_classes": ["futures"],
+                            "venues": ["CME"],
+                        },
+                        "execution_profile": {
+                            "signal_schema_version": "1.0",
+                            "quantity_type": "PERCENT_PORTFOLIO",
+                            "rebalance_cadence": "daily",
+                            "execution_mode_hint": "research",
+                        },
+                        "evaluation_plan": {
+                            "metrics": ["sharpe_ratio", "max_drawdown"],
+                            "candidate_gate": "Sharpe >= 0.7 over 90d replay",
+                            "paper_gate": "Sharpe >= 0.9 over 30d paper run",
+                            "live_gate": "Sharpe >= 1.1 over 60d paper run",
+                        },
+                        "governance": {
+                            "approval_required": True,
+                            "policy_id": "gov-policy-momentum-001",
+                            "risk_profile": "medium",
+                        },
+                        "citation_bundle": {
+                            "evidence_refs": [
+                                {
+                                    "ref_id": "evref-b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                                    "source_document_title": "Volatility Regime Analysis Q1 2026",
+                                    "link_type": "citation",
+                                    "credibility_tier": "secondary",
+                                    "association": "background",
+                                    "resolved_link": {
+                                        "availability": "external",
+                                        "route_href": "https://arxiv.org/abs/2026.12345",
+                                        "display_label": "Open external paper",
+                                        "open_in_new_tab": True,
+                                    },
+                                }
+                            ],
+                            "memory_anchors": [],
+                            "insight_citations": [],
+                        },
+                        "parent_spec_version_id": None,
+                        "derived_from_source_refs": ["paper-jegadeesh-titman-1993"],
+                        "created_at": "2026-03-01T10:00:00Z",
+                        "created_by": "Operator: Alice Chen",
+                    },
+                    {
+                        "spec_version_id": "specver-0a1b2c3d-0002-0002-0002-000000000002",
+                        "spec_version": "v2",
+                        "lifecycle_state": "candidate",
+                        "title": "Momentum Regime Response v2",
+                        "hypothesis": "A shorter decay half-life should recover faster after volatility breaks.",
+                        "objective": "Reduce post-break decay lag while preserving regime awareness.",
+                        "market_scope": {
+                            "symbols": ["ES", "NQ"],
+                            "frequency": "daily",
+                            "asset_classes": ["futures"],
+                            "venues": ["CME"],
+                        },
+                        "execution_profile": {
+                            "signal_schema_version": "1.1",
+                            "quantity_type": "PERCENT_PORTFOLIO",
+                            "rebalance_cadence": "daily",
+                            "execution_mode_hint": "paper",
+                        },
+                        "evaluation_plan": {
+                            "metrics": ["sharpe_ratio", "max_drawdown"],
+                            "candidate_gate": "Sharpe >= 0.8 over 90d replay",
+                            "paper_gate": "Sharpe >= 1.0 over 30d paper run",
+                            "live_gate": "Sharpe >= 1.15 over 60d paper run",
+                        },
+                        "governance": {
+                            "approval_required": True,
+                            "policy_id": "gov-policy-momentum-001",
+                            "risk_profile": "medium",
+                        },
+                        "citation_bundle": {
+                            "evidence_refs": [
+                                {
+                                    "ref_id": "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                                    "source_document_title": "Post-Incident Review: Flash Spike 2026-03-14",
+                                    "link_type": "supporting_evidence",
+                                    "credibility_tier": "primary",
+                                    "association": "evaluation",
+                                    "resolved_link": {
+                                        "availability": "available",
+                                        "route_href": "/knowledge/evidence/evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                                        "display_label": "View evidence reference",
+                                        "open_in_new_tab": False,
+                                    },
+                                }
+                            ],
+                            "memory_anchors": [
+                                {
+                                    "entry_id": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                                    "knowledge_type": "regime_pattern",
+                                    "content_headline": "High-volatility momentum slippage - pattern observed Q1 2026",
+                                    "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                                }
+                            ],
+                            "insight_citations": [],
+                        },
+                        "parent_spec_version_id": "specver-0a1b2c3d-0001-0001-0001-000000000001",
+                        "derived_from_source_refs": [
+                            "paper-jegadeesh-titman-1993",
+                            "note-momentum-research-2026-q1",
+                        ],
+                        "created_at": "2026-04-02T09:30:00Z",
+                        "created_by": "Persona: Momentum-alpha",
+                    },
+                    {
+                        "spec_version_id": "specver-0a1b2c3d-0003-0003-0003-000000000003",
+                        "spec_version": "v3",
+                        "lifecycle_state": "approved",
+                        "title": "Momentum Regime Response v3",
+                        "hypothesis": "Shorter decay and stricter paper gates improve post-break recovery without destabilizing signal selection.",
+                        "objective": "Promote the volatility-aware momentum response into governed paper-ready shape.",
+                        "market_scope": {
+                            "symbols": ["ES", "NQ"],
+                            "frequency": "daily",
+                            "asset_classes": ["futures"],
+                            "venues": ["CME"],
+                        },
+                        "execution_profile": {
+                            "signal_schema_version": "1.2",
+                            "quantity_type": "PERCENT_PORTFOLIO",
+                            "rebalance_cadence": "daily",
+                            "execution_mode_hint": "paper",
+                        },
+                        "evaluation_plan": {
+                            "metrics": ["sharpe_ratio", "max_drawdown"],
+                            "candidate_gate": "Sharpe >= 0.85 over 90d replay",
+                            "paper_gate": "Sharpe >= 1.05 over 30d paper run",
+                            "live_gate": "Sharpe >= 1.2 over 60d paper run",
+                        },
+                        "governance": {
+                            "approval_required": True,
+                            "policy_id": "gov-policy-momentum-001",
+                            "risk_profile": "medium",
+                        },
+                        "citation_bundle": {
+                            "evidence_refs": [
+                                {
+                                    "ref_id": "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                                    "source_document_title": "Post-Incident Review: Flash Spike 2026-03-14",
+                                    "link_type": "supporting_evidence",
+                                    "credibility_tier": "primary",
+                                    "association": "evaluation",
+                                    "resolved_link": {
+                                        "availability": "available",
+                                        "route_href": "/knowledge/evidence/evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                                        "display_label": "View evidence reference",
+                                        "open_in_new_tab": False,
+                                    },
+                                },
+                                {
+                                    "ref_id": "evref-b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                                    "source_document_title": "Volatility Regime Analysis Q1 2026",
+                                    "link_type": "citation",
+                                    "credibility_tier": "secondary",
+                                    "association": "background",
+                                    "resolved_link": {
+                                        "availability": "external",
+                                        "route_href": "https://arxiv.org/abs/2026.12345",
+                                        "display_label": "Open external paper",
+                                        "open_in_new_tab": True,
+                                    },
+                                },
+                            ],
+                            "memory_anchors": [
+                                {
+                                    "entry_id": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                                    "knowledge_type": "regime_pattern",
+                                    "content_headline": "High-volatility momentum slippage - pattern observed Q1 2026",
+                                    "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                                }
+                            ],
+                            "insight_citations": [
+                                {
+                                    "insight_id": "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+                                    "summary": "Momentum decay intensifies after the regime break and remains sensitive to rebalance cadence.",
+                                    "route_href": "/knowledge/insights/ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+                                }
+                            ],
+                        },
+                        "parent_spec_version_id": "specver-0a1b2c3d-0002-0002-0002-000000000002",
+                        "derived_from_source_refs": [
+                            "paper-jegadeesh-titman-1993",
+                            "note-momentum-research-2026-q1",
+                            "analysis-20260419-007-a",
+                        ],
+                        "created_at": "2026-04-18T09:00:00Z",
+                        "created_by": "Operator: Alice Chen",
+                    },
+                ],
             },
         },
         "research_analyses": {
@@ -2847,6 +3402,620 @@ def _default_read_data() -> Dict[str, Any]:
                 "allowedActions": {"canCancel": False},
             },
         },
+        "research_artifacts": {
+            "art_2024_abc121": {
+                "artifact_id": "art_2024_abc121",
+                "lineage_id": "lin_xyz987",
+                "version": 1,
+                "parent_artifact_id": None,
+                "status": "superseded",
+                "name": "MACD-momentum-v1",
+                "artifact_type": "strategy_model",
+                "description": "Baseline MACD-momentum strategy artifact.",
+                "produced_by_experiment_id": "exp_9800",
+                "linked_ticket_id": "tkt_5432",
+                "created_at": "2026-04-10T09:00:00Z",
+                "sealed_at": "2026-04-10T09:04:00Z",
+                "metrics": {
+                    "sharpe_ratio": 0.98,
+                    "sortino_ratio": 1.31,
+                    "max_drawdown": -0.14,
+                    "annualized_return": 0.11,
+                    "win_rate": 0.49,
+                    "avg_trade_duration_days": 4.1,
+                    "total_trades": 376,
+                },
+                "parameters": {
+                    "fast_period": 10,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                    "position_sizing": "fixed_fractional",
+                    "risk_per_trade": 0.01,
+                },
+                "provenance": {
+                    "linked_experiment": {
+                        "experiment_id": "exp_9800",
+                        "display_label": "MACD baseline run - 2026-04-10",
+                    },
+                    "linked_ticket": {
+                        "ticket_id": "tkt_5432",
+                        "title": "Momentum strategy parameter optimization",
+                    },
+                    "lineage_refs": [],
+                },
+            },
+            "art_2024_abc122": {
+                "artifact_id": "art_2024_abc122",
+                "lineage_id": "lin_xyz987",
+                "version": 2,
+                "parent_artifact_id": "art_2024_abc121",
+                "status": "superseded",
+                "name": "MACD-momentum-v2",
+                "artifact_type": "strategy_model",
+                "description": "Second MACD-momentum iteration with tuned entry timing.",
+                "produced_by_experiment_id": "exp_9840",
+                "linked_ticket_id": "tkt_5432",
+                "created_at": "2026-04-14T11:30:00Z",
+                "sealed_at": "2026-04-14T11:35:10Z",
+                "metrics": {
+                    "sharpe_ratio": 1.21,
+                    "sortino_ratio": 1.58,
+                    "max_drawdown": -0.10,
+                    "annualized_return": 0.15,
+                    "win_rate": 0.52,
+                    "avg_trade_duration_days": 3.5,
+                    "total_trades": 401,
+                },
+                "parameters": {
+                    "fast_period": 11,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                    "position_sizing": "fixed_fractional",
+                    "risk_per_trade": 0.01,
+                },
+                "provenance": {
+                    "linked_experiment": {
+                        "experiment_id": "exp_9840",
+                        "display_label": "MACD tuning run 2 - 2026-04-14",
+                    },
+                    "linked_ticket": {
+                        "ticket_id": "tkt_5432",
+                        "title": "Momentum strategy parameter optimization",
+                    },
+                    "lineage_refs": [],
+                },
+            },
+            "art_2024_abc123": {
+                "artifact_id": "art_2024_abc123",
+                "lineage_id": "lin_xyz987",
+                "version": 3,
+                "parent_artifact_id": "art_2024_abc122",
+                "status": "sealed",
+                "name": "MACD-momentum-v3",
+                "artifact_type": "strategy_model",
+                "description": "Third iteration of MACD-momentum strategy after parameter tuning",
+                "produced_by_experiment_id": "exp_9876",
+                "linked_ticket_id": "tkt_5432",
+                "created_at": "2026-04-18T14:22:00Z",
+                "sealed_at": "2026-04-18T14:25:10Z",
+                "metrics": {
+                    "sharpe_ratio": 1.42,
+                    "sortino_ratio": 1.87,
+                    "max_drawdown": -0.08,
+                    "annualized_return": 0.18,
+                    "win_rate": 0.54,
+                    "avg_trade_duration_days": 3.2,
+                    "total_trades": 412,
+                },
+                "parameters": {
+                    "fast_period": 12,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                    "position_sizing": "fixed_fractional",
+                    "risk_per_trade": 0.01,
+                },
+                "provenance": {
+                    "linked_experiment": {
+                        "experiment_id": "exp_9876",
+                        "display_label": "MACD tuning run 3 - 2026-04-18",
+                    },
+                    "linked_ticket": {
+                        "ticket_id": "tkt_5432",
+                        "title": "Momentum strategy parameter optimization",
+                    },
+                    "lineage_refs": [
+                        {
+                            "ref_type": "inspired_by",
+                            "target_artifact_id": "art_2020_base01",
+                            "resolved_link": "/research/compare?artifact_ids=art_2024_abc123,art_2020_base01",
+                        }
+                    ],
+                },
+            },
+            "art_2024_pending01": {
+                "artifact_id": "art_2024_pending01",
+                "lineage_id": "lin_pending555",
+                "version": 1,
+                "parent_artifact_id": None,
+                "status": "pending",
+                "name": "Volatility-gated candidate",
+                "artifact_type": "strategy_model",
+                "description": "Artifact is still being assembled by the experiment pipeline.",
+                "produced_by_experiment_id": "exp_9900",
+                "linked_ticket_id": "tkt_6000",
+                "created_at": "2026-04-19T16:00:00Z",
+                "sealed_at": None,
+                "metrics": {
+                    "sharpe_ratio": 1.05,
+                    "sortino_ratio": 1.39,
+                    "max_drawdown": -0.12,
+                    "annualized_return": 0.13,
+                    "win_rate": 0.5,
+                    "avg_trade_duration_days": 3.8,
+                    "total_trades": 210,
+                },
+                "parameters": {
+                    "fast_period": 14,
+                    "slow_period": 28,
+                    "signal_period": 10,
+                    "position_sizing": "fixed_fractional",
+                    "risk_per_trade": 0.012,
+                },
+                "provenance": {
+                    "linked_experiment": {
+                        "experiment_id": "exp_9900",
+                        "display_label": "Volatility-gated candidate run - 2026-04-19",
+                    },
+                    "linked_ticket": {
+                        "ticket_id": "tkt_6000",
+                        "title": "Volatility-gated signal candidate",
+                    },
+                    "lineage_refs": [],
+                },
+            },
+            "art_2024_failed01": {
+                "artifact_id": "art_2024_failed01",
+                "lineage_id": "lin_failed777",
+                "version": 1,
+                "parent_artifact_id": None,
+                "status": "failed",
+                "name": "Macro-event candidate",
+                "artifact_type": "strategy_model",
+                "description": "Artifact creation failed before the payload sealed.",
+                "produced_by_experiment_id": "exp_9910",
+                "linked_ticket_id": "tkt_6001",
+                "created_at": "2026-04-19T18:00:00Z",
+                "sealed_at": None,
+                "metrics": {
+                    "sharpe_ratio": None,
+                    "sortino_ratio": None,
+                    "max_drawdown": None,
+                    "annualized_return": None,
+                    "win_rate": None,
+                    "avg_trade_duration_days": None,
+                    "total_trades": None,
+                },
+                "parameters": {
+                    "fast_period": 8,
+                    "slow_period": 21,
+                    "signal_period": 7,
+                    "position_sizing": "fixed_fractional",
+                    "risk_per_trade": 0.015,
+                },
+                "provenance": {
+                    "linked_experiment": {
+                        "experiment_id": "exp_9910",
+                        "display_label": "Macro-event candidate run - 2026-04-19",
+                    },
+                    "linked_ticket": {
+                        "ticket_id": "tkt_6001",
+                        "title": "Macro-event strategy candidate",
+                    },
+                    "lineage_refs": [],
+                },
+            },
+        },
+        "research_notes": {
+            "note-a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
+                "note_id": "note-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "title": "Momentum regime - observed slippage above 2sigma",
+                "body": (
+                    "## Observation\n\nDuring the April 14-16 high-volatility window, strategy "
+                    "**MOM-v3** showed consistent bid-ask slippage above the 2sigma threshold "
+                    "on ES futures.\n\nThe effect was most pronounced in the 09:30-10:00 window."
+                ),
+                "attachment_type": "research_ticket",
+                "attachment_ref": "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+                "owner_ref": {
+                    "owner_type": "operator",
+                    "owner_id": "op-001",
+                    "display_name": "Alice Chen",
+                },
+                "tags": ["slippage", "momentum", "high-volatility"],
+                "linked_evidence_refs": [
+                    "evref-c3d4e5f6-a7b8-9012-cdef-012345678901",
+                    "evref-d4e5f6a7-b8c9-0123-defa-123456789012",
+                ],
+                "linked_memory_anchors": [
+                    "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                ],
+                "created_at": "2026-04-16T14:22:00Z",
+                "updated_at": "2026-04-17T09:05:00Z",
+            },
+            "note-b2c3d4e5-f6a7-8901-bcde-f01234567891": {
+                "note_id": "note-b2c3d4e5-f6a7-8901-bcde-f01234567891",
+                "title": None,
+                "body": (
+                    "Free-standing note: tracking cross-persona alignment on risk tolerance "
+                    "thresholds following the 2026-04-10 governance review."
+                ),
+                "attachment_type": "free_standing",
+                "attachment_ref": None,
+                "owner_ref": {
+                    "owner_type": "persona",
+                    "owner_id": "persona-HAWK-001",
+                    "display_name": "HAWK (Persona)",
+                },
+                "tags": ["governance", "risk-tolerance", "cross-persona"],
+                "linked_evidence_refs": [],
+                "linked_memory_anchors": [],
+                "created_at": "2026-04-11T08:00:00Z",
+                "updated_at": "2026-04-11T08:00:00Z",
+            },
+        },
+        "evidence_refs": {
+            "evref-c3d4e5f6-a7b8-9012-cdef-012345678901": {
+                "ref_id": "evref-c3d4e5f6-a7b8-9012-cdef-012345678901",
+                "source_document": {
+                    "title": "ES Futures Slippage Distribution - Apr 14-16 Backtrace",
+                    "source_type": "experiment_artifact",
+                    "source_ref": "artifact://research/artifact-abc123",
+                    "excerpt": (
+                        "Backtrace confirms that April 14-16 slippage concentrated in the 09:30-10:00 UTC "
+                        "execution window and coincided with widened spread conditions."
+                    ),
+                    "storage_preview": {
+                        "available": True,
+                        "preview_type": "image",
+                        "preview_token": "prev-local-artifact-abc123",
+                    },
+                    "captured_at": "2026-04-16T13:10:00Z",
+                    "captured_by": "Operator: Alice Chen",
+                },
+                "link_type": "supporting_evidence",
+                "credibility": {
+                    "tier": "primary",
+                    "verified": True,
+                    "last_verified_at": "2026-04-17T11:30:00Z",
+                    "verification_method": "operator_review",
+                },
+                "linked_object_summary": {
+                    "entity_type": "memory_entry",
+                    "entity_ref": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                    "display_label": "High-volatility momentum slippage - pattern observed Q1 2026",
+                },
+                "resolved_link": {
+                    "availability": "available",
+                    "route_href": "/research/artifacts/artifact-abc123",
+                    "display_label": "Open experiment artifact",
+                    "open_in_new_tab": False,
+                },
+                "linked_decisions": [
+                    {
+                        "entity_type": "memory_entry",
+                        "entity_ref": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                        "display_label": "High-volatility momentum slippage - pattern observed Q1 2026",
+                        "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                        "link_type": "supporting_evidence",
+                        "relationship_note": "Histogram reinforces the standing slippage pattern captured in institutional memory.",
+                    }
+                ],
+                "source_note_context": {
+                    "note_id": "note-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                    "title": "Momentum regime - observed slippage above 2sigma",
+                    "excerpt": "Observed persistent slippage above the 2sigma threshold during the April high-volatility window.",
+                    "route_href": "/knowledge/notes/note-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                },
+                "source_memory_context": {
+                    "entry_id": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                    "headline": "High-volatility momentum slippage - pattern observed Q1 2026",
+                    "knowledge_type": "regime_pattern",
+                    "lifecycle_status": "active",
+                    "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                },
+                "created_at": "2026-04-16T13:15:00Z",
+                "route_href": "/knowledge/evidence/evref-c3d4e5f6-a7b8-9012-cdef-012345678901",
+            },
+            "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
+                "ref_id": "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "source_document": {
+                    "title": "Post-Incident Review: Flash Spike 2026-03-14",
+                    "source_type": "postmortem",
+                    "source_ref": "s3://pantheon-docs/postmortems/2026-03-14-flash-spike.pdf",
+                    "excerpt": (
+                        "During the flash spike event on 2026-03-14, the momentum persona exhibited early "
+                        "position unwinding behavior at -2.1σ drawdown across three execution windows."
+                    ),
+                    "storage_preview": {
+                        "available": True,
+                        "preview_type": "pdf",
+                        "preview_token": "prev-local-flash-spike",
+                    },
+                    "captured_at": "2026-03-15T08:30:00Z",
+                    "captured_by": "Operator: Alice Chen",
+                },
+                "link_type": "supporting_evidence",
+                "credibility": {
+                    "tier": "primary",
+                    "verified": True,
+                    "last_verified_at": "2026-04-01T12:00:00Z",
+                    "verification_method": "operator_review",
+                },
+                "linked_object_summary": {
+                    "entity_type": "memory_entry",
+                    "entity_ref": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                    "display_label": "High-volatility momentum slippage - pattern observed Q1 2026",
+                },
+                "resolved_link": {
+                    "availability": "available",
+                    "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                    "display_label": "View institutional memory entry",
+                    "open_in_new_tab": False,
+                },
+                "linked_decisions": [
+                    {
+                        "entity_type": "memory_entry",
+                        "entity_ref": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                        "display_label": "High-volatility momentum slippage - pattern observed Q1 2026",
+                        "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                        "link_type": "supporting_evidence",
+                        "relationship_note": "Post-incident review directly supports the institutional memory entry.",
+                    },
+                    {
+                        "entity_type": "insight_card",
+                        "entity_ref": "ins-22222222-3333-4444-5555-666666666666",
+                        "display_label": "Momentum personas self-protect under flash spike conditions",
+                        "route_href": "/knowledge/insights/ins-22222222-3333-4444-5555-666666666666",
+                        "link_type": "corroboration",
+                        "relationship_note": None,
+                    },
+                ],
+                "source_note_context": None,
+                "source_memory_context": None,
+                "created_at": "2026-03-15T08:30:00Z",
+                "route_href": "/knowledge/evidence/evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            },
+            "evref-b2c3d4e5-f6a7-8901-bcde-f12345678901": {
+                "ref_id": "evref-b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                "source_document": {
+                    "title": "Volatility Regime Analysis Q1 2026",
+                    "source_type": "external_paper",
+                    "source_ref": "external://arxiv.org/abs/2026.12345",
+                    "excerpt": "Independent analysis of volatility-regime transitions and their impact on momentum model decay.",
+                    "storage_preview": {
+                        "available": False,
+                        "preview_type": "unavailable",
+                        "preview_token": None,
+                    },
+                    "captured_at": "2026-04-01T14:00:00Z",
+                    "captured_by": "Operator: Alice Chen",
+                },
+                "link_type": "citation",
+                "credibility": {
+                    "tier": "secondary",
+                    "verified": False,
+                    "last_verified_at": None,
+                    "verification_method": None,
+                },
+                "linked_object_summary": {
+                    "entity_type": "strategy_spec",
+                    "entity_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                    "display_label": "Momentum Regime Response v4",
+                },
+                "resolved_link": {
+                    "availability": "external",
+                    "route_href": "https://arxiv.org/abs/2026.12345",
+                    "display_label": "Open external paper",
+                    "open_in_new_tab": True,
+                },
+                "linked_decisions": [
+                    {
+                        "entity_type": "strategy_spec",
+                        "entity_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                        "display_label": "Momentum Regime Response v4",
+                        "route_href": "/knowledge/strategy-specs/strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                        "link_type": "citation",
+                        "relationship_note": "Background citation attached to the current strategy spec.",
+                    }
+                ],
+                "source_note_context": None,
+                "source_memory_context": None,
+                "created_at": "2026-04-01T14:00:00Z",
+                "route_href": "/knowledge/evidence/evref-b2c3d4e5-f6a7-8901-bcde-f12345678901",
+            },
+        },
+        "insight_cards": {
+            "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567": {
+                "insight_id": "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+                "summary": (
+                    "Momentum strategies consistently underperform during high-volatility regimes when "
+                    "rebalancing frequency exceeds weekly cadence. Evidence from four primary sources "
+                    "across three independent experiments."
+                ),
+                "scope": "strategy",
+                "scope_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                "status": "active",
+                "superseded_by_id": None,
+                "confidence": {
+                    "score": 0.82,
+                    "label": "high",
+                    "basis": (
+                        "Supported by 4 primary evidence refs from 3 independent experiments "
+                        "(EXP-441, EXP-456, EXP-472), corroborated by 2 institutional memory entries "
+                        "from Q1–Q2 2026 postmortem reviews."
+                    ),
+                },
+                "tags": ["momentum", "volatility-regime", "rebalancing-frequency"],
+                "source_ref": "agg-ref:ins-7a3f2c91-v2026041914",
+                "supporting_evidence_refs": [
+                    {
+                        "ref_id": "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                        "source_document_title": "Post-Incident Review: Flash Spike 2026-03-14",
+                        "link_type": "supporting_evidence",
+                        "credibility_tier": "primary",
+                        "resolved_link": {
+                            "availability": "available",
+                            "route_href": "/knowledge/evidence/evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                            "display_label": "View evidence reference",
+                            "open_in_new_tab": False,
+                        },
+                    },
+                    {
+                        "ref_id": "evref-c3d4e5f6-a7b8-9012-cdef-012345678901",
+                        "source_document_title": "ES Futures Slippage Distribution - Apr 14-16 Backtrace",
+                        "link_type": "supporting_evidence",
+                        "credibility_tier": "primary",
+                        "resolved_link": {
+                            "availability": "available",
+                            "route_href": "/knowledge/evidence/evref-c3d4e5f6-a7b8-9012-cdef-012345678901",
+                            "display_label": "View evidence reference",
+                            "open_in_new_tab": False,
+                        },
+                    },
+                    {
+                        "ref_id": "evref-b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                        "source_document_title": "Volatility Regime Analysis Q1 2026",
+                        "link_type": "citation",
+                        "credibility_tier": "secondary",
+                        "resolved_link": {
+                            "availability": "external",
+                            "route_href": "https://arxiv.org/abs/2026.12345",
+                            "display_label": "Open external paper",
+                            "open_in_new_tab": True,
+                        },
+                    },
+                ],
+                "linked_sources": [
+                    {
+                        "entity_type": "experiment",
+                        "entity_ref": "exp-20260419-012",
+                        "display_label": "Momentum decay replay on March volatility cluster",
+                        "route_href": "/research/experiments/exp-20260419-012",
+                        "relationship_note": "Primary aggregation input; full result set included in evidence refs",
+                    },
+                    {
+                        "entity_type": "memory_entry",
+                        "entity_ref": "mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                        "display_label": "High-volatility momentum slippage - pattern observed Q1 2026",
+                        "route_href": "/knowledge/memory/mem-e5f6a7b8-c9d0-1234-efab-234567890123",
+                        "relationship_note": "Institutional memory anchor; corroborating finding",
+                    },
+                    {
+                        "entity_type": "strategy_spec",
+                        "entity_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                        "display_label": "Momentum Regime Response v4",
+                        "route_href": "/knowledge/strategy-specs/strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                        "relationship_note": "Insight scoped to this strategy spec",
+                    },
+                ],
+                "aggregation_provenance": {
+                    "memory_entry_count": 2,
+                    "note_count": 1,
+                    "evidence_ref_count": 3,
+                    "primary_evidence_count": 2,
+                    "aggregated_at": "2026-04-19T14:32:10Z",
+                    "aggregation_version": "v2.3.1",
+                },
+                "created_at": "2026-04-15T10:00:00Z",
+                "updated_at": "2026-04-19T14:32:10Z",
+            },
+            "ins-b5d8e3f2-1a7c-4e09-8d56-f2c3a4b5d6e7": {
+                "insight_id": "ins-b5d8e3f2-1a7c-4e09-8d56-f2c3a4b5d6e7",
+                "summary": (
+                    "Mean-reversion signals derived from order-book imbalance show reduced predictive "
+                    "power during the first 30 minutes of each trading session."
+                ),
+                "scope": "global",
+                "scope_ref": None,
+                "status": "active",
+                "superseded_by_id": None,
+                "confidence": {
+                    "score": 0.67,
+                    "label": "medium",
+                    "basis": "Corroborated by institutional memory entries from Q1 and Q2 2026.",
+                },
+                "tags": ["mean-reversion", "order-book", "session-open"],
+                "source_ref": "agg-ref:ins-b5d8e3f2-v2026041822",
+                "supporting_evidence_refs": [],
+                "linked_sources": [
+                    {
+                        "entity_type": "memory_entry",
+                        "entity_ref": "mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f",
+                        "display_label": "Momentum strategy underperforms in low-volatility sideways regimes",
+                        "route_href": "/knowledge/memory/mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f",
+                        "relationship_note": "Cross-check against regime-memory findings",
+                    }
+                ],
+                "aggregation_provenance": {
+                    "memory_entry_count": 1,
+                    "note_count": 0,
+                    "evidence_ref_count": 0,
+                    "primary_evidence_count": 0,
+                    "aggregated_at": "2026-04-18T22:11:45Z",
+                    "aggregation_version": "v2.3.0",
+                },
+                "created_at": "2026-04-18T22:11:45Z",
+                "updated_at": "2026-04-18T22:11:45Z",
+            },
+            "ins-c9e0f1a2-3b4c-5d6e-7f80-91a2b3c4d5e6": {
+                "insight_id": "ins-c9e0f1a2-3b4c-5d6e-7f80-91a2b3c4d5e6",
+                "summary": "Legacy momentum parameter set v1 is superseded. See replacement card for updated findings.",
+                "scope": "strategy",
+                "scope_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                "status": "superseded",
+                "superseded_by_id": "ins-7a3f2c91-e4b8-4d12-9f65-0c8e1a234567",
+                "confidence": {
+                    "score": 0.55,
+                    "label": "medium",
+                    "basis": "Older synthesis retained for traceability only.",
+                },
+                "tags": ["momentum", "volatility-regime"],
+                "source_ref": "agg-ref:ins-c9e0f1a2-v2026031509",
+                "supporting_evidence_refs": [
+                    {
+                        "ref_id": "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                        "source_document_title": "Post-Incident Review: Flash Spike 2026-03-14",
+                        "link_type": "corroboration",
+                        "credibility_tier": "primary",
+                        "resolved_link": {
+                            "availability": "available",
+                            "route_href": "/knowledge/evidence/evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                            "display_label": "View evidence reference",
+                            "open_in_new_tab": False,
+                        },
+                    }
+                ],
+                "linked_sources": [
+                    {
+                        "entity_type": "strategy_spec",
+                        "entity_ref": "strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                        "display_label": "Momentum Regime Response v4",
+                        "route_href": "/knowledge/strategy-specs/strat-0a1b2c3d-9f8e-7d6c-5b4a-3f2e1d0c9b8a",
+                        "relationship_note": "Legacy insight attached to the same strategy family",
+                    }
+                ],
+                "aggregation_provenance": {
+                    "memory_entry_count": 1,
+                    "note_count": 0,
+                    "evidence_ref_count": 1,
+                    "primary_evidence_count": 1,
+                    "aggregated_at": "2026-03-15T09:00:00Z",
+                    "aggregation_version": "v1.8.4",
+                },
+                "created_at": "2026-03-15T09:00:00Z",
+                "updated_at": "2026-03-15T09:00:00Z",
+            },
+        },
         "research_search_documents": {
             "rt-20260419-007": {
                 "result_id": "rt-20260419-007",
@@ -2943,6 +4112,173 @@ def _default_read_data() -> Dict[str, Any]:
                 },
             }
         },
+        "trainer_replays": {
+            "trn-20260418-003": {
+                "session_id": "trn-20260418-003",
+                "persona_id": "persona-alpha",
+                "objective": "Reduce regime-switch whipsaw sensitivity in drawdown containment mode.",
+                "status": "completed",
+                "started_at": "2026-04-18T08:00:00Z",
+                "ended_at": "2026-04-18T08:42:00Z",
+                "actor_context": {
+                    "persona_display_name": "Alpha Persona",
+                    "persona_role_context": "systematic momentum coach",
+                },
+                "replay_resolution": {
+                    "state": "pending_decision",
+                    "decision_at": None,
+                    "decision_by": None,
+                    "note": None,
+                },
+                "artifacts": {
+                    "before_artifact_ref": "artifact-041",
+                    "candidate_artifact_ref": "artifact-042-candidate",
+                    "after_artifact_ref": None,
+                },
+                "events": [
+                    {
+                        "event_id": "tevt-20260418-001",
+                        "session_id": "trn-20260418-003",
+                        "actor": "operator",
+                        "actor_label": "Operator (Hedging Desk)",
+                        "event_type": "message",
+                        "message_body": "Focus on drawdown containment and reduce sensitivity to short-lived regime flips.",
+                        "summary": "Operator instructs persona to focus on drawdown containment.",
+                        "emitted_at": "2026-04-18T08:00:12Z",
+                        "sequence_number": 1,
+                        "outcome_signal": None,
+                        "evidence_ref": None,
+                        "patch_delta": None,
+                        "eval_ref": None,
+                        "artifact_refs": None,
+                    },
+                    {
+                        "event_id": "tevt-20260418-002",
+                        "session_id": "trn-20260418-003",
+                        "actor": "system",
+                        "actor_label": "System",
+                        "event_type": "control_patch",
+                        "message_body": None,
+                        "summary": "Drawdown sensitivity threshold adjusted.",
+                        "emitted_at": "2026-04-18T08:15:00Z",
+                        "sequence_number": 2,
+                        "outcome_signal": None,
+                        "evidence_ref": {
+                            "type": "telemetry",
+                            "id": _TW04_DRAWDOWN_EVIDENCE_REF_ID,
+                            "display_label": "Drawdown telemetry — April 18",
+                            "url_pattern": _TW04_DRAWDOWN_EVIDENCE_ROUTE,
+                        },
+                        "patch_delta": [
+                            {
+                                "parameter_key": "drawdown_sensitivity_threshold",
+                                "previous_value": 0.12,
+                                "new_value": 0.08,
+                            }
+                        ],
+                        "eval_ref": None,
+                        "artifact_refs": None,
+                    },
+                    {
+                        "event_id": "tevt-20260418-003",
+                        "session_id": "trn-20260418-003",
+                        "actor": "system",
+                        "actor_label": "System",
+                        "event_type": "preview_trigger",
+                        "message_body": None,
+                        "summary": "Rapid-eval triggered for candidate patch.",
+                        "emitted_at": "2026-04-18T08:20:00Z",
+                        "sequence_number": 3,
+                        "outcome_signal": None,
+                        "evidence_ref": None,
+                        "patch_delta": None,
+                        "eval_ref": {
+                            "eval_id": "teval-20260418-003",
+                            "baseline_snapshot_at": "2026-04-18T08:00:00Z",
+                            "candidate_snapshot_at": "2026-04-18T08:18:00Z",
+                        },
+                        "artifact_refs": None,
+                    },
+                    {
+                        "event_id": "tevt-20260418-004",
+                        "session_id": "trn-20260418-003",
+                        "actor": "persona",
+                        "actor_label": "Alpha Persona",
+                        "event_type": "outcome_signal",
+                        "message_body": "I can widen confirmation requirements before reversing the posture in containment mode.",
+                        "summary": "Teaching complete.",
+                        "emitted_at": "2026-04-18T08:42:00Z",
+                        "sequence_number": 4,
+                        "outcome_signal": "teaching-complete",
+                        "evidence_ref": None,
+                        "patch_delta": None,
+                        "eval_ref": None,
+                        "artifact_refs": None,
+                    },
+                ],
+            },
+            "trn-20260417-001": {
+                "session_id": "trn-20260417-001",
+                "persona_id": "persona-alpha",
+                "objective": "Adjust momentum signal weights for low-volume overnight sessions.",
+                "status": "completed",
+                "started_at": "2026-04-17T10:00:00Z",
+                "ended_at": "2026-04-17T10:30:00Z",
+                "actor_context": {
+                    "persona_display_name": "Alpha Persona",
+                    "persona_role_context": "systematic momentum coach",
+                },
+                "replay_resolution": {
+                    "state": "committed",
+                    "decision_at": "2026-04-17T11:00:00Z",
+                    "decision_by": "operator-risk-desk",
+                    "note": "Momentum weight adjustment approved after stable overnight eval.",
+                },
+                "artifacts": {
+                    "before_artifact_ref": "artifact-040",
+                    "candidate_artifact_ref": "artifact-041-candidate",
+                    "after_artifact_ref": "artifact-041",
+                },
+                "events": [
+                    {
+                        "event_id": "tevt-20260417-001",
+                        "session_id": "trn-20260417-001",
+                        "actor": "operator",
+                        "actor_label": "Operator (Risk Desk)",
+                        "event_type": "message",
+                        "message_body": "Reduce overnight signal weight during thin volume periods.",
+                        "summary": "Operator instructs persona to reduce overnight signal weight.",
+                        "emitted_at": "2026-04-17T10:00:10Z",
+                        "sequence_number": 1,
+                        "outcome_signal": None,
+                        "evidence_ref": None,
+                        "patch_delta": None,
+                        "eval_ref": None,
+                        "artifact_refs": None,
+                    },
+                    {
+                        "event_id": "tevt-20260417-002",
+                        "session_id": "trn-20260417-001",
+                        "actor": "system",
+                        "actor_label": "System",
+                        "event_type": "commit",
+                        "message_body": None,
+                        "summary": "Candidate committed.",
+                        "emitted_at": "2026-04-17T11:00:00Z",
+                        "sequence_number": 2,
+                        "outcome_signal": None,
+                        "evidence_ref": None,
+                        "patch_delta": None,
+                        "eval_ref": None,
+                        "artifact_refs": {
+                            "before_artifact_ref": "artifact-040",
+                            "candidate_artifact_ref": "artifact-041-candidate",
+                            "after_artifact_ref": "artifact-041",
+                        },
+                    },
+                ],
+            },
+        },
     }
 
 
@@ -2959,8 +4295,8 @@ class ReadSurfaceStore:
         "capability_snapshots": "capability_snapshots",
         "teaching_sessions": "teaching_sessions",
         "trainer_previews": "trainer_previews",
-        "trainer_controls": "trainer_controls",
         "consultation_sessions": "consultation_sessions",
+        "consult_transcripts": "consult_transcripts",
         "consult_policies": "consult_policies",
         "incidents": "incidents",
         "postmortems": "postmortems",
@@ -2983,12 +4319,19 @@ class ReadSurfaceStore:
         "deployment_diffs": "deployment_diffs",
         "research_tickets": "research_tickets",
         "research_experiments": "research_experiments",
+        "research_artifacts": "research_artifacts",
+        "research_notes": "research_notes",
         "institutional_memory_entries": "institutional_memory_entries",
         "research_analyses": "research_analyses",
+        "evidence_refs": "evidence_refs",
+        "insight_cards": "insight_cards",
+        "strategy_specs": "strategy_specs",
         "research_search_documents": "research_search_documents",
         "research_search_index": "research_search_index",
         "consult_requests": "consult_requests",
+        "consult_memos": "consult_memos",
         "trainer_replays": "trainer_replays",
+        "trainer_controls": "trainer_controls",
     }
 
     def __init__(
@@ -3046,8 +4389,18 @@ class ReadSurfaceStore:
         default_registry_entries = default_data.get("registry_entries", {})
         research_analyses = self._data.get("research_analyses")
         default_research_analyses = default_data.get("research_analyses", {})
+        research_artifacts = self._data.get("research_artifacts")
+        default_research_artifacts = default_data.get("research_artifacts", {})
+        research_notes = self._data.get("research_notes")
+        default_research_notes = default_data.get("research_notes", {})
+        evidence_refs = self._data.get("evidence_refs")
+        default_evidence_refs = default_data.get("evidence_refs", {})
+        insight_cards = self._data.get("insight_cards")
+        default_insight_cards = default_data.get("insight_cards", {})
         institutional_memory_entries = self._data.get("institutional_memory_entries")
         default_institutional_memory_entries = default_data.get("institutional_memory_entries", {})
+        strategy_specs = self._data.get("strategy_specs")
+        default_strategy_specs = default_data.get("strategy_specs", {})
         research_search_documents = self._data.get("research_search_documents")
         default_research_search_documents = default_data.get("research_search_documents", {})
         research_search_index = self._data.get("research_search_index")
@@ -3056,6 +4409,8 @@ class ReadSurfaceStore:
         default_inspiration_graphs = default_data.get("inspiration_graphs", {})
         trainer_previews = self._data.get("trainer_previews")
         default_trainer_previews = default_data.get("trainer_previews", {})
+        consult_memos = self._data.get("consult_memos")
+        default_consult_memos = default_data.get("consult_memos", {})
 
         if isinstance(deployment_plans, dict):
             for plan_id, default_plan in default_plans.items():
@@ -3173,6 +4528,42 @@ class ReadSurfaceStore:
                     research_analyses[analysis_id] = json.loads(json.dumps(default_analysis))
                     changed = True
 
+        if research_artifacts is None:
+            self._data["research_artifacts"] = json.loads(json.dumps(default_research_artifacts))
+            changed = True
+        elif isinstance(research_artifacts, dict):
+            for artifact_id, default_artifact in default_research_artifacts.items():
+                if artifact_id not in research_artifacts:
+                    research_artifacts[artifact_id] = json.loads(json.dumps(default_artifact))
+                    changed = True
+
+        if research_notes is None:
+            self._data["research_notes"] = json.loads(json.dumps(default_research_notes))
+            changed = True
+        elif isinstance(research_notes, dict):
+            for note_id, default_note in default_research_notes.items():
+                if note_id not in research_notes:
+                    research_notes[note_id] = json.loads(json.dumps(default_note))
+                    changed = True
+
+        if evidence_refs is None:
+            self._data["evidence_refs"] = json.loads(json.dumps(default_evidence_refs))
+            changed = True
+        elif isinstance(evidence_refs, dict):
+            for ref_id, default_ref in default_evidence_refs.items():
+                if ref_id not in evidence_refs:
+                    evidence_refs[ref_id] = json.loads(json.dumps(default_ref))
+                    changed = True
+
+        if insight_cards is None:
+            self._data["insight_cards"] = json.loads(json.dumps(default_insight_cards))
+            changed = True
+        elif isinstance(insight_cards, dict):
+            for insight_id, default_card in default_insight_cards.items():
+                if insight_id not in insight_cards:
+                    insight_cards[insight_id] = json.loads(json.dumps(default_card))
+                    changed = True
+
         if institutional_memory_entries is None:
             self._data["institutional_memory_entries"] = json.loads(
                 json.dumps(default_institutional_memory_entries)
@@ -3182,6 +4573,15 @@ class ReadSurfaceStore:
             for entry_id, default_entry in default_institutional_memory_entries.items():
                 if entry_id not in institutional_memory_entries:
                     institutional_memory_entries[entry_id] = json.loads(json.dumps(default_entry))
+                    changed = True
+
+        if strategy_specs is None:
+            self._data["strategy_specs"] = json.loads(json.dumps(default_strategy_specs))
+            changed = True
+        elif isinstance(strategy_specs, dict):
+            for strategy_id, default_strategy in default_strategy_specs.items():
+                if strategy_id not in strategy_specs:
+                    strategy_specs[strategy_id] = json.loads(json.dumps(default_strategy))
                     changed = True
 
         if research_search_documents is None:
@@ -3222,6 +4622,26 @@ class ReadSurfaceStore:
                     trainer_previews[session_id] = json.loads(json.dumps(default_preview))
                     changed = True
 
+        consult_transcripts = self._data.get("consult_transcripts")
+        default_consult_transcripts = default_data.get("consult_transcripts", {})
+        if consult_transcripts is None:
+            self._data["consult_transcripts"] = json.loads(json.dumps(default_consult_transcripts))
+            changed = True
+        elif isinstance(consult_transcripts, dict):
+            for session_id, default_transcript in default_consult_transcripts.items():
+                if session_id not in consult_transcripts:
+                    consult_transcripts[session_id] = json.loads(json.dumps(default_transcript))
+                    changed = True
+
+        if consult_memos is None:
+            self._data["consult_memos"] = json.loads(json.dumps(default_consult_memos))
+            changed = True
+        elif isinstance(consult_memos, dict):
+            for memo_id, default_memo in default_consult_memos.items():
+                if memo_id not in consult_memos:
+                    consult_memos[memo_id] = json.loads(json.dumps(default_memo))
+                    changed = True
+
         trainer_controls = self._data.get("trainer_controls")
         default_trainer_controls = default_data.get("trainer_controls", {})
         if trainer_controls is None:
@@ -3232,6 +4652,38 @@ class ReadSurfaceStore:
                 if session_id not in trainer_controls:
                     trainer_controls[session_id] = json.loads(json.dumps(default_ctrl))
                     changed = True
+
+        if self._backfill_tw04_replay_route_defaults():
+            changed = True
+
+        return changed
+
+    def _backfill_tw04_replay_route_defaults(self) -> bool:
+        trainer_replays = self._data.get("trainer_replays")
+        if not isinstance(trainer_replays, dict):
+            return False
+
+        changed = False
+        for session in trainer_replays.values():
+            if not isinstance(session, dict):
+                continue
+            events = session.get("events")
+            if not isinstance(events, list):
+                continue
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                evidence_ref = event.get("evidence_ref")
+                if not isinstance(evidence_ref, dict):
+                    continue
+                if str(evidence_ref.get("id") or "") != _TW04_DRAWDOWN_EVIDENCE_REF_ID:
+                    continue
+                if str(evidence_ref.get("type") or "") != "telemetry":
+                    continue
+                if evidence_ref.get("url_pattern") == _TW04_DRAWDOWN_EVIDENCE_ROUTE:
+                    continue
+                evidence_ref["url_pattern"] = _TW04_DRAWDOWN_EVIDENCE_ROUTE
+                changed = True
 
         return changed
 
@@ -3293,6 +4745,7 @@ class ReadSurfaceStore:
             "target_stage": raw.get("target_stage") or raw.get("stage"),
             "artifact_id": raw.get("artifact_id"),
             "artifact_version": raw.get("artifact_version"),
+            "submitted_at": raw.get("submitted_at") or raw.get("created_at"),
             "approval_decision_id": raw.get("approval_decision_id"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "binding_ids": binding_ids,
@@ -3447,6 +4900,24 @@ class ReadSurfaceStore:
             and decision_outcome in {"approved", "approved_with_conditions"}
             and plan_status not in {"rejected", "aborted", "failed", "executed"}
         )
+
+    @staticmethod
+    def _derive_can_review_deployment_plan(
+        plan: Optional[Dict[str, Any]],
+        decision: Optional[Dict[str, Any]],
+    ) -> bool:
+        if not plan:
+            return False
+        plan_status = str(plan.get("status") or "").lower()
+        decision_outcome = str((decision or {}).get("outcome") or "").lower()
+        decision_state = str((decision or {}).get("state") or "").lower()
+        if plan_status in {"approved", "rejected", "aborted", "failed", "executed"}:
+            return False
+        if decision_outcome in {"approved", "approved_with_conditions", "rejected"}:
+            return False
+        if decision_state in {"decided", "completed", "rejected"}:
+            return False
+        return True
 
     # ------------------------------------------------------------------ #
     # Catalog list surfaces (PS/CP/DP/RT)
@@ -3701,16 +5172,30 @@ class ReadSurfaceStore:
     def get_allowed_actions(self, plan_id: str) -> Dict[str, Any]:
         plan = self.get_deployment_plan(plan_id)
         decision = self.get_approval_decision(plan.get("approval_decision_id")) if plan else None
+        fallback_actions = dict((self._local_fallback("allowed_actions") or {}).get(plan_id, {}))
         if plan and (plan.get("status") is not None or plan.get("target_stage") is not None):
+            can_review = self._derive_can_review_deployment_plan(plan, decision)
             return {
-                "canPromoteToPaper": self._derive_can_promote_to_paper(plan, decision)
+                "canApprove": bool(fallback_actions.get("canApprove", can_review)),
+                "canReject": bool(fallback_actions.get("canReject", can_review)),
+                "canPromoteToPaper": bool(
+                    fallback_actions.get(
+                        "canPromoteToPaper",
+                        self._derive_can_promote_to_paper(plan, decision),
+                    )
+                ),
             }
         if self._allow_local_snapshot_fallback:
-            return (self._local_fallback("allowed_actions") or {}).get(
-                plan_id,
-                {"canPromoteToPaper": False},
-            )
-        return {"canPromoteToPaper": False}
+            return {
+                "canApprove": bool(fallback_actions.get("canApprove", False)),
+                "canReject": bool(fallback_actions.get("canReject", False)),
+                "canPromoteToPaper": bool(fallback_actions.get("canPromoteToPaper", False)),
+            }
+        return {
+            "canApprove": False,
+            "canReject": False,
+            "canPromoteToPaper": False,
+        }
 
     def get_latest_run(self, plan_id: str) -> Dict[str, Any]:
         if self._allow_local_snapshot_fallback:
@@ -3931,15 +5416,960 @@ class ReadSurfaceStore:
         )
         return [self._project_research_ticket_summary(ticket) for ticket in tickets]
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(
+        self,
+        ticket_id: Optional[str],
+        *,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
+    ) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
-        available, ticket = self._service.record("research_tickets", ticket_id)
-        if not available:
+        available, ticket = self._service.record(
+            "research_tickets",
+            ticket_id,
+            include_snapshot_fallback=include_snapshot_fallback,
+        )
+        if not available and include_local_fallback:
             ticket = (self._local_fallback("research_tickets") or {}).get(ticket_id)
         if not ticket:
             return None
         return self._project_research_ticket_detail(ticket)
+
+    def list_research_notes(self) -> List[Dict[str, Any]]:
+        notes = self._read_dataset_records("research_notes")
+        notes.sort(
+            key=lambda note: (
+                _parse_rfc3339(note.get("updated_at")) or _parse_rfc3339(note.get("created_at")) or datetime.min
+            ),
+            reverse=True,
+        )
+        return [json.loads(json.dumps(note)) for note in notes]
+
+    def get_research_note(self, note_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not note_id:
+            return None
+        available, note = self._service.record("research_notes", note_id)
+        if not available:
+            note = (self._local_fallback("research_notes") or {}).get(note_id)
+        if not note:
+            return None
+        return json.loads(json.dumps(note))
+
+    @staticmethod
+    def _kw03_route_href(ref_id: Optional[str]) -> Optional[str]:
+        ref = str(ref_id or "").strip()
+        if not ref:
+            return None
+        return f"/knowledge/evidence/{ref}"
+
+    @staticmethod
+    def _kw03_entity_route_href(entity_type: Optional[str], entity_ref: Optional[str]) -> Optional[str]:
+        entity = str(entity_type or "").strip()
+        ref = str(entity_ref or "").strip()
+        if not entity or not ref:
+            return None
+        route_map = {
+            "memory_entry": "/knowledge/memory",
+            "research_note": "/knowledge/notes",
+            "insight_card": "/knowledge/insights",
+            "strategy_spec": "/knowledge/strategy-specs",
+            "experiment": "/research/experiments",
+            "artifact": "/research/artifacts",
+        }
+        base = route_map.get(entity)
+        if not base:
+            return None
+        return f"{base}/{ref}"
+
+    def _kw03_entity_display_label(self, entity_type: Optional[str], entity_ref: Optional[str]) -> Optional[str]:
+        entity = str(entity_type or "").strip()
+        ref = str(entity_ref or "").strip()
+        if not entity or not ref:
+            return None
+        if entity == "memory_entry":
+            entry = self.get_institutional_memory_entry(ref) or {}
+            content = entry.get("content") if isinstance(entry.get("content"), dict) else {}
+            return content.get("headline")
+        if entity == "research_note":
+            note = self.get_research_note(ref) or {}
+            return note.get("title")
+        if entity == "evidence_ref":
+            evidence_ref = self.get_evidence_ref(ref) or {}
+            source_document = (
+                evidence_ref.get("source_document")
+                if isinstance(evidence_ref.get("source_document"), dict)
+                else {}
+            )
+            return evidence_ref.get("display_label") or source_document.get("title")
+        if entity == "insight_card":
+            insight = self.get_insight_card(ref) or {}
+            return insight.get("summary")
+        if entity == "strategy_spec":
+            spec = self.get_strategy_spec(ref) or {}
+            return spec.get("title") or spec.get("name")
+        if entity == "experiment":
+            experiment = self.get_research_experiment(ref) or {}
+            return experiment.get("experiment_name")
+        if entity == "artifact":
+            artifact = self.get_research_artifact(ref) or {}
+            return artifact.get("name")
+        return None
+
+    @staticmethod
+    def _kw03_normalize_credibility(raw: Any, *, include_detail: bool) -> Dict[str, Any]:
+        credibility = raw if isinstance(raw, dict) else {}
+        payload: Dict[str, Any] = {
+            "tier": credibility.get("tier") or "unverified",
+            "verified": bool(credibility.get("verified")),
+        }
+        if include_detail:
+            payload["last_verified_at"] = credibility.get("last_verified_at")
+            payload["verification_method"] = credibility.get("verification_method")
+        return payload
+
+    @staticmethod
+    def _kw03_normalize_resolved_link(raw: Any) -> Dict[str, Any]:
+        link = raw if isinstance(raw, dict) else {}
+        availability = str(link.get("availability") or "").strip().lower()
+        if availability not in {"available", "unavailable", "external"}:
+            availability = "unavailable"
+        route_href = link.get("route_href")
+        if availability == "unavailable":
+            route_href = None
+        open_in_new_tab = bool(link.get("open_in_new_tab")) if availability != "unavailable" else False
+        if availability == "external" and route_href:
+            open_in_new_tab = True if link.get("open_in_new_tab") is None else bool(link.get("open_in_new_tab"))
+        return {
+            "availability": availability,
+            "route_href": route_href,
+            "display_label": link.get("display_label") or "Source unavailable",
+            "open_in_new_tab": open_in_new_tab,
+        }
+
+    def _project_evidence_ref_list_item(self, evidence_ref: Dict[str, Any]) -> Dict[str, Any]:
+        ref_id = evidence_ref.get("ref_id")
+        source_document = evidence_ref.get("source_document") if isinstance(evidence_ref.get("source_document"), dict) else {}
+        linked_summary = (
+            evidence_ref.get("linked_object_summary")
+            if isinstance(evidence_ref.get("linked_object_summary"), dict)
+            else {}
+        )
+        if not linked_summary and isinstance(evidence_ref.get("linked_decisions"), list) and evidence_ref.get("linked_decisions"):
+            first = evidence_ref["linked_decisions"][0]
+            if isinstance(first, dict):
+                linked_summary = {
+                    "entity_type": first.get("entity_type"),
+                    "entity_ref": first.get("entity_ref"),
+                    "display_label": first.get("display_label"),
+                }
+
+        linked_entity_type = linked_summary.get("entity_type")
+        linked_entity_ref = linked_summary.get("entity_ref")
+        linked_display_label = (
+            linked_summary.get("display_label")
+            or self._kw03_entity_display_label(linked_entity_type, linked_entity_ref)
+        )
+        route_href = evidence_ref.get("route_href") or self._kw03_route_href(ref_id)
+        payload = {
+            "ref_id": ref_id,
+            "display_label": evidence_ref.get("display_label") or source_document.get("title") or linked_display_label or ref_id,
+            "route_href": route_href,
+            "source_document": {
+                "title": source_document.get("title") or evidence_ref.get("display_label") or ref_id,
+                "source_type": source_document.get("source_type"),
+                "source_ref": source_document.get("source_ref"),
+                "captured_at": source_document.get("captured_at") or evidence_ref.get("created_at"),
+            },
+            "link_type": evidence_ref.get("link_type"),
+            "credibility": self._kw03_normalize_credibility(
+                evidence_ref.get("credibility"),
+                include_detail=False,
+            ),
+            "linked_object_summary": {
+                "entity_type": linked_entity_type,
+                "entity_ref": linked_entity_ref,
+                "display_label": linked_display_label,
+            },
+            "resolved_link": self._kw03_normalize_resolved_link(evidence_ref.get("resolved_link")),
+        }
+        return payload
+
+    def _project_evidence_ref_detail(self, evidence_ref: Dict[str, Any]) -> Dict[str, Any]:
+        projected = self._project_evidence_ref_list_item(evidence_ref)
+        source_document = evidence_ref.get("source_document") if isinstance(evidence_ref.get("source_document"), dict) else {}
+        storage_preview = (
+            source_document.get("storage_preview")
+            if isinstance(source_document.get("storage_preview"), dict)
+            else {}
+        )
+        linked_decisions: List[Dict[str, Any]] = []
+        for item in evidence_ref.get("linked_decisions") or []:
+            if not isinstance(item, dict):
+                continue
+            entity_type = item.get("entity_type")
+            entity_ref = item.get("entity_ref")
+            linked_decisions.append(
+                {
+                    "entity_type": entity_type,
+                    "entity_ref": entity_ref,
+                    "display_label": item.get("display_label")
+                    or self._kw03_entity_display_label(entity_type, entity_ref),
+                    "route_href": item.get("route_href")
+                    or self._kw03_entity_route_href(entity_type, entity_ref),
+                    "link_type": item.get("link_type") or evidence_ref.get("link_type"),
+                    "relationship_note": item.get("relationship_note"),
+                }
+            )
+
+        source_note_context = (
+            evidence_ref.get("source_note_context")
+            if isinstance(evidence_ref.get("source_note_context"), dict)
+            else None
+        )
+        source_memory_context = (
+            evidence_ref.get("source_memory_context")
+            if isinstance(evidence_ref.get("source_memory_context"), dict)
+            else None
+        )
+
+        return {
+            "ref_id": projected.get("ref_id"),
+            "display_label": projected.get("display_label"),
+            "route_href": projected.get("route_href"),
+            "source_document": {
+                "title": projected["source_document"].get("title"),
+                "source_type": projected["source_document"].get("source_type"),
+                "excerpt": source_document.get("excerpt"),
+                "source_ref": projected["source_document"].get("source_ref"),
+                "storage_preview": {
+                    "available": bool(storage_preview.get("available")),
+                    "preview_type": storage_preview.get("preview_type") or "unavailable",
+                    "preview_token": storage_preview.get("preview_token"),
+                },
+                "captured_at": projected["source_document"].get("captured_at"),
+                "captured_by": source_document.get("captured_by"),
+            },
+            "link_type": projected.get("link_type"),
+            "credibility": self._kw03_normalize_credibility(
+                evidence_ref.get("credibility"),
+                include_detail=True,
+            ),
+            "resolved_link": projected.get("resolved_link"),
+            "linked_object_summary": projected.get("linked_object_summary"),
+            "linked_decisions": linked_decisions,
+            "source_note_context": json.loads(json.dumps(source_note_context)),
+            "source_memory_context": json.loads(json.dumps(source_memory_context)),
+            "created_at": evidence_ref.get("created_at") or projected["source_document"].get("captured_at"),
+        }
+
+    def list_evidence_refs(self) -> List[Dict[str, Any]]:
+        evidence_refs = self._read_dataset_records("evidence_refs")
+        evidence_refs.sort(
+            key=lambda evidence_ref: (
+                _parse_rfc3339(
+                    ((evidence_ref.get("source_document") or {}).get("captured_at"))
+                    or evidence_ref.get("created_at")
+                )
+                or datetime.min,
+                str(evidence_ref.get("ref_id") or ""),
+            ),
+            reverse=True,
+        )
+        return [self._project_evidence_ref_list_item(evidence_ref) for evidence_ref in evidence_refs]
+
+    def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not ref_id:
+            return None
+        available, evidence_ref = self._service.record("evidence_refs", ref_id)
+        if not available:
+            evidence_ref = (self._local_fallback("evidence_refs") or {}).get(ref_id)
+        if not evidence_ref:
+            return None
+        return self._project_evidence_ref_list_item(evidence_ref)
+
+    def get_evidence_ref_detail(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not ref_id:
+            return None
+        available, evidence_ref = self._service.record("evidence_refs", ref_id)
+        if not available:
+            evidence_ref = (self._local_fallback("evidence_refs") or {}).get(ref_id)
+        if not evidence_ref:
+            return None
+        return self._project_evidence_ref_detail(evidence_ref)
+
+    @staticmethod
+    def _kw04_route_href(insight_id: Optional[str]) -> Optional[str]:
+        ref = str(insight_id or "").strip()
+        if not ref:
+            return None
+        return f"/knowledge/insights/{ref}"
+
+    def _kw04_scope_context(self, scope: Optional[str], scope_ref: Optional[str]) -> Dict[str, Any]:
+        normalized_scope = str(scope or "").strip().lower()
+        ref = str(scope_ref or "").strip()
+        if normalized_scope == "global" or not ref:
+            return {
+                "scope_ref": None,
+                "display_label": None,
+                "route_href": None,
+            }
+        if normalized_scope == "persona":
+            persona = self.get_persona(ref) or {}
+            return {
+                "scope_ref": ref,
+                "display_label": persona.get("name"),
+                "route_href": f"/personas/{ref}",
+            }
+        if normalized_scope == "strategy":
+            strategy_spec = self.get_strategy_spec(ref) or {}
+            title = strategy_spec.get("title") or strategy_spec.get("name")
+            display = f"{title} — Strategy Spec" if title else None
+            return {
+                "scope_ref": ref,
+                "display_label": display,
+                "route_href": f"/knowledge/strategy-specs/{ref}",
+            }
+        if normalized_scope == "experiment":
+            experiment = self.get_research_experiment(ref) or {}
+            return {
+                "scope_ref": ref,
+                "display_label": experiment.get("experiment_name"),
+                "route_href": f"/research/experiments/{ref}",
+            }
+        if normalized_scope == "incident":
+            return {
+                "scope_ref": ref,
+                "display_label": f"Incident {ref}",
+                "route_href": f"/operator/post-incident-review?incident={ref}",
+            }
+        return {
+            "scope_ref": ref,
+            "display_label": None,
+            "route_href": None,
+        }
+
+    def _project_kw04_supporting_evidence_ref(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        ref_id = str(item.get("ref_id") or "").strip()
+        evidence_ref = self.get_evidence_ref(ref_id) if ref_id else None
+        source_document = (
+            evidence_ref.get("source_document")
+            if isinstance((evidence_ref or {}).get("source_document"), dict)
+            else {}
+        )
+        credibility = (
+            evidence_ref.get("credibility")
+            if isinstance((evidence_ref or {}).get("credibility"), dict)
+            else {}
+        )
+        return {
+            "ref_id": ref_id,
+            "source_document_title": (
+                item.get("source_document_title")
+                or source_document.get("title")
+                or (evidence_ref or {}).get("display_label")
+                or ref_id
+            ),
+            "link_type": item.get("link_type") or (evidence_ref or {}).get("link_type"),
+            "credibility_tier": item.get("credibility_tier") or credibility.get("tier") or "unverified",
+            "resolved_link": self._kw03_normalize_resolved_link(
+                item.get("resolved_link") or (evidence_ref or {}).get("resolved_link")
+            ),
+        }
+
+    def _project_kw04_linked_source(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        entity_type = item.get("entity_type")
+        entity_ref = item.get("entity_ref")
+        return {
+            "entity_type": entity_type,
+            "entity_ref": entity_ref,
+            "display_label": item.get("display_label")
+            or self._kw03_entity_display_label(entity_type, entity_ref),
+            "route_href": item.get("route_href")
+            or self._kw03_entity_route_href(entity_type, entity_ref),
+            "relationship_note": item.get("relationship_note"),
+        }
+
+    def _project_insight_card_list_item(self, insight_card: Dict[str, Any]) -> Dict[str, Any]:
+        confidence = insight_card.get("confidence") if isinstance(insight_card.get("confidence"), dict) else {}
+        provenance = (
+            insight_card.get("aggregation_provenance")
+            if isinstance(insight_card.get("aggregation_provenance"), dict)
+            else {}
+        )
+        supporting_evidence_refs = [
+            self._project_kw04_supporting_evidence_ref(item)
+            for item in insight_card.get("supporting_evidence_refs") or []
+            if isinstance(item, dict)
+        ]
+        linked_sources = [
+            self._project_kw04_linked_source(item)
+            for item in insight_card.get("linked_sources") or []
+            if isinstance(item, dict)
+        ]
+        return {
+            "insight_id": insight_card.get("insight_id"),
+            "summary": insight_card.get("summary"),
+            "scope": insight_card.get("scope"),
+            "scope_ref": insight_card.get("scope_ref"),
+            "status": insight_card.get("status") or "active",
+            "superseded_by_id": insight_card.get("superseded_by_id"),
+            "confidence": {
+                "score": confidence.get("score"),
+                "label": confidence.get("label"),
+            },
+            "tags": list(insight_card.get("tags") or []),
+            "evidence_count": len(supporting_evidence_refs),
+            "primary_evidence_count": provenance.get("primary_evidence_count")
+            if provenance.get("primary_evidence_count") is not None
+            else len(
+                [
+                    item
+                    for item in supporting_evidence_refs
+                    if str(item.get("credibility_tier") or "") == "primary"
+                ]
+            ),
+            "aggregated_at": provenance.get("aggregated_at"),
+            "route_href": insight_card.get("route_href") or self._kw04_route_href(insight_card.get("insight_id")),
+            "linked_sources": linked_sources,
+        }
+
+    def _project_insight_card_detail(self, insight_card: Dict[str, Any]) -> Dict[str, Any]:
+        projected = self._project_insight_card_list_item(insight_card)
+        superseded_by_id = projected.get("superseded_by_id")
+        superseded_card = self.get_insight_card(superseded_by_id) if superseded_by_id else None
+        confidence = insight_card.get("confidence") if isinstance(insight_card.get("confidence"), dict) else {}
+        return {
+            "insight_id": projected.get("insight_id"),
+            "summary": projected.get("summary"),
+            "scope": projected.get("scope"),
+            "scope_context": self._kw04_scope_context(
+                projected.get("scope"),
+                projected.get("scope_ref"),
+            ),
+            "status": projected.get("status"),
+            "superseded_by": {
+                "insight_id": superseded_by_id,
+                "summary": (superseded_card or {}).get("summary") if superseded_by_id else None,
+                "route_href": (superseded_card or {}).get("route_href") if superseded_by_id else None,
+            },
+            "confidence": {
+                "score": confidence.get("score"),
+                "label": confidence.get("label"),
+                "basis": confidence.get("basis"),
+            },
+            "tags": projected.get("tags"),
+            "source_ref": insight_card.get("source_ref"),
+            "supporting_evidence_refs": [
+                self._project_kw04_supporting_evidence_ref(item)
+                for item in insight_card.get("supporting_evidence_refs") or []
+                if isinstance(item, dict)
+            ],
+            "linked_sources": [
+                self._project_kw04_linked_source(item)
+                for item in insight_card.get("linked_sources") or []
+                if isinstance(item, dict)
+            ],
+            "aggregation_provenance": json.loads(
+                json.dumps(insight_card.get("aggregation_provenance") or {})
+            ),
+            "created_at": insight_card.get("created_at"),
+            "updated_at": insight_card.get("updated_at"),
+        }
+
+    def list_insight_cards(self) -> List[Dict[str, Any]]:
+        insight_cards = self._read_dataset_records("insight_cards")
+        insight_cards.sort(
+            key=lambda insight_card: (
+                _parse_rfc3339(
+                    ((insight_card.get("aggregation_provenance") or {}).get("aggregated_at"))
+                )
+                or _parse_rfc3339(insight_card.get("updated_at"))
+                or _parse_rfc3339(insight_card.get("created_at"))
+                or datetime.min,
+                str(insight_card.get("insight_id") or ""),
+            ),
+            reverse=True,
+        )
+        return [self._project_insight_card_list_item(insight_card) for insight_card in insight_cards]
+
+    def get_insight_card(self, insight_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not insight_id:
+            return None
+        available, insight_card = self._service.record("insight_cards", insight_id)
+        if not available:
+            insight_card = (self._local_fallback("insight_cards") or {}).get(insight_id)
+        if not insight_card:
+            return None
+        return self._project_insight_card_list_item(insight_card)
+
+    def get_insight_card_detail(self, insight_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not insight_id:
+            return None
+        available, insight_card = self._service.record("insight_cards", insight_id)
+        if not available:
+            insight_card = (self._local_fallback("insight_cards") or {}).get(insight_id)
+        if not insight_card:
+            return None
+        return self._project_insight_card_detail(insight_card)
+
+    @staticmethod
+    def _kw05_lifecycle_state(value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        mapping = {
+            "draft": "draft",
+            "candidate": "candidate",
+            "approved": "approved",
+            "retired": "retired",
+            "active": "approved",
+        }
+        return mapping.get(normalized, "draft")
+
+    @staticmethod
+    def _kw05_hypothesis_excerpt(value: Any, limit: int = 180) -> Optional[str]:
+        text = " ".join(str(value or "").split())
+        if not text:
+            return None
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "…"
+
+    @staticmethod
+    def _kw05_strategy_route_href(strategy_id: str, version_id: Optional[str] = None) -> str:
+        base = f"/knowledge/strategy-specs/{strategy_id}"
+        if version_id:
+            return f"{base}?version={version_id}"
+        return base
+
+    @classmethod
+    def _kw05_normalize_citation_bundle(cls, raw: Any) -> Dict[str, Any]:
+        bundle = raw if isinstance(raw, dict) else {}
+        return {
+            "evidence_refs": [
+                json.loads(json.dumps(item))
+                for item in bundle.get("evidence_refs") or []
+                if isinstance(item, dict)
+            ],
+            "memory_anchors": [
+                json.loads(json.dumps(item))
+                for item in bundle.get("memory_anchors") or []
+                if isinstance(item, dict)
+            ],
+            "insight_citations": [
+                json.loads(json.dumps(item))
+                for item in bundle.get("insight_citations") or []
+                if isinstance(item, dict)
+            ],
+        }
+
+    @classmethod
+    def _kw05_allowed_actions(cls, version: Dict[str, Any]) -> Dict[str, bool]:
+        lifecycle_state = cls._kw05_lifecycle_state(version.get("lifecycle_state"))
+        return {
+            "canSubmitForApproval": lifecycle_state == "draft",
+            "canRetire": lifecycle_state in {"candidate", "approved"},
+            "canCompare": lifecycle_state in {"candidate", "approved", "retired"},
+        }
+
+    @classmethod
+    def _kw05_sort_versions(cls, versions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return sorted(
+            versions,
+            key=lambda version: (
+                _parse_rfc3339(version.get("created_at")) or datetime.min,
+                str(version.get("spec_version_id") or ""),
+            ),
+            reverse=True,
+        )
+
+    @classmethod
+    def _kw05_versions(cls, strategy_spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+        strategy_id = str(strategy_spec.get("strategy_id") or strategy_spec.get("id") or "").strip()
+        if not strategy_id:
+            return []
+
+        raw_versions = strategy_spec.get("versions")
+        candidates = raw_versions if isinstance(raw_versions, list) and raw_versions else [strategy_spec]
+        versions: List[Dict[str, Any]] = []
+        for index, raw_version in enumerate(candidates, start=1):
+            if not isinstance(raw_version, dict):
+                continue
+            provenance = (
+                raw_version.get("provenance")
+                if isinstance(raw_version.get("provenance"), dict)
+                else {}
+            )
+            spec_version_id = str(
+                raw_version.get("spec_version_id")
+                or (
+                    strategy_spec.get("current_spec_version_id")
+                    if index == 1 and len(candidates) == 1
+                    else ""
+                )
+                or raw_version.get("id")
+                or strategy_id
+            ).strip()
+            spec_version = str(
+                raw_version.get("spec_version")
+                or (
+                    strategy_spec.get("current_spec_version")
+                    if index == 1 and len(candidates) == 1
+                    else ""
+                )
+                or f"v{index}"
+            ).strip()
+            title = (
+                raw_version.get("title")
+                or strategy_spec.get("title")
+                or strategy_spec.get("name")
+            )
+            version = {
+                "object_ref": {
+                    "type": "StrategySpec",
+                    "id": spec_version_id,
+                },
+                "strategy_id": strategy_id,
+                "spec_version_id": spec_version_id,
+                "spec_version": spec_version,
+                "parent_spec_version_id": raw_version.get("parent_spec_version_id"),
+                "derived_from_source_refs": list(
+                    raw_version.get("derived_from_source_refs")
+                    or provenance.get("source_refs")
+                    or []
+                ),
+                "lifecycle_state": cls._kw05_lifecycle_state(
+                    raw_version.get("lifecycle_state")
+                    or raw_version.get("status")
+                    or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("status")
+                ),
+                "title": title,
+                "hypothesis": raw_version.get("hypothesis") or strategy_spec.get("hypothesis"),
+                "objective": raw_version.get("objective") or strategy_spec.get("objective"),
+                "market_scope": json.loads(
+                    json.dumps(raw_version.get("market_scope") or strategy_spec.get("market_scope") or {})
+                ),
+                "execution_profile": json.loads(
+                    json.dumps(
+                        raw_version.get("execution_profile")
+                        or strategy_spec.get("execution_profile")
+                        or {}
+                    )
+                ),
+                "evaluation_plan": json.loads(
+                    json.dumps(
+                        raw_version.get("evaluation_plan")
+                        or strategy_spec.get("evaluation_plan")
+                        or {}
+                    )
+                ),
+                "governance": json.loads(
+                    json.dumps(raw_version.get("governance") or strategy_spec.get("governance") or {})
+                ),
+                "citation_bundle": cls._kw05_normalize_citation_bundle(
+                    raw_version.get("citation_bundle") or strategy_spec.get("citation_bundle")
+                ),
+                "source_kind": (
+                    raw_version.get("source_kind")
+                    or provenance.get("source_kind")
+                    or strategy_spec.get("source_kind")
+                ),
+                "persona_ids": list(raw_version.get("persona_ids") or strategy_spec.get("persona_ids") or []),
+                "created_at": (
+                    raw_version.get("created_at")
+                    or provenance.get("created_at")
+                    or strategy_spec.get("created_at")
+                    or strategy_spec.get("updated_at")
+                ),
+                "created_by": raw_version.get("created_by") or provenance.get("created_by"),
+                "last_modified_at": (
+                    raw_version.get("updated_at")
+                    or raw_version.get("last_modified_at")
+                    or strategy_spec.get("updated_at")
+                    or raw_version.get("created_at")
+                    or provenance.get("created_at")
+                ),
+            }
+            version["allowedActions"] = cls._kw05_allowed_actions(version)
+            versions.append(version)
+
+        return cls._kw05_sort_versions(versions)
+
+    @classmethod
+    def _kw05_current_version(
+        cls,
+        strategy_spec: Dict[str, Any],
+        versions: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        current_spec_version_id = str(strategy_spec.get("current_spec_version_id") or "").strip()
+        if current_spec_version_id:
+            for version in versions:
+                if str(version.get("spec_version_id") or "") == current_spec_version_id:
+                    return version
+        return versions[0] if versions else None
+
+    @classmethod
+    def _kw05_find_version(
+        cls,
+        strategy_spec: Dict[str, Any],
+        selector: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        versions = cls._kw05_versions(strategy_spec)
+        if not versions:
+            return None
+        normalized = str(selector or "current").strip()
+        if normalized in {"", "current"}:
+            return cls._kw05_current_version(strategy_spec, versions)
+        for version in versions:
+            if normalized in {
+                str(version.get("spec_version_id") or ""),
+                str(version.get("spec_version") or ""),
+            }:
+                return version
+        return None
+
+    @classmethod
+    def _kw05_compare_section(
+        cls,
+        left: Dict[str, Any],
+        right: Dict[str, Any],
+        field: str,
+        label: str,
+        *,
+        breaking: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        if json.dumps(left.get(field), sort_keys=True) == json.dumps(right.get(field), sort_keys=True):
+            return None
+        summary = f"{label} changed from {left.get('spec_version')} to {right.get('spec_version')}."
+        if field == "execution_profile":
+            left_mode = ((left.get(field) or {}).get("execution_mode_hint"))
+            right_mode = ((right.get(field) or {}).get("execution_mode_hint"))
+            if left_mode != right_mode and left_mode and right_mode:
+                summary = f"Execution mode hint changed from {left_mode} to {right_mode}."
+        if field == "evaluation_plan":
+            summary = "Evaluation gates or metrics changed."
+        if field == "market_scope":
+            summary = "Market scope changed."
+        if field == "governance":
+            summary = "Governance policy or approval requirements changed."
+        if field == "hypothesis":
+            summary = "Hypothesis changed."
+        if field == "objective":
+            summary = "Objective changed."
+        payload = {
+            "section": field,
+            "summary": summary,
+        }
+        if breaking:
+            payload["severity"] = "breaking"
+        return payload
+
+    def list_strategy_specs(
+        self,
+        *,
+        lifecycle_state: Optional[str] = None,
+        source_kind: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        include_retired: bool = False,
+    ) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for strategy_spec in self._read_dataset_records("strategy_specs"):
+            versions = self._kw05_versions(strategy_spec)
+            current_version = self._kw05_current_version(strategy_spec, versions)
+            if current_version is None:
+                continue
+
+            current_lifecycle_state = str(current_version.get("lifecycle_state") or "")
+            current_source_kind = str(current_version.get("source_kind") or "")
+            persona_ids = {
+                str(value)
+                for value in (current_version.get("persona_ids") or [])
+                if str(value).strip()
+            }
+
+            if lifecycle_state and lifecycle_state != "all" and current_lifecycle_state != lifecycle_state:
+                continue
+            if not include_retired and lifecycle_state in {None, "", "all"} and current_lifecycle_state == "retired":
+                continue
+            if source_kind and current_source_kind != source_kind:
+                continue
+            if persona_id and str(persona_id) not in persona_ids:
+                continue
+
+            strategy_id = str(current_version.get("strategy_id") or "")
+            items.append(
+                {
+                    "object_ref": json.loads(json.dumps(current_version.get("object_ref") or {})),
+                    "strategy_id": strategy_id,
+                    "current_spec_version_id": current_version.get("spec_version_id"),
+                    "current_spec_version": current_version.get("spec_version"),
+                    "title": current_version.get("title"),
+                    "lifecycle_state": current_lifecycle_state,
+                    "source_kind": current_source_kind,
+                    "hypothesis_excerpt": self._kw05_hypothesis_excerpt(current_version.get("hypothesis")),
+                    "version_count": len(versions),
+                    "last_modified_at": current_version.get("last_modified_at"),
+                    "route_href": self._kw05_strategy_route_href(strategy_id),
+                }
+            )
+
+        items.sort(
+            key=lambda item: (
+                _parse_rfc3339(item.get("last_modified_at")) or datetime.min,
+                str(item.get("strategy_id") or ""),
+            ),
+            reverse=True,
+        )
+        return items
+
+    def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        detail = self.get_strategy_spec_detail(strategy_id, version_selector="current")
+        if not detail:
+            return None
+        return {
+            "strategy_id": detail.get("strategy_id"),
+            "title": detail.get("title"),
+            "name": detail.get("title"),
+            "spec_version_id": detail.get("spec_version_id"),
+            "spec_version": detail.get("spec_version"),
+            "lifecycle_state": detail.get("lifecycle_state"),
+        }
+
+    def get_strategy_spec_detail(
+        self,
+        strategy_id: Optional[str],
+        *,
+        version_selector: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not strategy_id:
+            return None
+        available, strategy_spec = self._service.record("strategy_specs", strategy_id)
+        if not available:
+            strategy_spec = (self._local_fallback("strategy_specs") or {}).get(strategy_id)
+        if not strategy_spec:
+            return None
+        version = self._kw05_find_version(strategy_spec, version_selector)
+        if not version:
+            return None
+        return json.loads(json.dumps(version))
+
+    def list_strategy_spec_versions(self, strategy_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not strategy_id:
+            return []
+        available, strategy_spec = self._service.record("strategy_specs", strategy_id)
+        if not available:
+            strategy_spec = (self._local_fallback("strategy_specs") or {}).get(strategy_id)
+        if not strategy_spec:
+            return []
+        return [
+            {
+                "spec_version_id": version.get("spec_version_id"),
+                "spec_version": version.get("spec_version"),
+                "lifecycle_state": version.get("lifecycle_state"),
+                "created_at": version.get("created_at"),
+                "created_by": version.get("created_by"),
+                "parent_spec_version_id": version.get("parent_spec_version_id"),
+                "route_href": self._kw05_strategy_route_href(
+                    str(version.get("strategy_id") or ""),
+                    str(version.get("spec_version_id") or ""),
+                ),
+            }
+            for version in self._kw05_versions(strategy_spec)
+        ]
+
+    def compare_strategy_spec_versions(
+        self,
+        strategy_id: Optional[str],
+        *,
+        left_selector: str,
+        right_selector: str,
+    ) -> Optional[Dict[str, Any]]:
+        if not strategy_id:
+            return None
+        available, strategy_spec = self._service.record("strategy_specs", strategy_id)
+        if not available:
+            strategy_spec = (self._local_fallback("strategy_specs") or {}).get(strategy_id)
+        if not strategy_spec:
+            return None
+        left = self._kw05_find_version(strategy_spec, left_selector)
+        right = self._kw05_find_version(strategy_spec, right_selector)
+        if not left or not right:
+            return None
+
+        changed_sections = [
+            item
+            for item in [
+                self._kw05_compare_section(left, right, "hypothesis", "Hypothesis"),
+                self._kw05_compare_section(left, right, "objective", "Objective"),
+                self._kw05_compare_section(left, right, "market_scope", "Market scope"),
+                self._kw05_compare_section(left, right, "evaluation_plan", "Evaluation plan"),
+                self._kw05_compare_section(left, right, "governance", "Governance"),
+            ]
+            if item is not None
+        ]
+        breaking_changes = [
+            item
+            for item in [
+                self._kw05_compare_section(
+                    left,
+                    right,
+                    "execution_profile",
+                    "Execution profile",
+                    breaking=True,
+                )
+            ]
+            if item is not None
+        ]
+
+        evidence_refs = sorted(
+            {
+                str(item.get("ref_id") or "")
+                for item in (
+                    (left.get("citation_bundle") or {}).get("evidence_refs") or []
+                ) + (
+                    (right.get("citation_bundle") or {}).get("evidence_refs") or []
+                )
+                if isinstance(item, dict) and str(item.get("ref_id") or "").strip()
+            }
+        )
+
+        return {
+            "strategy_id": str(strategy_id),
+            "left_spec_version_id": left.get("spec_version_id"),
+            "right_spec_version_id": right.get("spec_version_id"),
+            "changed_sections": changed_sections,
+            "breaking_changes": breaking_changes,
+            "evidence_refs": evidence_refs,
+        }
+
+    def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        note_id = str(note.get("note_id") or "").strip()
+        if not note_id:
+            return None
+
+        service_store_path = self._service._resolve_path("research_notes")
+        persist_service_store = service_store_path is not None
+        notes: Optional[Dict[str, Any]]
+        if persist_service_store:
+            available, service_notes = self._service.list_records("research_notes")
+            if not available and service_store_path.exists():
+                return None
+            notes = {
+                str(existing.get("note_id") or existing.get("id") or ""): json.loads(json.dumps(existing))
+                for existing in service_notes
+                if isinstance(existing, dict) and str(existing.get("note_id") or existing.get("id") or "").strip()
+            }
+        else:
+            notes = self._local_fallback("research_notes")
+        if notes is None:
+            return None
+
+        notes[note_id] = json.loads(json.dumps(note))
+        if persist_service_store:
+            self._service.write_records("research_notes", notes)
+        else:
+            self._save()
+        return json.loads(json.dumps(note))
 
     def create_research_ticket(
         self,
@@ -4105,7 +6535,12 @@ class ReadSurfaceStore:
         }
 
     def list_institutional_memory_entries(self) -> List[Dict[str, Any]]:
-        entries = self._read_dataset_records("institutional_memory_entries")
+        available, entries = self._service.list_records(
+            "institutional_memory_entries",
+            include_snapshot_fallback=False,
+        )
+        if not available:
+            return []
         entries.sort(
             key=lambda entry: (
                 _parse_rfc3339(entry.get("written_at")) or datetime.min,
@@ -4115,12 +6550,21 @@ class ReadSurfaceStore:
         )
         return [self._project_institutional_memory_summary(entry) for entry in entries]
 
-    def get_institutional_memory_entry(self, entry_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_institutional_memory_entry(
+        self,
+        entry_id: Optional[str],
+        *,
+        include_snapshot_fallback: bool = True,
+    ) -> Optional[Dict[str, Any]]:
         if not entry_id:
             return None
-        available, entry = self._service.record("institutional_memory_entries", entry_id)
+        available, entry = self._service.record(
+            "institutional_memory_entries",
+            entry_id,
+            include_snapshot_fallback=include_snapshot_fallback,
+        )
         if not available:
-            entry = (self._local_fallback("institutional_memory_entries") or {}).get(entry_id)
+            return None
         if not entry:
             return None
         return self._project_institutional_memory_detail(entry)
@@ -4444,6 +6888,320 @@ class ReadSurfaceStore:
             self._data.setdefault("research_experiments", {})[experiment_id] = record
         self._save()
         return self._project_research_experiment_detail(record)
+
+    # ------------------------------------------------------------------ #
+    # Research Artifacts (RW-05)
+    # ------------------------------------------------------------------ #
+
+    _RW05_COMPARABLE_STATUSES = frozenset({"sealed", "superseded"})
+    _RW05_FIELD_SPECS = (
+        ("metrics.sharpe_ratio", "Sharpe Ratio", "performance", "higher_is_better"),
+        ("metrics.sortino_ratio", "Sortino Ratio", "performance", "higher_is_better"),
+        ("metrics.max_drawdown", "Max Drawdown", "risk", "higher_is_better"),
+        ("metrics.annualized_return", "Annualized Return", "performance", "higher_is_better"),
+        ("metrics.win_rate", "Win Rate", "performance", "higher_is_better"),
+        ("metrics.avg_trade_duration_days", "Avg Trade Duration", "performance", "lower_is_better"),
+        ("metrics.total_trades", "Total Trades", "metadata", "neutral"),
+        ("parameters.fast_period", "Fast Period", "parameters", "neutral"),
+        ("parameters.slow_period", "Slow Period", "parameters", "neutral"),
+        ("parameters.signal_period", "Signal Period", "parameters", "neutral"),
+        ("parameters.position_sizing", "Position Sizing", "parameters", "neutral"),
+        ("parameters.risk_per_trade", "Risk Per Trade", "parameters", "lower_is_better"),
+        ("name", "Artifact Name", "metadata", "neutral"),
+        ("produced_by_experiment_id", "Experiment Run", "metadata", "neutral"),
+    )
+
+    @classmethod
+    def _rw05_can_compare(cls, status: Optional[str]) -> bool:
+        return str(status or "").strip().lower() in cls._RW05_COMPARABLE_STATUSES
+
+    def _research_artifacts_store(self) -> Dict[str, Any]:
+        available, records = self._service.list_records("research_artifacts")
+        if available:
+            return {str(r.get("artifact_id") or r.get("id") or ""): r for r in records}
+        return self._data.get("research_artifacts") or {}
+
+    def _rw05_lineage_versions(self, lineage_id: Optional[str]) -> List[Dict[str, Any]]:
+        artifacts = list(self._research_artifacts_store().values())
+        chain = [
+            artifact
+            for artifact in artifacts
+            if str(artifact.get("lineage_id") or "") == str(lineage_id or "")
+        ]
+        chain.sort(
+            key=lambda artifact: (
+                int(artifact.get("version") or 0),
+                str(artifact.get("created_at") or ""),
+            )
+        )
+        return chain
+
+    @classmethod
+    def _rw05_metric_summary(cls, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        metrics = artifact.get("metrics") or {}
+        return {
+            "sharpe_ratio": metrics.get("sharpe_ratio"),
+            "max_drawdown": metrics.get("max_drawdown"),
+            "annualized_return": metrics.get("annualized_return"),
+        }
+
+    def _rw05_is_current_version(self, artifact: Dict[str, Any]) -> bool:
+        lineage_chain = self._rw05_lineage_versions(artifact.get("lineage_id"))
+        if not lineage_chain:
+            return False
+        latest = max(lineage_chain, key=lambda item: int(item.get("version") or 0))
+        return str(latest.get("artifact_id") or "") == str(artifact.get("artifact_id") or "")
+
+    def _project_research_artifact_summary(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "artifact_id": artifact.get("artifact_id"),
+            "lineage_id": artifact.get("lineage_id"),
+            "version": artifact.get("version"),
+            "status": artifact.get("status"),
+            "name": artifact.get("name"),
+            "artifact_type": artifact.get("artifact_type"),
+            "produced_by_experiment_id": artifact.get("produced_by_experiment_id"),
+            "linked_ticket_id": artifact.get("linked_ticket_id"),
+            "created_at": artifact.get("created_at"),
+            "metric_summary": self._rw05_metric_summary(artifact),
+            "is_current_version": self._rw05_is_current_version(artifact),
+            "allowedActions": {
+                "canCompare": self._rw05_can_compare(artifact.get("status")),
+            },
+        }
+
+    def _project_research_artifact_detail(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        lineage_chain = self._rw05_lineage_versions(artifact.get("lineage_id"))
+        return {
+            "artifact_id": artifact.get("artifact_id"),
+            "lineage_id": artifact.get("lineage_id"),
+            "version": artifact.get("version"),
+            "parent_artifact_id": artifact.get("parent_artifact_id"),
+            "status": artifact.get("status"),
+            "name": artifact.get("name"),
+            "artifact_type": artifact.get("artifact_type"),
+            "description": artifact.get("description"),
+            "produced_by_experiment_id": artifact.get("produced_by_experiment_id"),
+            "linked_ticket_id": artifact.get("linked_ticket_id"),
+            "created_at": artifact.get("created_at"),
+            "sealed_at": artifact.get("sealed_at"),
+            "is_current_version": self._rw05_is_current_version(artifact),
+            "version_chain": [
+                {
+                    "artifact_id": item.get("artifact_id"),
+                    "version": item.get("version"),
+                    "status": item.get("status"),
+                    "produced_by_experiment_id": item.get("produced_by_experiment_id"),
+                    "created_at": item.get("created_at"),
+                }
+                for item in lineage_chain
+            ],
+            "metrics": json.loads(json.dumps(artifact.get("metrics") or {})),
+            "parameters": json.loads(json.dumps(artifact.get("parameters") or {})),
+            "provenance": json.loads(json.dumps(artifact.get("provenance") or {})),
+            "allowedActions": {
+                "canCompare": self._rw05_can_compare(artifact.get("status")),
+                "canViewDetail": True,
+            },
+        }
+
+    def list_research_artifacts(
+        self,
+        *,
+        experiment_id: Optional[str] = None,
+        ticket_id: Optional[str] = None,
+        lineage_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        artifacts = list(self._research_artifacts_store().values())
+        if experiment_id:
+            artifacts = [
+                artifact
+                for artifact in artifacts
+                if str(artifact.get("produced_by_experiment_id") or "") == str(experiment_id)
+            ]
+        if ticket_id:
+            artifacts = [
+                artifact
+                for artifact in artifacts
+                if str(artifact.get("linked_ticket_id") or "") == str(ticket_id)
+            ]
+        if lineage_id:
+            artifacts = [
+                artifact
+                for artifact in artifacts
+                if str(artifact.get("lineage_id") or "") == str(lineage_id)
+            ]
+        if status:
+            artifacts = [
+                artifact
+                for artifact in artifacts
+                if str(artifact.get("status") or "").strip().lower() == str(status).strip().lower()
+            ]
+        artifacts.sort(
+            key=lambda artifact: (
+                _parse_rfc3339(artifact.get("created_at")) or datetime.min,
+                int(artifact.get("version") or 0),
+            ),
+            reverse=True,
+        )
+        return [self._project_research_artifact_summary(artifact) for artifact in artifacts]
+
+    def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not artifact_id:
+            return None
+        available, record = self._service.record("research_artifacts", artifact_id)
+        if available:
+            return self._project_research_artifact_detail(record) if record else None
+        artifact = (self._data.get("research_artifacts") or {}).get(artifact_id)
+        if not artifact:
+            return None
+        return self._project_research_artifact_detail(artifact)
+
+    @staticmethod
+    def _rw05_field_value(artifact: Dict[str, Any], field_key: str) -> Any:
+        current: Any = artifact
+        for part in field_key.split("."):
+            if not isinstance(current, dict):
+                return None
+            current = current.get(part)
+        return current
+
+    @staticmethod
+    def _rw05_round(value: float) -> float:
+        return round(value, 4)
+
+    @classmethod
+    def _rw05_delta_display(
+        cls,
+        field_key: str,
+        baseline: Any,
+        target: Any,
+        delta: float,
+    ) -> str:
+        if field_key == "metrics.max_drawdown" and baseline not in (None, 0):
+            reduction_pct = (abs(float(delta)) / abs(float(baseline))) * 100
+            if delta >= 0:
+                return f"{delta:+.2f} ({reduction_pct:.1f}% reduction)"
+            return f"{delta:+.2f} ({reduction_pct:.1f}% deeper)"
+
+        if isinstance(baseline, (int, float)) and isinstance(target, (int, float)):
+            if isinstance(baseline, int) and isinstance(target, int):
+                return f"{int(delta):+d}"
+            if baseline not in (None, 0):
+                relative_pct = (delta / float(baseline)) * 100
+                return f"{delta:+.2f} ({relative_pct:+.1f}%)"
+            return f"{delta:+.2f}"
+
+        return "changed"
+
+    @classmethod
+    def _rw05_compare_field_pair(
+        cls,
+        artifacts: List[Dict[str, Any]],
+        field_key: str,
+        display_label: str,
+        group: str,
+        orientation: str,
+    ) -> Dict[str, Any]:
+        values = [
+            {
+                "artifact_id": artifact.get("artifact_id"),
+                "value": cls._rw05_field_value(artifact, field_key),
+            }
+            for artifact in artifacts
+        ]
+        baseline = values[0]["value"]
+        target = values[-1]["value"]
+
+        pair: Dict[str, Any] = {
+            "field_key": field_key,
+            "display_label": display_label,
+            "group": group,
+            "values": values,
+            "change_label": "unchanged",
+            "delta_magnitude": 0,
+            "delta_direction": "none",
+            "delta_display": "No change",
+        }
+
+        if baseline == target:
+            return pair
+
+        if isinstance(baseline, (int, float)) and isinstance(target, (int, float)):
+            delta = float(target) - float(baseline)
+            pair["delta_magnitude"] = cls._rw05_round(abs(delta))
+            pair["delta_direction"] = "up" if delta > 0 else "down"
+            pair["delta_display"] = cls._rw05_delta_display(field_key, baseline, target, delta)
+
+            if orientation == "neutral":
+                pair["change_label"] = "changed"
+            elif orientation == "higher_is_better":
+                pair["change_label"] = "improved" if delta > 0 else "degraded"
+            elif orientation == "lower_is_better":
+                pair["change_label"] = "improved" if delta < 0 else "degraded"
+            else:
+                pair["change_label"] = "changed"
+            return pair
+
+        pair["delta_magnitude"] = None
+        pair["delta_direction"] = "none"
+        pair["delta_display"] = "changed"
+        pair["change_label"] = "changed"
+        return pair
+
+    def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
+        artifacts: List[Dict[str, Any]] = []
+        for artifact_id in artifact_ids:
+            artifact = self.get_research_artifact(artifact_id)
+            if artifact:
+                artifacts.append(artifact)
+
+        field_pairs = [
+            self._rw05_compare_field_pair(artifacts, field_key, display_label, group, orientation)
+            for field_key, display_label, group, orientation in self._RW05_FIELD_SPECS
+        ]
+        changed_count = sum(1 for pair in field_pairs if pair["change_label"] != "unchanged")
+        change_labels = [
+            pair["change_label"]
+            for pair in field_pairs
+            if pair["change_label"] in {"improved", "degraded", "changed"}
+        ]
+        dominant_change_label = "unchanged"
+        if change_labels:
+            dominant_change_label = max(set(change_labels), key=change_labels.count)
+
+        return {
+            "comparison_id": f"cmp_{uuid.uuid4().hex[:12]}",
+            "artifacts": [
+                {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "version": artifact.get("version"),
+                    "name": artifact.get("name"),
+                    "status": artifact.get("status"),
+                }
+                for artifact in artifacts
+            ],
+            "field_pairs": field_pairs,
+            "change_summary": {
+                "total_fields_compared": len(field_pairs),
+                "fields_changed": changed_count,
+                "fields_unchanged": len(field_pairs) - changed_count,
+                "dominant_change_label": dominant_change_label,
+            },
+            "provenance_pairs": [
+                {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "linked_experiment": json.loads(
+                        json.dumps((artifact.get("provenance") or {}).get("linked_experiment") or {})
+                    ),
+                    "linked_ticket": json.loads(
+                        json.dumps((artifact.get("provenance") or {}).get("linked_ticket") or {})
+                    ),
+                }
+                for artifact in artifacts
+            ],
+        }
 
     def _read_dataset_records(
         self,
@@ -6194,6 +8952,115 @@ class ReadSurfaceStore:
         meta_consult = (session.get("metadata") or {}).get("consultation", {})
         return list(meta_consult.get("evidence_refs") or [])
 
+    def _consult_transcript_records(self) -> Dict[str, Dict[str, Any]]:
+        available, records = self._service.list_records("consult_transcripts")
+        if available:
+            return {
+                str(session_id): transcript
+                for transcript in records
+                if isinstance(transcript, dict)
+                for session_id in [transcript.get("session_id") or transcript.get("transcript_id")]
+                if session_id
+            }
+        return self._local_fallback("consult_transcripts") or {}
+
+    def get_consult_transcript(
+        self,
+        session_id: Optional[str],
+        *,
+        from_sequence_no: Optional[int] = None,
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """CW-02: Return the ordered transcript for a consultation session.
+
+        Resolves root session_id so responder and committee sessions route to the
+        same transcript as the requester session.  Events are ordered by
+        sequence_no ascending and filtered by from_sequence_no when given.
+        page_token is treated as an opaque integer offset into the filtered set.
+        Returns None when the session does not exist.
+        """
+        if not session_id:
+            return None
+        all_sessions = self._consultation_session_records()
+        if session_id not in all_sessions:
+            return None
+        root_id = self._resolve_root_consultation_id(session_id)
+        root_session = all_sessions.get(root_id)
+        if root_session is None:
+            return None
+
+        transcripts = self._consult_transcript_records()
+        record = transcripts.get(root_id)
+
+        surface_state: str
+        events: List[Dict[str, Any]]
+        transcript_id: str
+        linked_request_id: Optional[str]
+
+        if record is None:
+            surface_state = "unavailable"
+            events = []
+            transcript_id = f"tr-{root_id}"
+            linked_request_id = root_session.get("request_id")
+        else:
+            transcript_id = str(record.get("transcript_id") or f"tr-{root_id}")
+            linked_request_id = record.get("linked_request_id") or root_session.get("request_id")
+            raw_events: List[Dict[str, Any]] = list(record.get("events") or [])
+            raw_events.sort(key=lambda e: int(e.get("sequence_no") or 0))
+
+            full_seqs = [int(e.get("sequence_no") or 0) for e in raw_events]
+            has_gap = any(
+                full_seqs[i + 1] != full_seqs[i] + 1
+                for i in range(len(full_seqs) - 1)
+            )
+            surface_state = "degraded" if has_gap else "ok"
+
+            if from_sequence_no is not None:
+                raw_events = [e for e in raw_events if int(e.get("sequence_no") or 0) >= from_sequence_no]
+
+            events = raw_events
+
+        offset = 0
+        if page_token:
+            try:
+                offset = int(page_token)
+            except (ValueError, TypeError):
+                offset = 0
+
+        page_events = events[offset: offset + page_size]
+        next_offset = offset + page_size
+        next_page_token: Optional[str] = str(next_offset) if next_offset < len(events) else None
+
+        now = _utc_now_rfc3339()
+        return {
+            "object_ref": {
+                "type": "ConsultTranscript",
+                "id": transcript_id,
+            },
+            "transcript_id": transcript_id,
+            "session_id": root_id,
+            "linked_request_id": linked_request_id,
+            "events": page_events,
+            "page_info": {
+                "next_page_token": next_page_token,
+                "page_size": page_size,
+                "total": len(events),
+            },
+            "meta": {
+                "snapshot_at": now,
+                "staleness": {
+                    "served_from": self.dataset_source("consult_transcripts") if record is not None else "unavailable",
+                    "last_known_at": now,
+                },
+                "surfaces": {
+                    "transcript": {
+                        "state": surface_state,
+                    },
+                },
+            },
+        }
+
     @staticmethod
     def _committee_surface_state(root_session: Dict[str, Any]) -> str:
         consult = (root_session.get("metadata") or {}).get("consultation", {})
@@ -6303,7 +9170,7 @@ class ReadSurfaceStore:
             )
 
         sponsor_assignment = next(
-            (row for row in participant_roster if row.get("role") == "sponsor"),
+            (row for row in participant_roster if str(row.get("participant_id") or "") == sponsor_session_id),
             None,
         )
         board_row = self._committee_board_row(root_session)
@@ -6331,9 +9198,23 @@ class ReadSurfaceStore:
         actor_id: str,
         recorded_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        consultation_sessions = self._local_fallback("consultation_sessions")
-        if consultation_sessions is None:
-            return None
+        service_store_path = self._service._resolve_path("consultation_sessions")
+        persist_service_store = service_store_path is not None
+        consultation_sessions: Optional[Dict[str, Any]]
+        if persist_service_store:
+            available, service_sessions = self._service.list_records("consultation_sessions")
+            if not available and service_store_path.exists():
+                return None
+            consultation_sessions = {
+                str(session.get("session_id") or session.get("id") or ""): json.loads(json.dumps(session))
+                for session in service_sessions
+                if isinstance(session, dict)
+                and str(session.get("session_id") or session.get("id") or "").strip()
+            }
+        else:
+            consultation_sessions = self._local_fallback("consultation_sessions")
+            if consultation_sessions is None:
+                return None
 
         root_session_id: Optional[str] = None
         for session_id, session in consultation_sessions.items():
@@ -6360,7 +9241,10 @@ class ReadSurfaceStore:
         consult["synthesis_summary"] = synthesis_summary
         consult["rationale_ref"] = rationale_ref
 
-        self._save()
+        if persist_service_store:
+            self._service.write_records("consultation_sessions", consultation_sessions)
+        else:
+            self._save()
         return self.get_committee(committee_id)
 
     def get_consult_policy(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -6587,6 +9471,178 @@ class ReadSurfaceStore:
         if requests is None:
             requests = {}
         requests[request_id] = req
+        if persist_service_store:
+            self._service.write_records("consult_requests", requests)
+        else:
+            local_key = self._LOCAL_DATA_KEYS.get("consult_requests", "consult_requests")
+            self._data.setdefault(local_key, {})[request_id] = req
+            self._save()
+        return self._project_consult_request_detail(req)
+
+    # ---------------------------------------------------------------------- #
+    # CW-04: Red-team Memo
+    # ---------------------------------------------------------------------- #
+
+    @staticmethod
+    def _cw04_route_href(memo_id: Optional[str]) -> Optional[str]:
+        memo_ref = str(memo_id or "").strip()
+        if not memo_ref:
+            return None
+        return f"/consultation/memos/{memo_ref}"
+
+    @staticmethod
+    def _cw04_normalize_evidence_ref(raw: Any) -> Dict[str, Any]:
+        evidence_ref = raw if isinstance(raw, dict) else {}
+        ref_id = str(evidence_ref.get("id") or evidence_ref.get("ref_id") or "").strip()
+        link = evidence_ref.get("link") or evidence_ref.get("route_href")
+        if not link and ref_id:
+            link = f"/evidence/{ref_id}"
+        return {
+            "id": ref_id,
+            "evidence_type": evidence_ref.get("evidence_type") or evidence_ref.get("type"),
+            "artifact_ref": evidence_ref.get("artifact_ref"),
+            "description": evidence_ref.get("description") or evidence_ref.get("display_label"),
+            "link": link,
+        }
+
+    @classmethod
+    def _project_consult_memo_summary(cls, memo: Dict[str, Any]) -> Dict[str, Any]:
+        memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
+        recommendations = list(memo.get("recommendations") or [])
+        return {
+            "object_ref": {
+                "type": "ConsultMemo",
+                "id": memo_id,
+            },
+            "memo_id": memo_id,
+            "memo_type": memo.get("memo_type") or "red_team",
+            "status": memo.get("status") or memo.get("lifecycle_state") or "draft",
+            "linked_request_id": memo.get("linked_request_id"),
+            "recommendation_count": len(recommendations),
+            "published_at": memo.get("published_at"),
+            "created_at": memo.get("created_at"),
+            "route_href": cls._cw04_route_href(memo_id),
+        }
+
+    @classmethod
+    def _project_consult_memo_detail(cls, memo: Dict[str, Any]) -> Dict[str, Any]:
+        memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
+        mapping = memo.get("session_to_memo_mapping") if isinstance(memo.get("session_to_memo_mapping"), dict) else {}
+        governance_target = memo.get("governance_target") if isinstance(memo.get("governance_target"), dict) else {}
+        return {
+            "object_ref": {
+                "type": "ConsultMemo",
+                "id": memo_id,
+            },
+            "memo_id": memo_id,
+            "memo_type": memo.get("memo_type") or "red_team",
+            "status": memo.get("status") or memo.get("lifecycle_state") or "draft",
+            "lifecycle_state": memo.get("lifecycle_state") or memo.get("status") or "draft",
+            "author_ref": memo.get("author_ref"),
+            "linked_request_id": memo.get("linked_request_id"),
+            "linked_session_id": memo.get("linked_session_id"),
+            "session_to_memo_mapping": {
+                "mapping_id": mapping.get("mapping_id"),
+                "source_session_id": mapping.get("source_session_id"),
+                "transcript_id": mapping.get("transcript_id"),
+                "transcript_version": mapping.get("transcript_version"),
+                "memo_id": mapping.get("memo_id") or memo_id,
+                "memo_type": mapping.get("memo_type") or memo.get("memo_type") or "red_team",
+                "created_by": json.loads(json.dumps(mapping.get("created_by") or {})),
+                "evidence_refs": list(mapping.get("evidence_refs") or []),
+                "mapping_status": mapping.get("mapping_status"),
+                "created_at": mapping.get("created_at"),
+            },
+            "summary": memo.get("summary"),
+            "recommendations": list(memo.get("recommendations") or []),
+            "evidence_refs": [
+                cls._cw04_normalize_evidence_ref(item)
+                for item in (memo.get("evidence_refs") or [])
+            ],
+            "published_at": memo.get("published_at"),
+            "created_at": memo.get("created_at"),
+            "supersedes_memo_id": memo.get("supersedes_memo_id"),
+            "superseded_by_memo_id": memo.get("superseded_by_memo_id"),
+            "surface_state": memo.get("surface_state") or "ok",
+            "governance_target": json.loads(json.dumps(governance_target)),
+            "suppressed": bool(memo.get("suppressed")),
+            "withdrawn": bool(memo.get("withdrawn")),
+            "active_governance_review_id": memo.get("active_governance_review_id"),
+        }
+
+    def list_consult_memos(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        memos = self._read_dataset_records("consult_memos")
+        if statuses:
+            requested = {str(value).strip().lower() for value in statuses if str(value).strip()}
+            memos = [
+                memo
+                for memo in memos
+                if str(memo.get("status") or memo.get("lifecycle_state") or "").strip().lower() in requested
+            ]
+        memos.sort(
+            key=lambda memo: (
+                _parse_rfc3339(memo.get("published_at") or memo.get("created_at")) or datetime.min,
+                _parse_rfc3339(memo.get("created_at")) or datetime.min,
+                str(memo.get("memo_id") or ""),
+            ),
+            reverse=True,
+        )
+        return [self._project_consult_memo_summary(memo) for memo in memos]
+
+    def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not memo_id:
+            return None
+        available, memo = self._service.record("consult_memos", memo_id)
+        if not available:
+            memo = (self._local_fallback("consult_memos") or {}).get(memo_id)
+        if not memo:
+            return None
+        return self._project_consult_memo_detail(memo)
+
+    def cancel_consult_request(
+        self,
+        request_id: str,
+        *,
+        actor_id: str,
+        canceled_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        service_store_path = self._service._resolve_path("consult_requests")
+        persist_service_store = service_store_path is not None
+        requests: Optional[Dict[str, Any]]
+        if persist_service_store:
+            available, service_requests = self._service.list_records("consult_requests")
+            if not available and service_store_path.exists():
+                return None
+            requests = {
+                str(r.get("request_id") or r.get("id") or ""): json.loads(json.dumps(r))
+                for r in service_requests
+                if isinstance(r, dict)
+                and str(r.get("request_id") or r.get("id") or "").strip()
+            }
+        else:
+            local_key = self._LOCAL_DATA_KEYS.get("consult_requests", "consult_requests")
+            local_payload = self._data.get(local_key)
+            if isinstance(local_payload, dict):
+                requests = json.loads(json.dumps(local_payload))
+            else:
+                requests = {}
+
+        req = (requests or {}).get(request_id)
+        if not req:
+            return None
+        if not self._consult_request_can_cancel(req):
+            return None
+
+        timestamp = canceled_at or _utc_now_rfc3339()
+        req["status"] = "canceled"
+        req["canceled_at"] = timestamp
+        req["request_to_session_status"] = "canceled_before_session"
+        req["session_handoff_note"] = "Request canceled by operator."
+
         if persist_service_store:
             self._service.write_records("consult_requests", requests)
         else:
@@ -6891,50 +9947,523 @@ class ReadSurfaceStore:
             },
         }
 
-    def cancel_consult_request(
-        self,
-        request_id: str,
-        *,
-        actor_id: str,
-        canceled_at: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        service_store_path = self._service._resolve_path("consult_requests")
-        persist_service_store = service_store_path is not None
-        requests: Optional[Dict[str, Any]]
-        if persist_service_store:
-            available, service_requests = self._service.list_records("consult_requests")
+    # -------------------------------------------------------------------------
+    # TW-04 Teaching Replay
+    # -------------------------------------------------------------------------
+
+    _TW04_REPLAY_SURFACE_STATES = {"ok", "stale", "degraded", "unavailable"}
+    _TW04_REPLAY_RESOLUTION_STATES = {"pending_decision", "committed", "discarded", "not_applicable"}
+
+    def _tw04_replay_records(self) -> Dict[str, Dict[str, Any]]:
+        available, records = self._service.list_records("trainer_replays")
+        if available:
+            return {
+                str(r.get("session_id") or r.get("id") or ""): json.loads(json.dumps(r))
+                for r in records
+                if isinstance(r, dict) and str(r.get("session_id") or r.get("id") or "").strip()
+            }
+        return json.loads(json.dumps(self._local_fallback("trainer_replays") or {}))
+
+    def _mutable_tw04_replay_records(self) -> Optional[tuple[bool, Dict[str, Dict[str, Any]]]]:
+        service_store_path = self._service._resolve_path("trainer_replays")
+        if service_store_path is not None:
+            available, service_records = self._service.list_records("trainer_replays")
             if not available and service_store_path.exists():
                 return None
-            requests = {
-                str(r.get("request_id") or r.get("id") or ""): json.loads(json.dumps(r))
-                for r in service_requests
-                if isinstance(r, dict)
-                and str(r.get("request_id") or r.get("id") or "").strip()
+            records = {
+                str(r.get("session_id") or r.get("id") or ""): json.loads(json.dumps(r))
+                for r in service_records
+                if isinstance(r, dict) and str(r.get("session_id") or r.get("id") or "").strip()
             }
-        else:
-            local_key = self._LOCAL_DATA_KEYS.get("consult_requests", "consult_requests")
-            local_payload = self._data.get(local_key)
-            if isinstance(local_payload, dict):
-                requests = json.loads(json.dumps(local_payload))
-            else:
-                requests = {}
-
-        req = (requests or {}).get(request_id)
-        if not req:
+            return True, records
+        replays = self._local_fallback("trainer_replays")
+        if replays is None:
             return None
-        if not self._consult_request_can_cancel(req):
+        return False, json.loads(json.dumps(replays))
+
+    @classmethod
+    def _tw04_replay_surface_state(
+        cls,
+        *,
+        has_data: bool,
+        dataset_source: str = "service_store",
+        stored_state_override: Optional[str] = None,
+    ) -> str:
+        if not has_data or dataset_source == "missing":
+            return "unavailable"
+        requested = str(stored_state_override or "ok").strip().lower()
+        if requested not in cls._TW04_REPLAY_SURFACE_STATES:
+            requested = "ok"
+        if dataset_source == "local_snapshot" and requested == "ok":
+            return "stale"
+        return requested
+
+    @staticmethod
+    def _project_replay_teaching_event(raw: Dict[str, Any]) -> Dict[str, Any]:
+        patch_delta = raw.get("patch_delta")
+        if isinstance(patch_delta, list):
+            patch_delta = [
+                {
+                    "parameter_key": row.get("parameter_key"),
+                    "previous_value": row.get("previous_value"),
+                    "new_value": row.get("new_value"),
+                }
+                for row in patch_delta
+                if isinstance(row, dict)
+            ]
+        eval_ref = raw.get("eval_ref")
+        if isinstance(eval_ref, dict):
+            eval_ref = {
+                "eval_id": eval_ref.get("eval_id"),
+                "baseline_snapshot_at": eval_ref.get("baseline_snapshot_at"),
+                "candidate_snapshot_at": eval_ref.get("candidate_snapshot_at"),
+            }
+        evidence_ref = raw.get("evidence_ref")
+        if isinstance(evidence_ref, dict):
+            evidence_ref = {
+                "type": evidence_ref.get("type"),
+                "id": evidence_ref.get("id"),
+                "display_label": evidence_ref.get("display_label"),
+                "url_pattern": evidence_ref.get("url_pattern"),
+            }
+        artifact_refs = raw.get("artifact_refs")
+        if isinstance(artifact_refs, dict):
+            artifact_refs = {
+                "before_artifact_ref": artifact_refs.get("before_artifact_ref"),
+                "candidate_artifact_ref": artifact_refs.get("candidate_artifact_ref"),
+                "after_artifact_ref": artifact_refs.get("after_artifact_ref"),
+            }
+        return {
+            "event_id": raw.get("event_id"),
+            "session_id": raw.get("session_id"),
+            "actor": raw.get("actor"),
+            "actor_label": raw.get("actor_label"),
+            "event_type": raw.get("event_type"),
+            "message_body": raw.get("message_body"),
+            "summary": raw.get("summary"),
+            "emitted_at": raw.get("emitted_at"),
+            "sequence_number": raw.get("sequence_number"),
+            "outcome_signal": raw.get("outcome_signal"),
+            "evidence_ref": evidence_ref,
+            "patch_delta": patch_delta,
+            "eval_ref": eval_ref,
+            "artifact_refs": artifact_refs,
+        }
+
+    @staticmethod
+    def _project_replay_resolution(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {
+                "state": "not_applicable",
+                "decision_at": None,
+                "decision_by": None,
+                "note": None,
+            }
+        return {
+            "state": str(raw.get("state") or "not_applicable"),
+            "decision_at": raw.get("decision_at"),
+            "decision_by": raw.get("decision_by"),
+            "note": raw.get("note"),
+        }
+
+    @staticmethod
+    def _project_replay_artifacts(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {
+                "before_artifact_ref": None,
+                "candidate_artifact_ref": None,
+                "after_artifact_ref": None,
+            }
+        return {
+            "before_artifact_ref": raw.get("before_artifact_ref"),
+            "candidate_artifact_ref": raw.get("candidate_artifact_ref"),
+            "after_artifact_ref": raw.get("after_artifact_ref"),
+        }
+
+    @classmethod
+    def _tw04_replay_allowed_actions(
+        cls,
+        *,
+        session_status: Optional[str],
+        resolution_state: str,
+        surface_state: str,
+        candidate_artifact_ref: Optional[str],
+    ) -> Dict[str, bool]:
+        status_ok = str(session_status or "").strip().lower() == "completed"
+        resolution_ok = resolution_state == "pending_decision"
+        surface_ok = surface_state not in {"degraded", "unavailable"}
+        candidate_ok = bool(candidate_artifact_ref)
+        can_act = status_ok and resolution_ok and surface_ok and candidate_ok
+        return {
+            "canReplay": surface_state != "unavailable",
+            "canCommit": can_act,
+            "canDiscard": can_act,
+        }
+
+    @classmethod
+    def _project_trainer_replay_list_item(
+        cls,
+        session: Dict[str, Any],
+        *,
+        surface_state: str,
+    ) -> Dict[str, Any]:
+        session_id = str(session.get("session_id") or session.get("id") or "")
+        events = sorted(
+            [e for e in (session.get("events") or []) if isinstance(e, dict)],
+            key=lambda e: int(e.get("sequence_number") or 0),
+        )
+        event_count = len(events)
+        latest_event_type = events[-1].get("event_type") if events else None
+        latest_outcome_signal = None
+        for ev in events:
+            if ev.get("outcome_signal"):
+                latest_outcome_signal = ev.get("outcome_signal")
+
+        resolution = cls._project_replay_resolution(session.get("replay_resolution"))
+        artifacts = cls._project_replay_artifacts(session.get("artifacts"))
+        allowed = cls._tw04_replay_allowed_actions(
+            session_status=session.get("status"),
+            resolution_state=resolution["state"],
+            surface_state=surface_state,
+            candidate_artifact_ref=artifacts.get("candidate_artifact_ref"),
+        )
+        return {
+            "session_id": session_id,
+            "persona_id": session.get("persona_id"),
+            "objective": session.get("objective"),
+            "status": session.get("status"),
+            "started_at": session.get("started_at"),
+            "ended_at": session.get("ended_at"),
+            "event_count": event_count,
+            "latest_event_type": latest_event_type,
+            "latest_outcome_signal": latest_outcome_signal,
+            "replay_resolution": {"state": resolution["state"]},
+            "allowedActions": allowed,
+            "links": {
+                "replay_detail": f"/trainer/replay/{session_id}",
+            },
+        }
+
+    @classmethod
+    def _project_trainer_replay_detail(
+        cls,
+        session: Dict[str, Any],
+        *,
+        surface_state: str,
+        snapshot_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        session_id = str(session.get("session_id") or session.get("id") or "")
+        snapshot_timestamp = snapshot_at or _utc_now_rfc3339()
+
+        raw_events = sorted(
+            [e for e in (session.get("events") or []) if isinstance(e, dict)],
+            key=lambda e: int(e.get("sequence_number") or 0),
+        )
+        events = [cls._project_replay_teaching_event(e) for e in raw_events]
+        event_count = len(events)
+        first_seq = events[0]["sequence_number"] if events else None
+        last_seq = events[-1]["sequence_number"] if events else None
+        latest_outcome_signal = None
+        for ev in events:
+            if ev.get("outcome_signal"):
+                latest_outcome_signal = ev["outcome_signal"]
+
+        resolution = cls._project_replay_resolution(session.get("replay_resolution"))
+        artifacts = cls._project_replay_artifacts(session.get("artifacts"))
+        allowed = cls._tw04_replay_allowed_actions(
+            session_status=session.get("status"),
+            resolution_state=resolution["state"],
+            surface_state=surface_state,
+            candidate_artifact_ref=artifacts.get("candidate_artifact_ref"),
+        )
+        return {
+            "session_id": session_id,
+            "persona_id": session.get("persona_id"),
+            "objective": session.get("objective"),
+            "status": session.get("status"),
+            "started_at": session.get("started_at"),
+            "ended_at": session.get("ended_at"),
+            "replay_resolution": resolution,
+            "artifacts": artifacts,
+            "event_summary": {
+                "event_count": event_count,
+                "first_sequence_number": first_seq,
+                "last_sequence_number": last_seq,
+                "latest_outcome_signal": latest_outcome_signal,
+            },
+            "events": events,
+            "allowedActions": allowed,
+            "links": {
+                "self": f"/trainer/replay/{session_id}",
+                "session_detail": f"/trainer/sessions/{session_id}",
+            },
+            "meta": {
+                "snapshot_at": snapshot_timestamp,
+                "surfaces": {
+                    "trainer_replay": surface_state,
+                },
+            },
+        }
+
+    def list_trainer_replays(
+        self,
+        *,
+        persona_id: Optional[str],
+        status: Optional[str] = None,
+        snapshot_at: Optional[str] = None,
+    ) -> tuple[List[Dict[str, Any]], str]:
+        records = self._tw04_replay_records()
+        _surface_severity = {"unavailable": 4, "degraded": 3, "stale": 2, "ok": 1}
+        worst_stored_override: Optional[str] = None
+        for r in records.values():
+            if not isinstance(r, dict):
+                continue
+            stored = str(
+                ((r.get("meta") or {}).get("surfaces") or {}).get("trainer_replay") or ""
+            ).strip().lower()
+            if stored in _surface_severity:
+                if (
+                    worst_stored_override is None
+                    or _surface_severity[stored] > _surface_severity.get(worst_stored_override, 0)
+                ):
+                    worst_stored_override = stored
+        surface_state = self._tw04_replay_surface_state(
+            has_data=bool(records),
+            dataset_source=self.dataset_source("trainer_replays"),
+            stored_state_override=worst_stored_override,
+        )
+        items = [
+            self._project_trainer_replay_list_item(session, surface_state=surface_state)
+            for session in records.values()
+            if isinstance(session, dict)
+            and str(session.get("persona_id") or "") == str(persona_id or "")
+        ]
+        if status is not None:
+            normalized = str(status).strip().lower()
+            items = [item for item in items if str(item.get("status") or "").strip().lower() == normalized]
+        items.sort(
+            key=lambda item: (
+                _parse_rfc3339(item.get("ended_at")) or datetime.min
+            ),
+            reverse=True,
+        )
+        return items, surface_state
+
+    def get_trainer_replay(
+        self,
+        session_id: Optional[str],
+        *,
+        snapshot_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        snapshot_timestamp = snapshot_at or _utc_now_rfc3339()
+        available, raw = self._service.record("trainer_replays", session_id)
+        if available:
+            if raw is None:
+                return None
+            session = dict(raw)
+        else:
+            replays = self._local_fallback("trainer_replays") or {}
+            session = replays.get(session_id)
+            if session is None:
+                return None
+        stored_meta_surfaces = ((session.get("meta") or {}).get("surfaces") or {})
+        surface_state = self._tw04_replay_surface_state(
+            has_data=True,
+            dataset_source=self.dataset_source("trainer_replays"),
+            stored_state_override=stored_meta_surfaces.get("trainer_replay"),
+        )
+        return self._project_trainer_replay_detail(
+            session,
+            surface_state=surface_state,
+            snapshot_at=snapshot_timestamp,
+        )
+
+    def commit_trainer_replay(
+        self,
+        session_id: str,
+        *,
+        expected_candidate_snapshot_at: str,
+        note: Optional[str],
+        actor_id: str,
+        committed_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        mutable = self._mutable_tw04_replay_records()
+        if mutable is None:
+            return None
+        persist_service, records = mutable
+
+        session = records.get(session_id)
+        if session is None:
             return None
 
-        timestamp = canceled_at or _utc_now_rfc3339()
-        req["status"] = "canceled"
-        req["canceled_at"] = timestamp
-        req["request_to_session_status"] = "canceled_before_session"
-        req["session_handoff_note"] = "Request canceled by operator."
+        timestamp = committed_at or _utc_now_rfc3339()
+        resolution = session.setdefault("replay_resolution", {})
+        resolution["state"] = "committed"
+        resolution["decision_at"] = timestamp
+        resolution["decision_by"] = actor_id
+        resolution["note"] = note
 
-        if persist_service_store:
-            self._service.write_records("consult_requests", requests)
+        artifacts = session.setdefault("artifacts", {})
+        after_ref = f"{session_id}-committed-artifact"
+        artifacts["after_artifact_ref"] = after_ref
+
+        events = session.setdefault("events", [])
+        next_seq = max((int(e.get("sequence_number") or 0) for e in events), default=0) + 1
+        prefix = timestamp[:10].replace("-", "")
+        event_id = f"tevt-{prefix}-{next_seq:03d}"
+        existing_ids = {str(e.get("event_id") or "") for e in events}
+        dedupe = next_seq
+        while event_id in existing_ids:
+            dedupe += 1
+            event_id = f"tevt-{prefix}-{dedupe:03d}"
+
+        commit_event = {
+            "event_id": event_id,
+            "session_id": session_id,
+            "actor": "system",
+            "actor_label": "System",
+            "event_type": "commit",
+            "message_body": None,
+            "summary": f"Candidate committed by {actor_id}.",
+            "emitted_at": timestamp,
+            "sequence_number": next_seq,
+            "outcome_signal": None,
+            "evidence_ref": None,
+            "patch_delta": None,
+            "eval_ref": None,
+            "artifact_refs": {
+                "before_artifact_ref": artifacts.get("before_artifact_ref"),
+                "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
+                "after_artifact_ref": after_ref,
+            },
+        }
+        events.append(commit_event)
+
+        if persist_service:
+            self._service.write_records("trainer_replays", records)
         else:
-            local_key = self._LOCAL_DATA_KEYS.get("consult_requests", "consult_requests")
-            self._data.setdefault(local_key, {})[request_id] = req
+            local_key = self._LOCAL_DATA_KEYS.get("trainer_replays", "trainer_replays")
+            self._data.setdefault(local_key, {})[session_id] = session
             self._save()
-        return self._project_consult_request_detail(req)
+
+        surface_state = self._tw04_replay_surface_state(
+            has_data=True,
+            dataset_source=self.dataset_source("trainer_replays"),
+        )
+        projected_resolution = self._project_replay_resolution(resolution)
+        projected_artifacts = self._project_replay_artifacts(artifacts)
+        allowed = self._tw04_replay_allowed_actions(
+            session_status=session.get("status"),
+            resolution_state=projected_resolution["state"],
+            surface_state=surface_state,
+            candidate_artifact_ref=projected_artifacts.get("candidate_artifact_ref"),
+        )
+        return {
+            "session_id": session_id,
+            "status": session.get("status"),
+            "replay_resolution": projected_resolution,
+            "artifacts": projected_artifacts,
+            "committed_at": timestamp,
+            "committed_by": actor_id,
+            "event": self._project_replay_teaching_event(commit_event),
+            "allowedActions": allowed,
+            "meta": {
+                "snapshot_at": timestamp,
+                "surfaces": {"trainer_replay": surface_state},
+            },
+        }
+
+    def discard_trainer_replay(
+        self,
+        session_id: str,
+        *,
+        expected_candidate_snapshot_at: str,
+        note: Optional[str],
+        actor_id: str,
+        discarded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        mutable = self._mutable_tw04_replay_records()
+        if mutable is None:
+            return None
+        persist_service, records = mutable
+
+        session = records.get(session_id)
+        if session is None:
+            return None
+
+        timestamp = discarded_at or _utc_now_rfc3339()
+        resolution = session.setdefault("replay_resolution", {})
+        resolution["state"] = "discarded"
+        resolution["decision_at"] = timestamp
+        resolution["decision_by"] = actor_id
+        resolution["note"] = note
+
+        artifacts = session.setdefault("artifacts", {})
+
+        events = session.setdefault("events", [])
+        next_seq = max((int(e.get("sequence_number") or 0) for e in events), default=0) + 1
+        prefix = timestamp[:10].replace("-", "")
+        event_id = f"tevt-{prefix}-{next_seq:03d}"
+        existing_ids = {str(e.get("event_id") or "") for e in events}
+        dedupe = next_seq
+        while event_id in existing_ids:
+            dedupe += 1
+            event_id = f"tevt-{prefix}-{dedupe:03d}"
+
+        discard_event = {
+            "event_id": event_id,
+            "session_id": session_id,
+            "actor": "system",
+            "actor_label": "System",
+            "event_type": "discard",
+            "message_body": None,
+            "summary": f"Candidate discarded by {actor_id}.",
+            "emitted_at": timestamp,
+            "sequence_number": next_seq,
+            "outcome_signal": None,
+            "evidence_ref": None,
+            "patch_delta": None,
+            "eval_ref": None,
+            "artifact_refs": {
+                "before_artifact_ref": artifacts.get("before_artifact_ref"),
+                "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
+                "after_artifact_ref": None,
+            },
+        }
+        events.append(discard_event)
+
+        if persist_service:
+            self._service.write_records("trainer_replays", records)
+        else:
+            local_key = self._LOCAL_DATA_KEYS.get("trainer_replays", "trainer_replays")
+            self._data.setdefault(local_key, {})[session_id] = session
+            self._save()
+
+        surface_state = self._tw04_replay_surface_state(
+            has_data=True,
+            dataset_source=self.dataset_source("trainer_replays"),
+        )
+        projected_resolution = self._project_replay_resolution(resolution)
+        projected_artifacts = self._project_replay_artifacts(artifacts)
+        allowed = self._tw04_replay_allowed_actions(
+            session_status=session.get("status"),
+            resolution_state=projected_resolution["state"],
+            surface_state=surface_state,
+            candidate_artifact_ref=projected_artifacts.get("candidate_artifact_ref"),
+        )
+        return {
+            "session_id": session_id,
+            "status": session.get("status"),
+            "replay_resolution": projected_resolution,
+            "artifacts": projected_artifacts,
+            "discarded_at": timestamp,
+            "discarded_by": actor_id,
+            "event": self._project_replay_teaching_event(discard_event),
+            "allowedActions": allowed,
+            "meta": {
+                "snapshot_at": timestamp,
+                "surfaces": {"trainer_replay": surface_state},
+            },
+        }

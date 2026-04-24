@@ -48,11 +48,11 @@ def _service_backed_client():
                         "ticket_id": "rt-service-001",
                         "title": "Service-backed ticket wins over local fallback",
                         "description": "Used to verify RW-01 reads the service store first.",
-                        "status": "open",
-                        "priority": "normal",
+                        "status": "in_progress",
+                        "priority": "high",
                         "owner": "persona-alpha",
                         "created_at": "2026-04-20T03:00:00Z",
-                        "updated_at": "2026-04-20T03:00:00Z",
+                        "updated_at": "2026-04-20T05:30:00Z",
                         "closed_at": None,
                         "archived_at": None,
                         "lifecycle_history": [
@@ -61,9 +61,15 @@ def _service_backed_client():
                                 "to_status": "open",
                                 "transitioned_at": "2026-04-20T03:00:00Z",
                                 "transitioned_by": "persona-alpha",
+                            },
+                            {
+                                "from_status": "open",
+                                "to_status": "in_progress",
+                                "transitioned_at": "2026-04-20T05:30:00Z",
+                                "transitioned_by": "test-operator",
                             }
                         ],
-                        "linked_experiments": [],
+                        "linked_experiments": ["exp-service-001"],
                         "linked_artifacts": ["artifact-service-001"],
                     }
                 },
@@ -91,6 +97,21 @@ def _service_backed_client():
                     os.environ[key] = value
 
 
+@contextmanager
+def _unavailable_client():
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        client = TestClient(bff_main.app)
+        try:
+            yield client
+        finally:
+            bff_main.read_store = original_store
+
+
 def test_rw01_list_contract_returns_ticket_projection() -> None:
     with _seeded_client() as client:
         response = client.get(
@@ -100,11 +121,12 @@ def test_rw01_list_contract_returns_ticket_projection() -> None:
         assert response.status_code == 200, response.text
 
         payload = response.json()
-        assert payload["page_info"]["total"] == 2
-        assert payload["meta"]["surfaces"]["ticket_list"] in {"fresh", "stale", "degraded"}
+        assert payload["page_info"]["total"] == 3
+        assert payload["meta"]["surfaces"]["ticket_list"] == "degraded"
         assert [item["ticket_id"] for item in payload["data"]] == [
             "rt-20260419-007",
             "rt-20260415-001",
+            "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
         ]
         assert payload["data"][0]["allowedActions"] == {
             "canEdit": True,
@@ -116,26 +138,40 @@ def test_rw01_list_contract_returns_ticket_projection() -> None:
             "canClose": False,
             "canArchive": True,
         }
+        assert payload["data"][2]["allowedActions"] == {
+            "canEdit": False,
+            "canClose": False,
+            "canArchive": True,
+        }
 
 
 def test_rw01_detail_contract_returns_lifecycle_and_links() -> None:
-    with _seeded_client() as client:
+    with _service_backed_client() as (client, _ticket_store):
         response = client.get(
-            "/api/v1/research/tickets/rt-20260419-007",
+            "/api/v1/research/tickets/rt-service-001",
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 200, response.text
 
         payload = response.json()
-        assert payload["ticket_id"] == "rt-20260419-007"
-        assert payload["linked_experiments"] == ["exp-20260419-012"]
-        assert payload["linked_artifacts"] == []
+        assert payload["ticket_id"] == "rt-service-001"
+        assert payload["linked_experiments"] == ["exp-service-001"]
+        assert payload["linked_artifacts"] == ["artifact-service-001"]
         assert payload["links"] == {
-            "self": "/api/v1/research/tickets/rt-20260419-007",
-            "workbench_detail": "/research/tickets/rt-20260419-007",
+            "self": "/api/v1/research/tickets/rt-service-001",
+            "workbench_detail": "/research/tickets/rt-service-001",
         }
         assert payload["lifecycle_history"][1]["to_status"] == "in_progress"
-        assert payload["meta"]["surfaces"]["ticket_detail"] in {"fresh", "stale", "degraded"}
+        assert payload["meta"]["surfaces"]["ticket_detail"] == "fresh"
+
+
+def test_rw01_detail_does_not_fall_back_to_local_snapshot() -> None:
+    with _seeded_client() as client:
+        response = client.get(
+            "/api/v1/research/tickets/rt-20260419-007",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert response.status_code == 404, response.text
 
 
 def test_rw01_create_and_patch_contract_follow_lifecycle() -> None:
@@ -217,6 +253,23 @@ def test_rw01_service_backed_reads_override_seeded_snapshot() -> None:
         detail = detail_response.json()
         assert detail["linked_artifacts"] == ["artifact-service-001"]
         assert detail["meta"]["surfaces"]["ticket_detail"] == "fresh"
+
+
+def test_rw01_list_reports_unavailable_without_service_or_snapshot_fallback() -> None:
+    with _unavailable_client() as client:
+        response = client.get(
+            "/api/v1/research/tickets",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert response.status_code == 200, response.text
+
+        payload = response.json()
+        assert payload["data"] == []
+        assert payload["page_info"] == {
+            "next_page_token": None,
+            "total": 0,
+        }
+        assert payload["meta"]["surfaces"]["ticket_list"] == "unavailable"
 
 
 def test_rw01_create_and_patch_persist_to_service_store() -> None:

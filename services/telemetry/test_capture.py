@@ -26,6 +26,18 @@ FULL_BINDING_CONTEXT = {
     "deployment_stage": "canary",
     "plan_id": "plan-deploy-001",
     "persona_capital_binding_id": "pcb-001",
+    "authority_refs": {
+        "write_owner": "runtime-manager",
+        "authority_source": "runtime_binding",
+        "runtime_role": "pantheon-lean-paper-runtime",
+        "runtime_mode": "paper",
+        "workspace_ref": "workspace-paper-alpha",
+        "auth_profile_ref": "auth-profile-paper-alpha",
+        "persona_id": "persona-ops",
+        "session_id": "session-001",
+        "trace_id": "trace-001",
+        "request_id": "request-001",
+    },
 }
 
 
@@ -413,6 +425,20 @@ class TestBindingStageEvidence(unittest.TestCase):
         # Evidence E-3: Governance admissibility proof
         self.assertEqual(event["plan_id"], FULL_BINDING_CONTEXT["plan_id"])
         self.assertEqual(event["persona_capital_binding_id"], FULL_BINDING_CONTEXT["persona_capital_binding_id"])
+        self.assertEqual(event["authority_refs"], FULL_BINDING_CONTEXT["authority_refs"])
+
+    def test_capture_injects_authority_refs(self):
+        """Telemetry events should carry explicit runtime authority and isolation refs."""
+        capture = TelemetryCapture(
+            schema_path=CANONICAL_SCHEMA,
+            binding_context=FULL_BINDING_CONTEXT.copy(),
+        )
+        capture.capture_heartbeat(ExecutionMode.PAPER, "test_strategy")
+
+        event = capture.get_paper_events()[0]
+        self.assertEqual(event["authority_refs"]["workspace_ref"], "workspace-paper-alpha")
+        self.assertEqual(event["authority_refs"]["auth_profile_ref"], "auth-profile-paper-alpha")
+        self.assertEqual(event["authority_refs"]["write_owner"], "runtime-manager")
 
     def test_environment_equals_deployment_stage(self):
         """TEL-001A: environment MUST equal deployment_stage for v1+ events."""

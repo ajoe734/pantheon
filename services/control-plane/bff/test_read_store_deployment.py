@@ -27,7 +27,7 @@ def _write_json(path: Path, payload) -> None:
 def test_seeded_review_summary():
     with tempfile.TemporaryDirectory() as td:
         store_path = os.path.join(td, "read_surfaces.json")
-        store = ReadSurfaceStore(store_path)
+        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
 
         plan = store.get_deployment_plan("plan-F-042")
         assert plan is not None
@@ -143,7 +143,7 @@ def test_canonical_overlay():
             os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
 
             store_path = os.path.join(td, "read_surfaces.json")
-            store = ReadSurfaceStore(store_path)
+            store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=False)
 
             plan = store.get_deployment_plan("plan-live-001")
             assert plan is not None

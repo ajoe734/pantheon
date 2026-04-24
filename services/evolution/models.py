@@ -186,3 +186,67 @@ class BoundaryResponse(BaseModel):
     default_observation_days: int
     followthrough: List[str]
     notes: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Redeploy follow-through
+# ---------------------------------------------------------------------------
+
+class RedeployFollowthroughRequest(BaseModel):
+    artifact_id: str
+    artifact_version: str
+    approval_decision_id: str
+    target_stage: str
+    requested_at: Optional[str] = None
+    sponsor_persona_id: Optional[str] = None
+
+
+class DispatchCommandResponse(BaseModel):
+    command_id: str
+    decision_id: str
+    execution_plane: str
+    action_type: str
+    target_type: str
+    target_id: str
+    target_version: str
+    target_stage: Optional[str]
+    cooldown_ends_at: str
+    observation_window_ends_at: str
+    metadata: Dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Rollback follow-through
+# ---------------------------------------------------------------------------
+
+class RollbackFollowthroughRequest(BaseModel):
+    actor_role: str
+    actor_id: str
+    active_binding_id: Optional[str] = None
+    rollback_action_type: Optional[str] = None
+    fallback_artifact_id: Optional[str] = None
+    fallback_artifact_version: Optional[str] = None
+    note: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Action-paths routing matrix
+# ---------------------------------------------------------------------------
+
+class ActionPathEntry(BaseModel):
+    path_key: str
+    action_family: str
+    trigger_source: str
+    reviewed_owner: str
+    approved_owner: str
+    cooldown_days: int
+    observation_days: int
+    execution_plane: str
+    followthrough: List[str]
+    policy_source: str
+    notes: Optional[str] = None
+
+
+class ActionPathsResponse(BaseModel):
+    policy_document: str
+    paths: List[ActionPathEntry]

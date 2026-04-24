@@ -26,9 +26,13 @@ from typing import Any, Dict, Optional
 _THIS_DIR = str(Path(__file__).resolve().parent)
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from service import RuntimeManagerError, RuntimeManagerService  # noqa: E402
 from runtime_binding import RuntimeBindingError  # noqa: E402
+from services.runtime_auth import resolve_runtime_manager_auth  # noqa: E402
 
 
 class RuntimeManagerClientError(RuntimeError):
@@ -59,10 +63,8 @@ class RuntimeManagerClient:
         timeout_seconds: Optional[int] = None,
     ) -> None:
         self._base_url = (base_url or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")).strip().rstrip("/")
-        self._bearer_token = (
-            bearer_token
-            or os.getenv("PANTHEON_RUNTIME_MANAGER_TOKEN", "runtime-control-internal")
-        )
+        self._auth = resolve_runtime_manager_auth(token=bearer_token)
+        self._bearer_token = self._auth.token
         self._timeout_seconds = int(
             timeout_seconds
             if timeout_seconds is not None
@@ -287,7 +289,7 @@ class RuntimeManagerClient:
         body = None
         headers = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {self._bearer_token}",
+            **self._auth.headers(),
         }
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")

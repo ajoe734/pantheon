@@ -15,7 +15,7 @@ from read_store import ReadSurfaceStore
 def test_store():
     with tempfile.TemporaryDirectory() as td:
         store_path = os.path.join(td, "read_surfaces.json")
-        store = ReadSurfaceStore(store_path)
+        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
 
         # IN-01: list incidents
         incidents = store.list_incidents()
@@ -28,6 +28,12 @@ def test_store():
         assert len(active) >= 1
         assert all(i["status"] == "open" for i in active)
         print("✅ IN-01: list_incidents filtered by status=open")
+
+        # IN-01: filter by comma-separated status values
+        active_or_resolved = store.list_incidents(status="open,resolved")
+        assert len(active_or_resolved) >= len(active)
+        assert all(i["status"] in {"open", "resolved"} for i in active_or_resolved)
+        print("✅ IN-01: list_incidents filtered by comma-separated status")
 
         # IN-01: filter by severity
         high = store.list_incidents(severity="high")
@@ -75,6 +81,10 @@ def test_store():
         assert "active_freeze_orders" in ks
         assert "safe_mode_status" in ks
         assert "last_checked_at" in ks
+        assert ks["status"] in ("armed", "triggered", "cooling_down")
+        assert "last_triggered_at" in ks
+        assert "last_confirmed_at" in ks
+        assert "active_commands" in ks
         print("✅ IN-05: get_kill_switch_status returns expected shape")
 
         # Composed view helpers
@@ -94,7 +104,7 @@ def test_store():
         print("✅ Composed: get_telemetry_summary")
 
         # Verify seed data persists
-        store2 = ReadSurfaceStore(store_path)
+        store2 = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
         assert store2.get_incident("inc-20260410-001") is not None
         print("✅ Persistence: store reloads data correctly")
 

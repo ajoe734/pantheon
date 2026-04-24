@@ -117,6 +117,7 @@ from flask import Flask, jsonify, request
 
 from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
 from .lineage_read import LineageReadService
+from services.runtime_auth import resolve_runtime_manager_auth
 
 log = logging.getLogger(__name__)
 
@@ -171,11 +172,11 @@ class _RuntimeBindingAdapter:
     def __init__(
         self,
         base_url: str,
-        token: str = "runtime-control-internal",
+        token: str | None = None,
         timeout: int = 5,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._token = token
+        self._auth = resolve_runtime_manager_auth(token=token)
         self._timeout = timeout
 
     def get_binding(self, binding_id: str):
@@ -184,7 +185,7 @@ class _RuntimeBindingAdapter:
             url,
             headers={
                 "Accept": "application/json",
-                "Authorization": f"Bearer {self._token}",
+                **self._auth.headers(),
             },
             method="GET",
         )
@@ -240,9 +241,8 @@ def _build_service() -> TelemetryIngestService:
 
     rm_url = os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip()
     if rm_url:
-        rm_token = os.getenv("PANTHEON_RUNTIME_MANAGER_TOKEN", "runtime-control-internal")
         binding_store: _RuntimeBindingAdapter | None = _RuntimeBindingAdapter(
-            base_url=rm_url, token=rm_token
+            base_url=rm_url
         )
         log.info(
             "TelemetryIngestService: authoritative RuntimeBinding validation wired to %s", rm_url

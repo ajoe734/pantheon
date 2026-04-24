@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -44,6 +45,7 @@ from models import (
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from read_store import ReadSurfaceStore
+from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -64,6 +66,7 @@ read_store = ReadSurfaceStore(
         != "false"
     ),
 )
+settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 
 # --------------------------------------------------------------------------- #
 # Auth / identity helpers
@@ -84,6 +87,20 @@ def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
             suggestion="Re-authenticate and include a valid Bearer token",
         )
     token = authorization[len("Bearer "):]
+    if ":" not in token:
+        lowered = token.lower()
+        inferred_roles = ["operator"]
+        if lowered.startswith("admin_"):
+            inferred_roles = ["admin"]
+        elif lowered.startswith("analyst_"):
+            inferred_roles = ["analyst"]
+        elif lowered.startswith("viewer_"):
+            inferred_roles = ["viewer"]
+        return OperatorIdentity(
+            operator_id=token,
+            roles=inferred_roles,
+            mfa_verified="mfa" in lowered,
+        )
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
@@ -165,6 +182,7 @@ _OPERATOR_POST_INCIDENT_REVIEW_ROUTE = "/operator/post-incident-review"
 _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
 _CONSULTATION_WORKBENCH_ROUTE = "/consultation"
 _KNOWLEDGE_WORKBENCH_ROUTE = "/knowledge"
+_TRAINER_WORKBENCH_ROUTE = "/trainer"
 _GOVERNANCE_REVIEW_QUEUE_ROUTE = "/governance-review-queue"
 _GOVERNANCE_APPROVAL_QUEUE_ROUTE = "/governance-approval-queue"
 _MUTATION_REVIEW_ROUTE = "/operator/mutation-review"
@@ -1172,11 +1190,14 @@ def _cw03_allowed_actions(
     sponsor_decision = committee.get("sponsor_decision")
     consensus_state = str(committee.get("consensus_state") or "").strip().lower()
     roles = set(identity.roles)
+    sponsor_assignment = committee.get("sponsor_assignment") or {}
+    sponsor_participant_id = str(sponsor_assignment.get("participant_id") or "").strip()
     return {
         "canRecordSponsorDecision": (
             sponsor_decision in (None, "")
             and consensus_state == "sponsor_required"
-            and bool(roles.intersection({"operator", "reviewer", "approver", "admin"}))
+            and bool(sponsor_participant_id)
+            and bool(roles.intersection({"operator", "approver", "admin"}))
         )
     }
 
@@ -1213,6 +1234,169 @@ def _cw03_committee_projection(
             },
         },
     }
+
+
+_CW04_ALLOWED_STATUSES = {"draft", "published"}
+_CW04_GOVERNANCE_ROLES = {"reviewer", "approver", "admin", "governance_committee"}
+_CW04_SUPPORTED_TARGET_TYPES = {"strategy", "artifact", "deployment_plan"}
+
+
+def _cw04_collection_surface_state(snapshot_at: str) -> str:
+    surface = _dataset_surface_status(
+        "consult_memos",
+        snapshot_at=snapshot_at,
+        missing_message="Red-team memo list is unavailable.",
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "degraded"
+    return "ok"
+
+
+def _cw04_memo_surface_state(
+    memo: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> str:
+    dataset_state = _cw04_collection_surface_state(snapshot_at)
+    explicit_state = str(memo.get("surface_state") or "").strip().lower()
+    if explicit_state == "unavailable":
+        return "unavailable"
+    if explicit_state == "degraded":
+        return "degraded"
+    return dataset_state
+
+
+def _cw04_memo_staleness(
+    surface_state: str,
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "fresh" if surface_state == "ok" else "stale",
+        "as_of": snapshot_at,
+    }
+
+
+def _cw04_governance_target(
+    memo: Dict[str, Any],
+) -> tuple[str, str, bool]:
+    target = memo.get("governance_target") if isinstance(memo.get("governance_target"), dict) else {}
+    target_type = str(target.get("target_type") or "").strip().lower()
+    target_id = str(target.get("target_id") or "").strip()
+
+    strategy_id = str(target.get("strategy_id") or "").strip()
+    artifact_id = str(target.get("artifact_id") or "").strip()
+    deployment_plan_id = str(target.get("deployment_plan_id") or "").strip()
+
+    if not target_type:
+        if strategy_id:
+            target_type = "strategy"
+            target_id = strategy_id
+        elif artifact_id:
+            target_type = "artifact"
+            target_id = artifact_id
+        elif deployment_plan_id:
+            target_type = "deployment_plan"
+            target_id = deployment_plan_id
+
+    has_valid_target = bool(strategy_id or artifact_id or deployment_plan_id or target_id)
+    return target_type, target_id, has_valid_target
+
+
+def _cw04_allowed_actions(
+    memo: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    surface_state: str,
+) -> Dict[str, bool]:
+    if surface_state != "ok":
+        return {
+            "canInitiateGovernanceReview": False,
+        }
+
+    lifecycle_state = str(memo.get("lifecycle_state") or memo.get("status") or "").strip().lower()
+    target_type, _target_id, has_valid_target = _cw04_governance_target(memo)
+    roles = set(identity.roles)
+    has_authority = bool(roles.intersection(_CW04_GOVERNANCE_ROLES))
+    has_active_review = bool(str(memo.get("active_governance_review_id") or "").strip())
+    suppressed = bool(memo.get("suppressed"))
+    withdrawn = bool(memo.get("withdrawn"))
+    governance_accepts_target_type = target_type in _CW04_SUPPORTED_TARGET_TYPES
+
+    return {
+        "canInitiateGovernanceReview": (
+            lifecycle_state == "published"
+            and has_valid_target
+            and has_authority
+            and not has_active_review
+            and not suppressed
+            and not withdrawn
+            and governance_accepts_target_type
+        )
+    }
+
+
+def _cw04_memo_projection(
+    memo: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    surface_state = _cw04_memo_surface_state(memo, snapshot_at=snapshot_at)
+    allowed_actions = _cw04_allowed_actions(memo, identity=identity, surface_state=surface_state)
+    hide_memo_content = surface_state == "unavailable"
+
+    return {
+        "object_ref": json.loads(json.dumps(memo.get("object_ref") or {})),
+        "memo_id": memo.get("memo_id"),
+        "memo_type": memo.get("memo_type") or "red_team",
+        "status": memo.get("status"),
+        "lifecycle_state": memo.get("lifecycle_state"),
+        "author_ref": memo.get("author_ref"),
+        "linked_request_id": memo.get("linked_request_id"),
+        "linked_session_id": memo.get("linked_session_id"),
+        "session_to_memo_mapping": json.loads(json.dumps(memo.get("session_to_memo_mapping") or {})),
+        "summary": None if hide_memo_content else memo.get("summary"),
+        "recommendations": [] if hide_memo_content else list(memo.get("recommendations") or []),
+        "evidence_refs": [] if hide_memo_content else json.loads(json.dumps(memo.get("evidence_refs") or [])),
+        "published_at": memo.get("published_at"),
+        "created_at": memo.get("created_at"),
+        "supersedes_memo_id": memo.get("supersedes_memo_id"),
+        "superseded_by_memo_id": memo.get("superseded_by_memo_id"),
+        "allowedActions": allowed_actions,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "staleness": _cw04_memo_staleness(surface_state, snapshot_at=snapshot_at),
+            "surfaces": {
+                "redteam_memo": {
+                    "state": surface_state,
+                },
+            },
+        },
+    }
+
+
+def _cw04_validate_status_filters(status_values: Optional[List[str]]) -> Optional[List[str]]:
+    if not status_values:
+        return None
+    invalid = [
+        value
+        for value in status_values
+        if str(value).strip().lower() not in _CW04_ALLOWED_STATUSES
+    ]
+    if invalid:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid memo status filter",
+            "status must be draft or published",
+            precondition_failed="status",
+        )
+    return [str(value).strip().lower() for value in status_values if str(value).strip()]
 
 
 def _validate_record_sponsor_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
@@ -3349,7 +3533,43 @@ _RW02_ALLOWED_MATCH_TYPES = {"all", "ticket", "experiment", "artifact"}
 _RW02_ALLOWED_ADAPTER_STATES = {"fresh", "stale", "degraded", "unavailable"}
 _RW03_ALLOWED_STATUSES = {"queued", "running", "completed", "failed"}
 _RW03_ALLOWED_DATE_RANGES = {"24h", "7d", "30d", "90d"}
+_RW05_ALLOWED_STATUSES = {"pending", "sealed", "superseded", "failed"}
 _EW04_ALLOWED_SURFACE_STATES = {"fresh", "stale", "unavailable"}
+_KW02_ATTACHMENT_TYPES = {"research_ticket", "persona", "strategy_spec", "free_standing"}
+_KW02_ATTACHMENT_ID_PATTERNS = {
+    "research_ticket": re.compile(r"^tkt-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    "persona": re.compile(r"^persona-[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    "strategy_spec": re.compile(r"^strat-[A-Za-z0-9-]+$"),
+}
+_KW02_MEMORY_ANCHOR_PATTERN = re.compile(
+    r"^mem-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_KW03_LINKED_ENTITY_TYPES = {
+    "memory_entry",
+    "research_note",
+    "insight_card",
+    "strategy_spec",
+    "experiment",
+    "artifact",
+}
+_KW03_LINK_TYPES = {
+    "supporting_evidence",
+    "counter_evidence",
+    "citation",
+    "provenance",
+    "corroboration",
+}
+_KW03_CREDIBILITY_TIERS = {"primary", "secondary", "tertiary", "unverified"}
+_KW04_STATUSES = {"active", "superseded", "archived", "all"}
+_KW04_LINKED_ENTITY_TYPES = {
+    "memory_entry",
+    "research_note",
+    "evidence_ref",
+    "strategy_spec",
+    "experiment",
+}
+_KW04_RECENCY_VALUES = {"7d", "30d", "90d", "all"}
+_KW05_LIFECYCLE_STATES = {"draft", "candidate", "approved", "retired", "all"}
 
 
 def _ew04_inspiration_surface_state(
@@ -3448,6 +3668,33 @@ def _rw01_surface_state(
 
 
 _TW01_SESSION_STATUSES = {"active", "paused", "completed", "abandoned"}
+_TW04_REPLAY_TERMINAL_STATUSES = {"completed", "abandoned"}
+
+
+def _tw04_get_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
+    preview_events = sorted(
+        [
+            e for e in (replay.get("events") or [])
+            if isinstance(e, dict) and e.get("event_type") == "preview_trigger"
+        ],
+        key=lambda e: int(e.get("sequence_number") or 0),
+    )
+    if not preview_events:
+        return None
+    return (preview_events[-1].get("eval_ref") or {}).get("candidate_snapshot_at")
+
+
+def _tw04_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
 
 
 def _tw01_validate_session_status(value: Optional[str]) -> str:
@@ -3772,6 +4019,628 @@ def _rw01_validate_status(status: Any) -> str:
     return normalized
 
 
+def _kw02_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw02_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw02_optional_title(payload: Dict[str, Any]) -> Optional[str]:
+    title = payload.get("title")
+    if title in (None, ""):
+        return None
+    normalized = str(title).strip()
+    if not normalized:
+        return None
+    if len(normalized) > 256:
+        raise _kw02_bad_request(
+            "Invalid title",
+            "title must be 256 characters or fewer",
+            "title",
+        )
+    return normalized
+
+
+def _kw02_required_body(payload: Dict[str, Any]) -> str:
+    body = payload.get("body")
+    if body is None or not str(body).strip():
+        raise _kw02_bad_request(
+            "Missing required field: body",
+            "body must be a non-empty string",
+            "body",
+        )
+    return str(body).strip()
+
+
+def _kw02_validate_string_list(value: Any, field: str) -> List[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise _kw02_bad_request(
+            f"Invalid {field}",
+            f"{field} must be an array of strings",
+            field,
+        )
+    normalized: List[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if not text:
+            raise _kw02_bad_request(
+                f"Invalid {field} entry",
+                f"{field} entries must be non-empty strings",
+                field,
+            )
+        normalized.append(text)
+    return normalized
+
+
+def _kw02_validate_attachment_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW02_ATTACHMENT_TYPES:
+        raise _kw02_bad_request(
+            "Invalid attachment_type",
+            f"attachment_type must be one of {sorted(_KW02_ATTACHMENT_TYPES)}",
+            "attachment_type",
+        )
+    return normalized
+
+
+def _kw02_validate_attachment_ref(attachment_type: str, value: Any) -> Optional[str]:
+    if attachment_type == "free_standing":
+        if value not in (None, ""):
+            raise _kw02_bad_request(
+                "Invalid attachment_ref",
+                "attachment_ref must be null when attachment_type is free_standing",
+                "attachment_ref",
+            )
+        return None
+
+    ref = str(value or "").strip()
+    if not ref:
+        raise _kw02_bad_request(
+            "Missing attachment_ref",
+            "attachment_ref is required unless attachment_type is free_standing",
+            "attachment_ref",
+        )
+    pattern = _KW02_ATTACHMENT_ID_PATTERNS.get(attachment_type)
+    if pattern is not None and not pattern.match(ref):
+        raise _kw02_bad_request(
+            "Invalid attachment_ref",
+            f"attachment_ref does not match the identity format for {attachment_type}",
+            "attachment_ref",
+        )
+    return ref
+
+
+def _kw02_resolve_attachment_target(
+    attachment_type: str,
+    attachment_ref: Optional[str],
+) -> tuple[bool, Optional[str], Optional[str]]:
+    if attachment_type == "free_standing":
+        return True, None, None
+    if attachment_type == "research_ticket":
+        ticket = read_store.get_research_ticket(attachment_ref)
+        if not ticket:
+            return False, None, None
+        return True, ticket.get("title"), f"/research/tickets/{attachment_ref}"
+    if attachment_type == "persona":
+        persona = read_store.get_persona(attachment_ref)
+        if not persona:
+            return False, None, None
+        return True, persona.get("name"), f"/personas/{attachment_ref}"
+    strategy_spec = read_store.get_strategy_spec(attachment_ref)
+    if not strategy_spec:
+        return False, None, None
+    label = strategy_spec.get("title") or strategy_spec.get("name") or attachment_ref
+    return True, label, f"/knowledge/strategy-specs/{attachment_ref}"
+
+
+def _kw02_validate_memory_anchors(anchor_ids: List[str]) -> List[str]:
+    validated: List[str] = []
+    for entry_id in anchor_ids:
+        if not _KW02_MEMORY_ANCHOR_PATTERN.match(entry_id):
+            raise _kw02_bad_request(
+                "Invalid linked_memory_anchors entry",
+                "linked_memory_anchors items must use the mem-{UUID} format",
+                "linked_memory_anchors",
+            )
+        if read_store.get_institutional_memory_entry(entry_id) is None:
+            raise _kw02_bad_request(
+                "Unknown linked_memory_anchors entry",
+                f"linked_memory_anchors entry {entry_id} does not resolve to a known institutional memory entry",
+                "linked_memory_anchors",
+            )
+        validated.append(entry_id)
+    return validated
+
+
+def _kw02_operator_display_name(operator_id: str) -> str:
+    if operator_id == "op-001":
+        return "Alice Chen"
+    token = str(operator_id or "").strip()
+    if not token:
+        return "Operator"
+    if token.startswith("op-"):
+        return f"Operator {token}"
+    return " ".join(part.capitalize() for part in re.split(r"[-_]+", token) if part)
+
+
+def _kw02_strip_markdown(text: str) -> str:
+    plain = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    plain = re.sub(r"[`*_>#]", " ", plain)
+    plain = re.sub(r"\s+", " ", plain).strip()
+    return plain
+
+
+def _kw02_note_excerpt(body: str) -> str:
+    return _kw02_strip_markdown(body)[:280]
+
+
+def _kw02_attachment_payload(note: Dict[str, Any], *, include_route: bool) -> Dict[str, Any]:
+    attachment_type = str(note.get("attachment_type") or "free_standing")
+    attachment_ref = note.get("attachment_ref")
+    exists, display_label, route_href = _kw02_resolve_attachment_target(attachment_type, attachment_ref)
+    payload = {
+        "type": attachment_type,
+        "ref": attachment_ref,
+        "display_label": display_label if exists else None,
+    }
+    if include_route:
+        payload["route_href"] = route_href if exists else None
+    return payload
+
+
+def _kw02_note_list_item(note: Dict[str, Any]) -> Dict[str, Any]:
+    body = str(note.get("body") or "")
+    return {
+        "note_id": note.get("note_id"),
+        "title": note.get("title"),
+        "excerpt": _kw02_note_excerpt(body),
+        "owner_ref": json.loads(json.dumps(note.get("owner_ref") or {})),
+        "attachment": _kw02_attachment_payload(note, include_route=False),
+        "tags": list(note.get("tags") or []),
+        "created_at": note.get("created_at"),
+        "updated_at": note.get("updated_at"),
+        "route_href": f"/knowledge/notes/{note.get('note_id')}",
+    }
+
+
+def _kw02_resolve_evidence_links(
+    ref_ids: List[str],
+    *,
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], str]:
+    surface_state = _kw02_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    items: List[Dict[str, Any]] = []
+    for ref_id in ref_ids:
+        if surface_state == "unavailable":
+            items.append(
+                {
+                    "ref_id": ref_id,
+                    "resolution_state": "unavailable",
+                    "display_label": None,
+                    "route_href": None,
+                }
+            )
+            continue
+        evidence_ref = read_store.get_evidence_ref(ref_id)
+        if evidence_ref:
+            items.append(
+                {
+                    "ref_id": ref_id,
+                    "resolution_state": "resolved",
+                    "display_label": evidence_ref.get("display_label"),
+                    "route_href": evidence_ref.get("route_href") or f"/knowledge/evidence/{ref_id}",
+                }
+            )
+            continue
+        items.append(
+            {
+                "ref_id": ref_id,
+                "resolution_state": "unresolved",
+                "display_label": None,
+                "route_href": None,
+            }
+        )
+    return items, surface_state
+
+
+def _kw02_resolve_memory_anchors(
+    entry_ids: List[str],
+    *,
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], str]:
+    surface_state = _kw02_surface_state(
+        "institutional_memory_entries",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    items: List[Dict[str, Any]] = []
+    missing_entries = False
+    for entry_id in entry_ids:
+        entry = read_store.get_institutional_memory_entry(entry_id)
+        if not entry:
+            missing_entries = True
+            continue
+        content = entry.get("content") if isinstance(entry.get("content"), dict) else {}
+        lifecycle = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
+        items.append(
+            {
+                "entry_id": entry_id,
+                "headline": content.get("headline"),
+                "knowledge_type": entry.get("knowledge_type"),
+                "lifecycle_status": lifecycle.get("status"),
+                "route_href": f"/knowledge/memory/{entry_id}",
+            }
+        )
+    if missing_entries and surface_state == "ok":
+        surface_state = "degraded"
+    return items, surface_state
+
+
+def _kw03_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw03_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw03_validate_linked_entity_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_LINKED_ENTITY_TYPES:
+        raise _kw03_bad_request(
+            "Invalid linked_entity_type",
+            f"linked_entity_type must be one of {sorted(_KW03_LINKED_ENTITY_TYPES)}",
+            "linked_entity_type",
+        )
+    return normalized
+
+
+def _kw03_validate_link_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_LINK_TYPES:
+        raise _kw03_bad_request(
+            "Invalid link_type",
+            f"link_type must be one of {sorted(_KW03_LINK_TYPES)}",
+            "link_type",
+        )
+    return normalized
+
+
+def _kw03_validate_credibility_tier(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_CREDIBILITY_TIERS:
+        raise _kw03_bad_request(
+            "Invalid credibility_tier",
+            f"credibility_tier must be one of {sorted(_KW03_CREDIBILITY_TIERS)}",
+            "credibility_tier",
+        )
+    return normalized
+
+
+def _kw04_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw04_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw04_validate_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW04_STATUSES:
+        raise _kw04_bad_request(
+            "Invalid status",
+            f"status must be one of {sorted(_KW04_STATUSES)}",
+            "status",
+        )
+    return normalized
+
+
+def _kw04_validate_linked_entity_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW04_LINKED_ENTITY_TYPES:
+        raise _kw04_bad_request(
+            "Invalid linked_entity_type",
+            f"linked_entity_type must be one of {sorted(_KW04_LINKED_ENTITY_TYPES)}",
+            "linked_entity_type",
+        )
+    return normalized
+
+
+def _kw04_validate_recency(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW04_RECENCY_VALUES:
+        raise _kw04_bad_request(
+            "Invalid recency",
+            f"recency must be one of {sorted(_KW04_RECENCY_VALUES)}",
+            "recency",
+        )
+    return normalized
+
+
+def _kw04_validate_confidence_min(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise _kw04_bad_request(
+            "Invalid confidence_min",
+            "confidence_min must be a number between 0.0 and 1.0",
+            "confidence_min",
+        )
+    if parsed < 0.0 or parsed > 1.0:
+        raise _kw04_bad_request(
+            "Invalid confidence_min",
+            "confidence_min must be a number between 0.0 and 1.0",
+            "confidence_min",
+        )
+    return parsed
+
+
+def _kw04_recency_display_label(value: str) -> str:
+    labels = {
+        "7d": "Last 7 days",
+        "30d": "Last 30 days",
+        "90d": "Last 90 days",
+        "all": "All time",
+    }
+    return labels[value]
+
+
+def _kw04_within_recency(aggregated_at: Optional[str], recency: str, snapshot_at: str) -> bool:
+    if recency == "all":
+        return True
+    aggregated_dt = _parse_rfc3339(aggregated_at)
+    snapshot_dt = _parse_rfc3339(snapshot_at)
+    if aggregated_dt is None or snapshot_dt is None:
+        return False
+    days = {"7d": 7, "30d": 30, "90d": 90}[recency]
+    return aggregated_dt >= snapshot_dt - timedelta(days=days)
+
+
+def _kw04_filter_metadata(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    tag_counts: Dict[str, int] = {}
+    linked_entity_counts: Dict[str, int] = {}
+    for card in cards:
+        seen_tags = set()
+        for tag in card.get("tags") or []:
+            tag_value = str(tag or "").strip()
+            if not tag_value or tag_value in seen_tags:
+                continue
+            tag_counts[tag_value] = tag_counts.get(tag_value, 0) + 1
+            seen_tags.add(tag_value)
+        seen_entity_types = set()
+        for source in card.get("linked_sources") or []:
+            entity_type = str((source or {}).get("entity_type") or "").strip()
+            if not entity_type or entity_type in seen_entity_types:
+                continue
+            linked_entity_counts[entity_type] = linked_entity_counts.get(entity_type, 0) + 1
+            seen_entity_types.add(entity_type)
+
+    linked_entity_labels = {
+        "memory_entry": "Institutional Memory",
+        "research_note": "Research Note",
+        "evidence_ref": "Evidence Reference",
+        "strategy_spec": "Strategy Spec",
+        "experiment": "Experiment",
+    }
+    return {
+        "tags": [
+            {
+                "value": tag,
+                "display_label": tag.replace("-", " ").title(),
+                "count": count,
+            }
+            for tag, count in sorted(tag_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "linked_entity_types": [
+            {
+                "value": entity_type,
+                "display_label": linked_entity_labels.get(entity_type, entity_type.replace("_", " ").title()),
+                "count": count,
+            }
+            for entity_type, count in sorted(
+                linked_entity_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ],
+        "recency_options": [
+            {
+                "value": value,
+                "display_label": _kw04_recency_display_label(value),
+            }
+            for value in ["7d", "30d", "90d", "all"]
+        ],
+        "total_active_count": len(
+            [card for card in cards if str(card.get("status") or "") == "active"]
+        ),
+    }
+
+
+def _kw05_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw05_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw05_validate_lifecycle_state(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW05_LIFECYCLE_STATES:
+        raise _kw05_bad_request(
+            "Invalid lifecycle_state",
+            f"lifecycle_state must be one of {sorted(_KW05_LIFECYCLE_STATES)}",
+            "lifecycle_state",
+        )
+    return normalized
+
+
+def _kw05_compare_selectors(
+    *,
+    left_version: Optional[str],
+    right_version: Optional[str],
+    base_version: Optional[str],
+    target_version: Optional[str],
+) -> tuple[str, str]:
+    left = str(left_version or base_version or "").strip()
+    right = str(right_version or target_version or "").strip()
+    if not left or not right:
+        raise _kw05_bad_request(
+            "Missing compare versions",
+            "Provide either left_version/right_version or base_version/target_version",
+            "left_version",
+        )
+    if left_version and base_version and str(left_version).strip() != str(base_version).strip():
+        raise _kw05_bad_request(
+            "Conflicting compare aliases",
+            "left_version and base_version must reference the same version when both are provided",
+            "left_version",
+        )
+    if right_version and target_version and str(right_version).strip() != str(target_version).strip():
+        raise _kw05_bad_request(
+            "Conflicting compare aliases",
+            "right_version and target_version must reference the same version when both are provided",
+            "right_version",
+        )
+    return left, right
+
+
+def _kw04_supporting_evidence_surface(
+    supporting_evidence_refs: List[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> str:
+    surface_state = _kw04_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    if surface_state != "ok":
+        return surface_state
+    for item in supporting_evidence_refs:
+        if not item.get("ref_id") or not isinstance(item.get("resolved_link"), dict):
+            return "degraded"
+    return "ok"
+
+
+def _kw04_linked_sources_surface(
+    linked_sources: List[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> str:
+    dataset_map = {
+        "memory_entry": "institutional_memory_entries",
+        "research_note": "research_notes",
+        "evidence_ref": "evidence_refs",
+        "strategy_spec": "strategy_specs",
+        "experiment": "research_experiments",
+    }
+    if not linked_sources:
+        return "ok"
+    overall = "ok"
+    for item in linked_sources:
+        entity_type = str(item.get("entity_type") or "").strip()
+        dataset = dataset_map.get(entity_type)
+        if not dataset:
+            return "degraded"
+        state = _kw04_surface_state(dataset, snapshot_at=snapshot_at, has_data=True)
+        if state == "unavailable":
+            return "unavailable"
+        if state == "degraded":
+            overall = "degraded"
+        if not item.get("display_label") or "route_href" not in item:
+            overall = "degraded"
+    return overall
+
+
 def _rw03_validate_status(status: Any) -> str:
     normalized = str(status or "").strip().lower()
     if normalized not in _RW03_ALLOWED_STATUSES:
@@ -4003,45 +4872,40 @@ def _build_consultation_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
         {
             "module_id": "CW-02",
             "label": "Debate Transcript",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 2,
-            "summary": "The ordered transcript route, actor resolution, and evidence-link semantics are not yet packetized.",
-            "missing_contracts": [
+            "summary": "Transcript route is live. Ordered TranscriptEvent stream with actor identity, sequence_no ordering, from_sequence_no filtering, and degradation semantics are implemented.",
+            "live_routes": [
                 "GET /api/v1/consultations/{session_id}/transcript",
-                "TranscriptEvent schema",
-                "Actor labeling contract",
-                "Evidence attachment inline behavior",
             ],
-            "next_gate": "Lock transcript ordering and actor-label truth after CW-01 is live.",
+            "next_gate": "Activate the CW-02 transcript UI against the published frontend packet; CW-03 and CW-04 may continue consuming the live transcript truth.",
             "upstream_dependencies": ["CW-01"],
         },
         {
             "module_id": "CW-03",
             "label": "Committee Board",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 3,
-            "summary": "Committee queue/detail projections and sponsor decision authority are published, but upstream request and transcript modules are still pending for packet handoff.",
-            "missing_contracts": [
-                "CW-01 Consult Request live request identity",
-                "CW-02 Debate Transcript live event ordering",
+            "summary": "Committee list/detail routes, sponsor-decision authority, and transcript dependency (CW-02) are all live. Full production handoff is unblocked.",
+            "live_routes": [
+                "GET /api/v1/committees",
+                "GET /api/v1/committees/{committee_id}",
+                "POST /api/v1/operator/commands (RecordSponsorDecision)",
             ],
-            "next_gate": "Advance to packet handoff once CW-01 and CW-02 are live dependencies rather than contract-only predecessors.",
+            "next_gate": "CW-03 is fully live. Proceed with CW-04 Red-team Memo implementation.",
             "upstream_dependencies": ["CW-01", "CW-02"],
         },
         {
             "module_id": "CW-04",
             "label": "Red-team Memo",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 4,
-            "summary": "Memo browse/detail routes and the downstream governance handoff authority signal are still absent.",
-            "missing_contracts": [
+            "summary": "Memo list/detail routes are live. Backend-owned mapping, evidence links, degradation semantics, and governance handoff authority are implemented.",
+            "live_routes": [
                 "GET /api/v1/consult/memos",
                 "GET /api/v1/consult/memos/{memo_id}",
-                "ConsultMemo read model",
-                "Red-team session-to-memo mapping",
-                "allowedActions.canInitiateGovernanceReview",
             ],
-            "next_gate": "Publish memo lifecycle and evidence rail truth after request identity and session evidence semantics are stable.",
+            "next_gate": "Activate the CW-04 memo UI against the published frontend handoff packet and preserve backend-owned mapping, evidence, and governance semantics.",
             "upstream_dependencies": ["CW-01", "CW-02"],
         },
     ]
@@ -4050,16 +4914,19 @@ def _build_consultation_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
         "label": "Consultation Workbench",
         "route_href": _CONSULTATION_WORKBENCH_ROUTE,
         "overall_status": "partial_ready",
-        "headline": "CW-01 consult request routes are live; remaining modules are gated on CW-01 and CW-02",
+        "headline": "CW-01 through CW-04 are live in the BFF, and both CW-02 and CW-04 frontend packets are published",
         "summary": (
-            "CW-01 request create/list/detail/cancel routes are live and implement the published ConsultRequest lifecycle. "
-            "CW-02 (Debate Transcript), CW-03 (Committee Board), and CW-04 (Red-team Memo) remain gated."
+            "CW-01 request create/list/detail/cancel routes are live. "
+            "CW-02 transcript route is live with ordered TranscriptEvent stream, actor identity, degradation semantics, and a published frontend activation packet. "
+            "CW-03 committee list/detail and sponsor-decision routes are fully live. "
+            "CW-04 memo list/detail routes are live with backend-owned mapping, evidence links, governance handoff gating, and a published module-local frontend handoff bundle. "
+            "The remaining work is UI activation and truthful loop closeout, not backend implementation."
         ),
         "packet_family": {
             "family_id": "CW-008",
             "path": "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
             "lovable_readiness": "partial_ready",
-            "note": "CW-01 is live. Remaining modules still blocked on upstream BFF routes.",
+            "note": "All four consultation BFF modules are live. CW-02 and CW-04 both have published module-local frontend handoff bundles.",
         },
         "module_counts": {
             "total": len(modules),
@@ -4098,8 +4965,8 @@ def _build_consultation_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
             },
         ],
         "next_steps": [
-            "Land CW-01 request create/list/detail/cancel routes and lifecycle truth.",
-            "Publish the ordered transcript event contract before opening Committee Board or Red-team Memo UI packets.",
+            "Activate the CW-02 transcript UI against the published frontend packet now that the route family is live.",
+            "Activate the CW-04 memo UI against the published frontend packet and keep governance CTA authority backend-owned.",
             "Keep this overview read-only; do not invent request forms or memo state in the browser.",
         ],
         "meta": {
@@ -4127,61 +4994,47 @@ def _build_knowledge_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
         {
             "module_id": "KW-02",
             "label": "Research Notes",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 2,
-            "summary": "Note create/list/detail flows and the attachment taxonomy are still undefined at the BFF layer.",
-            "missing_contracts": [
-                "POST /api/v1/knowledge/notes",
-                "GET /api/v1/knowledge/notes",
-                "GET /api/v1/knowledge/notes/{note_id}",
-                "Research note ownership and attachment contract",
-            ],
-            "next_gate": "Publish note attachment and ownership truth after KW-01 identity settles.",
+            "summary": "Research Notes create/list/detail routes are live. Ownership, attachment taxonomy, and referential integrity rules are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-02 routes.",
             "upstream_dependencies": ["KW-01"],
         },
         {
             "module_id": "KW-03",
             "label": "Evidence Refs",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 3,
-            "summary": "Evidence browse/detail projections and typed link resolution are not yet available as workbench routes.",
-            "missing_contracts": [
-                "GET /api/v1/knowledge/evidence",
-                "GET /api/v1/knowledge/evidence/{ref_id}",
-                "Evidence reference read model",
-                "Evidence link resolution contract",
-            ],
-            "next_gate": "Publish typed evidence-link truth after memory anchors and note source context are stable.",
+            "summary": "Evidence Refs list/detail routes are live. Link taxonomy, credibility metadata, and resolved-link projection are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-03 routes and preserve backend-owned resolved-link semantics.",
             "upstream_dependencies": ["KW-01", "KW-02"],
         },
         {
             "module_id": "KW-04",
             "label": "Insight Cards",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 4,
-            "summary": "Insight aggregation and filter semantics still live only in backlog language; no workbench packet exists yet.",
-            "missing_contracts": [
-                "Insight aggregation endpoint",
-                "Insight card detail endpoint",
-                "Card-surface read model",
-                "Filter taxonomy and aggregation contract",
-            ],
-            "next_gate": "Publish card identity and linked-source drilldown after memory and evidence routes are live.",
+            "summary": "Insight Cards list/detail routes are live. Aggregation/detail projection and backend-owned filter taxonomy are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-04 routes without client-side filter synthesis; the frontend handoff bundle is published.",
             "upstream_dependencies": ["KW-01", "KW-03"],
         },
         {
             "module_id": "KW-05",
             "label": "Strategy Spec",
-            "status": "not_ready",
+            "status": "ready",
             "wave_order": 5,
-            "summary": "Canonical StrategySpec objects exist, but there is still no browse/detail/version compare workbench projection.",
-            "missing_contracts": [
-                "Strategy-spec list route",
-                "Versioned strategy-spec detail route",
-                "Strategy-spec versioning and lifecycle contract",
-                "Strategy-spec diff or compare contract",
+            "summary": "Strategy Spec browse/detail/version-history/compare routes are live. Version identity, ancestry, lifecycle, and compare semantics are implemented per the ratified contract.",
+            "missing_contracts": [],
+            "live_routes": [
+                "GET /api/v1/knowledge/strategy-specs",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare",
             ],
-            "next_gate": "Publish versioned browse truth and diff semantics after lineage and evidence anchors are stable.",
+            "next_gate": "Activate the Lovable UI task against the live KW-05 routes using backend-owned version identity, ancestry, and compare semantics.",
             "upstream_dependencies": ["KW-01", "KW-03"],
         },
     ]
@@ -4190,21 +5043,21 @@ def _build_knowledge_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
         "label": "Knowledge Workbench",
         "route_href": _KNOWLEDGE_WORKBENCH_ROUTE,
         "overall_status": "overview_ready",
-        "headline": "Overview route is live; knowledge delivery remains module-gated",
+        "headline": "KW-01 to KW-05 are route-live",
         "summary": (
             "This overview is a truthful landing surface for the Knowledge Workbench. "
-            "It exposes the remaining browse, evidence, and versioning contracts without pretending the full registry, notes, or evidence browser are already live."
+            "All five Knowledge Workbench modules are route-live in the current BFF."
         ),
         "packet_family": {
             "family_id": "KW-006",
             "path": "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
-            "lovable_readiness": "partial",
-            "note": "KW-01 Institutional Memory is ready. KW-02 to KW-05 remain blocked on net-new BFF routes or lifecycle contracts.",
+            "lovable_readiness": "overview_ready",
+            "note": "KW-01 to KW-05 are route-live in the current BFF. KW-02 to KW-05 now carry published frontend handoff packets; remaining work is front-owned UI activation plus KW-01 hardening follow-up.",
         },
         "module_counts": {
             "total": len(modules),
-            "ready": 1,
-            "not_ready": len(modules) - 1,
+            "ready": sum(1 for m in modules if m.get("status") == "ready"),
+            "not_ready": sum(1 for m in modules if m.get("status") != "ready"),
         },
         "modules": modules,
         "support_refs": [
@@ -4227,7 +5080,7 @@ def _build_knowledge_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
                 "label": "StrategySpec schema",
                 "ref_type": "document",
                 "value": "services/control-plane/specs/strategy_spec.schema.json",
-                "note": "Canonical StrategySpec object schema; version browsing and diff semantics are still missing.",
+                "note": "Canonical StrategySpec object schema; version browsing, ancestry, lifecycle, and compare semantics are now ratified in docs/bff/KW-05-strategy-spec.md.",
             },
             {
                 "ref_id": "memory-retrieval-facade",
@@ -4238,9 +5091,12 @@ def _build_knowledge_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
             },
         ],
         "next_steps": [
-            "Land KW-02 Research Notes routes and attachment contract to unblock KW-03 and downstream modules.",
+            "Activate the Lovable UI task against the live KW-02 Research Notes routes.",
+            "Activate the Lovable UI task against the live KW-03 Evidence Refs routes.",
+            "Activate the Lovable UI task against the live KW-04 Insight Cards routes; the frontend handoff bundle is already published.",
+            "Activate the Lovable UI task against the live KW-05 Strategy Spec routes using backend-owned version identity, ancestry, and compare semantics.",
             "Keep the Knowledge Workbench payload-owned; do not synthesize registry joins from raw schemas in the browser.",
-            "Use this overview to track which module is next, not to imply that Insight Cards or Strategy Spec browse already exist.",
+            "Use this overview to track the remaining workbench order without downgrading live routes back to pending-BFF text.",
         ],
         "meta": {
             **_snapshot_meta(snapshot_at),
@@ -4550,6 +5406,75 @@ async def health():
         "version": "0.2.0",
         "timestamp": utc_now(),
     }
+
+
+@app.get("/api/v1/settings")
+async def get_settings(
+    authorization: Optional[str] = Header(default=None),
+):
+    _extract_identity(authorization)
+    return settings_store.get()
+
+
+@app.post("/api/v1/settings")
+async def update_settings(
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_admin_mfa(identity, "update_settings")
+    patch = body.get("settings", body)
+    try:
+        settings = settings_store.update(patch)
+    except ValueError as exc:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Settings update payload is invalid",
+            str(exc),
+            precondition_failed="settings_payload",
+            suggestion="Submit a complete settings object or a valid partial patch",
+        )
+    return {"settings": settings}
+
+
+@app.get("/api/v1/settings/export")
+async def export_settings(
+    authorization: Optional[str] = Header(default=None),
+):
+    _extract_identity(authorization)
+    return {"jsonData": settings_store.export_json()}
+
+
+@app.post("/api/v1/settings/import")
+async def import_settings(
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_admin_mfa(identity, "import_settings")
+    json_data = body.get("jsonData")
+    if not isinstance(json_data, str):
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Settings import payload is invalid",
+            "jsonData must be a string containing a settings JSON document",
+            precondition_failed="settings_import_payload",
+            suggestion="Send jsonData as a string",
+        )
+    try:
+        settings = settings_store.import_json(json_data)
+    except ValueError as exc:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Settings import payload is invalid",
+            str(exc),
+            precondition_failed="settings_import_payload",
+            suggestion="Upload a valid JSON export from the Pantheon settings surface",
+        )
+    return {"settings": settings}
 
 
 # --------------------------------------------------------------------------- #
@@ -4866,6 +5791,75 @@ async def get_trainer_session_detail(
     return payload
 
 
+@app.get("/api/v1/trainer/sessions/{session_id}/controls")
+async def get_trainer_controls(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
+    if not controls:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    return controls
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/patch")
+async def patch_trainer_controls(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    patches = _tw02_validate_patch_payload(payload)
+
+    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
+    if not controls:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    if str(controls.get("status") or "").strip().lower() != "active":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot patch controls",
+            "POST /patch is only allowed while the trainer session status is active",
+            precondition_failed="status",
+        )
+    if not (controls.get("allowedActions") or {}).get("canPatchControls"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Trainer control patch unavailable",
+            "allowedActions.canPatchControls is false for this trainer session",
+            precondition_failed="allowedActions.canPatchControls",
+        )
+
+    result = read_store.patch_trainer_controls(
+        session_id,
+        patches=patches,
+        patched_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer control store unavailable",
+            "Trainer control patch store is unavailable.",
+        )
+    return result
+
+
 @app.post("/api/v1/trainer/sessions/{session_id}/message")
 async def append_trainer_message(
     session_id: str,
@@ -5027,6 +6021,214 @@ async def refresh_trainer_preview(
             "Trainer preview refresh store is unavailable.",
         )
     return refreshed
+
+
+@app.get("/api/v1/trainer/replay")
+async def list_trainer_replays(
+    persona_id: str,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    if status is not None:
+        normalized_status = str(status).strip().lower()
+        if normalized_status not in _TW04_REPLAY_TERMINAL_STATUSES:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid replay status filter",
+                f"status must be one of {sorted(_TW04_REPLAY_TERMINAL_STATUSES)}",
+                precondition_failed="status",
+            )
+    else:
+        normalized_status = None
+
+    snapshot_at = utc_now()
+    items, surface_state = read_store.list_trainer_replays(
+        persona_id=persona_id,
+        status=normalized_status,
+        snapshot_at=snapshot_at,
+    )
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "trainer_replay": surface_state,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/trainer/replay/{session_id}")
+async def get_trainer_replay_detail(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    replay = read_store.get_trainer_replay(session_id, snapshot_at=snapshot_at)
+    if not replay:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer replay session not found",
+            f"Trainer replay session {session_id} does not exist",
+        )
+    return replay
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/commit")
+async def commit_trainer_replay(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    expected_candidate_snapshot_at = _tw04_required_text(payload, "expected_candidate_snapshot_at")
+    note = payload.get("note") or None
+
+    replay = read_store.get_trainer_replay(session_id)
+    if not replay:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer replay session not found",
+            f"Trainer replay session {session_id} does not exist",
+        )
+
+    if str(replay.get("status") or "").strip().lower() != "completed":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot be committed",
+            "commit is only allowed when session status is completed",
+            precondition_failed="status",
+        )
+
+    if not replay.get("allowedActions", {}).get("canCommit"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Commit not allowed",
+            "allowedActions.canCommit is false for this trainer replay session",
+            precondition_failed="allowedActions.canCommit",
+        )
+
+    candidate_snapshot_at = _tw04_get_candidate_snapshot_at(replay)
+    if candidate_snapshot_at != expected_candidate_snapshot_at:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Candidate snapshot mismatch",
+            "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
+            precondition_failed="expected_candidate_snapshot_at",
+        )
+
+    result = read_store.commit_trainer_replay(
+        session_id,
+        expected_candidate_snapshot_at=expected_candidate_snapshot_at,
+        note=note,
+        actor_id=identity.operator_id,
+        committed_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer replay store unavailable",
+            "Trainer replay commit store is unavailable.",
+        )
+    return result
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/discard")
+async def discard_trainer_replay(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    expected_candidate_snapshot_at = _tw04_required_text(payload, "expected_candidate_snapshot_at")
+    note = payload.get("note") or None
+
+    replay = read_store.get_trainer_replay(session_id)
+    if not replay:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer replay session not found",
+            f"Trainer replay session {session_id} does not exist",
+        )
+
+    if str(replay.get("status") or "").strip().lower() != "completed":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot be discarded",
+            "discard is only allowed when session status is completed",
+            precondition_failed="status",
+        )
+
+    if not replay.get("allowedActions", {}).get("canDiscard"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Discard not allowed",
+            "allowedActions.canDiscard is false for this trainer replay session",
+            precondition_failed="allowedActions.canDiscard",
+        )
+
+    candidate_snapshot_at = _tw04_get_candidate_snapshot_at(replay)
+    if candidate_snapshot_at != expected_candidate_snapshot_at:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Candidate snapshot mismatch",
+            "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
+            precondition_failed="expected_candidate_snapshot_at",
+        )
+
+    result = read_store.discard_trainer_replay(
+        session_id,
+        expected_candidate_snapshot_at=expected_candidate_snapshot_at,
+        note=note,
+        actor_id=identity.operator_id,
+        discarded_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer replay store unavailable",
+            "Trainer replay discard store is unavailable.",
+        )
+    return result
 
 
 @app.get("/api/v1/capital-pools")
@@ -5321,6 +6523,212 @@ async def get_runtime_rollbacks(runtime_id: str, authorization: Optional[str] = 
     }
 
 
+_PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES = {"pending_review", "approved", "rejected"}
+
+
+def _pkt001_requested_plan_statuses(status: Optional[str]) -> Optional[set[str]]:
+    requested = _split_csv_query(status)
+    if requested is None:
+        return None
+    normalized = {token.lower() for token in requested}
+    invalid = normalized - _PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES
+    if invalid:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid deployment plan status filter",
+            f"status must be one of {sorted(_PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _pkt001_governance_outcome(
+    plan: Dict[str, Any],
+    approval_decision: Optional[Dict[str, Any]],
+    review: Optional[Dict[str, Any]],
+) -> str:
+    raw_value = str(
+        (review or {}).get("governanceOutcome")
+        or (approval_decision or {}).get("outcome")
+        or plan.get("status")
+        or ""
+    ).strip().lower()
+    if raw_value in {"", "pending_review", "under_review", "in_review"}:
+        return "pending"
+    if raw_value in {"approve", "approved_with_conditions"}:
+        return "approved"
+    if raw_value in {"reject"}:
+        return "rejected"
+    return raw_value
+
+
+def _pkt001_plan_filter_status(
+    plan: Dict[str, Any],
+    approval_decision: Optional[Dict[str, Any]],
+    review: Optional[Dict[str, Any]],
+) -> str:
+    governance_outcome = _pkt001_governance_outcome(plan, approval_decision, review)
+    if governance_outcome == "approved":
+        return "approved"
+    if governance_outcome == "rejected":
+        return "rejected"
+    return "pending_review"
+
+
+def _pkt001_plan_list_item(
+    plan: Dict[str, Any],
+    approval_decision: Optional[Dict[str, Any]],
+    review: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
+        "plan_id": plan.get("plan_id") or plan.get("id"),
+        "artifact_id": plan.get("artifact_id"),
+        "target_stage": plan.get("target_stage") or plan.get("stage"),
+        "risk_level": (approval_decision or {}).get("risk_level"),
+        "governance_outcome": _pkt001_governance_outcome(plan, approval_decision, review),
+        "submitted_at": (
+            plan.get("submitted_at")
+            or plan.get("created_at")
+            or (approval_decision or {}).get("decided_at")
+        ),
+    }
+
+
+def _pkt001_allowed_actions_present(allowed_actions: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(allowed_actions, dict):
+        return False
+    required_fields = ("canApprove", "canReject", "canPromoteToPaper")
+    return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
+
+
+def _pkt001_degradation_meta(surfaces: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    reason_templates = {
+        "deployment_plans": (
+            "Deployment plan list is degraded and may be stale.",
+            "Deployment plan list is currently unavailable.",
+        ),
+        "deployment_plan": (
+            "Deployment plan detail is degraded and may be stale.",
+            "Deployment plan detail is currently unavailable.",
+        ),
+        "approval_decision": (
+            "Approval decision detail is degraded and may be stale.",
+            "Approval decision detail is currently unavailable.",
+        ),
+        "capital_pool": (
+            "Capital pool detail is degraded and may be stale.",
+            "Capital pool detail is currently unavailable.",
+        ),
+        "bindings": (
+            "Binding detail is degraded and may be stale.",
+            "Binding detail is currently unavailable.",
+        ),
+        "runtime_binding": (
+            "Runtime binding detail is degraded and may be stale.",
+            "Runtime binding detail is currently unavailable.",
+        ),
+        "allowedActions": (
+            "Action authority is degraded. All CTAs disabled for safety.",
+            "Action authority service is unavailable. All CTAs disabled for safety.",
+        ),
+        "latestRun": (
+            "Latest run progress is degraded and may be stale.",
+            "Latest run progress is currently unavailable.",
+        ),
+        "review": (
+            "Review summary is degraded and may be stale.",
+            "Review summary is currently unavailable.",
+        ),
+    }
+    degradation: Dict[str, Any] = {}
+    for surface_name, surface in surfaces.items():
+        templates = reason_templates.get(surface_name)
+        if not templates:
+            continue
+        reason = _surface_degradation_reason(
+            surface,
+            degraded_reason=templates[0],
+            unavailable_reason=templates[1],
+        )
+        if reason is not None:
+            degradation[f"{surface_name}_reason"] = reason
+    if degradation and "allowedActions" in surfaces:
+        degradation["disable_ctas"] = surfaces["allowedActions"].get("status") != "ok"
+    return degradation
+
+
+@app.get("/api/v1/operator/deployment-plans")
+async def list_operator_deployment_plans(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    requested_statuses = _pkt001_requested_plan_statuses(status)
+    snapshot_at = utc_now()
+    deployment_plans_surface = _dataset_surface_status(
+        "deployment_plans",
+        snapshot_at=snapshot_at,
+    )
+
+    matched_items: List[Dict[str, Any]] = []
+    allowed_actions_complete = True
+    for plan in read_store.list_deployment_plans():
+        plan_id = str(plan.get("plan_id") or plan.get("id") or "")
+        approval_decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
+        review = read_store.get_review_summary(plan_id)
+        derived_status = _pkt001_plan_filter_status(plan, approval_decision, review)
+        if requested_statuses and derived_status not in requested_statuses:
+            continue
+        matched_items.append(_pkt001_plan_list_item(plan, approval_decision, review))
+        if not _pkt001_allowed_actions_present(read_store.get_allowed_actions(plan_id)):
+            allowed_actions_complete = False
+
+    matched_items.sort(
+        key=lambda item: (item.get("submitted_at") or "", item.get("plan_id") or ""),
+        reverse=True,
+    )
+
+    if deployment_plans_surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(matched_items, page_token, page_size)
+
+    allowed_actions_surface = _dataset_surface_status(
+        "approval_decisions",
+        snapshot_at=snapshot_at,
+        has_data=allowed_actions_complete if matched_items else None,
+        missing_message="Deployment action authority unavailable for this deployment-plan snapshot.",
+    )
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "deployment_plans": deployment_plans_surface,
+            "allowedActions": allowed_actions_surface,
+        },
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    degradation = _pkt001_degradation_meta(meta["surfaces"])
+    if degradation:
+        meta["degradation"] = degradation
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
+    }
+
+
 @app.get("/api/v1/operator/deployment-review/{plan_id}")
 async def get_deployment_review(plan_id: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
@@ -5372,57 +6780,68 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
         "review": review,
     }
 
+    surfaces = {
+        "deployment_plan": _dataset_surface_status(
+            "deployment_plans",
+            snapshot_at=snapshot_at,
+            has_data=plan is not None,
+        ),
+        "approval_decision": _dataset_surface_status(
+            "approval_decisions",
+            snapshot_at=snapshot_at,
+            has_data=approval_decision is not None,
+            missing_message="Approval decision unavailable for this deployment plan.",
+        ),
+        "capital_pool": _dataset_surface_status(
+            "capital_pools",
+            snapshot_at=snapshot_at,
+            has_data=pool is not None,
+            missing_message="Capital pool detail unavailable for this deployment plan.",
+        ),
+        "bindings": _dataset_surface_status(
+            "persona_bindings",
+            snapshot_at=snapshot_at,
+            has_data=bindings is not None,
+        ),
+        "runtime_binding": _dataset_surface_status(
+            "runtime_bindings",
+            snapshot_at=snapshot_at,
+            has_data=runtime_binding is not None,
+            missing_message="Runtime binding unavailable for this deployment plan.",
+        ),
+        "rollbacks": _dataset_surface_status("rollbacks", snapshot_at=snapshot_at),
+        "allowedActions": _dataset_surface_status(
+            "approval_decisions",
+            snapshot_at=snapshot_at,
+            has_data=_pkt001_allowed_actions_present(allowed_actions),
+            missing_message="Deployment action authority unavailable for this deployment plan.",
+        ),
+        "latestRun": _dataset_surface_status(
+            "latest_runs",
+            snapshot_at=snapshot_at,
+            has_data=latest_run is not None,
+        ),
+        "review": _dataset_surface_status(
+            "review_summaries",
+            snapshot_at=snapshot_at,
+            has_data=review is not None,
+        ),
+    }
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": surfaces,
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    degradation = _pkt001_degradation_meta(surfaces)
+    if degradation:
+        meta["degradation"] = degradation
+
     return {
         "data": data,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {
-                "deployment_plan": _dataset_surface_status(
-                    "deployment_plans",
-                    snapshot_at=snapshot_at,
-                    has_data=plan is not None,
-                ),
-                "approval_decision": _dataset_surface_status(
-                    "approval_decisions",
-                    snapshot_at=snapshot_at,
-                    has_data=approval_decision is not None,
-                    missing_message="Approval decision unavailable for this deployment plan.",
-                ),
-                "capital_pool": _dataset_surface_status(
-                    "capital_pools",
-                    snapshot_at=snapshot_at,
-                    has_data=pool is not None,
-                    missing_message="Capital pool detail unavailable for this deployment plan.",
-                ),
-                "bindings": _dataset_surface_status(
-                    "persona_bindings",
-                    snapshot_at=snapshot_at,
-                    has_data=bindings is not None,
-                ),
-                "runtime_binding": _dataset_surface_status(
-                    "runtime_bindings",
-                    snapshot_at=snapshot_at,
-                    has_data=runtime_binding is not None,
-                    missing_message="Runtime binding unavailable for this deployment plan.",
-                ),
-                "rollbacks": _dataset_surface_status("rollbacks", snapshot_at=snapshot_at),
-                "allowedActions": _dataset_surface_status(
-                    "allowed_actions",
-                    snapshot_at=snapshot_at,
-                    has_data=allowed_actions is not None,
-                ),
-                "latestRun": _dataset_surface_status(
-                    "latest_runs",
-                    snapshot_at=snapshot_at,
-                    has_data=latest_run is not None,
-                ),
-                "review": _dataset_surface_status(
-                    "review_summaries",
-                    snapshot_at=snapshot_at,
-                    has_data=review is not None,
-                ),
-            },
-        },
+        "meta": meta,
     }
 
 
@@ -5803,75 +7222,6 @@ async def cancel_consult_request(
     }
 
 
-@app.get("/api/v1/trainer/sessions/{session_id}/controls")
-async def get_trainer_controls(
-    session_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
-    if not controls:
-        raise _bff_error(
-            404,
-            ErrorCode.OBJECT_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-    return controls
-
-
-@app.post("/api/v1/trainer/sessions/{session_id}/patch")
-async def patch_trainer_controls(
-    session_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    patches = _tw02_validate_patch_payload(payload)
-
-    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
-    if not controls:
-        raise _bff_error(
-            404,
-            ErrorCode.OBJECT_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-    if str(controls.get("status") or "").strip().lower() != "active":
-        raise _bff_error(
-            409,
-            ErrorCode.INVALID_STATE,
-            "Trainer session cannot patch controls",
-            "POST /patch is only allowed while the trainer session status is active",
-            precondition_failed="status",
-        )
-    if not (controls.get("allowedActions") or {}).get("canPatchControls"):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_NOT_MET,
-            "Trainer control patch unavailable",
-            "allowedActions.canPatchControls is false for this trainer session",
-            precondition_failed="allowedActions.canPatchControls",
-        )
-
-    result = read_store.patch_trainer_controls(
-        session_id,
-        patches=patches,
-        patched_at=utc_now(),
-    )
-    if result is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
-            "Trainer control store unavailable",
-            "Trainer control patch store is unavailable.",
-        )
-    return result
-
-
 @app.get("/api/v1/committees")
 async def list_committees(
     quorum_state: Optional[str] = None,
@@ -5940,6 +7290,72 @@ async def get_committee(
 
     return _cw03_committee_projection(
         committee,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+
+
+@app.get("/api/v1/consult/memos")
+async def list_consult_memos(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=25, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    requested_statuses = _cw04_validate_status_filters(_split_csv_query(status))
+    memos = read_store.list_consult_memos(statuses=requested_statuses)
+    surface_state = _cw04_collection_surface_state(snapshot_at)
+
+    if surface_state == "unavailable":
+        items = []
+        total = 0
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(memos, page_token, page_size)
+        total = len(memos)
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "page_size": page_size,
+            "total": total,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "staleness": _cw04_memo_staleness(surface_state, snapshot_at=snapshot_at),
+            "surfaces": {
+                "redteam_memo": {
+                    "state": surface_state,
+                },
+            },
+        },
+    }
+
+
+@app.get("/api/v1/consult/memos/{memo_id}")
+async def get_consult_memo(
+    memo_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    memo = read_store.get_consult_memo(memo_id)
+    if memo is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consult memo not found",
+            f"Consult memo {memo_id} does not exist",
+        )
+
+    return _cw04_memo_projection(
+        memo,
         identity=identity,
         snapshot_at=utc_now(),
     )
@@ -6031,7 +7447,11 @@ async def get_research_ticket(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    ticket = read_store.get_research_ticket(ticket_id)
+    ticket = read_store.get_research_ticket(
+        ticket_id,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
     if not ticket:
         raise _bff_error(
             404,
@@ -6332,6 +7752,21 @@ def _rw04_surface_state(snapshot_at: str, *, has_data: Optional[bool] = None) ->
     return _rw01_surface_state("research_experiments", snapshot_at=snapshot_at, has_data=has_data)
 
 
+def _rw05_surface_state(snapshot_at: str, *, has_data: Optional[bool] = None) -> str:
+    surface = _dataset_surface_status(
+        "research_artifacts",
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "degraded"
+    return "ok"
+
+
 def _rw04_required_text(payload: Dict[str, Any], field: str) -> str:
     value = payload.get(field)
     if value is None or not str(value).strip():
@@ -6343,6 +7778,21 @@ def _rw04_required_text(payload: Dict[str, Any], field: str) -> str:
             precondition_failed=field,
         )
     return str(value).strip()
+
+
+def _rw05_validate_status(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized not in _RW05_ALLOWED_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid artifact status",
+            f"status must be one of {sorted(_RW05_ALLOWED_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
 
 
 def _rw04_required_dict(payload: Dict[str, Any], field: str) -> Dict[str, Any]:
@@ -6576,6 +8026,947 @@ async def cancel_experiment(
     }
 
 
+@app.get("/api/v1/artifacts")
+async def list_artifacts(
+    experiment_id: Optional[str] = None,
+    ticket_id: Optional[str] = None,
+    lineage_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_status = _rw05_validate_status(status)
+    snapshot_at = utc_now()
+    items = read_store.list_research_artifacts(
+        experiment_id=experiment_id,
+        ticket_id=ticket_id,
+        lineage_id=lineage_id,
+        status=validated_status,
+    )
+    total = len(items)
+    surface_state = _rw05_surface_state(snapshot_at, has_data=bool(items))
+    if surface_state == "unavailable":
+        page_items: List[Dict[str, Any]] = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    return {
+        "artifacts": page_items,
+        "next_page_token": next_page_token,
+        "total_count": total,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"artifact_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/artifacts/compare")
+async def compare_artifacts(
+    artifact_ids: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    requested_ids = [
+        str(artifact_id).strip()
+        for artifact_id in artifact_ids.split(",")
+        if str(artifact_id).strip()
+    ]
+    if len(requested_ids) < 2:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "At least two artifact_ids are required",
+            "artifact_ids must include between 2 and 4 artifact ids",
+            precondition_failed="artifact_ids",
+        )
+    if len(requested_ids) > 4:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Too many artifact_ids provided",
+            "artifact_ids must include between 2 and 4 artifact ids",
+            precondition_failed="artifact_ids",
+        )
+
+    artifacts: List[Dict[str, Any]] = []
+    for artifact_id in requested_ids:
+        artifact = read_store.get_research_artifact(artifact_id)
+        if not artifact:
+            raise _bff_error(
+                404,
+                ErrorCode.OBJECT_NOT_FOUND,
+                "Artifact not found",
+                f"Artifact {artifact_id} does not exist",
+            )
+        artifacts.append(artifact)
+
+    non_comparable = [
+        {
+            "artifact_id": artifact.get("artifact_id"),
+            "status": artifact.get("status"),
+            "reason": "Only sealed and superseded artifacts may be compared.",
+        }
+        for artifact in artifacts
+        if not (artifact.get("allowedActions") or {}).get("canCompare")
+    ]
+    if non_comparable:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": ErrorCode.INVALID_STATE.value,
+                    "message": "One or more artifacts cannot be compared",
+                    "details": {
+                        "reason": "Compare accepts only sealed or superseded artifacts.",
+                        "precondition_failed": "artifact_status",
+                    },
+                },
+                "non_comparable_artifacts": non_comparable,
+            },
+        )
+
+    snapshot_at = utc_now()
+    payload = read_store.compare_research_artifacts(requested_ids)
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "computed_at": utc_now(),
+        "surfaces": {"artifact_compare": _rw05_surface_state(snapshot_at, has_data=True)},
+    }
+    return payload
+
+
+@app.get("/api/v1/artifacts/{artifact_id}")
+async def get_artifact(
+    artifact_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    artifact = read_store.get_research_artifact(artifact_id)
+    if not artifact:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Artifact not found",
+            f"Artifact {artifact_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    payload = dict(artifact)
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {"artifact_detail": _rw05_surface_state(snapshot_at, has_data=True)},
+    }
+    return payload
+
+
+@app.post("/api/v1/knowledge/notes", status_code=201)
+async def create_research_note(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if "owner_ref" in payload:
+        raise _kw02_bad_request(
+            "Invalid owner_ref",
+            "owner_ref is server-assigned and must not be supplied by the caller",
+            "owner_ref",
+        )
+
+    title = _kw02_optional_title(payload)
+    body = _kw02_required_body(payload)
+    validated_attachment_type = _kw02_validate_attachment_type(payload.get("attachment_type"))
+    validated_attachment_ref = _kw02_validate_attachment_ref(
+        validated_attachment_type,
+        payload.get("attachment_ref"),
+    )
+    tags = _kw02_validate_string_list(payload.get("tags"), "tags")
+    linked_evidence_refs = _kw02_validate_string_list(
+        payload.get("linked_evidence_refs"),
+        "linked_evidence_refs",
+    )
+    linked_memory_anchors = _kw02_validate_memory_anchors(
+        _kw02_validate_string_list(payload.get("linked_memory_anchors"), "linked_memory_anchors")
+    )
+
+    attachment_exists, _, _ = _kw02_resolve_attachment_target(
+        validated_attachment_type,
+        validated_attachment_ref,
+    )
+    if not attachment_exists:
+        raise _bff_error(
+            422,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Attachment target does not exist",
+            f"{validated_attachment_type} target {validated_attachment_ref} could not be resolved",
+            precondition_failed="attachment_ref",
+        )
+
+    timestamp = utc_now()
+    note_id = f"note-{uuid.uuid4()}"
+    note = {
+        "note_id": note_id,
+        "title": title,
+        "body": body,
+        "attachment_type": validated_attachment_type,
+        "attachment_ref": validated_attachment_ref,
+        "owner_ref": {
+            "owner_type": "operator",
+            "owner_id": identity.operator_id,
+            "display_name": _kw02_operator_display_name(identity.operator_id),
+        },
+        "tags": tags,
+        "linked_evidence_refs": linked_evidence_refs,
+        "linked_memory_anchors": linked_memory_anchors,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+    created = read_store.create_research_note(note)
+    if created is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Research note store unavailable",
+            "Research note creation store is unavailable.",
+        )
+
+    return {
+        "note_id": note_id,
+        "created_at": timestamp,
+        "route_href": f"/knowledge/notes/{note_id}",
+    }
+
+
+@app.get("/api/v1/knowledge/notes")
+async def list_research_notes(
+    owner_ref: Optional[str] = None,
+    attachment_type: Optional[str] = None,
+    attachment_ref: Optional[str] = None,
+    tags: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_attachment_type = None
+    if attachment_type is not None:
+        validated_attachment_type = _kw02_validate_attachment_type(attachment_type)
+    if attachment_ref is not None and validated_attachment_type is None:
+        raise _kw02_bad_request(
+            "Invalid attachment_ref filter",
+            "attachment_ref requires attachment_type to be set",
+            "attachment_ref",
+        )
+    validated_attachment_ref = None
+    if validated_attachment_type is not None and attachment_ref is not None:
+        validated_attachment_ref = _kw02_validate_attachment_ref(
+            validated_attachment_type,
+            attachment_ref,
+        )
+
+    snapshot_at = utc_now()
+    notes = read_store.list_research_notes()
+    notes_dataset_available = read_store.dataset_source("research_notes") != "missing"
+    if owner_ref:
+        notes = [
+            note
+            for note in notes
+            if str(((note.get("owner_ref") or {}).get("owner_id")) or "") == owner_ref
+        ]
+    if validated_attachment_type:
+        notes = [
+            note
+            for note in notes
+            if str(note.get("attachment_type") or "") == validated_attachment_type
+        ]
+    if validated_attachment_type == "free_standing" or validated_attachment_ref is not None:
+        notes = [
+            note
+            for note in notes
+            if note.get("attachment_ref") == validated_attachment_ref
+        ]
+    if tags:
+        requested_tags = {value.strip() for value in tags.split(",") if value.strip()}
+        notes = [
+            note
+            for note in notes
+            if requested_tags.intersection(set(note.get("tags") or []))
+        ]
+
+    surface_state = _kw02_surface_state(
+        "research_notes",
+        snapshot_at=snapshot_at,
+        has_data=notes_dataset_available,
+    )
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(notes, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "notes": [_kw02_note_list_item(note) for note in page_items],
+        "pagination": {
+            "page_size": page_size,
+            "next_page_token": next_page_token,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"research_note_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/notes/{note_id}")
+async def get_research_note_detail(
+    note_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    note = read_store.get_research_note(note_id)
+    if not note:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Research note not found",
+            f"Research note {note_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    evidence_links, evidence_surface = _kw02_resolve_evidence_links(
+        list(note.get("linked_evidence_refs") or []),
+        snapshot_at=snapshot_at,
+    )
+    memory_anchors, memory_surface = _kw02_resolve_memory_anchors(
+        list(note.get("linked_memory_anchors") or []),
+        snapshot_at=snapshot_at,
+    )
+
+    return {
+        "note_id": note.get("note_id"),
+        "title": note.get("title"),
+        "body": note.get("body"),
+        "owner_ref": json.loads(json.dumps(note.get("owner_ref") or {})),
+        "attachment": _kw02_attachment_payload(note, include_route=True),
+        "tags": list(note.get("tags") or []),
+        "linked_evidence_refs": evidence_links,
+        "linked_memory_anchors": memory_anchors,
+        "created_at": note.get("created_at"),
+        "updated_at": note.get("updated_at"),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "research_note_detail": _kw02_surface_state(
+                    "research_notes",
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                ),
+                "evidence_links": evidence_surface,
+                "memory_anchors": memory_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/evidence")
+async def list_evidence_refs(
+    linked_entity_type: Optional[str] = None,
+    linked_entity_ref: Optional[str] = None,
+    link_type: Optional[str] = None,
+    credibility_tier: Optional[str] = None,
+    verified: Optional[bool] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_linked_entity_type = None
+    if linked_entity_type is not None:
+        validated_linked_entity_type = _kw03_validate_linked_entity_type(linked_entity_type)
+    if linked_entity_ref is not None and validated_linked_entity_type is None:
+        raise _kw03_bad_request(
+            "Invalid linked_entity_ref filter",
+            "linked_entity_ref requires linked_entity_type to be set",
+            "linked_entity_ref",
+        )
+
+    validated_link_type = _kw03_validate_link_type(link_type) if link_type is not None else None
+    validated_credibility_tier = (
+        _kw03_validate_credibility_tier(credibility_tier)
+        if credibility_tier is not None
+        else None
+    )
+
+    snapshot_at = utc_now()
+    evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+
+    if validated_linked_entity_type:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("linked_object_summary") or {}).get("entity_type")) or "")
+            == validated_linked_entity_type
+        ]
+    if linked_entity_ref is not None:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("linked_object_summary") or {}).get("entity_ref")) or "")
+            == str(linked_entity_ref)
+        ]
+    if validated_link_type:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(item.get("link_type") or "") == validated_link_type
+        ]
+    if validated_credibility_tier:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("credibility") or {}).get("tier")) or "")
+            == validated_credibility_tier
+        ]
+    if verified is not None:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if bool((item.get("credibility") or {}).get("verified")) is verified
+        ]
+
+    surface_state = _kw03_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+    )
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "evidence_refs": [
+            {
+                "ref_id": item.get("ref_id"),
+                "source_document": json.loads(json.dumps(item.get("source_document") or {})),
+                "link_type": item.get("link_type"),
+                "credibility": json.loads(json.dumps(item.get("credibility") or {})),
+                "linked_object_summary": json.loads(json.dumps(item.get("linked_object_summary") or {})),
+                "resolved_link": json.loads(json.dumps(item.get("resolved_link") or {})),
+                "route_href": item.get("route_href"),
+            }
+            for item in page_items
+        ],
+        "pagination": {
+            "page_size": page_size,
+            "next_page_token": next_page_token,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"evidence_refs_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/evidence/{ref_id}")
+async def get_evidence_ref_detail(
+    ref_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    evidence_ref = read_store.get_evidence_ref_detail(ref_id)
+    if not evidence_ref:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Evidence reference not found",
+            f"Evidence reference {ref_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    detail_surface = _kw03_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+
+    return {
+        "ref_id": evidence_ref.get("ref_id"),
+        "source_document": json.loads(json.dumps(evidence_ref.get("source_document") or {})),
+        "link_type": evidence_ref.get("link_type"),
+        "credibility": json.loads(json.dumps(evidence_ref.get("credibility") or {})),
+        "resolved_link": json.loads(json.dumps(evidence_ref.get("resolved_link") or {})),
+        "linked_decisions": json.loads(json.dumps(evidence_ref.get("linked_decisions") or [])),
+        "source_note_context": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
+        "source_memory_context": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
+        "created_at": evidence_ref.get("created_at"),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "evidence_ref_detail": detail_surface,
+                "resolved_link": detail_surface,
+                "linked_decisions": detail_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/insights")
+async def list_insight_cards(
+    status: str = Query(default="active"),
+    tag: Optional[str] = None,
+    linked_entity_type: Optional[str] = None,
+    linked_entity_ref: Optional[str] = None,
+    recency: str = Query(default="all"),
+    confidence_min: Optional[float] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    include_inactive: bool = False,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_status = _kw04_validate_status(status)
+    validated_recency = _kw04_validate_recency(recency)
+    validated_linked_entity_type = None
+    if linked_entity_type is not None:
+        validated_linked_entity_type = _kw04_validate_linked_entity_type(linked_entity_type)
+    if linked_entity_ref is not None and validated_linked_entity_type is None:
+        raise _kw04_bad_request(
+            "Invalid linked_entity_ref filter",
+            "linked_entity_ref requires linked_entity_type to be set",
+            "linked_entity_ref",
+        )
+    validated_confidence_min = (
+        _kw04_validate_confidence_min(confidence_min)
+        if confidence_min is not None
+        else None
+    )
+
+    snapshot_at = utc_now()
+    cards = read_store.list_insight_cards()
+    cards_dataset_available = read_store.dataset_source("insight_cards") != "missing"
+    filter_metadata = _kw04_filter_metadata(cards) if cards_dataset_available else {
+        "tags": [],
+        "linked_entity_types": [],
+        "recency_options": [
+            {"value": value, "display_label": _kw04_recency_display_label(value)}
+            for value in ["7d", "30d", "90d", "all"]
+        ],
+        "total_active_count": 0,
+    }
+
+    filtered_cards = list(cards)
+    if not include_inactive and validated_status != "all":
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if str(card.get("status") or "") == validated_status
+        ]
+    elif not include_inactive and validated_status == "all":
+        filtered_cards = filtered_cards
+    elif include_inactive and validated_status != "all":
+        filtered_cards = filtered_cards
+
+    if tag is not None:
+        filtered_cards = [
+            card for card in filtered_cards if str(tag) in set(card.get("tags") or [])
+        ]
+    if validated_linked_entity_type is not None:
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if any(
+                str((source or {}).get("entity_type") or "") == validated_linked_entity_type
+                for source in card.get("linked_sources") or []
+            )
+        ]
+    if linked_entity_ref is not None:
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if any(
+                str((source or {}).get("entity_type") or "") == validated_linked_entity_type
+                and str((source or {}).get("entity_ref") or "") == str(linked_entity_ref)
+                for source in card.get("linked_sources") or []
+            )
+        ]
+    if validated_recency != "all":
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if _kw04_within_recency(card.get("aggregated_at"), validated_recency, snapshot_at)
+        ]
+    if validated_confidence_min is not None:
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if float(((card.get("confidence") or {}).get("score")) or 0.0) >= validated_confidence_min
+        ]
+
+    surface_state = _kw04_surface_state(
+        "insight_cards",
+        snapshot_at=snapshot_at,
+        has_data=cards_dataset_available,
+    )
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(filtered_cards, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "insight_cards": [
+            {
+                "insight_id": item.get("insight_id"),
+                "summary": item.get("summary"),
+                "scope": item.get("scope"),
+                "scope_ref": item.get("scope_ref"),
+                "status": item.get("status"),
+                "superseded_by_id": item.get("superseded_by_id"),
+                "confidence": json.loads(json.dumps(item.get("confidence") or {})),
+                "tags": list(item.get("tags") or []),
+                "evidence_count": item.get("evidence_count"),
+                "primary_evidence_count": item.get("primary_evidence_count"),
+                "aggregated_at": item.get("aggregated_at"),
+                "route_href": item.get("route_href"),
+            }
+            for item in page_items
+        ],
+        "filter_metadata": filter_metadata,
+        "pagination": {
+            "page_size": page_size,
+            "next_page_token": next_page_token,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"insight_cards": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/insights/{insight_id}")
+async def get_insight_card_detail(
+    insight_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    insight_card = read_store.get_insight_card_detail(insight_id)
+    if not insight_card:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Insight card not found",
+            f"Insight card {insight_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    detail_surface = _kw04_surface_state(
+        "insight_cards",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    supporting_evidence_surface = _kw04_supporting_evidence_surface(
+        list(insight_card.get("supporting_evidence_refs") or []),
+        snapshot_at=snapshot_at,
+    )
+    linked_sources_surface = _kw04_linked_sources_surface(
+        list(insight_card.get("linked_sources") or []),
+        snapshot_at=snapshot_at,
+    )
+
+    return {
+        "insight_id": insight_card.get("insight_id"),
+        "summary": insight_card.get("summary"),
+        "scope": insight_card.get("scope"),
+        "scope_context": json.loads(json.dumps(insight_card.get("scope_context") or {})),
+        "status": insight_card.get("status"),
+        "superseded_by": json.loads(json.dumps(insight_card.get("superseded_by") or {})),
+        "confidence": json.loads(json.dumps(insight_card.get("confidence") or {})),
+        "tags": list(insight_card.get("tags") or []),
+        "source_ref": insight_card.get("source_ref"),
+        "supporting_evidence_refs": json.loads(
+            json.dumps(insight_card.get("supporting_evidence_refs") or [])
+        ),
+        "linked_sources": json.loads(json.dumps(insight_card.get("linked_sources") or [])),
+        "aggregation_provenance": json.loads(
+            json.dumps(insight_card.get("aggregation_provenance") or {})
+        ),
+        "created_at": insight_card.get("created_at"),
+        "updated_at": insight_card.get("updated_at"),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "insight_card_detail": detail_surface,
+                "supporting_evidence_refs": supporting_evidence_surface,
+                "linked_sources": linked_sources_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs")
+async def list_strategy_specs(
+    lifecycle_state: str = Query(default="all"),
+    source_kind: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    include_retired: bool = False,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_lifecycle_state = _kw05_validate_lifecycle_state(lifecycle_state)
+    snapshot_at = utc_now()
+    items = read_store.list_strategy_specs(
+        lifecycle_state=validated_lifecycle_state,
+        source_kind=source_kind,
+        persona_id=persona_id,
+        include_retired=include_retired,
+    )
+    dataset_available = read_store.dataset_source("strategy_specs") != "missing"
+    surface_state = _kw05_surface_state(
+        "strategy_specs",
+        snapshot_at=snapshot_at,
+        has_data=dataset_available,
+    )
+
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "items": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "page_size": page_size,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"strategy_spec_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}")
+async def get_strategy_spec_detail(
+    strategy_id: str,
+    version: str = Query(default="current"),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    strategy_exists = read_store.get_strategy_spec(strategy_id)
+    if not strategy_exists:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec not found",
+            f"Strategy spec family {strategy_id} does not exist",
+        )
+
+    detail = read_store.get_strategy_spec_detail(strategy_id, version_selector=version)
+    if not detail:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec version not found",
+            f"Version {version} does not exist for strategy {strategy_id}",
+        )
+
+    snapshot_at = utc_now()
+    detail_surface = _kw05_surface_state(
+        "strategy_specs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    citation_bundle = json.loads(json.dumps(detail.get("citation_bundle") or {}))
+    citation_surface = "partial" if not any(citation_bundle.values()) else detail_surface
+    ancestry_surface = (
+        "degraded"
+        if detail.get("parent_spec_version_id") is None and str(version).strip() not in {"", "current"}
+        else detail_surface
+    )
+
+    return {
+        "object_ref": json.loads(json.dumps(detail.get("object_ref") or {})),
+        "strategy_id": detail.get("strategy_id"),
+        "spec_version_id": detail.get("spec_version_id"),
+        "spec_version": detail.get("spec_version"),
+        "parent_spec_version_id": detail.get("parent_spec_version_id"),
+        "derived_from_source_refs": list(detail.get("derived_from_source_refs") or []),
+        "lifecycle_state": detail.get("lifecycle_state"),
+        "title": detail.get("title"),
+        "hypothesis": detail.get("hypothesis"),
+        "objective": detail.get("objective"),
+        "market_scope": json.loads(json.dumps(detail.get("market_scope") or {})),
+        "execution_profile": json.loads(json.dumps(detail.get("execution_profile") or {})),
+        "evaluation_plan": json.loads(json.dumps(detail.get("evaluation_plan") or {})),
+        "governance": json.loads(json.dumps(detail.get("governance") or {})),
+        "citation_bundle": citation_bundle,
+        "allowedActions": json.loads(json.dumps(detail.get("allowedActions") or {})),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "strategy_spec_detail": detail_surface,
+                "citation_bundle": citation_surface,
+                "version_ancestry": ancestry_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}/versions")
+async def list_strategy_spec_versions(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    versions = read_store.list_strategy_spec_versions(strategy_id)
+    if not versions and not read_store.get_strategy_spec(strategy_id):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec not found",
+            f"Strategy spec family {strategy_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return {
+        "strategy_id": strategy_id,
+        "versions": versions,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "version_history": _kw05_surface_state(
+                    "strategy_specs",
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                )
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}/compare")
+async def compare_strategy_spec_versions(
+    strategy_id: str,
+    left_version: Optional[str] = None,
+    right_version: Optional[str] = None,
+    base_version: Optional[str] = None,
+    target_version: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    left_selector, right_selector = _kw05_compare_selectors(
+        left_version=left_version,
+        right_version=right_version,
+        base_version=base_version,
+        target_version=target_version,
+    )
+    if left_selector == right_selector:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Compare requires two distinct versions",
+            "left_version and right_version must identify different versions",
+            precondition_failed="left_version",
+        )
+
+    left_detail = read_store.get_strategy_spec_detail(strategy_id, version_selector=left_selector)
+    right_detail = read_store.get_strategy_spec_detail(strategy_id, version_selector=right_selector)
+    if not left_detail or not right_detail:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec version not found",
+            f"Cannot compare missing versions for strategy {strategy_id}",
+        )
+    if not (left_detail.get("allowedActions") or {}).get("canCompare") or not (
+        right_detail.get("allowedActions") or {}
+    ).get("canCompare"):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_STATE,
+            "One or more versions cannot be compared",
+            "Compare accepts only candidate, approved, or retired strategy spec versions",
+            precondition_failed="lifecycle_state",
+        )
+
+    payload = read_store.compare_strategy_spec_versions(
+        strategy_id,
+        left_selector=left_selector,
+        right_selector=right_selector,
+    )
+    if not payload:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec version not found",
+            f"Cannot compare missing versions for strategy {strategy_id}",
+        )
+
+    snapshot_at = utc_now()
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "strategy_spec_compare": _kw05_surface_state(
+                "strategy_specs",
+                snapshot_at=snapshot_at,
+                has_data=True,
+            )
+        },
+    }
+    return payload
+
+
 def _kw01_surface_state(
     dataset: str,
     *,
@@ -6583,11 +8974,17 @@ def _kw01_surface_state(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
 ) -> str:
+    source = read_store.dataset_source(
+        dataset,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
     surface = _dataset_surface_status(
         dataset,
         snapshot_at=snapshot_at,
         has_data=has_data,
         missing_message=missing_message,
+        source=source,
     )
     if surface.get("status") == "unavailable":
         return "unavailable"
@@ -6663,7 +9060,10 @@ async def get_institutional_memory_entry(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    entry = read_store.get_institutional_memory_entry(entry_id)
+    entry = read_store.get_institutional_memory_entry(
+        entry_id,
+        include_snapshot_fallback=False,
+    )
     if entry is None:
         return JSONResponse(
             status_code=404,
@@ -8138,6 +10538,35 @@ def get_consultation_evidence(
             "staleness": _meta_staleness(),
         },
     }
+
+
+@app.get("/api/v1/consultations/{session_id}/transcript")
+def get_consultation_transcript(
+    session_id: str,
+    page_token: Optional[str] = None,
+    page_size: int = 50,
+    from_sequence_no: Optional[int] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-02: Ordered debate transcript for a consultation session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    transcript = read_store.get_consult_transcript(
+        session_id,
+        from_sequence_no=from_sequence_no,
+        page_size=page_size,
+        page_token=page_token,
+    )
+    if transcript is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return transcript
 
 
 @app.get("/api/v1/personas/{persona_id}/consult-policy")

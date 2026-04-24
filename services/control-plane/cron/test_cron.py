@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from models import OpenClawRuntimePin
 from openclaw_client import OpenClawCronClient
@@ -145,6 +147,37 @@ class TestOpenClawCronClient(unittest.TestCase):
         workflow = WORKFLOW_CATALOG["pantheon.ingest"]
         with self.assertRaises(ValueError):
             self.client.prepare_dispatch(workflow, {"strategy_id": "missing-fields"})
+
+    def test_prepare_dispatch_includes_adapter_boundary_refs(self):
+        workflow = WORKFLOW_CATALOG["pantheon.ingest"]
+        payload = {
+            "strategy_id": "strat-001",
+            "title": "Title",
+            "hypothesis": "Hypothesis",
+            "objective": "Objective",
+            "symbols": ["SPY"],
+            "frequency": "daily",
+            "source_refs": ["https://api.openalex.org/works/W1"],
+        }
+        env = {
+            "PANTHEON_WORKSPACE_REF": "workspace-ops",
+            "PANTHEON_AUTH_PROFILE_REF": "auth-ops",
+            "PANTHEON_PERSONA_ID": "persona-ops",
+            "PANTHEON_SESSION_ID": "session-ops",
+            "PANTHEON_TRACE_ID": "trace-ops",
+            "PANTHEON_REQUEST_ID": "request-ops",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            client = OpenClawCronClient(runtime_pin=self.client.runtime_pin)
+            request = client.prepare_dispatch(workflow, payload)
+
+        self.assertEqual(
+            request["pantheon_adapter"]["integration_boundary"],
+            "pantheon-openclaw-gateway-adapter",
+        )
+        self.assertEqual(request["pantheon_adapter"]["workspace_ref"], "workspace-ops")
+        self.assertEqual(request["pantheon_adapter"]["auth_profile_ref"], "auth-ops")
+        self.assertEqual(request["pantheon_adapter"]["credential_sharing"], "disallowed")
 
 
 class GatewayRuntimeSpy:

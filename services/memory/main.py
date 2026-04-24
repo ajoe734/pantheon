@@ -1,25 +1,33 @@
-"""
-services/memory — minimal HTTP service.
-
-Exposes the institutional memory store as a deployable service.
-
-Routes
-------
-  GET  /__health__              liveness probe
-  POST /api/memory/entries      store a memory entry
-  GET  /api/memory/entries      list entries (optional ?scope= filter)
-"""
+"""HTTP facade for the canonical institutional memory store."""
 from __future__ import annotations
 
 import os
-import uuid
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
+
+from .institutional_memory_store import (
+    InstitutionalMemoryEntry,
+    InstitutionalMemoryError,
+    InstitutionalMemoryStore,
+)
 
 app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
 
-_entries: List[Dict[str, Any]] = []
+
+def _store_path() -> Path:
+    explicit = os.getenv("PANTHEON_MEMORY_STORE", "").strip()
+    if explicit:
+        return Path(explicit)
+    data_dir = Path(os.getenv("PANTHEON_MEMORY_DATA_DIR", "/tmp/pantheon/memory"))
+    return data_dir / "institutional_memory_entries.json"
+
+
+def _store() -> InstitutionalMemoryStore:
+    path = _store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return InstitutionalMemoryStore(path=path)
 
 
 @app.get("/__health__")
@@ -29,16 +37,38 @@ async def health():
 
 @app.post("/api/memory/entries", status_code=201)
 async def store_entry(payload: Dict[str, Any]):
-    entry_id = payload.get("entry_id") or f"mem-{uuid.uuid4().hex[:12]}"
-    payload.setdefault("entry_id", entry_id)
-    _entries.append(payload)
-    return {"entry_id": entry_id}
+    try:
+        entry = InstitutionalMemoryEntry.from_dict(payload)
+        saved = _store().create(entry)
+    except (InstitutionalMemoryError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_entry", "message": str(exc)}) from exc
+    return {"entry_id": saved.entry_id}
 
 
 @app.get("/api/memory/entries")
-async def list_entries(scope: Optional[str] = Query(default=None)):
-    results = _entries if scope is None else [e for e in _entries if e.get("scope") == scope]
-    return {"entries": results, "count": len(results)}
+async def list_entries(
+    knowledge_type: Optional[str] = Query(default=None),
+    scope: Optional[str] = Query(default=None),
+    scope_filter: Optional[str] = Query(default=None),
+    contributing_persona_id: Optional[str] = Query(default=None),
+    active_only: bool = Query(default=True),
+):
+    entries = _store().list(
+        knowledge_type=knowledge_type,
+        scope=scope,
+        scope_filter=scope_filter,
+        contributing_persona_id=contributing_persona_id,
+        active_only=active_only,
+    )
+    return {"entries": [entry.to_dict() for entry in entries], "count": len(entries)}
+
+
+@app.get("/api/memory/entries/{entry_id}")
+async def get_entry(entry_id: str):
+    entry = _store().get(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail={"error": "entry_not_found", "entry_id": entry_id})
+    return entry.to_dict()
 
 
 if __name__ == "__main__":

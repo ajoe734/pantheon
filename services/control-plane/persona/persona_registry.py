@@ -629,6 +629,15 @@ class PersonaSessionStore:
         self._save()
         return updated
 
+    def activate(self, session_id: str) -> SessionPersona:
+        session = self.require(session_id)
+        updated = SessionPersona.from_dict(
+            {**session.to_dict(), "status": SessionStatus.ACTIVE.value}
+        )
+        self._store[session_id] = updated
+        self._save()
+        return updated
+
     def quarantine(self, session_id: str) -> SessionPersona:
         session = self.require(session_id)
         updated = SessionPersona.from_dict(
