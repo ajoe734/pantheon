@@ -276,8 +276,9 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
         return False
 
     agent = agent_config_for(config, target_agent)
+    context_files = event.get("context_files") or execution_context_files(config, event.get("task_id"))
+    event["context_files"] = context_files
     message = render_wakeup_message(config, event, target_agent)
-    context_files = execution_context_files(config, event.get("task_id"))
     queue_payload = {
         "event_id": new_runtime_id("evt"),
         "created_at": utc_now(),

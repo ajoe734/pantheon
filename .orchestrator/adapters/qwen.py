@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
@@ -19,10 +20,15 @@ from common import (
 
 
 QWEN_SETTINGS_PATH = Path.home() / ".qwen" / "settings.json"
+QWEN_OAUTH_FREE_TIER_END_DATE = date(2026, 4, 15)
 
 
 def _qwen_settings() -> dict:
     return load_json(QWEN_SETTINGS_PATH, default={}) or {}
+
+
+def _today_utc() -> date:
+    return datetime.now(timezone.utc).date()
 
 
 def _allow_inbox_fallback(config: dict | None = None) -> bool:
@@ -48,13 +54,30 @@ def _saved_auth_ready(cli: str | None) -> bool:
     return bool(output) and "no authentication method configured" not in output
 
 
+def _selected_auth_type(runtime: dict, settings: dict) -> str:
+    return str(runtime.get("auth_type") or settings.get("security", {}).get("auth", {}).get("selectedType") or "").strip()
+
+
+def _auth_type_blocked_reason(auth_type: str | None, today: date | None = None) -> str | None:
+    if str(auth_type or "").strip() != "qwen-oauth":
+        return None
+    if (today or _today_utc()) < QWEN_OAUTH_FREE_TIER_END_DATE:
+        return None
+    return (
+        "Qwen OAuth free tier was discontinued on 2026-04-15; "
+        "switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials."
+    )
+
+
 def _qwen_auth_ready(runtime: dict) -> bool:
     cli = command_exists(runtime.get("cli") or "qwen")
+    settings = _qwen_settings()
+    auth_type = _selected_auth_type(runtime, settings)
+    if _auth_type_blocked_reason(auth_type):
+        return False
     if _saved_auth_ready(cli):
         return True
 
-    settings = _qwen_settings()
-    auth_type = str(runtime.get("auth_type") or settings.get("security", {}).get("auth", {}).get("selectedType") or "").strip()
     if auth_type == "openai":
         return bool(_configured_value(runtime, "openai_api_key", "OPENAI_API_KEY"))
     if auth_type == "anthropic":
@@ -93,9 +116,14 @@ class QwenAdapter(BaseAdapter):
         provider = self.config.get("providers", {}).get("qwen", {})
         runtime = provider.get("qwen", {})
         cli = command_exists(runtime.get("cli") or "qwen")
+        settings = _qwen_settings()
+        auth_type = _selected_auth_type(runtime, settings)
+        auth_blocked_reason = _auth_type_blocked_reason(auth_type)
         auth_ready = _qwen_auth_ready(runtime)
         supported = bool(cli and auth_ready)
-        if cli and auth_ready:
+        if auth_blocked_reason:
+            notes = auth_blocked_reason
+        elif cli and auth_ready:
             notes = "Uses the official Qwen Code CLI in non-interactive mode with standalone Qwen authentication."
         elif cli:
             notes = "Qwen Code CLI is installed but not authenticated/configured for non-interactive use."

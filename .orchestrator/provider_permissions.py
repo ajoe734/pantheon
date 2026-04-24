@@ -4,10 +4,23 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from common import ROOT, command_exists, config_path, load_config, load_json, run_command, to_bool, utc_now, write_json
+from common import (
+    ROOT,
+    claude_auth_ready,
+    claude_credentials_path,
+    command_exists,
+    config_path,
+    load_config,
+    load_json,
+    run_command,
+    to_bool,
+    utc_now,
+    write_json,
+)
 
 WORKSPACE_SETTINGS_PATH = ROOT / ".vscode" / "settings.json"
 CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
@@ -19,6 +32,7 @@ CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
 COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
+QWEN_OAUTH_FREE_TIER_END_DATE = date(2026, 4, 15)
 
 
 def _find_extension(prefix: str) -> tuple[Path | None, str | None]:
@@ -50,6 +64,10 @@ def _gemini_settings() -> dict[str, Any]:
 
 def _qwen_settings() -> dict[str, Any]:
     return load_json(QWEN_SETTINGS_PATH, default={}) or {}
+
+
+def _today_utc() -> date:
+    return datetime.now(timezone.utc).date()
 
 
 def _truthy_env(name: str) -> bool:
@@ -146,11 +164,18 @@ def _json_command(command: list[str]) -> dict[str, Any]:
         return {}
 
 
-def _claude_auth_ready(binary: str | None) -> bool:
-    if not binary:
-        return False
-    payload = _json_command([binary, "auth", "status"])
-    return bool(payload.get("loggedIn"))
+def _provider_runtime_env(config: dict[str, Any], provider_id: str) -> dict[str, str]:
+    env = dict(os.environ)
+    runtime = (config.get("providers", {}).get(provider_id, {}) or {}).get("runtime", {}) or {}
+    home = str(runtime.get("home") or "").strip()
+    if home:
+        env["HOME"] = os.path.expanduser(home)
+    extra_env = runtime.get("env", {}) or {}
+    for key, value in extra_env.items():
+        if value is None:
+            continue
+        env[str(key)] = os.path.expanduser(str(value))
+    return env
 
 
 def _gh_auth_token(binary: str | None) -> str | None:
@@ -200,6 +225,37 @@ def _qwen_saved_auth_ready(binary: str | None) -> bool:
     result = run_command([binary, "auth", "status"])
     output = ((result.stdout or "") + (result.stderr or "")).lower()
     return bool(output) and "no authentication method configured" not in output
+
+
+def _qwen_auth_type(runtime: dict[str, Any], settings: dict[str, Any]) -> str:
+    return str(runtime.get("auth_type") or settings.get("security", {}).get("auth", {}).get("selectedType") or "").strip()
+
+
+def _qwen_oauth_free_tier_active(today: date | None = None) -> bool:
+    return (today or _today_utc()) < QWEN_OAUTH_FREE_TIER_END_DATE
+
+
+def _qwen_auth_type_blocked_reason(auth_type: str | None, today: date | None = None) -> str | None:
+    if str(auth_type or "").strip() != "qwen-oauth":
+        return None
+    if _qwen_oauth_free_tier_active(today):
+        return None
+    return (
+        "Qwen OAuth free tier was discontinued on 2026-04-15; "
+        "switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials."
+    )
+
+
+def _qwen_env_auth_ready(runtime: dict[str, Any], auth_type: str) -> bool:
+    if auth_type == "openai":
+        return bool(_configured_value(runtime, "openai_api_key", "OPENAI_API_KEY"))
+    if auth_type == "anthropic":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if auth_type == "gemini":
+        return bool(os.environ.get("GEMINI_API_KEY"))
+    if auth_type == "vertex-ai":
+        return bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
+    return False
 
 
 def _configured_provider_binary(config: dict[str, Any], provider: str, section: str, default: str) -> str | None:
@@ -294,6 +350,14 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(cd * && python3 -m py_compile *)",
         "Bash(python3 */smoke_test.py*)",
         "Bash(cd * && python3 smoke_test.py*)",
+        "Bash(docker ps*)",
+        "Bash(docker images*)",
+        "Bash(docker inspect*)",
+        "Bash(docker logs*)",
+        "Bash(docker compose ps*)",
+        "Bash(docker compose images*)",
+        "Bash(docker exec * python3 -c \"import*\")",
+        "Bash(docker exec * python -c \"import*\")",
         "Bash(AI_NAME=* python3 scripts/ai_status.py *)",
         "Bash(AI_NAME=* python3 */scripts/ai_status.py *)",
         "Bash(AI_NAME=* cd * && python3 scripts/ai_status.py *)",
@@ -305,7 +369,20 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(apt *)",
         "Bash(npm install *)",
         "Bash(pip install *)",
-        "Bash(docker *)",
+        "Bash(docker build *)",
+        "Bash(docker pull *)",
+        "Bash(docker push *)",
+        "Bash(docker run *)",
+        "Bash(docker rm *)",
+        "Bash(docker stop *)",
+        "Bash(docker start *)",
+        "Bash(docker restart *)",
+        "Bash(docker kill *)",
+        "Bash(docker cp *)",
+        "Bash(docker compose up *)",
+        "Bash(docker compose down *)",
+        "Bash(docker compose run *)",
+        "Bash(docker compose exec *)",
     ]
     deny = [
         "Bash(git reset --hard*)",
@@ -417,6 +494,78 @@ def desired_gemini_settings(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _claude_provider_report(
+    config: dict[str, Any],
+    *,
+    provider_id: str,
+    claude_path: Path | None,
+    claude_version: str | None,
+    claude_local: dict[str, Any],
+    claude_permissions: dict[str, Any],
+    workspace_settings: dict[str, Any],
+    claude_applied: bool,
+) -> dict[str, Any]:
+    provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
+    runtime_env = _provider_runtime_env(config, provider_id)
+    provider_binary = _configured_provider_binary(config, provider_id, "runtime", "claude")
+    provider_auth_ready = claude_auth_ready(provider_binary, env=runtime_env)
+    provider_home = str((provider_settings.get("runtime", {}) or {}).get("home") or "").strip()
+    credentials_path = claude_credentials_path(runtime_env)
+    installed = bool(provider_binary or claude_path or claude_local or credentials_path.exists())
+    notes = [
+        "Verified settings keys from the installed Claude Code extension package and schema.",
+        "Claude CLI worker support becomes active when the `claude` binary is on PATH and authenticated; otherwise the adapter falls back to inbox delivery.",
+        "The local approval broker uses committed Claude hooks plus the orchestrator approval queue instead of VS Code UI injection.",
+    ]
+    if provider_id != "claude":
+        notes.append(f"Provider `{provider_id}` uses its own Claude runtime HOME/profile when configured.")
+    return {
+        "installed": installed,
+        "host_layer": "CLI + VS Code extension" if provider_binary and claude_path else ("CLI" if provider_binary else "VS Code extension"),
+        "delivery_mode": provider_settings.get("delivery_mode", "claude_cli"),
+        "approval_mode": claude_permissions.get("defaultMode")
+        or _workspace_setting(workspace_settings, "claudeCode.initialPermissionMode")
+        or "default",
+        "persistent_allow_supported": True,
+        "default_auto_approve_supported": True,
+        "full_access_supported": True,
+        "per_tool_allow_supported": True,
+        "local_cli_worker_supported": bool(provider_binary and provider_auth_ready),
+        "vscode_link_supported": bool(claude_path),
+        "cloud_agent_supported": False,
+        "supports_auto_approve": bool(provider_binary and provider_auth_ready),
+        "supports_defer_resume": bool(provider_binary),
+        "auth_ready": provider_auth_ready,
+        "supported_models": claude_local.get("availableModels", []) or [],
+        "selected_model": claude_local.get("model"),
+        "applied": claude_applied,
+        "verified": "verified" if installed else "unavailable",
+        "version": claude_version,
+        "paths": {
+            "binary": provider_binary,
+            "extension": str(claude_path) if claude_path else None,
+            "workspace_settings": str(WORKSPACE_SETTINGS_PATH),
+            "project_settings": str(CLAUDE_LOCAL_SETTINGS_PATH),
+            "mcp_config": str(config_path(config, "claude_mcp_config")),
+            "home": os.path.expanduser(provider_home) if provider_home else None,
+            "credentials": str(credentials_path),
+        },
+        "settings": {
+            "claudeCode.initialPermissionMode": _workspace_setting(workspace_settings, "claudeCode.initialPermissionMode"),
+            "claudeCode.allowDangerouslySkipPermissions": _workspace_setting(
+                workspace_settings, "claudeCode.allowDangerouslySkipPermissions"
+            ),
+            "permissions.defaultMode": claude_permissions.get("defaultMode"),
+            "permissions.allow_count": len(claude_permissions.get("allow", []) or []),
+            "permissions.ask_count": len(claude_permissions.get("ask", []) or []),
+            "permissions.deny_count": len(claude_permissions.get("deny", []) or []),
+            "hooks.PreToolUse": bool(claude_local.get("hooks", {}).get("PreToolUse")),
+            "hooks.PermissionRequest": bool(claude_local.get("hooks", {}).get("PermissionRequest")),
+        },
+        "notes": notes,
+    }
+
+
 def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any]:
     config = config or load_config()
     from adapters import build_adapter
@@ -441,26 +590,22 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     codex_binary = command_exists("codex")
     gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
     qwen_binary = _configured_provider_binary(config, "qwen", "qwen", "qwen")
-    claude_binary = _configured_provider_binary(config, "claude", "runtime", "claude")
     copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
     gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
     gh_version = _gh_version(gh_binary)
     gh_auth_ready = _gh_auth_ready(gh_binary)
-    claude_auth_ready = _claude_auth_ready(claude_binary)
     copilot_auth_ready = _copilot_auth_ready(gh_binary)
     copilot_settings = config.get("providers", {}).get("copilot", {})
     qwen_runtime = config.get("providers", {}).get("qwen", {}).get("qwen", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
     qwen_version = (run_command([qwen_binary, "--version"]).stdout or "").strip() if qwen_binary else None
-    qwen_auth_type = str(
-        qwen_runtime.get("auth_type") or qwen_settings.get("security", {}).get("auth", {}).get("selectedType") or ""
-    ).strip()
+    qwen_auth_type = _qwen_auth_type(qwen_runtime, qwen_settings)
     qwen_model = _configured_value(qwen_runtime, "model", "OPENAI_MODEL") or str(qwen_settings.get("model", {}).get("name") or "").strip() or None
     qwen_openai_api_key = _configured_value(qwen_runtime, "openai_api_key", "OPENAI_API_KEY")
     qwen_openai_base_url = _configured_value(qwen_runtime, "openai_base_url", "OPENAI_BASE_URL")
     qwen_saved_auth = _qwen_saved_auth_ready(qwen_binary)
-    qwen_auth_ready = qwen_saved_auth or (qwen_auth_type == "openai" and bool(qwen_openai_api_key))
-    claude_installed = bool(claude_path or claude_local or (ROOT / ".claude").exists())
+    qwen_auth_blocked_reason = _qwen_auth_type_blocked_reason(qwen_auth_type)
+    qwen_auth_ready = not qwen_auth_blocked_reason and (qwen_saved_auth or _qwen_env_auth_ready(qwen_runtime, qwen_auth_type))
     gemini_installed = bool(gemini_path or gemini_binary)
     qwen_installed = bool(qwen_binary)
     codex_installed = bool(openai_path or codex_binary)
@@ -501,6 +646,18 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         and _workspace_setting(workspace_settings, "github.copilot.chat.claudeAgent.enabled")
         == desired_workspace["github.copilot.chat.claudeAgent.enabled"]
     )
+    claude_provider_ids = list(
+        dict.fromkeys(
+            [
+                "claude",
+                *[
+                    provider_id
+                    for provider_id, settings in (config.get("providers", {}) or {}).items()
+                    if provider_id != "claude" and (settings or {}).get("delivery_mode") == "claude_cli"
+                ],
+            ]
+        )
+    )
 
     report = {
         "generated_at": utc_now(),
@@ -523,52 +680,18 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             for agent_id, agent in config.get("agents", {}).items()
         },
         "providers": {
-            "claude": {
-                "installed": claude_installed,
-                "host_layer": "CLI + VS Code extension" if claude_binary and claude_path else ("CLI" if claude_binary else "VS Code extension"),
-                "delivery_mode": config.get("providers", {}).get("claude", {}).get("delivery_mode", "claude_cli"),
-                "approval_mode": claude_permissions.get("defaultMode")
-                or _workspace_setting(workspace_settings, "claudeCode.initialPermissionMode")
-                or "default",
-                "persistent_allow_supported": True,
-                "default_auto_approve_supported": True,
-                "full_access_supported": True,
-                "per_tool_allow_supported": True,
-                "local_cli_worker_supported": bool(claude_binary and claude_auth_ready),
-                "vscode_link_supported": bool(claude_path),
-                "cloud_agent_supported": False,
-                "supports_auto_approve": bool(claude_binary and claude_auth_ready),
-                "supports_defer_resume": bool(claude_binary),
-                "auth_ready": claude_auth_ready,
-                "supported_models": claude_local.get("availableModels", []) or [],
-                "selected_model": claude_local.get("model"),
-                "applied": claude_applied,
-                "verified": "verified" if claude_installed else "unavailable",
-                "version": claude_version,
-                "paths": {
-                    "binary": claude_binary,
-                    "extension": str(claude_path) if claude_path else None,
-                    "workspace_settings": str(WORKSPACE_SETTINGS_PATH),
-                    "project_settings": str(CLAUDE_LOCAL_SETTINGS_PATH),
-                    "mcp_config": str(config_path(config, "claude_mcp_config")),
-                },
-                "settings": {
-                    "claudeCode.initialPermissionMode": _workspace_setting(workspace_settings, "claudeCode.initialPermissionMode"),
-                    "claudeCode.allowDangerouslySkipPermissions": _workspace_setting(
-                        workspace_settings, "claudeCode.allowDangerouslySkipPermissions"
-                    ),
-                    "permissions.defaultMode": claude_permissions.get("defaultMode"),
-                    "permissions.allow_count": len(claude_permissions.get("allow", []) or []),
-                    "permissions.ask_count": len(claude_permissions.get("ask", []) or []),
-                    "permissions.deny_count": len(claude_permissions.get("deny", []) or []),
-                    "hooks.PreToolUse": bool(claude_local.get("hooks", {}).get("PreToolUse")),
-                    "hooks.PermissionRequest": bool(claude_local.get("hooks", {}).get("PermissionRequest")),
-                },
-                "notes": [
-                    "Verified settings keys from the installed Claude Code extension package and schema.",
-                    "Claude CLI worker support becomes active when the `claude` binary is on PATH and authenticated; otherwise the adapter falls back to inbox delivery.",
-                    "The local approval broker uses committed Claude hooks plus the orchestrator approval queue instead of VS Code UI injection.",
-                ],
+            **{
+                provider_id: _claude_provider_report(
+                    config,
+                    provider_id=provider_id,
+                    claude_path=claude_path,
+                    claude_version=claude_version,
+                    claude_local=claude_local,
+                    claude_permissions=claude_permissions,
+                    workspace_settings=workspace_settings,
+                    claude_applied=claude_applied,
+                )
+                for provider_id in claude_provider_ids
             },
             "gemini": {
                 "installed": gemini_installed,
@@ -680,10 +803,17 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                     "runtime.approval_mode": qwen_runtime.get("approval_mode"),
                     "runtime.channel": qwen_runtime.get("channel"),
                     "resolved.openai_base_url": qwen_openai_base_url,
+                    "auth_blocked_reason": qwen_auth_blocked_reason,
                 },
                 "notes": [
                     "Qwen is wired as a standalone provider via the official `qwen` CLI rather than through Copilot model routing.",
-                    "Run `qwen auth qwen-oauth` for the official free tier, or set `providers.qwen.qwen.auth_type=openai` plus OPENAI-compatible env vars for a custom endpoint.",
+                    *(
+                        [qwen_auth_blocked_reason, "Use `providers.qwen.qwen.auth_type=openai` plus OPENAI-compatible env vars for a supported non-interactive setup."]
+                        if qwen_auth_blocked_reason
+                        else [
+                            "Run `qwen auth qwen-oauth` for the official free tier, or set `providers.qwen.qwen.auth_type=openai` plus OPENAI-compatible env vars for a custom endpoint."
+                        ]
+                    ),
                 ],
             },
             "copilot": {

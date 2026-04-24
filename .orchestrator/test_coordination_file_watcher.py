@@ -102,6 +102,42 @@ class CoordinationWatcherTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
 
+    def _write_f042_backend_delivery_bundle(self) -> None:
+        (self.front / ".coordination" / "requests" / "F-042-frontend-feedback.yaml").write_text(
+            "feature_id: F-042\nsource_repo: front-ai-trading-system\ntype: frontend-feedback\n",
+            encoding="utf-8",
+        )
+        delivery_dir = self.pantheon / "docs" / "pantheon-delivery" / "F-042"
+        delivery_dir.mkdir(parents=True, exist_ok=True)
+        (delivery_dir / "DELIVERY_NOTE.md").write_text(
+            "# F-042 Delivery Note\n",
+            encoding="utf-8",
+        )
+        (delivery_dir / "CONTRACT_LOCK.json").write_text(
+            '{"feature_id":"F-042","source_payload":".coordination/requests/F-042-frontend-feedback.yaml"}\n',
+            encoding="utf-8",
+        )
+        (self.pantheon / ".coordination" / "responses" / "F-042-backend-delivery.yaml").write_text(
+            "\n".join(
+                [
+                    "feature_id: F-042",
+                    "type: backend-delivery",
+                    "target_repo: ajoe734/front-ai-trading-system",
+                    "workbench: governance-workbench",
+                    "screen_id: screen-governance-promotion-review",
+                    "status: delivered",
+                    "backend_commit: 2222222222222222222222222222222222222222",
+                    "bff_contract_version: pantheon-bff@2222222222222222222222222222222222222222",
+                    "delivery_note_path: docs/pantheon-delivery/F-042/DELIVERY_NOTE.md",
+                    "contract_lock_path: docs/pantheon-delivery/F-042/CONTRACT_LOCK.json",
+                    "followup_expectation: resume the UI cycle against the updated contract.",
+                    "source_payload: .coordination/requests/F-042-frontend-feedback.yaml",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     def test_bff_gap_request_queues_pantheon_worker(self) -> None:
         request = self.front / ".coordination" / "requests" / "F-042-bff-gap.yaml"
         request.write_text(
@@ -132,6 +168,7 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "pantheon-bff-worker")
 
     def test_contract_ready_generates_lovable_packet_and_front_sync_dispatch(self) -> None:
+        self._write_f042_backend_delivery_bundle()
         response = self.pantheon / ".coordination" / "responses" / "F-042-contract-ready.yaml"
         response.write_text(
             "\n".join(
@@ -148,6 +185,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "  screen_spec: docs/screens/F-042-promotion-review.md",
                     "  example_payload: docs/examples/F-042-review-page.json",
                     "  lovable_ui_task: .coordination/responses/F-042-lovable-ui-task.yaml",
+                    "  backend_delivery: .coordination/responses/F-042-backend-delivery.yaml",
                     "endpoints:",
                     "  - GET /api/v1/operator/deployment-review/F-042",
                     "front_actions_required:",
@@ -176,12 +214,16 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertIn("workbench: governance-workbench", lovable_task_text)
         self.assertIn("screen_id: screen-governance-promotion-review", lovable_task_text)
         self.assertIn("frontend_change_spec_path: docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md", lovable_task_text)
+        self.assertIn("- .coordination/responses/F-042-backend-delivery.yaml", lovable_task_text)
         mirrored_contract = self.front / ".coordination" / "responses" / "F-042-contract-ready.yaml"
+        mirrored_backend_delivery = self.front / ".coordination" / "responses" / "F-042-backend-delivery.yaml"
         mirrored_task = self.front / ".coordination" / "responses" / "F-042-lovable-ui-task.yaml"
         mirrored_prompt = self.front / ".coordination" / "responses" / "F-042-lovable-prompt.md"
         mirrored_handoff_contract = self.front / "docs" / "pantheon-handoffs" / "F-042" / "F-042-contract-ready.yaml"
         mirrored_handoff_task = self.front / "docs" / "pantheon-handoffs" / "F-042" / "F-042-lovable-ui-task.yaml"
         mirrored_handoff_prompt = self.front / "docs" / "pantheon-handoffs" / "F-042" / "F-042-lovable-prompt.md"
+        mirrored_delivery_note = self.front / "docs" / "pantheon-delivery" / "F-042" / "DELIVERY_NOTE.md"
+        mirrored_contract_lock = self.front / "docs" / "pantheon-delivery" / "F-042" / "CONTRACT_LOCK.json"
         mirrored_bff = self.front / "docs" / "pantheon-handoffs" / "F-042" / "bff" / "F-042-promotion-review.md"
         mirrored_screen = self.front / "docs" / "pantheon-handoffs" / "F-042" / "screens" / "F-042-promotion-review.md"
         mirrored_example = self.front / "docs" / "pantheon-handoffs" / "F-042" / "examples" / "F-042-review-page.json"
@@ -189,11 +231,14 @@ class CoordinationWatcherTests(unittest.TestCase):
         mirrored_gap_template = self.front / ".coordination" / "requests" / "F-042-bff-gap.example.yaml"
         mirrored_done_template = self.front / ".coordination" / "requests" / "F-042-ui-done.example.yaml"
         self.assertTrue(mirrored_contract.exists())
+        self.assertTrue(mirrored_backend_delivery.exists())
         self.assertTrue(mirrored_task.exists())
         self.assertTrue(mirrored_prompt.exists())
         self.assertTrue(mirrored_handoff_contract.exists())
         self.assertTrue(mirrored_handoff_task.exists())
         self.assertTrue(mirrored_handoff_prompt.exists())
+        self.assertTrue(mirrored_delivery_note.exists())
+        self.assertTrue(mirrored_contract_lock.exists())
         self.assertTrue(mirrored_bff.exists())
         self.assertTrue(mirrored_screen.exists())
         self.assertTrue(mirrored_example.exists())
@@ -201,6 +246,7 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertTrue(mirrored_gap_template.exists())
         self.assertTrue(mirrored_done_template.exists())
         self.assertIn("mirror_only: true", mirrored_contract.read_text(encoding="utf-8"))
+        self.assertIn("mirror_only: true", mirrored_backend_delivery.read_text(encoding="utf-8"))
         self.assertIn("handoff_bundle_dir: docs/pantheon-handoffs/F-042", mirrored_task.read_text(encoding="utf-8"))
         self.assertIn("Completion handoff:", mirrored_prompt.read_text(encoding="utf-8"))
         queue = load_jsonl(Path(self.config["paths"]["event_queue"]))
@@ -208,6 +254,7 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "front-sync-worker")
 
     def test_contract_ready_artifacts_are_mirrored_into_front_repo_paths(self) -> None:
+        self._write_f042_backend_delivery_bundle()
         response = self.pantheon / ".coordination" / "responses" / "F-042-contract-ready.yaml"
         response.write_text(
             "\n".join(
@@ -222,6 +269,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "  screen_spec: docs/screens/F-042-promotion-review.md",
                     "  example_payload: docs/examples/F-042-review-page.json",
                     "  lovable_ui_task: .coordination/responses/F-042-lovable-ui-task.yaml",
+                    "  backend_delivery: .coordination/responses/F-042-backend-delivery.yaml",
                     "acceptance:",
                     "  - page renders without mock data",
                 ]
@@ -235,6 +283,9 @@ class CoordinationWatcherTests(unittest.TestCase):
 
         self.assertTrue(changed)
         mirrored_contract = self.front / ".coordination" / "responses" / "F-042-contract-ready.yaml"
+        mirrored_backend_delivery = self.front / ".coordination" / "responses" / "F-042-backend-delivery.yaml"
+        mirrored_delivery_note = self.front / "docs" / "pantheon-delivery" / "F-042" / "DELIVERY_NOTE.md"
+        mirrored_contract_lock = self.front / "docs" / "pantheon-delivery" / "F-042" / "CONTRACT_LOCK.json"
         mirrored_bff = self.front / "docs" / "pantheon-handoffs" / "F-042" / "bff" / "F-042-promotion-review.md"
         mirrored_screen = self.front / "docs" / "pantheon-handoffs" / "F-042" / "screens" / "F-042-promotion-review.md"
         mirrored_example = self.front / "docs" / "pantheon-handoffs" / "F-042" / "examples" / "F-042-review-page.json"
@@ -242,6 +293,9 @@ class CoordinationWatcherTests(unittest.TestCase):
         mirrored_task = self.front / ".coordination" / "responses" / "F-042-lovable-ui-task.yaml"
 
         self.assertTrue(mirrored_contract.exists())
+        self.assertTrue(mirrored_backend_delivery.exists())
+        self.assertTrue(mirrored_delivery_note.exists())
+        self.assertTrue(mirrored_contract_lock.exists())
         self.assertTrue(mirrored_bff.exists())
         self.assertTrue(mirrored_screen.exists())
         self.assertTrue(mirrored_example.exists())
@@ -252,7 +306,12 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertIn("bff_contract: docs/pantheon-handoffs/F-042/bff/F-042-promotion-review.md", mirrored_contract_text)
         self.assertIn("screen_spec: docs/pantheon-handoffs/F-042/screens/F-042-promotion-review.md", mirrored_contract_text)
         self.assertIn("example_payload: docs/pantheon-handoffs/F-042/examples/F-042-review-page.json", mirrored_contract_text)
+        self.assertIn("backend_delivery: .coordination/responses/F-042-backend-delivery.yaml", mirrored_contract_text)
         self.assertIn("bff_spec_path: docs/pantheon-handoffs/F-042/bff/F-042-promotion-review.md", mirrored_contract_text)
+
+        mirrored_backend_delivery_text = mirrored_backend_delivery.read_text(encoding="utf-8")
+        self.assertIn("delivery_note_path: docs/pantheon-delivery/F-042/DELIVERY_NOTE.md", mirrored_backend_delivery_text)
+        self.assertIn("contract_lock_path: docs/pantheon-delivery/F-042/CONTRACT_LOCK.json", mirrored_backend_delivery_text)
 
         mirrored_task_text = mirrored_task.read_text(encoding="utf-8")
         self.assertIn("bff_spec_path: docs/pantheon-handoffs/F-042/bff/F-042-promotion-review.md", mirrored_task_text)
@@ -260,6 +319,7 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertIn("frontend_change_spec_path: docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md", mirrored_task_text)
         self.assertIn("handoff_bundle_dir: docs/pantheon-handoffs/F-042", mirrored_task_text)
         self.assertIn("- docs/pantheon-handoffs/F-042/examples/F-042-review-page.json", mirrored_task_text)
+        self.assertIn("- .coordination/responses/F-042-backend-delivery.yaml", mirrored_task_text)
 
     def test_contract_ready_artifacts_fields_are_mirrored_into_front_repo(self) -> None:
         (self.pantheon / "docs" / "bff" / "PKT-003-lineage-view.md").write_text(

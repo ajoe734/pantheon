@@ -64,9 +64,12 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error when talking to gemini api\b", re.IGNORECASE),
     re.compile(r'"error"\s*:\s*"rate_limit"', re.IGNORECASE),
     re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE),
+    re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
     re.compile(r"quota exceeded", re.IGNORECASE),
     re.compile(r"free daily quota has been reached", re.IGNORECASE),
     re.compile(r"you have no quota", re.IGNORECASE),
+    re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
+    re.compile(r"invalid authentication credentials", re.IGNORECASE),
     re.compile(
         r"^reason:\s*.*\b("
         r"terminalquotaerror|retryablequotaerror|quota_exhausted|resource_exhausted|"
@@ -454,7 +457,15 @@ def stamp_supervisor_runtime_state(
 
     desired_focus = "planning" if discussion_planning_is_active(planning_state) else "execution"
     previous_focus_valid = previous_focus in {"planning", "execution"}
-    if previous_focus_valid and previous_focus != desired_focus and mode_has_activity(occupancy.get(previous_focus)):
+    # Discussion planning is additive: keep the visible focus on planning even if
+    # execution still has inflight work that should continue to drain in parallel.
+    if desired_focus == "planning":
+        supervisor_state["focus_mode"] = "planning"
+        supervisor_state["mode_status"] = "active" if mode_has_activity(occupancy.get("planning")) else "idle"
+        supervisor_state["mode_switch_requested"] = None
+        if previous_focus_valid and previous_focus != "planning":
+            supervisor_state["last_mode_switch_at"] = heartbeat_at
+    elif previous_focus_valid and previous_focus != desired_focus and mode_has_activity(occupancy.get(previous_focus)):
         supervisor_state["focus_mode"] = previous_focus
         supervisor_state["mode_status"] = "draining"
         supervisor_state["mode_switch_requested"] = desired_focus
@@ -728,9 +739,19 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         event_id = event.get("event_id")
         if not event_id:
             continue
+        existing_record = state.get("queue", {}).get("events", {}).get(event_id, {})
+        related_workers = [
+            worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id
+        ]
+        if queue_event_is_orphaned(config, event, existing_record, related_workers):
+            continue
         record = queue_status(state, event_id)
         if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
             continue
+        if record.get("status") == "retry_backoff":
+            next_retry_at = _parse_iso_utc(str(record.get("next_retry_at") or ""))
+            if next_retry_at is not None and next_retry_at > datetime.now(timezone.utc):
+                continue
         active_worker = next(
             (
                 worker
@@ -825,7 +846,8 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 failure_reason,
                 failure_kind=str(failure.get("kind") or ""),
             )
-            if failure.get("kind") == "capacity":
+            failure_kind = str(failure.get("kind") or "")
+            if should_pause_dispatch_for_failure_kind(failure_kind):
                 mark_provider_dispatch_paused(
                     config,
                     state,
@@ -833,15 +855,45 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     failure_reason,
                     task_id=str(request.task_id or ""),
                     failure_kind=str(failure.get("kind") or ""),
+                    pause_kind=failure_kind,
                     raw_ref=raw_ref,
                 )
+            if is_retryable_capacity_failure_kind(failure_kind):
+                retry = worker_retry_settings(config, request.provider)
+                retry_count = int(record.get("retry_count", 0))
+                max_attempts = int(retry.get("max_attempts", 5))
+                if retry_count < max_attempts:
+                    schedule_queue_event_retry(
+                        config,
+                        record,
+                        provider=request.provider,
+                        reason=failure_summary.get("summary") or failure_reason,
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "dispatch_retry_scheduled",
+                            "provider": request.provider,
+                            "task_id": request.task_id,
+                            "queue_event_id": event_id,
+                            "message": (
+                                f"Transient dispatch failure detected ({failure.get('label')}); "
+                                f"retry {record.get('retry_count')} scheduled at {record.get('next_retry_at')}: "
+                                f"{failure_summary.get('summary') or failure_reason}"
+                            ),
+                            "next_retry_at": record.get("next_retry_at"),
+                            "raw_ref": raw_ref,
+                        },
+                    )
+                    changed = True
+                    continue
             reassigned_to = maybe_reassign_task_after_worker_failure(
                 config,
                 state,
                 failure_worker,
                 failure_summary.get("summary") or failure_reason,
                 terminal=True,
-                force=bool(failure.get("kind") == "capacity"),
+                force=is_terminal_quota_failure_kind(failure_kind),
                 failure_count=failure_count,
             )
             if reassigned_to:
@@ -936,6 +988,8 @@ def discussion_planning_needs_materialization(config: dict[str, Any], planning_s
     if str(planning_state.get("status") or "").strip() != "accepted":
         return False
     if str(planning_state.get("human_gate_status") or "").strip() != "approved":
+        return False
+    if str(planning_state.get("materialized_at") or "").strip():
         return False
 
     proposed = [payload for payload in list(planning_state.get("proposed_execution_tasks") or []) if isinstance(payload, dict)]
@@ -1286,22 +1340,29 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "forbidden",
         "permission denied",
     }
-    capacity_markers = {
-        "status: 429",
+    terminal_quota_markers = {
         "status: 402",
-        "quota_exhausted",
-        "resource_exhausted",
-        "rate limit",
-        "rate limited",
+        "credit balance is too low",
+        "billing_error",
         "hit your limit",
         "exhausted your capacity",
-        "no capacity available",
         "no quota",
         "you have no quota",
         "quota exceeded",
         "free daily quota has been reached",
+        "free tier quota exceeded",
+        "qwen oauth free tier was discontinued",
+        "quota will reset after",
         "terminalquotaerror",
+    }
+    retryable_capacity_markers = {
+        "status: 429",
         "retryablequotaerror",
+        "quota_exhausted",
+        "resource_exhausted",
+        "rate limit",
+        "rate limited",
+        "no capacity available",
     }
     unknown_critical_markers = {
         "an unexpected critical error occurred",
@@ -1310,8 +1371,10 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
 
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
-    if any(marker in normalized for marker in capacity_markers):
-        return {"kind": "capacity", "transient": True, "label": "capacity/429"}
+    if any(marker in normalized for marker in terminal_quota_markers):
+        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
+    if any(marker in normalized for marker in retryable_capacity_markers):
+        return {"kind": "capacity_retryable", "transient": True, "label": "capacity/429"}
     if provider == "gemini" and any(marker in normalized for marker in unknown_critical_markers):
         return {"kind": "unknown_critical", "transient": False, "label": "unknown critical error"}
     if any(pattern in normalized for pattern in transient_patterns):
@@ -1333,7 +1396,10 @@ def _parse_iso_utc(ts: str | None) -> datetime | None:
 def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("provider_guardrails", {}) or {})
     settings.setdefault("pause_on_capacity_failure", True)
+    settings.setdefault("pause_on_auth_failure", True)
     settings.setdefault("capacity_pause_seconds", 900)
+    settings.setdefault("auth_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
+    settings.setdefault("quota_terminal_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
 
@@ -1385,6 +1451,26 @@ def agent_dispatch_paused(config: dict[str, Any], state: dict[str, Any], agent_i
     return provider_dispatch_paused(state, provider_id)
 
 
+def is_terminal_quota_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() == "quota_terminal"
+
+
+def is_retryable_capacity_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() in {"capacity", "capacity_retryable"}
+
+
+def is_auth_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() == "auth"
+
+
+def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
+    return (
+        is_terminal_quota_failure_kind(kind)
+        or is_retryable_capacity_failure_kind(kind)
+        or is_auth_failure_kind(kind)
+    )
+
+
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1394,16 +1480,24 @@ def mark_provider_dispatch_paused(
     task_id: str | None = None,
     worker_run_id: str | None = None,
     failure_kind: str | None = None,
+    pause_kind: str | None = None,
     raw_ref: str | None = None,
 ) -> bool:
     settings = provider_guardrail_settings(config)
-    if not settings.get("pause_on_capacity_failure", True):
-        return False
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
         return False
     now = datetime.now(timezone.utc)
-    pause_seconds = max(60, int(settings.get("capacity_pause_seconds", 900)))
+    effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
+    if effective_pause_kind == "auth":
+        if not settings.get("pause_on_auth_failure", True):
+            return False
+        pause_seconds_key = "auth_pause_seconds"
+    else:
+        if not settings.get("pause_on_capacity_failure", True):
+            return False
+        pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
+    pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
     bucket = _dispatch_pause_bucket(state)
@@ -1423,11 +1517,19 @@ def mark_provider_dispatch_paused(
         "summary": summary.get("summary"),
         "detail": summary.get("detail"),
         "failure_kind": failure_kind or summary.get("kind"),
+        "pause_kind": effective_pause_kind or failure_kind or summary.get("kind"),
+        "reset_after_seconds": pause_seconds,
         "raw_ref": raw_ref,
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
     if changed:
+        if effective_pause_kind == "quota_terminal":
+            pause_description = "terminal quota failure"
+        elif effective_pause_kind == "auth":
+            pause_description = "authentication failure"
+        else:
+            pause_description = "capacity failure"
         write_activity_log(
             config,
             {
@@ -1436,13 +1538,43 @@ def mark_provider_dispatch_paused(
                 "task_id": task_id,
                 "worker_run_id": worker_run_id,
                 "message": (
-                    f"Paused new dispatches for {provider_id} until {blocked_until_iso} after capacity failure: "
+                    f"Paused new dispatches for {provider_id} until {blocked_until_iso} after {pause_description}: "
                     f"{summary.get('summary')}"
                 ),
                 "raw_ref": raw_ref,
             },
         )
     return changed
+
+
+def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    bucket = _dispatch_pause_bucket(state)
+    if not bucket:
+        return False
+    now = datetime.now(timezone.utc)
+    expired: list[tuple[str, dict[str, Any]]] = []
+    for provider_id, entry in list(bucket.items()):
+        if not isinstance(entry, dict):
+            continue
+        blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
+        if blocked_until is None or blocked_until > now:
+            continue
+        expired.append((provider_id, dict(entry)))
+        bucket.pop(provider_id, None)
+
+    for provider_id, entry in expired:
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_resumed",
+                "provider": provider_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": f"Dispatch pause for {provider_id} expired at {entry.get('blocked_until')}; dispatch is enabled again.",
+                "raw_ref": entry.get("raw_ref"),
+            },
+        )
+    return bool(expired)
 
 
 def record_task_failure_streak(
@@ -1570,7 +1702,31 @@ def known_agent_display_names(config: dict[str, Any]) -> set[str]:
     }
 
 
-def first_viable_agent(config: dict[str, Any], preferred: list[str], exclude: set[str]) -> str | None:
+def sidecar_only_agent_names(config: dict[str, Any]) -> set[str]:
+    return {
+        str(agent_name).strip()
+        for agent_name in ready_dispatch_settings(config).get("sidecar_only_agents", []) or []
+        if str(agent_name).strip()
+    }
+
+
+def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
+    name = str(agent_name or "").strip()
+    if not name:
+        return False
+    if not isinstance(task, dict) or task_is_sidecar(task):
+        return True
+    return name not in sidecar_only_agent_names(config)
+
+
+def first_viable_agent(
+    config: dict[str, Any],
+    preferred: list[str],
+    exclude: set[str],
+    *,
+    state: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+) -> str | None:
     known = known_agent_display_names(config)
     seen: set[str] = set()
     for candidate in preferred:
@@ -1579,6 +1735,10 @@ def first_viable_agent(config: dict[str, Any], preferred: list[str], exclude: se
             continue
         seen.add(name)
         if name in known:
+            if state is not None and agent_dispatch_paused(config, state, name):
+                continue
+            if task is not None and not agent_can_take_task(config, name, task):
+                continue
             return name
     return None
 
@@ -1691,6 +1851,75 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     return False
 
 
+def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+    """Keep task truth aligned when a worker is superseded for higher-priority work."""
+    if not config.get("paths", {}).get("status_file"):
+        return False
+
+    dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or "").strip()
+    task_id = str(worker.get("task_id") or "").strip()
+    target_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or "")).strip()
+    if not task_id or not target_agent:
+        return False
+
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if not task:
+        return False
+    if str(task.get("owner") or "").strip() != target_agent:
+        return False
+
+    task_status = str(task.get("status") or "").lower()
+    timestamp = utc_now()
+    message = ""
+
+    if dispatch_reason in {"owned_ready_dispatch", "owned_in_progress_dispatch"}:
+        if task_status != "in_progress":
+            return False
+        task["status"] = "todo"
+        message = (
+            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority review/finalize work; "
+            "task returned to todo until a fresh run restarts it."
+        )
+    elif dispatch_reason == "owned_finalize_dispatch":
+        if task_status != "review_approved":
+            return False
+        message = (
+            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority review work; "
+            "task remains review_approved."
+        )
+    else:
+        return False
+
+    task["last_update"] = timestamp
+    task["next"] = message
+    write_json(config_path(config, "status_file"), status)
+    synced = sync_status_pipeline(config)
+    if synced:
+        write_activity_log(
+            config,
+            {
+                "type": "task_preempted_synced",
+                "task_id": task_id,
+                "target_agent": target_agent,
+                "dispatch_reason": dispatch_reason,
+                "message": message,
+            },
+        )
+    else:
+        write_activity_log(
+            config,
+            {
+                "type": "task_preempt_sync_failed",
+                "task_id": task_id,
+                "target_agent": target_agent,
+                "dispatch_reason": dispatch_reason,
+                "message": f"Failed to persist preempted task truth for {task_id}.",
+            },
+        )
+    return synced
+
+
 def persist_task_reassignment(
     config: dict[str, Any],
     *,
@@ -1698,6 +1927,7 @@ def persist_task_reassignment(
     new_owner: str,
     new_reviewer: str,
     message: str,
+    new_status: str | None = None,
     handoff_to: str | None = None,
     handoff_from: str | None = None,
 ) -> bool:
@@ -1713,6 +1943,8 @@ def persist_task_reassignment(
     old_reviewer = str(task.get("reviewer") or "")
     task["owner"] = new_owner
     task["reviewer"] = new_reviewer
+    if new_status:
+        task["status"] = new_status
     task["last_update"] = timestamp
     task["next"] = message
 
@@ -1794,7 +2026,7 @@ def maybe_reassign_task_after_worker_failure(
 
     if task_status in review_statuses and reviewer == failing_agent:
         candidates = normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent)
-        new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer})
+        new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
         if not new_reviewer:
             return None
         message = (
@@ -1830,24 +2062,28 @@ def maybe_reassign_task_after_worker_failure(
 
     if task_status in owned_statuses | finalize_statuses and owner == failing_agent:
         candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent)
-        new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer})
+        new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
         if not new_owner:
             return None
         reviewer_candidates = [reviewer]
         reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent))
         reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent))
-        new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner})
+        new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
         if not new_reviewer:
             return None
+        requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
         message = (
             f"Auto-reassigned ownership from {owner} to {new_owner} after repeated {failing_agent} {failure_label}: {failure_summary}"
         )
+        if requeue_for_fresh_dispatch:
+            message = f"{message}. Task returned to todo until {new_owner} starts a fresh run."
         if not persist_task_reassignment(
             config,
             task_id=task_id,
             new_owner=new_owner,
             new_reviewer=new_reviewer,
             message=message,
+            new_status="todo" if requeue_for_fresh_dispatch else None,
             handoff_from=owner,
         ):
             return None
@@ -1890,6 +2126,22 @@ def retry_delay_seconds(config: dict[str, Any], worker: dict[str, Any]) -> float
     base_delay = float(schedule[index])
     jitter = float(retry.get("jitter_seconds", 0) or 0)
     return base_delay + (random.uniform(0, jitter) if jitter > 0 else 0)
+
+
+def schedule_queue_event_retry(config: dict[str, Any], record: dict[str, Any], *, provider: str | None, reason: str) -> None:
+    delay = retry_delay_seconds(
+        config,
+        {
+            "provider": provider,
+            "retry_count": int(record.get("retry_count", 0)),
+        },
+    )
+    retry_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + delay, tz=timezone.utc)
+    record["status"] = "retry_backoff"
+    record["retry_count"] = int(record.get("retry_count", 0)) + 1
+    record["next_retry_at"] = retry_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    record["error"] = reason
+    record["processed_at"] = utc_now()
 
 
 def request_for_worker(config: dict[str, Any], worker: dict[str, Any]) -> DeliveryRequest | None:
@@ -2137,9 +2389,35 @@ def _claude_resume_allowed_tools(approval: dict[str, Any] | None) -> list[str]:
     return candidates
 
 
-def worker_supports_approval_resume(worker: dict[str, Any]) -> bool:
+def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -> bool:
+    normalized = normalize_agent_id(provider_id or "")
+    if not normalized:
+        return False
+    provider = (config.get("providers", {}) or {}).get(normalized, {}) or {}
+    delivery_mode = str(provider.get("delivery_mode") or "").strip()
+    if delivery_mode:
+        return delivery_mode == "claude_cli"
+    return normalized.startswith("claude")
+
+
+def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict[str, str]:
+    provider = (config.get("providers", {}) or {}).get(normalize_agent_id(provider_id or ""), {}) or {}
+    runtime = provider.get("runtime", {}) or {}
+    env = dict(os.environ)
+    home = str(runtime.get("home") or "").strip()
+    if home:
+        env["HOME"] = os.path.expanduser(home)
+    extra_env = runtime.get("env", {}) or {}
+    for key, value in extra_env.items():
+        if value is None:
+            continue
+        env[str(key)] = os.path.expanduser(str(value))
+    return env
+
+
+def worker_supports_approval_resume(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     return bool(
-        worker.get("provider") == "claude"
+        _provider_uses_claude_cli(config, worker.get("provider"))
         and (worker.get("session_id") or worker.get("resume_token"))
     )
 
@@ -2154,7 +2432,8 @@ def resume_claude_worker(
     session_id = worker.get("session_id") or worker.get("resume_token")
     if not session_id:
         return None
-    provider = config.get("providers", {}).get("claude", {})
+    provider_id = normalize_agent_id(worker.get("provider") or "claude")
+    provider = (config.get("providers", {}) or {}).get(provider_id) or config.get("providers", {}).get("claude", {}) or {}
     runtime = provider.get("runtime", {})
     cli = command_exists(runtime.get("cli") or "claude")
     if not cli:
@@ -2177,7 +2456,10 @@ def resume_claude_worker(
     )
     if allowed_tools:
         command.extend(["--allowedTools", *allowed_tools])
-    provider_info = (provider_report or {}).get("providers", {}).get("claude", {})
+    provider_info = (
+        (provider_report or {}).get("providers", {}).get(provider_id)
+        or (provider_report or {}).get("providers", {}).get("claude", {})
+    )
     resume_permission_mode = runtime.get("resume_permission_mode_after_approval", "bypassPermissions")
     if worker.get("last_approval_id"):
         command.extend(["--permission-mode", resume_permission_mode])
@@ -2188,13 +2470,14 @@ def resume_claude_worker(
     mcp_config = runtime.get("mcp_config")
     if mcp_config:
         command.extend(["--mcp-config", str(config_path(config, "claude_mcp_config"))])
-    log_path = config_path(config, "state_file").parent / "logs" / f"{new_runtime_id('claude-resume')}.log"
-    env = os.environ.copy()
+    log_path = config_path(config, "state_file").parent / "logs" / f"{new_runtime_id(f'{provider_id}-resume')}.log"
+    env = _claude_runtime_env(config, provider_id)
     env.update(
         {
             "ORCH_RUN_ID": worker["run_id"],
             "ORCH_TASK_ID": worker.get("task_id") or "",
             "ORCH_AGENT_ID": worker.get("agent_id") or "",
+            "ORCH_PROVIDER": provider_id,
             "ORCH_SESSION_ID": str(session_id),
         }
     )
@@ -2345,6 +2628,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 "completed",
                 worker["last_error"],
             )
+            sync_preempted_task_status(config, worker)
             write_activity_log(
                 config,
                 {
@@ -2390,7 +2674,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])
         if pending:
-            if not alive and not worker_supports_approval_resume(worker):
+            if not alive and not worker_supports_approval_resume(config, worker):
                 worker["status"] = "failed"
                 worker["deferred_action"] = None
                 worker["deferred_tool_use"] = None
@@ -2453,7 +2737,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             latest = resolved[-1]
             if latest.get("approval_id") != worker.get("last_approval_id"):
                 worker["last_approval_id"] = latest.get("approval_id")
-                if latest.get("decision") == "allow" and worker.get("provider") == "claude":
+                if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
                     resumed = resume_claude_worker(config, worker, provider_report, approval=latest)
                     write_activity_log(
                         config,
@@ -2602,7 +2886,8 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
                 quiet=SUPERVISOR_LOG_QUIET,
             )
-            if failure.get("kind") == "capacity":
+            failure_kind = str(failure.get("kind") or "")
+            if should_pause_dispatch_for_failure_kind(failure_kind):
                 mark_provider_dispatch_paused(
                     config,
                     state,
@@ -2611,8 +2896,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     task_id=str(worker.get("task_id") or ""),
                     worker_run_id=str(worker.get("run_id") or ""),
                     failure_kind=str(failure.get("kind") or ""),
+                    pause_kind=failure_kind,
                     raw_ref=raw_ref,
                 )
+            if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = maybe_reassign_task_after_worker_failure(
                     config,
                     state,
@@ -2857,12 +3144,14 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("review_statuses", ["review"])
     settings.setdefault("finalize_statuses", ["review_approved"])
     settings.setdefault("owned_statuses", ["in_progress", "todo"])
+    settings.setdefault("sidecar_only_agents", [])
     legacy_done_statuses = settings.get("done_statuses", ["done", "review_approved"])
     settings.setdefault("dependency_done_statuses", ["done"])
     settings.setdefault("worker_terminal_statuses", legacy_done_statuses)
     settings.setdefault("active_worker_statuses", ["running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"])
     settings.setdefault("max_tasks_per_agent", 1)
     settings.setdefault("max_dispatches_per_tick", 4)
+    settings.setdefault("orphaned_queue_event_grace_seconds", 300)
     return settings
 
 
@@ -3009,6 +3298,96 @@ def preferred_agents_for_sidecar(kind: str) -> list[str]:
     return mapping.get(kind, ["Codex", "Qwen", "Copilot", "Claude", "Gemini"])
 
 
+def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, Any]) -> bool:
+    if task_is_sidecar(task):
+        return False
+    settings = worker_reassignment_settings(config)
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return False
+    task_status = str(task.get("status") or "").lower()
+    eligible_statuses = {str(value).lower() for value in settings.get("eligible_statuses", [])}
+    eligible_statuses.add("blocked")
+    if task_status not in eligible_statuses:
+        return False
+
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    owner_allowed = agent_can_take_task(config, owner, task)
+    reviewer_allowed = agent_can_take_task(config, reviewer, task)
+    if owner_allowed and reviewer_allowed:
+        return False
+
+    new_owner = owner
+    new_reviewer = reviewer
+    changed_fields: list[str] = []
+
+    if owner and not owner_allowed:
+        owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
+        replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task)
+        if not replacement_owner:
+            return False
+        new_owner = replacement_owner
+        changed_fields.append(f"owner {owner} -> {new_owner}")
+
+    if not reviewer or not reviewer_allowed or reviewer == new_owner:
+        reviewer_candidates: list[str] = []
+        if reviewer:
+            reviewer_candidates.append(reviewer)
+            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), reviewer))
+        if owner:
+            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), owner))
+            reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), owner))
+        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task)
+        if not replacement_reviewer:
+            return False
+        new_reviewer = replacement_reviewer
+        if replacement_reviewer != reviewer:
+            changed_fields.append(f"reviewer {reviewer or '(unset)'} -> {new_reviewer}")
+
+    if new_owner == owner and new_reviewer == reviewer:
+        return False
+
+    blocked_agents = [
+        agent_name
+        for agent_name in (owner, reviewer)
+        if agent_name and not agent_can_take_task(config, agent_name, task)
+    ]
+    blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
+    message = (
+        f"Auto-reassigned {task_id} away from sidecar-only lane {blocked_summary}; "
+        f"{', '.join(changed_fields)}. Reserved sidecar-only agents no longer hold mainline tasks."
+    )
+    if not persist_task_reassignment(
+        config,
+        task_id=task_id,
+        new_owner=new_owner,
+        new_reviewer=new_reviewer,
+        message=message,
+        handoff_to=new_owner if new_owner != owner else new_reviewer,
+        handoff_from=owner if new_owner != owner else reviewer,
+    ):
+        return False
+    write_activity_log(
+        config,
+        {
+            "type": "task_reassigned",
+            "task_id": task_id,
+            "message": message,
+            "from_owner": owner,
+            "to_owner": new_owner,
+            "from_reviewer": reviewer,
+            "to_reviewer": new_reviewer,
+            "policy": "sidecar_only_agent_mainline_guard",
+        },
+    )
+    console_log(
+        f"policy reassignment: task={task_id} owner={owner}->{new_owner} reviewer={reviewer}->{new_reviewer}",
+        quiet=SUPERVISOR_LOG_QUIET,
+    )
+    return True
+
+
 def agent_has_dispatchable_primary_work(
     config: dict[str, Any],
     status: dict[str, Any],
@@ -3021,6 +3400,8 @@ def agent_has_dispatchable_primary_work(
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     for task in status.get("tasks", []) or []:
         if task_is_sidecar(task):
+            continue
+        if not agent_can_take_task(config, agent_name, task):
             continue
         task_status = str(task.get("status") or "").lower()
         if task_status in review_statuses and task.get("reviewer") == agent_name:
@@ -3325,6 +3706,38 @@ def active_worker_indexes(state: dict[str, Any], active_statuses: set[str]) -> t
     return agents, task_agents
 
 
+def orphaned_queue_event_grace_seconds(config: dict[str, Any]) -> int:
+    value = ready_dispatch_settings(config).get("orphaned_queue_event_grace_seconds", 300)
+    try:
+        return max(30, int(value))
+    except (TypeError, ValueError):
+        return 300
+
+
+def queue_event_age_seconds(event: dict[str, Any]) -> float | None:
+    created_at = _parse_iso_utc(str(event.get("created_at") or ""))
+    if created_at is None:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - created_at.astimezone(timezone.utc)).total_seconds())
+
+
+def queue_event_is_orphaned(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    record: dict[str, Any],
+    related_workers: list[dict[str, Any]],
+) -> bool:
+    if related_workers:
+        return False
+    status = str(record.get("status") or "").lower()
+    if status in {"completed", "failed"}:
+        return False
+    age_seconds = queue_event_age_seconds(event)
+    if age_seconds is None:
+        return False
+    return age_seconds > orphaned_queue_event_grace_seconds(config)
+
+
 def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) -> tuple[set[str], set[tuple[str, str]], set[str]]:
     agents: set[str] = set()
     task_agents: set[tuple[str, str]] = set()
@@ -3335,7 +3748,12 @@ def outstanding_delivery_indexes(config: dict[str, Any], state: dict[str, Any]) 
         if not event_id:
             continue
         record = queue_records.get(event_id, {})
+        related_workers = [
+            worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id
+        ]
         if record.get("status") in {"completed", "failed"}:
+            continue
+        if queue_event_is_orphaned(config, event, record, related_workers):
             continue
         event_key = str(event.get("event_key") or "")
         if event_key:
@@ -3394,6 +3812,24 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
         record = queue_events.get(event_id, {})
         related_workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
         has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
+        if queue_event_is_orphaned(config, event, record, related_workers):
+            age_seconds = queue_event_age_seconds(event)
+            write_activity_log(
+                config,
+                {
+                    "type": "queue_event_pruned",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "queue_event_id": event_id,
+                    "message": (
+                        f"Pruned orphaned queue event after {age_seconds:.1f}s without a live worker or queue record."
+                        if age_seconds is not None
+                        else "Pruned orphaned queue event without a live worker or queue record."
+                    ),
+                },
+            )
+            changed = True
+            continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
 
         if skip_message and not has_active_worker:
@@ -3586,6 +4022,8 @@ def choose_helper_claim_agent(
 ) -> bool:
     if not helper_settings.get("enabled", True):
         return False
+    if not agent_can_take_task(config, idle_agent_name, task):
+        return False
     task_status = str(task.get("status") or "").lower()
     allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}
     paused_owner_statuses = {
@@ -3608,6 +4046,32 @@ def choose_helper_claim_agent(
     return idle_agent_name in fallbacks
 
 
+def is_sidecar_review_of_current_parent(
+    candidate_task: dict[str, Any],
+    current_task: dict[str, Any] | None,
+    *,
+    agent_name: str,
+    review_statuses: set[str],
+    owner_field: str,
+    reviewer_field: str,
+) -> bool:
+    if not current_task:
+        return False
+    candidate_status = str(candidate_task.get("status") or "").lower()
+    if candidate_status not in review_statuses:
+        return False
+    if candidate_task.get(reviewer_field) != agent_name:
+        return False
+    if current_task.get(owner_field) != agent_name:
+        return False
+    current_task_id = str(current_task.get("id") or "")
+    helper_parent = str(candidate_task.get("helper_parent") or "").strip()
+    if not current_task_id or helper_parent != current_task_id:
+        return False
+    task_class = str(candidate_task.get("task_class") or "").lower()
+    return task_class == "sidecar" or bool(candidate_task.get("helper_kind"))
+
+
 def higher_priority_ready_task_exists(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -3628,6 +4092,7 @@ def higher_priority_ready_task_exists(
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
+    current_task = task_map.get(current_task_id)
 
     for task_id, task in task_map.items():
         if task_id == current_task_id:
@@ -3635,6 +4100,15 @@ def higher_priority_ready_task_exists(
         task_status = str(task.get("status") or "").lower()
         candidate_priority = None
         if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+            if is_sidecar_review_of_current_parent(
+                task,
+                current_task,
+                agent_name=agent_name,
+                review_statuses=review_statuses,
+                owner_field=owner_field,
+                reviewer_field=reviewer_field,
+            ):
+                continue
             candidate_priority = 0
         elif task_status in finalize_statuses and task.get(owner_field) == agent_name:
             candidate_priority = 1
@@ -3822,6 +4296,19 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
     seen = state.setdefault("seen_event_keys", {})
 
     changed = False
+    normalized = False
+    for task in tasks:
+        task_id = str(task.get(task_id_field) or "")
+        if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
+            continue
+        normalized = normalize_mainline_task_assignment(config, task) or normalized
+
+    if normalized:
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
     dispatches = 0
     agent_ids = list(config.get("agents", {}).keys())
     for agent_id in agent_ids:
@@ -3860,6 +4347,9 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
             elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
                 reason = "owned_ready_dispatch"
                 priority = 3
+
+            if reason is not None and not agent_can_take_task(config, target_agent, task):
+                continue
 
             helper_claim_candidate = (
                 dependencies_satisfied(task, task_map, dependency_done_statuses)
@@ -4167,6 +4657,7 @@ def run_once(
     save_runtime_state(config, state)
     changed = False
     try:
+        changed = expire_provider_dispatch_pauses(config, state) or changed
         pruned = prune_stale_approvals(config)
         if pruned:
             changed = True

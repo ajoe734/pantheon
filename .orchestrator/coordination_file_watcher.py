@@ -16,7 +16,7 @@ from common import (
     utc_now,
     write_activity_log,
 )
-from coordination_repo_mirror import mirror_contract_ready_bundle
+from coordination_repo_mirror import mirror_backend_delivery_bundle, mirror_contract_ready_bundle
 from lovable_task_publisher import publish_lovable_task_packet
 from multi_repo_registry import (
     coordination_enabled,
@@ -389,6 +389,18 @@ def sync_coordination_files(config: dict[str, Any], state: dict[str, Any]) -> bo
                                 "type": "coordination_repo_mirror_synced",
                                 "task_id": record["feature_id"],
                                 "message": f"Mirrored contract-ready bundle into {mirrored['target_repo_id']}.",
+                            },
+                        )
+                elif current_type == "backend-delivery":
+                    mirrored = mirror_backend_delivery_bundle(config, payload) if not mirror_only else None
+                    if mirrored:
+                        record["mirrored_to_target_repo"] = mirrored
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "coordination_repo_mirror_synced",
+                                "task_id": record["feature_id"],
+                                "message": f"Mirrored backend-delivery bundle into {mirrored['target_repo_id']}.",
                             },
                         )
 

@@ -24,10 +24,11 @@ tmux kill-session -t "${SESSION}" 2>/dev/null || true
 rm -f "${URL_FILE}"
 
 tmux new-session -d -s "${SESSION}" \
-  "cd '${ROOT_DIR}' && cloudflared tunnel --no-autoupdate --url '${LOCAL_URL}' 2>&1 | tee -a '${LOG_FILE}'"
+  "cd '${ROOT_DIR}' && PANTHEON_DASHBOARD_TUNNEL_TARGET='${LOCAL_URL}' PANTHEON_DASHBOARD_TUNNEL_PUBLIC_PATH='${PUBLIC_PATH}' PANTHEON_DASHBOARD_TUNNEL_RESTART_DELAY_SECONDS='${PANTHEON_DASHBOARD_TUNNEL_RESTART_DELAY_SECONDS:-2}' bash '${ROOT_DIR}/scripts/dashboard_tunnel_keepalive.sh'"
+tmux set-option -t "${SESSION}" remain-on-exit on >/dev/null
 
 for _ in $(seq 1 30); do
-  python3 - "${LOG_FILE}" "${URL_FILE}" "${PUBLIC_PATH}" <<'PY'
+  if python3 - "${LOG_FILE}" "${URL_FILE}" "${PUBLIC_PATH}" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -48,6 +49,9 @@ base = matches[-1].rstrip("/")
 path = "/" + public_path.strip("/") + "/"
 url_path.write_text(base + path, encoding="utf-8")
 PY
+  then
+    :
+  fi
   if [[ -s "${URL_FILE}" ]]; then
     cat "${URL_FILE}"
     exit 0

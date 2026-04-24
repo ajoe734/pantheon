@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import os
 import json
+import os
 
 from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.claude_code import ClaudeCodeAdapter
 from common import (
+    agent_config_for,
+    claude_auth_ready as shared_claude_auth_ready,
     config_path,
     new_runtime_id,
     runtime_log_path,
@@ -16,26 +18,50 @@ from common import (
 )
 
 
-def _claude_auth_ready(cli: str | None) -> bool:
-    if not cli:
-        return False
-    status = run_command([cli, "auth", "status"])
-    if status.returncode != 0 or not status.stdout:
-        return False
-    try:
-        payload = json.loads(status.stdout)
-    except json.JSONDecodeError:
-        return False
-    return bool(payload.get("loggedIn"))
+def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
+    if provider_id:
+        return str(provider_id).strip() or "claude"
+    if agent_id:
+        agent = agent_config_for(config or {}, agent_id)
+        return str(agent.get("provider") or agent.get("id") or agent_id).strip() or "claude"
+    return "claude"
 
 
-def _configured_claude_cli(config: dict | None = None) -> str | None:
-    runtime = ((config or {}).get("providers", {}).get("claude", {}) or {}).get("runtime", {})
+def _provider_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
+    providers = (config or {}).get("providers", {}) or {}
+    key = _provider_key(config, provider_id=provider_id)
+    return providers.get(key) or providers.get("claude") or {}
+
+
+def _runtime_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
+    return _provider_settings(config, provider_id).get("runtime", {}) or {}
+
+
+def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
+    env = dict(os.environ)
+    runtime = _runtime_settings(config, provider_id)
+    home = str(runtime.get("home") or "").strip()
+    if home:
+        env["HOME"] = os.path.expanduser(home)
+    extra_env = runtime.get("env", {}) or {}
+    for key, value in extra_env.items():
+        if value is None:
+            continue
+        env[str(key)] = os.path.expanduser(str(value))
+    return env
+
+
+def _claude_auth_ready(cli: str | None, *, env: dict[str, str] | None = None) -> bool:
+    return shared_claude_auth_ready(cli, env=env)
+
+
+def _configured_claude_cli(config: dict | None = None, provider_id: str | None = None) -> str | None:
+    runtime = _runtime_settings(config, provider_id)
     return command_exists(runtime.get("cli") or "claude")
 
 
-def _allow_inbox_fallback(config: dict | None = None) -> bool:
-    provider = ((config or {}).get("providers", {}).get("claude", {}) or {})
+def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
+    provider = _provider_settings(config, provider_id)
     return bool(provider.get("allow_inbox_fallback", True))
 
 
@@ -43,8 +69,10 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
     name = "claude_cli"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        cli = _configured_claude_cli(self.config)
-        if cli and _claude_auth_ready(cli):
+        provider_id = _provider_key(self.config, agent_id=agent_id)
+        cli = _configured_claude_cli(self.config, provider_id)
+        auth_ready = _claude_auth_ready(cli, env=_spawn_env(self.config, provider_id))
+        if cli and auth_ready:
             return DeliveryCapability(
                 adapter=self.name,
                 supported=True,
@@ -57,7 +85,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
                 notes="Uses non-interactive Claude CLI sessions with the local approval broker hooks.",
             )
         missing_reason = "Claude CLI is not installed" if not cli else "Claude CLI is installed but not authenticated"
-        if not _allow_inbox_fallback(self.config):
+        if not _allow_inbox_fallback(self.config, provider_id):
             return DeliveryCapability(
                 adapter=self.name,
                 supported=bool(cli),
@@ -83,10 +111,12 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
-        cli = _configured_claude_cli(self.config)
-        auth_ready = _claude_auth_ready(cli)
+        provider_id = _provider_key(self.config, agent_id=request.agent_id, provider_id=request.provider)
+        cli = _configured_claude_cli(self.config, provider_id)
+        env = _spawn_env(self.config, provider_id)
+        auth_ready = _claude_auth_ready(cli, env=env)
         if not cli or not auth_ready:
-            if not _allow_inbox_fallback(self.config):
+            if not _allow_inbox_fallback(self.config, provider_id):
                 reason = (
                     "Claude CLI is unavailable; inbox fallback is disabled for this provider."
                     if not cli
@@ -111,7 +141,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
                 result.notes = f"{result.notes}. Claude CLI is not authenticated, so inbox fallback was used."
             return result
 
-        provider = self.config.get("providers", {}).get("claude", {})
+        provider = _provider_settings(self.config, provider_id)
         runtime = provider.get("runtime", {})
         output_format = runtime.get("output_format", "stream-json")
         command = [
@@ -126,7 +156,10 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         if runtime.get("include_hook_events", True):
             command.append("--include-hook-events")
 
-        provider_info = (self.provider_capabilities or {}).get("providers", {}).get("claude", {})
+        provider_info = (
+            (self.provider_capabilities or {}).get("providers", {}).get(provider_id)
+            or (self.provider_capabilities or {}).get("providers", {}).get("claude", {})
+        )
         if runtime.get("enable_auto_mode_if_supported", True) and provider_info.get("supports_auto_approve"):
             command.extend(["--permission-mode", runtime.get("auto_permission_mode", "auto")])
         else:
@@ -136,14 +169,14 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         if mcp_config:
             command.extend(["--mcp-config", str(config_path(self.config, "claude_mcp_config"))])
 
-        run_id = new_runtime_id("claude")
-        log_path = runtime_log_path("claude", request.agent_id)
-        env = os.environ.copy()
+        run_id = new_runtime_id(provider_id)
+        log_path = runtime_log_path(provider_id, request.agent_id)
         env.update(
             {
                 "ORCH_RUN_ID": run_id,
                 "ORCH_TASK_ID": request.task_id or "",
                 "ORCH_AGENT_ID": request.agent_id,
+                "ORCH_PROVIDER": provider_id,
                 "ORCH_REASON": request.reason or "",
                 "ORCH_CONTEXT_FILES": "\n".join(request.context_files),
                 "ORCH_TARGET_FILES": "\n".join(request.target_files),

@@ -208,6 +208,28 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     for run_id in stale_manual_workers:
         workers.pop(run_id, None)
 
+    try:
+        pending_approval_runs = {
+            str(item.get("worker_run_id") or "")
+            for item in load_approval_state(config).get("pending", [])
+            if item.get("worker_run_id")
+        }
+    except KeyError:
+        pending_approval_runs = set()
+    # Approval-gated workers without a surviving queue event or pending approval
+    # are stale runtime leftovers. Once both coordination anchors are gone,
+    # keeping them around only causes dashboards and health checks to report
+    # ghost workers.
+    stale_approval_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if worker.get("status") in {"waiting_approval", "suspended_approval"}
+        and worker.get("queue_event_id") not in valid_pending_event_ids
+        and str(run_id) not in pending_approval_runs
+    ]
+    for run_id in stale_approval_workers:
+        workers.pop(run_id, None)
+
     prune_worker_records(state)
     return state
 

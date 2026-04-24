@@ -27,7 +27,9 @@ class CodexAdapter(BaseAdapter):
         return provider, codex_settings
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        cli = command_exists("codex")
+        _provider, codex_settings = self._provider_settings(agent_id)
+        configured_cli = codex_settings.get("cli") or "codex"
+        cli = command_exists(configured_cli) or command_exists("codex")
         supported = bool(cli)
         return DeliveryCapability(
             adapter=self.name,
@@ -72,15 +74,20 @@ class CodexAdapter(BaseAdapter):
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.append(request.message)
 
-        # Build env: inherit current environment, then override OPENAI_API_KEY
-        # if api_key_env is set in this provider's codex block.
+        # Build env: inherit current environment, then apply overrides.
         spawn_env: dict[str, str] | None = None
+
         api_key_env = codex_settings.get("api_key_env", "").strip()
-        if api_key_env and api_key_env != "OPENAI_API_KEY":
-            api_key_value = os.environ.get(api_key_env, "")
-            if api_key_value:
-                spawn_env = dict(os.environ)
-                spawn_env["OPENAI_API_KEY"] = api_key_value
+        codex_home = codex_settings.get("codex_home", "").strip()
+
+        if (api_key_env and api_key_env != "OPENAI_API_KEY") or codex_home:
+            spawn_env = dict(os.environ)
+            if api_key_env and api_key_env != "OPENAI_API_KEY":
+                api_key_value = os.environ.get(api_key_env, "")
+                if api_key_value:
+                    spawn_env["OPENAI_API_KEY"] = api_key_value
+            if codex_home:
+                spawn_env["CODEX_HOME"] = os.path.expanduser(codex_home)
 
         run_id = new_runtime_id("codex")
         log_path = runtime_log_path("codex", request.agent_id)

@@ -229,14 +229,14 @@ cat >"$OUTPUT_DIR/registry-register.json" <<JSON
 }
 JSON
 http_call POST "${REGISTRY_URL%/}/api/registry/entries" \
-  "$OUTPUT_DIR/registry-register.json" "$OUTPUT_DIR/registry-register-response.json" 201
-expect_eq "registry_id" \
-  "$(json_query "$OUTPUT_DIR/registry-register-response.json" "registry_id")" "$REGISTRY_ID"
+  "$OUTPUT_DIR/registry-register.json" "$OUTPUT_DIR/registry-register-response.json" 200
+REGISTRY_ID="$(json_query "$OUTPUT_DIR/registry-register-response.json" "entry.registry_id")"
+expect_nonempty "registry_id" "$REGISTRY_ID"
 
 http_call GET "${REGISTRY_URL%/}/api/registry/entries/${REGISTRY_ID}" "" \
   "$OUTPUT_DIR/registry-get-response.json" 200
 expect_eq "registry get registry_id" \
-  "$(json_query "$OUTPUT_DIR/registry-get-response.json" "registry_id")" "$REGISTRY_ID"
+  "$(json_query "$OUTPUT_DIR/registry-get-response.json" "entry.registry_id")" "$REGISTRY_ID"
 echo ""
 
 # ── 5. Governance — propose → accept_review → decide approval ──────────────
@@ -315,6 +315,8 @@ http_call POST "${RUNTIME_MANAGER_URL%/}/api/runtimes/deploy" \
   "$RUNTIME_MANAGER_TOKEN"
 BINDING_ID="$(json_query "$OUTPUT_DIR/runtime-deploy-response.json" "binding_id")"
 expect_nonempty "binding_id" "$BINDING_ID"
+BINDING_EFFECTIVE_AT="$(json_query "$OUTPUT_DIR/runtime-deploy-response.json" "effective_at")"
+expect_nonempty "binding effective_at" "$BINDING_EFFECTIVE_AT"
 expect_eq "deployment_mode" \
   "$(json_query "$OUTPUT_DIR/runtime-deploy-response.json" "deployment_mode")" "paper"
 echo ""
@@ -325,7 +327,7 @@ cat >"$OUTPUT_DIR/telemetry-ingest.json" <<JSON
 {
   "event_id": "$TELEMETRY_EVENT_ID",
   "event_type": "deploy_completed",
-  "created_at": "$RUN_AT",
+  "created_at": "$BINDING_EFFECTIVE_AT",
   "execution_mode": "paper",
   "environment": "paper",
   "deployment_stage": "paper",

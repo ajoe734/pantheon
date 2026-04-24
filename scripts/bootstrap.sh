@@ -124,23 +124,73 @@ else
   PANTHEON_APP_DB_PASSWORD_VAL="${PANTHEON_APP_DB_PASSWORD:-pantheon_app}"
   PANTHEON_APP_DB_NAME_VAL="${PANTHEON_APP_DB_NAME:-pantheon}"
 
+  if command -v psql >/dev/null 2>&1; then
+    PSQL_RUNNER=(
+      env "PGPASSWORD=${POSTGRES_PASSWORD_VAL}" psql
+      -h 127.0.0.1 -p "$POSTGRES_PORT"
+      -U "$POSTGRES_USER_VAL" -d postgres
+      -v ON_ERROR_STOP=1
+    )
+  else
+    echo "    host psql not found; using postgres container client"
+    PSQL_RUNNER=(
+      docker compose "${COMPOSE_ARGS[@]}" exec -T
+      -e "PGPASSWORD=${POSTGRES_PASSWORD_VAL}"
+      postgres
+      psql -U "$POSTGRES_USER_VAL" -d postgres
+      -v ON_ERROR_STOP=1
+    )
+  fi
+
   # Ensure app user + database exist (idempotent)
-  PGPASSWORD="$POSTGRES_PASSWORD_VAL" psql \
-    -h 127.0.0.1 -p "$POSTGRES_PORT" \
-    -U "$POSTGRES_USER_VAL" -d postgres \
-    -v ON_ERROR_STOP=1 \
+  "${PSQL_RUNNER[@]}" \
     -c "DO \$\$ BEGIN
           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${PANTHEON_APP_DB_USER_VAL}') THEN
             EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', '${PANTHEON_APP_DB_USER_VAL}', '${PANTHEON_APP_DB_PASSWORD_VAL}');
           END IF;
-        END \$\$;" \
-    -c "SELECT format('CREATE DATABASE %I OWNER %I', '${PANTHEON_APP_DB_NAME_VAL}', '${PANTHEON_APP_DB_USER_VAL}')
-        WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${PANTHEON_APP_DB_NAME_VAL}') \gexec" \
+        END \$\$;"
+
+  CREATE_DB_SQL="$("${PSQL_RUNNER[@]}" -At -c \
+    "SELECT format('CREATE DATABASE %I OWNER %I', '${PANTHEON_APP_DB_NAME_VAL}', '${PANTHEON_APP_DB_USER_VAL}')
+     WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${PANTHEON_APP_DB_NAME_VAL}')")"
+  if [[ -n "$CREATE_DB_SQL" ]]; then
+    "${PSQL_RUNNER[@]}" -c "$CREATE_DB_SQL"
+  fi
+
+  "${PSQL_RUNNER[@]}" \
     -c "GRANT ALL PRIVILEGES ON DATABASE \"${PANTHEON_APP_DB_NAME_VAL}\" TO \"${PANTHEON_APP_DB_USER_VAL}\";"
 
-  MIGRATION_DSN="postgresql://${PANTHEON_APP_DB_USER_VAL}:${PANTHEON_APP_DB_PASSWORD_VAL}@127.0.0.1:${POSTGRES_PORT}/${PANTHEON_APP_DB_NAME_VAL}"
-  TELEMETRY_DB_DSN="$MIGRATION_DSN" DATABASE_URL="$MIGRATION_DSN" \
-    bash "$ROOT_DIR/scripts/db_migrate.sh"
+  if command -v psql >/dev/null 2>&1; then
+    APP_PSQL_RUNNER=(
+      env "PGPASSWORD=${PANTHEON_APP_DB_PASSWORD_VAL}" psql
+      -h 127.0.0.1 -p "$POSTGRES_PORT"
+      -U "$PANTHEON_APP_DB_USER_VAL" -d "$PANTHEON_APP_DB_NAME_VAL"
+      -v ON_ERROR_STOP=1
+    )
+  else
+    APP_PSQL_RUNNER=(
+      docker compose "${COMPOSE_ARGS[@]}" exec -T
+      -e "PGPASSWORD=${PANTHEON_APP_DB_PASSWORD_VAL}"
+      postgres
+      psql -U "$PANTHEON_APP_DB_USER_VAL" -d "$PANTHEON_APP_DB_NAME_VAL"
+      -v ON_ERROR_STOP=1
+    )
+  fi
+
+  "${APP_PSQL_RUNNER[@]}" <<'SQL'
+CREATE TABLE IF NOT EXISTS telemetry_events (
+    event_id   TEXT        PRIMARY KEY,
+    event_type TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    payload    JSONB       NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at
+    ON telemetry_events (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type
+    ON telemetry_events (event_type);
+SQL
 fi
 
 # ---------------------------------------------------------------------------

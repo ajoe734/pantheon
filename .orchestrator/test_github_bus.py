@@ -109,6 +109,113 @@ class GitHubBusCommandTests(unittest.TestCase):
         self.assertEqual(bus_state["processed_review_ids"], ["review:999"])
         write_activity_log.assert_called_once()
 
+    def test_poll_pr_reviews_batches_with_cursor(self) -> None:
+        self.config["github_bus"]["poll_batch_sizes"] = {"pr_reviews": 2}
+        status = {
+            "tasks": [
+                {"id": "LIN-001", "reviewer": "Claude"},
+                {"id": "LIN-002", "reviewer": "Claude"},
+                {"id": "LIN-003", "reviewer": "Claude"},
+            ]
+        }
+        bus_state = {
+            "processed_review_ids": [],
+            "poll_cursors": {"pr_reviews": 0},
+            "tasks": {
+                "LIN-001": {"review_pr": {"number": 11}},
+                "LIN-002": {"review_pr": {"number": 12}},
+                "LIN-003": {"review_pr": {"number": 13}},
+            },
+        }
+
+        with mock.patch.object(github_bus, "gh_json", return_value=[]) as gh_json:
+            changed = github_bus.poll_pr_reviews(self.config, bus_state, status, "ajoe734/pantheon")
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            [call.args[0][-1] for call in gh_json.call_args_list],
+            [
+                "repos/ajoe734/pantheon/pulls/11/reviews?per_page=100",
+                "repos/ajoe734/pantheon/pulls/12/reviews?per_page=100",
+            ],
+        )
+        self.assertEqual(bus_state["poll_cursors"]["pr_reviews"], 2)
+
+        with mock.patch.object(github_bus, "gh_json", return_value=[]) as gh_json:
+            changed = github_bus.poll_pr_reviews(self.config, bus_state, status, "ajoe734/pantheon")
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            [call.args[0][-1] for call in gh_json.call_args_list],
+            ["repos/ajoe734/pantheon/pulls/13/reviews?per_page=100"],
+        )
+        self.assertEqual(bus_state["poll_cursors"]["pr_reviews"], 0)
+
+    def test_poll_issue_comments_batches_with_cursor(self) -> None:
+        self.config["github_bus"]["poll_batch_sizes"] = {"issue_comments": 2}
+        status = {
+            "tasks": [
+                {"id": "LIN-001", "reviewer": "Claude"},
+                {"id": "LIN-002", "reviewer": "Claude"},
+                {"id": "LIN-003", "reviewer": "Claude"},
+            ]
+        }
+        bus_state = {
+            "processed_comment_ids": [],
+            "poll_cursors": {"issue_comments": 0},
+            "tasks": {
+                "LIN-001": {"ops_issue": {"number": 21}},
+                "LIN-002": {"ops_issue": {"number": 22}},
+                "LIN-003": {"ops_issue": {"number": 23}},
+            },
+        }
+
+        with mock.patch.object(github_bus, "gh_json", return_value=[]) as gh_json:
+            changed = github_bus.poll_issue_comments(self.config, bus_state, status, "ajoe734/pantheon")
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            [call.args[0][-1] for call in gh_json.call_args_list],
+            [
+                "repos/ajoe734/pantheon/issues/21/comments?per_page=100",
+                "repos/ajoe734/pantheon/issues/22/comments?per_page=100",
+            ],
+        )
+        self.assertEqual(bus_state["poll_cursors"]["issue_comments"], 2)
+
+    def test_poll_coordination_issue_comments_batches_with_cursor(self) -> None:
+        self.config["github_bus"]["poll_batch_sizes"] = {"coordination_comments": 2}
+        bus_state = {
+            "processed_comment_ids": [],
+            "poll_cursors": {"coordination_comments": 0},
+            "coordination": {
+                "ajoe734/pantheon:F-001": {"repo": "ajoe734/pantheon", "issue": {"number": 31}},
+                "ajoe734/pantheon:F-002": {"repo": "ajoe734/pantheon", "issue": {"number": 32}},
+                "ajoe734/front-ai-trading-system:F-003": {
+                    "repo": "ajoe734/front-ai-trading-system",
+                    "issue": {"number": 33},
+                },
+            },
+        }
+
+        with mock.patch.object(github_bus, "gh_json", return_value=[]) as gh_json:
+            changed = github_bus.poll_coordination_issue_comments(
+                self.config,
+                bus_state,
+                {"tasks": []},
+                runtime_state={},
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            [call.args[0][-1] for call in gh_json.call_args_list],
+            [
+                "repos/ajoe734/pantheon/issues/31/comments?per_page=100",
+                "repos/ajoe734/pantheon/issues/32/comments?per_page=100",
+            ],
+        )
+        self.assertEqual(bus_state["poll_cursors"]["coordination_comments"], 2)
+
     def test_upsert_review_pr_create_uses_create_label_flags(self) -> None:
         config = {
             "github_bus": {
@@ -139,6 +246,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         with (
             mock.patch.object(github_bus, "branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
+            mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_has_diff", return_value=True),
             mock.patch.object(github_bus, "find_existing_pr", return_value=None),
             mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
@@ -160,6 +268,136 @@ class GitHubBusCommandTests(unittest.TestCase):
         args = run_gh.call_args.args[0]
         self.assertIn("--label", args)
         self.assertNotIn("--add-label", args)
+
+    def test_upsert_review_pr_skips_unpublished_remote_branch(self) -> None:
+        config = {
+            "github_bus": {
+                "default_branch": "master",
+                "labels": {"review": ["pantheon-bus", "pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+        bus_state = {"tasks": {}}
+        status = {
+            "agents": [{"name": "Codex", "branch": "feature/lin-001"}],
+            "tasks": [],
+        }
+        task = {
+            "id": "LIN-001",
+            "title": "Lineage task",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": ["foo.md"],
+            "next": "ready for review",
+        }
+
+        with (
+            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
+            mock.patch.object(github_bus, "remote_branch_exists", return_value=False),
+            mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
+
+        self.assertTrue(changed)
+        entry = bus_state["tasks"]["LIN-001"]["review_pr"]
+        self.assertEqual(entry["state"], "skipped_unpublished_branch")
+        self.assertEqual(entry["branch"], "feature/lin-001")
+        self.assertEqual(entry["head_sha"], "abc123")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "github_review_pr_skipped")
+
+    def test_upsert_review_pr_skips_recent_remote_recheck_for_unpublished_branch(self) -> None:
+        config = {
+            "github_bus": {
+                "default_branch": "master",
+                "unpublished_branch_recheck_seconds": 300,
+            }
+        }
+        status = {
+            "agents": [{"name": "Codex", "branch": "feature/lin-001"}],
+            "tasks": [],
+        }
+        task = {
+            "id": "LIN-001",
+            "title": "Lineage task",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        skip_hash = '{"base": "master", "branch": "feature/lin-001", "head_sha": "abc123", "state": "skipped_unpublished_branch", "task_id": "LIN-001"}'
+        bus_state = {
+            "tasks": {
+                "LIN-001": {
+                    "review_pr": {
+                        "title": "[ReviewBus] LIN-001 Lineage task",
+                        "branch": "feature/lin-001",
+                        "state": "skipped_unpublished_branch",
+                        "head_sha": "abc123",
+                        "last_remote_branch_check_at": github_bus.utc_now(),
+                    },
+                    "last_review_hash": skip_hash,
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
+            mock.patch.object(github_bus, "remote_branch_exists") as remote_branch_exists,
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
+
+        self.assertFalse(changed)
+        remote_branch_exists.assert_not_called()
+
+    def test_upsert_review_pr_rechecks_unpublished_branch_after_ttl(self) -> None:
+        config = {
+            "github_bus": {
+                "default_branch": "master",
+                "unpublished_branch_recheck_seconds": 300,
+            }
+        }
+        status = {
+            "agents": [{"name": "Codex", "branch": "feature/lin-001"}],
+            "tasks": [],
+        }
+        task = {
+            "id": "LIN-001",
+            "title": "Lineage task",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        skip_hash = '{"base": "master", "branch": "feature/lin-001", "head_sha": "abc123", "state": "skipped_unpublished_branch", "task_id": "LIN-001"}'
+        bus_state = {
+            "tasks": {
+                "LIN-001": {
+                    "review_pr": {
+                        "title": "[ReviewBus] LIN-001 Lineage task",
+                        "branch": "feature/lin-001",
+                        "state": "skipped_unpublished_branch",
+                        "head_sha": "abc123",
+                        "last_remote_branch_check_at": "2026-04-22T00:00:00Z",
+                    },
+                    "last_review_hash": skip_hash,
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(github_bus, "branch_exists", return_value=True),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
+            mock.patch.object(github_bus, "remote_branch_exists", return_value=False) as remote_branch_exists,
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
+
+        self.assertFalse(changed)
+        remote_branch_exists.assert_called_once_with("feature/lin-001")
 
 
 class GitHubBusProcessTests(unittest.TestCase):
@@ -185,6 +423,27 @@ class GitHubBusProcessTests(unittest.TestCase):
 
         killpg.assert_called_once_with(4321, github_bus.signal.SIGKILL)
         self.assertEqual(fake_process.wait_calls, [1.0, 0.2])
+
+    def test_run_gh_uses_vendored_wrapper_when_system_gh_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            vendored = root / ".orchestrator" / "bin" / "gh"
+            vendored.parent.mkdir(parents=True, exist_ok=True)
+            vendored.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            vendored.chmod(0o755)
+
+            with (
+                mock.patch.object(github_bus, "ROOT", root),
+                mock.patch.object(github_bus, "command_exists", return_value=None),
+                mock.patch.object(
+                    github_bus,
+                    "run_gh_process",
+                    return_value=subprocess.CompletedProcess([str(vendored), "auth", "status"], 0, "", ""),
+                ) as run_gh_process,
+            ):
+                github_bus.run_gh(["auth", "status"], allow_offline=False)
+
+            self.assertEqual(run_gh_process.call_args.kwargs["gh_binary"], str(vendored))
 
 
 class GitHubCoordinationCommandTests(unittest.TestCase):

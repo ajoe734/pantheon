@@ -10,6 +10,10 @@ name: Coordination Manual Replay
 #  - trigger_mode is fixed to "replay" for all runs of this workflow.
 #  - If payload content must change, publish a new normal-cycle payload instead.
 #
+# Transport note:
+#  - workflow input source_commit points to the commit that contains payload_path
+#  - payload.source_commit may point to the reviewed UI cycle commit
+#
 # See coordination-loop-spec.md §Replay Contract for the full replay rules.
 
 on:
@@ -126,7 +130,7 @@ jobs:
           fi
 
       - name: Checkout source repo at source_commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ inputs.source_repo }}
           ref: ${{ inputs.source_commit }}
@@ -210,11 +214,16 @@ jobs:
                   f"payload='{payload_source_repo}'"
               )
 
+          # input source_commit is the transport commit that must contain the
+          # payload. payload.source_commit may instead pin the reviewed UI
+          # cycle commit that Pantheon should inspect.
           payload_source_commit = payload.get("source_commit", "")
-          if payload_source_commit and payload_source_commit != envelope_source_commit:
+          if payload_source_commit and not (
+              len(payload_source_commit) == 40 and
+              all(c in "0123456789abcdef" for c in payload_source_commit)
+          ):
               errors.append(
-                  f"source_commit mismatch: input='{envelope_source_commit}' "
-                  f"payload='{payload_source_commit}'"
+                  f"payload source_commit must be a full 40-character SHA, got '{payload_source_commit}'"
               )
 
           paths_to_check = []
@@ -314,7 +323,7 @@ jobs:
 
       - name: Checkout replay target repo (Pantheon-owned replays)
         if: ${{ inputs.event_type == 'pantheon.contract_ready' || inputs.event_type == 'pantheon.backend_delivery' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ajoe734/front-ai-trading-system
           token: ${{ secrets.COORDINATION_REPO_TOKEN }}
@@ -362,6 +371,13 @@ jobs:
               sys.exit(1)
           PYEOF
 
+      - name: Capture replay target head
+        id: replay-target
+        if: ${{ inputs.event_type == 'pantheon.contract_ready' || inputs.event_type == 'pantheon.backend_delivery' }}
+        working-directory: replay-target
+        run: |
+          echo "mirror_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Emit replay dispatch
         env:
           GH_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
@@ -374,6 +390,7 @@ jobs:
           REPLAY_OF: ${{ inputs.replay_of }}
           REQUESTED_BY: ${{ inputs.requested_by }}
           PAYLOAD_SHA256: ${{ steps.payload-check.outputs.payload_sha256 }}
+          MIRROR_COMMIT: ${{ steps.replay-target.outputs.mirror_commit }}
           RUN_ID: ${{ github.run_id }}
         run: |
           # Determine target repo: Pantheon-owned event types dispatch into
@@ -414,6 +431,7 @@ jobs:
             -F client_payload[origin_workflow]="coordination-manual-replay/$RUN_ID" \
             -F client_payload[replay_of]="$REPLAY_OF" \
             -F client_payload[requested_by]="${REQUESTED_BY:-}" \
+            -F client_payload[mirror_commit]="${MIRROR_COMMIT:-}" \
             -F client_payload[payload_sha256]="$PAYLOAD_SHA256"
 
           echo "Replay dispatch emitted."

@@ -33,6 +33,7 @@ from task_archive import (
     task_satisfies_dependency,
     terminal_outcome_for,
 )
+from multi_repo_registry import repository_local_path
 from runtime_state import load_runtime_state
 
 STATUS_FILE = ROOT / "ai-status.json"
@@ -52,6 +53,11 @@ KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
+        "target_workload": 15,
+    },
+    "Claude2": {
+        "capability_lane": ["execution", "control-plane", "governance-review"],
+        "default_branch": "feat/claude2-execution-control",
         "target_workload": 15,
     },
     "Gemini": {
@@ -82,8 +88,12 @@ KNOWN_AGENTS = {
 }
 
 AGENT_ALIASES = {
+    "claude2": "Claude2",
+    "claude 2": "Claude2",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
+    "codex3": "Codex",
+    "codex (3)": "Codex",
     "qwen": "Qwen",
     "qwen coder": "Qwen",
     "qwen2.5-coder": "Qwen",
@@ -139,6 +149,7 @@ OPTIONAL_CURRENT_WORK_REFERENCES = (
 DISPLAY_TIMEZONE = ZoneInfo("Asia/Taipei")
 DISPLAY_TIMEZONE_LABEL = "台灣時間 (UTC+8)"
 ISO_TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b")
+FEATURE_MODULE_RE = re.compile(r"^([A-Z]+-\d{2,3})(?:-|$)")
 
 
 def default_canonical_document_layers() -> dict[str, list[str]]:
@@ -1302,6 +1313,14 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             f"- UI-done returned: `{coordination_counts.get('ui_done_received', 0)}`",
             f"- Frontend feedback returned: `{coordination_counts.get('frontend_feedback_received', 0)}`",
             f"- Open BFF gaps: `{coordination_counts.get('open_bff_gaps', 0)}`",
+            f"- Backend route live: `{coordination_counts.get('backend_route_live', 0)}`",
+            f"- Pantheon handoff published: `{coordination_counts.get('pantheon_handoff_published', 0)}`",
+            f"- Mirrored to front default branch: `{coordination_counts.get('mirrored_to_front_default_branch', 0)}`",
+            f"- Dispatch recorded in coordinator state: `{coordination_counts.get('dispatch_emitted', 0)}`",
+            f"- Receiver-visible payload on front default branch: `{coordination_counts.get('front_receiver_applied', 0)}`",
+            f"- Lovable consumed packet: `{coordination_counts.get('lovable_consumed', 0)}`",
+            f"- UI activated: `{coordination_counts.get('ui_activated', 0)}`",
+            f"- Runtime verified: `{coordination_counts.get('runtime_verified', 0)}`",
             "",
             "| Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |",
             "|---|---|---|---|---|---|---|---|",
@@ -1325,6 +1344,22 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     else:
         lines.append("| _(none)_ | - | - | - | - | - | - | - |")
 
+    route_live_activation_archive = archived_route_live_activation_modules()
+    route_live_activation_outside_feature_rows = modules_outside_coordination_feature_rows(
+        route_live_activation_archive,
+        coordination_features,
+    )
+    if route_live_activation_outside_feature_rows:
+        lines.extend(
+            [
+                "",
+                "Tracked-feature note: the table above only lists modules that currently have coordination feature records.",
+                "Archive-done route-live activation publication lanes that remain outside explicit feature rows: "
+                + ", ".join(f"`{module}`" for module in route_live_activation_outside_feature_rows) + ".",
+                "Do not read those omitted modules as open Pantheon backlog purely because they are absent from the coordination feature table.",
+            ]
+        )
+
     lines.extend(["", "## Latest Checkpoints", ""])
     if current_logs:
         for entry in current_logs:
@@ -1336,6 +1371,52 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         lines.append("- No checkpoints yet.")
 
     CURRENT_WORK_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def archived_route_live_activation_modules() -> list[str]:
+    task_modules = {
+        "APP-003-ROUTE-LIVE-FRONTEND-001": ["CW-02", "KW-04", "KW-05"],
+        "APP-003-ROUTE-LIVE-FRONTEND-002": ["RW-02", "RW-04", "RW-05", "KW-02", "KW-03", "TW-01", "TW-02", "TW-04"],
+    }
+    modules: list[str] = []
+    for task_id, task_module_list in task_modules.items():
+        snapshot = archived_task_snapshot(task_id)
+        if snapshot is None:
+            continue
+        task = snapshot.get("task") if isinstance(snapshot, dict) else None
+        if not isinstance(task, dict):
+            continue
+        if str(task.get("status") or "").lower() != "done":
+            continue
+        for module in task_module_list:
+            if module not in modules:
+                modules.append(module)
+    return modules
+
+
+def feature_module_identifier(feature_id: Any) -> str | None:
+    candidate = str(feature_id or "").strip()
+    if not candidate:
+        return None
+    match = FEATURE_MODULE_RE.match(candidate)
+    if match:
+        return match.group(1)
+    return None
+
+
+def modules_outside_coordination_feature_rows(
+    modules: list[str],
+    coordination_features: list[dict[str, Any]],
+) -> list[str]:
+    tracked_modules: set[str] = set()
+    for feature in coordination_features:
+        if not isinstance(feature, dict):
+            continue
+        module = feature_module_identifier(feature.get("feature_id"))
+        if module:
+            tracked_modules.add(module)
+
+    return [module for module in modules if module not in tracked_modules]
 
 
 def normalize_worker_actor(worker: dict[str, Any]) -> str:
@@ -1550,14 +1631,14 @@ def detect_truth_mismatches(
         parent_id = str(task.get("helper_parent") or "").strip()
         if parent_id:
             for worker in live_workers_by_task.get(parent_id, []):
-                if canonical_agent_name(worker.get("actor")) == expected_actor:
+                if canonical_agent_name(worker.get("actor") or worker.get("agent_id")) == expected_actor:
                     return True
 
         for related_id, related_task in task_map.items():
             if str(related_task.get("helper_parent") or "").strip() != task_id:
                 continue
             for worker in live_workers_by_task.get(related_id, []):
-                if canonical_agent_name(worker.get("actor")) == expected_actor:
+                if canonical_agent_name(worker.get("actor") or worker.get("agent_id")) == expected_actor:
                     return True
 
         return False
@@ -1610,7 +1691,7 @@ def detect_truth_mismatches(
 
         task_status = str(task.get("status") or "").lower()
         expected_actor = expected_task_actor(task)
-        actual_actor = canonical_agent_name(worker.get("actor"))
+        actual_actor = canonical_agent_name(worker.get("actor") or worker.get("agent_id"))
         if expected_actor and actual_actor and expected_actor != actual_actor:
             push(
                 {
@@ -1897,6 +1978,93 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def coordination_repo_root(repo_id: str) -> Path | None:
+    config = load_config()
+    root = repository_local_path(config, repo_id)
+    if isinstance(root, Path):
+        return root
+    if repo_id == "front_ai_trading_system":
+        fallback = ROOT.parent / "front-ai-trading-system"
+        return fallback if fallback.exists() else None
+    if repo_id == "pantheon":
+        return ROOT
+    return None
+
+
+def coordination_audit_matches(repo_root: Path | None, feature_id: str, marker: str) -> bool:
+    if repo_root is None:
+        return False
+    audit_dir = repo_root / ".coordination" / "audit"
+    if not audit_dir.exists():
+        return False
+    return any(audit_dir.glob(f"{feature_id}-{marker}-*.json"))
+
+
+def coordination_repo_payload_exists(repo_root: Path | None, rel_path: str | None) -> bool:
+    candidate = str(rel_path or "").strip()
+    if repo_root is None or not candidate:
+        return False
+    if candidate.startswith("/") or ".." in candidate:
+        return False
+    return (repo_root / candidate).is_file()
+
+
+def coordination_payload_has_runtime_verification(entry: dict[str, Any] | None) -> bool:
+    payload = entry.get("payload") if isinstance(entry, dict) else None
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("runtime_verified_at") or payload.get("verified_runtime_ref"):
+        return True
+    payload_type = normalize_coordination_token(payload.get("type"))
+    return payload_type in {"needs_runtime", "bff_gap"} and bool(payload.get("resolved_at"))
+
+
+def coordination_state_flags(feature: dict[str, Any]) -> dict[str, bool]:
+    feature_id = str(feature.get("feature_id") or "").strip()
+    contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
+    lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
+    backend_delivery = coordination_payload_entry(feature, "responses", "backend-delivery")
+    ui_done = coordination_payload_entry(feature, "requests", "ui-done")
+    frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+    bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
+    needs_runtime = coordination_payload_entry(feature, "requests", "needs-runtime")
+
+    front_root = coordination_repo_root("front_ai_trading_system")
+    pantheon_root = coordination_repo_root("pantheon")
+    mirrored_contract_path = f".coordination/responses/{feature_id}-contract-ready.yaml" if feature_id else None
+    mirrored_delivery_path = f".coordination/responses/{feature_id}-backend-delivery.yaml" if feature_id else None
+
+    mirrored_to_front = bool(feature.get("mirrored_to_target_repo")) or coordination_repo_payload_exists(front_root, mirrored_contract_path)
+    if not mirrored_to_front:
+        mirrored_to_front = coordination_repo_payload_exists(front_root, mirrored_delivery_path)
+
+    dispatch_recorded = bool(feature.get("last_dispatched_at")) or coordination_audit_matches(
+        pantheon_root, feature_id, "dispatch-emitted"
+    )
+    receiver_visible = mirrored_to_front and (
+        bool(feature.get("last_dispatched_at"))
+        or coordination_audit_matches(front_root, feature_id, "received")
+    )
+
+    lovable_consumed = any(bool(entry) for entry in (ui_done, frontend_feedback, bff_gap, needs_runtime))
+    ui_activated = any(bool(entry) for entry in (ui_done, frontend_feedback))
+    runtime_verified = any(
+        coordination_payload_has_runtime_verification(entry)
+        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, backend_delivery)
+    )
+
+    return {
+        "backend_route_live": bool(contract_ready or backend_delivery),
+        "pantheon_handoff_published": bool(contract_ready or lovable_task or backend_delivery),
+        "mirrored_to_front_default_branch": mirrored_to_front,
+        "dispatch_emitted": dispatch_recorded,
+        "front_receiver_applied": receiver_visible,
+        "lovable_consumed": lovable_consumed,
+        "ui_activated": ui_activated,
+        "runtime_verified": runtime_verified,
+    }
+
+
 def coordination_local_response_path(feature: dict[str, Any], payload_type: str) -> str | None:
     feature_id = str(feature.get("feature_id") or "").strip()
     if not feature_id:
@@ -2098,6 +2266,14 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
         "ui_done_received": 0,
         "frontend_feedback_received": 0,
         "open_bff_gaps": 0,
+        "backend_route_live": 0,
+        "pantheon_handoff_published": 0,
+        "mirrored_to_front_default_branch": 0,
+        "dispatch_emitted": 0,
+        "front_receiver_applied": 0,
+        "lovable_consumed": 0,
+        "ui_activated": 0,
+        "runtime_verified": 0,
     }
 
     for feature_id in sorted(raw_features):
@@ -2112,7 +2288,8 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
         bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
         review = coordination_review_snapshot(feature_id)
         stage, next_action = coordination_stage(feature)
-        mirrored = bool(feature.get("mirrored_to_target_repo"))
+        state_flags = coordination_state_flags(feature)
+        mirrored = bool(state_flags.get("mirrored_to_front_default_branch"))
         lovable_ready = bool(lovable_task or feature.get("lovable_task_path"))
         open_bff_gap = bool(stage == "bff_gap_open" and bff_gap and not coordination_payload_resolved(bff_gap))
 
@@ -2138,6 +2315,7 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
             "has_frontend_feedback": bool(frontend_feedback),
             "has_bff_gap": bool(bff_gap),
             "bff_gap_open": open_bff_gap,
+            "state_flags": state_flags,
             "review_path": review.get("path") if isinstance(review, dict) else None,
             "review_disposition": review.get("disposition") if isinstance(review, dict) else None,
             "paths": {
@@ -2159,6 +2337,8 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
         counts["ui_done_received"] += int(bool(ui_done))
         counts["frontend_feedback_received"] += int(bool(frontend_feedback))
         counts["open_bff_gaps"] += int(open_bff_gap)
+        for flag_name, enabled in state_flags.items():
+            counts[flag_name] += int(bool(enabled))
 
     return {
         "last_scan_at": coordination.get("last_scan_at"),
