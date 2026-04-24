@@ -41,8 +41,8 @@ DEFAULT_SETTINGS_BUNDLE: Dict[str, Any] = {
         "autoParamTuning": True,
     },
     "data": {
-        "primary": "bloomberg",
-        "fallbacks": ["yahoo", "alpha_vantage"],
+        "primary": "IBKR",
+        "fallbacks": ["MassivePolygon", "Shioaji", "TEJAPI", "Kraken"],
         "refreshSec": 30,
         "keys": {},
     },
