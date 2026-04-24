@@ -1,0 +1,55 @@
+feature_id: KW-05-strategy-spec
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: knowledge-strategy-spec
+screen_id: screen-knowledge-strategy-spec-list
+workbench: knowledge-workbench
+status: live
+published_at: "2026-04-24T00:52:34Z"
+task: KW-05-STRATEGY-SPEC-001
+description: >-
+  KW-05 Strategy Spec handoff republished from the route-live Pantheon
+  contract. The list, detail, versions, and compare routes are live, and the
+  next front-owned cycle should build the versioned spec browser and compare UI
+  against the published identity, lifecycle, ancestry, and compare semantics
+  instead of treating KW-05 as pending-BFF work.
+artifacts:
+  bff_contract: docs/bff/KW-05-strategy-spec.md
+  example_payload: docs/examples/KW-05-strategy-spec.json
+  lovable_ui_task: .coordination/responses/KW-05-strategy-spec-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/KW-05-strategy-spec/FRONTEND_CHANGE_SPEC.md
+endpoints:
+  - GET /api/v1/knowledge/strategy-specs
+  - GET /api/v1/knowledge/strategy-specs/{strategy_id}
+  - GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions
+  - GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+  - frontend_change_spec
+readiness_gate: >-
+  All four KW-05 strategy-spec routes are live and returning the published
+  field shape. Frontend implementation may proceed against the live route
+  family. If any required field diverges from the synced contract, emit the
+  canonical KW-05 bff-gap handoff instead of reconstructing ancestry or diffing
+  raw spec JSON client-side.
+front_actions_required:
+  - build the Strategy Spec list, detail, version-history, and compare surfaces in front-ai-trading-system
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - render canonical version identity, lifecycle, ancestry, citation links, and compare output from Pantheon BFF only
+  - do not reconstruct version history or compare semantics client-side
+  - emit a bff-gap handoff if any required field is absent
+  - publish ui-done and frontend-feedback from one Git-visible commit
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: true
+  compare_route_live: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true
+bff_spec_path: docs/bff/KW-05-strategy-spec.md
+frontend_change_spec_path: docs/pantheon-handoffs/KW-05-strategy-spec/FRONTEND_CHANGE_SPEC.md
+examples:
+  - docs/examples/KW-05-strategy-spec.json
