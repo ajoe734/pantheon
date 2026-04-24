@@ -10,7 +10,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
-from .crypto_symbol_utils import parse_kraken_symbol_components
+try:
+    from .crypto_symbol_utils import parse_kraken_symbol_components
+except ImportError:  # pragma: no cover - supports direct script imports
+    from crypto_symbol_utils import parse_kraken_symbol_components
 
 _KRAKEN_VENUE_ALIASES = {
     "KRAKEN": "KRAKEN",

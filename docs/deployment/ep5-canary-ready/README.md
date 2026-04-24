@@ -13,6 +13,7 @@ packet and a later human-gated `EP5-002` proof run:
 - runnable operator approval checklist
 - runnable provider smoke validation
 - runnable rollback drill harness
+- a machine-readable human-gate packet manifest for closeout and reviewer replay
 
 ## What This Bundle Does
 
@@ -23,6 +24,8 @@ packet and a later human-gated `EP5-002` proof run:
 3. gives operators a stepwise checklist in `operator-approval-checklist.md`
 4. gives the repo one runnable entrypoint at
    `scripts/run_ep5_canary_readiness.py`
+5. feeds the repo-authoritative closeout packet at
+   `docs/deployment/app-003-openclaw-closeout-packet.md`
 
 ## What This Bundle Does Not Prove
 
@@ -46,6 +49,7 @@ Those still belong to later gated `EP5` proof work.
 | `operator-approval-checklist.md` | tells operators which commands to run and what evidence to archive |
 | `env/canary-exec.env.example` | repo-local template for canary readiness variables and secret names |
 | `scripts/run_ep5_canary_readiness.py` | validates readiness, emits a canary DeploymentPlan artifact, and rehearses the rollback drill |
+| `docs/deployment/app-003-openclaw-closeout-packet.md` | consolidates the operator packet, OpenClaw runtime boundary, and event-trace gap disposition for APP-003 closeout |
 
 ## Recommended Flow
 
@@ -74,12 +78,33 @@ python3 scripts/run_ep5_canary_readiness.py \
   --binding-id rb-canary-active-001 \
   --dry-run \
   --output-dir /tmp/pantheon/ep5-canary-ready/drill
+
+python3 scripts/run_ep5_canary_readiness.py \
+  emit-human-gate-packet \
+  --checklist-json docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z/operator-checklist.json \
+  --datasource-summary-json /tmp/pantheon/ep5-canary-ready/datasource-smoke/summary.json \
+  --plan-json docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z/canary-deployment-plan.json \
+  --drill-summary-json docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z/rollback-drill-summary.json \
+  --dual-vm-evidence-dir docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z \
+  --event-trace-status packetized \
+  --event-trace-note "Replay-clean event-trace projection evidence still needs a dedicated capture; use the closeout packet for the current gap disposition." \
+  --output-dir /tmp/pantheon/ep5-canary-ready/human-gate
 ```
 
 Use `--dry-run` until a human gate and real canary infrastructure are available.
+
+The local `run-rollback-drill --dry-run` output is a payload rehearsal only.
+Its `summary.json` stays `prepared`, so feeding that file into
+`emit-human-gate-packet` yields `incomplete` by design. A
+`ready_for_review` human-gate packet must point at an executed rollback drill
+summary such as the archived dual-VM evidence bundle above.
 
 ## Proof Boundary
 
 The outputs produced here are readiness artifacts only. They are acceptable
 closeout evidence for `EP5-001` and datasource-ops bring-up because they
 prepare the path, but they must not be cited as the first `EP5` proof packet.
+
+For the current APP-003 closeout, the event-trace read-model surface is
+explicitly packetized in `docs/deployment/app-003-openclaw-closeout-packet.md`
+instead of being silently treated as closed.

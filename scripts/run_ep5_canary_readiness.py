@@ -79,6 +79,10 @@ def dump_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 GOVERNED_PROVIDER_SPECS = (
     GovernedProviderSpec(
         key="ibkr",
@@ -734,6 +738,122 @@ def command_emit_canary_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_human_gate_packet(
+    *,
+    checklist_path: Path,
+    datasource_summary_path: Path,
+    plan_path: Path,
+    drill_summary_path: Path,
+    dual_vm_evidence_dir: Path | None,
+    event_trace_status: str,
+    event_trace_note: str,
+) -> dict[str, Any]:
+    checklist = load_json(checklist_path)
+    datasource_summary = load_json(datasource_summary_path)
+    plan = load_json(plan_path)
+    drill_summary = load_json(drill_summary_path)
+
+    checklist_ok = checklist.get("status") == "pass"
+    datasource_ok = datasource_summary.get("status") == "pass"
+    plan_ok = (
+        plan.get("target_stage") == "canary"
+        and float((plan.get("scale") or {}).get("capital_scale_pct") or 0.0) <= 5.0
+        and float((plan.get("scale") or {}).get("gross_scale_pct") or 0.0) <= 25.0
+        and str((plan.get("rollback") or {}).get("action_type") or "") == "pause_then_replace"
+    )
+    drill_ok = drill_summary.get("status") == "executed"
+    packet_ready = checklist_ok and datasource_ok and plan_ok and drill_ok
+
+    return {
+        "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+        "generated_at": iso_now(),
+        "mode": "human_gate_packet",
+        "status": "ready_for_review" if packet_ready else "incomplete",
+        "proof_boundary": "EP5-001 prerequisite_only; not EP5-002 proof",
+        "openclaw_runtime_boundary": {
+            "contract": "OPENCLAW_RUNTIME_CONTRACT.md",
+            "summary": "OpenClaw remains the governed control-plane/runtime substrate, not the execution kernel.",
+            "execution_kernel_owner": "Pantheon runtime-manager and execution plane",
+        },
+        "bundle": {
+            "operator_checklist": {
+                "path": str(checklist_path),
+                "status": checklist.get("status"),
+                "check_health": checklist.get("check_health"),
+            },
+            "datasource_smoke": {
+                "path": str(datasource_summary_path),
+                "status": datasource_summary.get("status"),
+                "providers": datasource_summary.get("providers"),
+            },
+            "canary_plan": {
+                "path": str(plan_path),
+                "target_stage": plan.get("target_stage"),
+                "capital_scale_pct": (plan.get("scale") or {}).get("capital_scale_pct"),
+                "gross_scale_pct": (plan.get("scale") or {}).get("gross_scale_pct"),
+                "rollback_action_type": (plan.get("rollback") or {}).get("action_type"),
+            },
+            "rollback_drill": {
+                "path": str(drill_summary_path),
+                "status": drill_summary.get("status"),
+                "replacement_binding_id": drill_summary.get("replacement_binding_id"),
+                "kill_switch_safe_mode": drill_summary.get("kill_switch_safe_mode"),
+            },
+            "dual_vm_evidence_dir": str(dual_vm_evidence_dir) if dual_vm_evidence_dir else None,
+        },
+        "event_trace_read_model": {
+            "status": event_trace_status,
+            "note": event_trace_note,
+            "acceptance_rule": "Must be either closed with replayable trace evidence or explicitly packetized before human gate.",
+        },
+        "acceptance_checks": [
+            {
+                "name": "repo_authoritative_operator_packet",
+                "status": "pass" if checklist_ok and datasource_ok and plan_ok and drill_ok else "fail",
+                "detail": "Checklist, datasource smoke, canary plan, and rollback drill evidence are all present and internally consistent.",
+            },
+            {
+                "name": "event_trace_gap_dispositioned",
+                "status": "pass" if event_trace_status in {"closed", "packetized"} else "fail",
+                "detail": event_trace_note,
+            },
+            {
+                "name": "human_gate_bundle_complete",
+                "status": "pass" if packet_ready else "fail",
+                "detail": "Human gate input bundle is replay-clean at the artifact level; EP5 proof remains deferred.",
+            },
+        ],
+    }
+
+
+def command_emit_human_gate_packet(args: argparse.Namespace) -> int:
+    output_dir = make_output_dir(args.output_dir, "pantheon-ep5-human-gate-")
+    dual_vm_evidence_dir = Path(args.dual_vm_evidence_dir) if args.dual_vm_evidence_dir else None
+    packet = build_human_gate_packet(
+        checklist_path=Path(args.checklist_json),
+        datasource_summary_path=Path(args.datasource_summary_json),
+        plan_path=Path(args.plan_json),
+        drill_summary_path=Path(args.drill_summary_json),
+        dual_vm_evidence_dir=dual_vm_evidence_dir,
+        event_trace_status=args.event_trace_status,
+        event_trace_note=args.event_trace_note,
+    )
+    dump_json(output_dir / "human-gate-packet.json", packet)
+    dump_json(
+        output_dir / "summary.json",
+        {
+            "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+            "generated_at": packet["generated_at"],
+            "mode": "human_gate_packet",
+            "status": packet["status"],
+            "event_trace_status": packet["event_trace_read_model"]["status"],
+            "proof_boundary": packet["proof_boundary"],
+        },
+    )
+    print(json.dumps({"status": packet["status"], "output_dir": str(output_dir)}, ensure_ascii=False))
+    return 0 if packet["status"] == "ready_for_review" else 1
+
+
 def build_auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -953,6 +1073,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_smoke.add_argument("--env-file", default=None)
     p_smoke.add_argument("--output-dir", default=None)
     p_smoke.set_defaults(func=command_run_datasource_smoke)
+
+    p_packet = subparsers.add_parser("emit-human-gate-packet")
+    p_packet.add_argument("--checklist-json", required=True)
+    p_packet.add_argument("--datasource-summary-json", required=True)
+    p_packet.add_argument("--plan-json", required=True)
+    p_packet.add_argument("--drill-summary-json", required=True)
+    p_packet.add_argument("--dual-vm-evidence-dir", default=None)
+    p_packet.add_argument("--event-trace-status", choices=("closed", "packetized"), required=True)
+    p_packet.add_argument("--event-trace-note", required=True)
+    p_packet.add_argument("--output-dir", default=None)
+    p_packet.set_defaults(func=command_emit_human_gate_packet)
 
     p_drill = subparsers.add_parser("run-rollback-drill")
     p_drill.add_argument("--env-file", default=None)
