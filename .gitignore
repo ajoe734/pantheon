@@ -20,6 +20,7 @@ __pycache__/
 .orchestrator/task-briefs/
 docs-site/planning-state.json
 docs-site/ai-activity-log.jsonl
+ai-activity-log.jsonl
 docs-site/ai-status.json
 docs-site/approval-queue.json
 docs-site/current-work.md
