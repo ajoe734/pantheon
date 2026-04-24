@@ -1,21 +1,21 @@
 # APP-003-DATASOURCE-OPS-001 Review Packet (Sidecar)
 
 **Parent Task**: `APP-003-DATASOURCE-OPS-001`  
-**Parent Owner**: `Codex2`  
-**Parent Reviewer**: `Codex`  
-**Parent Status**: `review_approved`  
+**Parent Owner (at closeout)**: `Codex2`  
+**Parent Reviewer (at closeout)**: `Codex`  
+**Parent Status**: `done` (archived `2026-04-24T18:01:32Z`)  
 **Sidecar Task**: `APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW`  
 **Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Codex2`  
+**Sidecar Reviewer**: `Claude`  
 **Helper Kind**: `review_packet`  
-**Generated**: `2026-04-24`  
+**Generated**: `2026-04-24` (refreshed for `Claude` review approval and pending owner finalization against archived parent `done` state)  
 **Mutates canonical**: `no`
 
 > This is a support artifact only. It does not modify L1 policy, canonical
-> runtime truth, registry/governance behavior, or the live parent
-> `review_approved` record. It packages a reviewer-facing packet and evidence
-> summary for the governed datasource ops slice while the parent owner remains
-> responsible for final mainline closeout.
+> runtime truth, registry/governance behavior, or the archived parent `done`
+> record. It packages a reviewer-facing packet and evidence summary for the
+> governed datasource ops slice so the sidecar reviewer can verify packet
+> accuracy without reopening the parent task.
 
 ## 1. Findings First
 
@@ -27,7 +27,7 @@ Non-blocking reviewer notes:
 
 | Severity | Finding | Evidence | Why it does not block |
 |---|---|---|---|
-| Low | The companion acceptance sidecar for the same parent is still `todo`, so there is no sibling acceptance packet to cite yet. | `ai-status.json:588-606` shows `APP-003-DATASOURCE-OPS-001-SIDECAR-ACCEPTANCE` as `todo`; this directory now contains only this review packet. | This sidecar's acceptance is limited to support artifact creation and reviewer handoff. The packet is intentionally self-contained. |
+| Low | The companion acceptance sidecar for the same parent is still `todo`, so there is no sibling acceptance packet to cite yet. | The `APP-003-DATASOURCE-OPS-001-SIDECAR-ACCEPTANCE` entry in `ai-status.json` remains `todo`; `support/sidecars/APP-003-DATASOURCE-OPS-001/` still contains only this review packet. | This sidecar's acceptance is limited to support artifact creation and reviewer handoff. The packet is intentionally self-contained. |
 
 ## 2. Source Boundary
 
@@ -36,6 +36,7 @@ This packet uses only task-scoped and directly relevant evidence:
 - `AI_COLLABORATION_GUIDE.md`
 - `.orchestrator/task-briefs/app_003_datasource_ops_001_sidecar_review.md`
 - `ai-status.json`
+- `ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json`
 - `docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md`
 - `env/canary-exec.env.example`
 - `env/prod-exec.env.example`
@@ -61,11 +62,11 @@ task brief required it.
 
 | Item | Current truth | Review implication |
 |---|---|---|
-| Parent lifecycle | `ai-status.json:303-332` records the parent as owner `Codex2`, reviewer `Codex`, status `review_approved`, with finalize intentionally paused while higher-priority review work ran. | This sidecar must not claim authority to finalize or reopen the parent. It only summarizes the approved state for reviewer intake. |
-| Parent acceptance scope | The parent acceptance remains limited to governed provider secrets/env coverage, smoke automation, and truthful operator runbooks. | The packet should verify those accepted targets rather than reframe the work as a broader runtime/governance change. |
+| Parent lifecycle | `ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json` records the parent archived as `status=done` / `terminal_outcome=completed` at `2026-04-24T18:01:32Z`, with delivery commit `95ba6c16d1600ee971dc49aea4fe326615daecee` authored on branch `codex/2026-04-21-exec-sync`. | This sidecar must not claim authority to reopen the archived parent. It only summarizes the already-closed state for reviewer intake. |
+| Parent acceptance scope | The archived parent acceptance remains limited to governed provider secrets/env coverage, smoke automation, and truthful operator runbooks. | The packet should verify those accepted targets rather than reframe the work as a broader runtime/governance change. |
 | Parent review path | `docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md:1-19` records a clean approval with four reruns and no blocking findings. | Reviewer should confirm the packet preserves that already-approved disposition instead of inventing a second review path. |
-| Sidecar lifecycle | `ai-status.json:640-657` shows this sidecar as owner `Codex`, reviewer `Codex2`, status `review`, with support-only acceptance criteria after an auto-reassign away from `Claude`. | The packet is now waiting on `Codex2` review disposition; it does not need more owner-side scope expansion. |
-| Companion support coverage | The companion acceptance sidecar exists only as a task row and has not produced a packet yet. | This review packet must carry its own evidence inventory and cannot rely on a sibling support artifact. |
+| Sidecar lifecycle | The `APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW` entry in `ai-status.json` now records owner `Codex`, reviewer `Claude`, status `review_approved`, and reviewer notes confirming archived-parent alignment plus rerun success. | The only remaining step is the owner-side `review_approved -> done` transition for this support slice; reviewer work is already complete. |
+| Companion support coverage | The `APP-003-DATASOURCE-OPS-001-SIDECAR-ACCEPTANCE` entry in `ai-status.json` still shows `todo`; no sibling acceptance packet has been produced yet. | This review packet must carry its own evidence inventory and cannot rely on a sibling support artifact. |
 
 ## 4. Parent Review Matrix
 
@@ -82,9 +83,9 @@ task brief required it.
 
 | Surface | What it proves | Why it matters |
 |---|---|---|
-| `ai-status.json:303-332` | The parent is still live `review_approved`, not `done`, and its review notes already record provider matrix coverage, VM-2 onboarding guidance, and rerun success. | This is the durable current truth the sidecar must summarize without changing ownership or terminal state. |
-| `docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md:1-19` | The reviewer disposition was `approved` with no blocking findings and with explicit verification of env templates, secrets guide, smoke automation, tests, and example-env reruns. | It is the parent's canonical review record for the current approved state. |
-| `ai-status.json:640-657` | The sidecar itself is now a support-only `review` task assigned to `Codex` with reviewer `Codex2`, after the orchestrator auto-reassigned review away from `Claude`. | It shows the correct next step is reviewer disposition, not parent finalization. |
+| `ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json` | The parent is now archived with `terminal_status=done`, `terminal_outcome=completed`, delivery commit `95ba6c16d1600ee971dc49aea4fe326615daecee`, and parent review notes already recording provider matrix coverage, VM-2 onboarding guidance, and rerun success. | This is the durable closed truth the sidecar must summarize without re-authorizing or reopening the parent. |
+| `docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md:1-19` | The reviewer disposition was `approved` with no blocking findings and with explicit verification of env templates, secrets guide, smoke automation, tests, and example-env reruns. | It is the parent's canonical review record and remains valid after archival. |
+| The `APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW` task entry and the pending handoff from `Claude` to `Codex` in `ai-status.json` | The sidecar itself is now a support-only `review_approved` task assigned to `Codex`; reviewer `Claude` already verified archived-parent alignment, env/runbook surfaces, and the rerun bundle. | It shows the correct next step is owner finalization of the sidecar, not another reviewer pass or parent re-finalization. |
 
 ### 5.2 Landed Supportable Surfaces
 
@@ -103,65 +104,59 @@ bundle against the current workspace before handoff.
 | Command | Result |
 |---|---|
 | `python3 scripts/test_run_ep5_canary_readiness.py` | `3` tests passed |
-| `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/canary-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-sidecar-review` | `status=pass` |
-| `python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets --output-dir /tmp/pantheon/ep5-canary-ready/checklist-sidecar-review` | `status=pass` |
-| `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/prod-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-prod-example-sidecar-review` | `status=pass` |
+| `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/canary-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-sidecar-review-refresh` | `status=pass` |
+| `python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets --output-dir /tmp/pantheon/ep5-canary-ready/checklist-sidecar-review-refresh` | `status=pass` |
+| `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/prod-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-prod-example-sidecar-review-refresh` | `status=pass` |
 
 Review note:
 
-1. These reruns confirm the current workspace still matches the parent's
-   approved evidence bundle.
+1. These reruns confirm the current workspace still matches the archived
+   parent's approved evidence bundle.
 2. Because this sidecar is support-only, the reruns strengthen packet accuracy
-   but do not create a second approval path for the parent task.
+   but do not reopen or re-approve the archived parent task.
 
 ## 6. What Reviewer Should Reject
 
 | Incorrect move | Why it is wrong |
 |---|---|
-| Treating this sidecar as authority to move the parent from `review_approved` to `done` | Only the parent owner may finalize a `review_approved` task, and the sidecar has no authority over parent lifecycle transitions. |
-| Blocking this sidecar because the sibling acceptance packet is not present yet | The acceptance sidecar is a separate helper task. This review packet is allowed to be self-contained and support-only. |
-| Using the task brief's `todo` snapshot as live lifecycle truth | The brief is dispatch context. `ai-status.json` is the durable live source of truth for the active sidecar state. |
-| Asking this packet to modify env/script/runbook truth directly | This slice is restricted to support artifacts and reviewer handoff only; canonical or runtime edits belong to the parent owner flow. |
+| Treating this sidecar as authority to reopen the archived parent or re-run the parent's `review_approved → done` transition | The parent is already archived `done`; the sidecar has no authority to touch archived parent lifecycle state. |
+| Blocking this sidecar because the sibling acceptance packet is not present yet | The acceptance sidecar is a separate helper task still at `todo`. This review packet is allowed to be self-contained and support-only. |
+| Using the task brief's `todo` snapshot as live lifecycle truth | The brief is dispatch context. `ai-status.json` is the durable live source of truth for the active sidecar state, and the archive file is the truth for the parent. |
+| Asking this packet to modify env/script/runbook truth directly | This slice is restricted to support artifacts and reviewer handoff only; canonical or runtime edits belong to the parent owner flow, which is already closed. |
 
-## 7. Reviewer Disposition and Handoff For `Codex2`
+## 7. Approved Reviewer Disposition and Owner Finalize Note
 
-Recommended review outcome:
+Recorded reviewer outcome from `Claude` (`2026-04-24T18:12:44Z`):
 
-1. Approve this sidecar if Sections 3 through 5 remain true and the packet
-   stays support-only.
-2. Reopen this sidecar only if one of the cited evidence surfaces no longer
-   matches the parent's approved state, or if the packet starts claiming
-   authority over parent closeout.
-
-Suggested approval command:
-
-```bash
-AI_NAME=Codex2 \
-REVIEW_FILE=support/sidecars/APP-003-DATASOURCE-OPS-001/APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW.md \
-REVIEW_NOTES_ZH="審查通過||review packet 已整理 parent review_approved 狀態、governed provider env/runbook/smoke evidence 與 sidecar rerun；內容維持 support-only，未代替 parent finalize" \
-bash scripts/ai-status.sh approve APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW \
-  "Review packet verified against parent approval record, env/runbook surfaces, and current rerun checks."
-```
+1. The packet was verified against the archived parent `done` record at
+   `ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json` and the parent
+   review record at
+   `docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md`.
+2. The governed env/runbook surfaces and the rerun bundle (`3` unit tests,
+   canary datasource smoke, operator checklist, and prod-example datasource
+   smoke) were confirmed to remain `pass`.
+3. The packet remained support-only and did not claim authority to reopen the
+   archived parent task.
 
 Owner finalize note:
 
-- After `Codex2` approves the sidecar, ownership returns to `Codex` for the
-  normal `review_approved -> done` transition.
-- That finalization should close only this sidecar support slice. The parent
-  owner still decides whether and when to absorb anything into mainline closeout.
+- `Codex` should finalize only this sidecar from `review_approved` to `done`.
+- The archived parent `APP-003-DATASOURCE-OPS-001` remains untouched; any
+  mainline absorption stays with the parent owner path.
 
 ## 8. Verification Commands
 
 - `python3 scripts/ai_status.py show APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW`
-- `python3 scripts/ai_status.py show APP-003-DATASOURCE-OPS-001`
+- `python3 scripts/ai_status.py show APP-003-DATASOURCE-OPS-001` (returns the archived snapshot)
 - `rg -n "APP-003-DATASOURCE-OPS-001" docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json`
 - `find support/sidecars/APP-003-DATASOURCE-OPS-001 -maxdepth 1 -type f | sort`
 - `python3 scripts/test_run_ep5_canary_readiness.py`
-- `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/canary-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-sidecar-review`
-- `python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets --output-dir /tmp/pantheon/ep5-canary-ready/checklist-sidecar-review`
-- `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/prod-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-prod-example-sidecar-review`
+- `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/canary-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-sidecar-review-refresh`
+- `python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets --output-dir /tmp/pantheon/ep5-canary-ready/checklist-sidecar-review-refresh`
+- `python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/prod-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-prod-example-sidecar-review-refresh`
 - `nl -ba .orchestrator/task-briefs/app_003_datasource_ops_001_sidecar_review.md | sed -n '1,40p'`
-- `nl -ba ai-status.json | sed -n '303,332p;588,606p;640,657p'`
+- `rg -n 'APP-003-DATASOURCE-OPS-001-SIDECAR-(ACCEPTANCE|REVIEW)' ai-status.json`
+- `nl -ba ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json | sed -n '1,40p'`
 - `nl -ba docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md | sed -n '1,40p'`
 - `nl -ba env/canary-exec.env.example | sed -n '25,63p'`
 - `nl -ba env/prod-exec.env.example | sed -n '59,104p'`
