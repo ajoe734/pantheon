@@ -103,6 +103,23 @@ def default_required_feedback(feature_id: str) -> list[str]:
     return [f"{feedback_dir}/{name}" for name in DEFAULT_REQUIRED_FEEDBACK_FILES]
 
 
+def default_delivery_dependencies(feature_id: str, contract_payload: dict[str, Any]) -> list[str]:
+    explicit = [str(item).strip() for item in (contract_payload.get("delivery_dependencies") or []) if str(item).strip()]
+    if explicit:
+        return explicit
+
+    artifacts = dict(contract_payload.get("artifacts") or {})
+    defaults = [
+        f".coordination/responses/{feature_id}-contract-ready.yaml",
+        str(artifacts.get("backend_delivery") or "").strip(),
+    ]
+    ordered: list[str] = []
+    for item in defaults:
+        if item and item not in ordered:
+            ordered.append(item)
+    return ordered
+
+
 def resolve_contract_packet_refs(config: dict[str, Any], contract_payload: dict[str, Any]) -> dict[str, Any]:
     feature_id = str(contract_payload.get("feature_id") or "").strip()
     pantheon_root = repository_local_path(config, "pantheon")
@@ -164,8 +181,13 @@ def render_lovable_prompt(machine_packet: dict[str, Any]) -> str:
     gap_handoff_template = str(machine_packet.get("gap_handoff_template") or "").strip()
     completion_handoff_path = str(machine_packet.get("completion_handoff_path") or "").strip()
     completion_handoff_template = str(machine_packet.get("completion_handoff_template") or "").strip()
+    feedback_handoff_path = str(machine_packet.get("feedback_handoff_path") or "").strip()
+    feedback_handoff_template = str(machine_packet.get("feedback_handoff_template") or "").strip()
+    required_feedback = list(machine_packet.get("required_feedback") or [])
+    delivery_dependencies = list(machine_packet.get("delivery_dependencies") or [])
     prompt_lines = [
         f"Build the `{machine_packet.get('feature_id')}` UI flow in `front-ai-trading-system` using only Pantheon APIs.",
+        "Pantheon has already published the contract-ready handoff for this feature.",
     ]
     if gap_handoff_path:
         gap_line = f"If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `{gap_handoff_path}`"
@@ -184,21 +206,39 @@ def render_lovable_prompt(machine_packet: dict[str, Any]) -> str:
     if endpoints:
         prompt_lines.append("Allowed endpoints:")
         prompt_lines.extend(f"- {endpoint}" for endpoint in endpoints)
+    if delivery_dependencies:
+        prompt_lines.append("Published Pantheon dependencies:")
+        prompt_lines.extend(f"- {item}" for item in delivery_dependencies)
     prompt_lines.append("Constraints:")
     prompt_lines.extend(f"- {item}" for item in list(machine_packet.get("constraints") or []))
     acceptance = list(machine_packet.get("acceptance") or [])
     if acceptance:
         prompt_lines.append("Acceptance:")
         prompt_lines.extend(f"- {item}" for item in acceptance)
+    if required_feedback:
+        prompt_lines.append("Required feedback bundle:")
+        prompt_lines.extend(f"- {item}" for item in required_feedback)
     if completion_handoff_path:
         completion_line = f"When the UI implementation is ready, write `{completion_handoff_path}`"
         if completion_handoff_template:
             completion_line += f" using `{completion_handoff_template}` as the template."
         else:
             completion_line += "."
-        completion_line += " Sync that file back to GitHub and stop so Pantheon supervisor can pick up review/integration work automatically."
+        completion_line += " This handoff alone is not enough to close the loop."
         prompt_lines.append("Completion handoff:")
         prompt_lines.append(f"- {completion_line}")
+    if feedback_handoff_path:
+        feedback_line = f"After the UI handoff, write `{feedback_handoff_path}`"
+        if feedback_handoff_template:
+            feedback_line += f" using `{feedback_handoff_template}` as the template."
+        else:
+            feedback_line += "."
+        feedback_line += " Use the same Git-visible `source_commit` as the reviewed UI slice, include the refreshed feedback bundle paths, sync the files back to GitHub, and stop."
+        prompt_lines.append("Feedback return:")
+        prompt_lines.append(f"- {feedback_line}")
+        prompt_lines.append(
+            "- Pantheon supervisor polls the coordination and GitHub-visible return loop on a fixed cadence; once both `ui-done` and `frontend-feedback` land, supervisor will decide closeout vs. another follow-up cycle automatically."
+        )
     links = dict(machine_packet.get("links") or {})
     ref_lines: list[str] = []
     for value in [
@@ -256,8 +296,7 @@ def publish_lovable_task_packet(config: dict[str, Any], contract_payload: dict[s
         or list(contract_payload.get("front_actions_required") or []),
         "required_feedback": list(contract_payload.get("required_feedback") or [])
         or default_required_feedback(feature_id),
-        "delivery_dependencies": list(contract_payload.get("delivery_dependencies") or [])
-        or [f".coordination/responses/{feature_id}-contract-ready.yaml"],
+        "delivery_dependencies": default_delivery_dependencies(feature_id, contract_payload),
         "links": {
             "lovable_project_url": _env_or_value(
                 str(lovable_cfg.get("project_url_env") or "").strip() or None,
@@ -275,6 +314,8 @@ def publish_lovable_task_packet(config: dict[str, Any], contract_payload: dict[s
         "gap_handoff_template": f".coordination/requests/{feature_id}-bff-gap.example.yaml",
         "completion_handoff_path": f".coordination/requests/{feature_id}-ui-done.yaml",
         "completion_handoff_template": f".coordination/requests/{feature_id}-ui-done.example.yaml",
+        "feedback_handoff_path": f".coordination/requests/{feature_id}-frontend-feedback.yaml",
+        "feedback_handoff_template": f".coordination/requests/{feature_id}-frontend-feedback.example.yaml",
     }
 
     packet_path = responses_dir / f"{feature_id}-lovable-ui-task.yaml"

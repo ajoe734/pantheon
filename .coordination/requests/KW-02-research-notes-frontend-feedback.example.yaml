@@ -1,0 +1,25 @@
+feature_id: KW-02-research-notes
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+workbench: knowledge-workbench
+screen_id: screen-knowledge-notes-list
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/KW-02-research-notes
+feedback_path: docs/pantheon-feedback/KW-02-research-notes/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/KW-02-research-notes/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/KW-02-research-notes/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/KW-02-research-notes/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - .coordination/requests/KW-02-research-notes-ui-done.yaml
+  - .coordination/requests/KW-02-research-notes-frontend-feedback.yaml
+  - docs/pantheon-feedback/KW-02-research-notes/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/KW-02-research-notes/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/KW-02-research-notes/UI_DECISIONS.md
+  - docs/pantheon-feedback/KW-02-research-notes/QA_STATUS.md
+  - src/lib/bffClient.ts
+  - src/App.tsx
+pantheon_review_hint: review-ui
+summary: Research Notes UI is implemented against the published Pantheon contract and the feedback bundle is ready for Pantheon review.

@@ -1,0 +1,54 @@
+feature_id: TW-02-parameter-controls
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: parameter-controls
+screen_id: screen-parameter-controls
+workbench: trainer-workbench
+status: live
+published_at: "2026-04-24T00:52:34Z"
+task: TW-02-CONTROLS-001
+description: >-
+  TW-02 Parameter Controls handoff republished from the route-live Pantheon
+  contract. The trainer-controls read route and governed patch route are live,
+  and the next front-owned cycle should build the controls and patch UI against
+  the published authority, validation, diff, and degraded-state semantics
+  instead of treating TW-02 as pending-BFF work.
+artifacts:
+  bff_contract: docs/bff/TW-02-parameter-controls.md
+  example_payload: docs/examples/TW-02-parameter-controls.json
+  lovable_ui_task: .coordination/responses/TW-02-parameter-controls-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md
+endpoints:
+  - GET /api/v1/trainer/sessions/{session_id}/controls
+  - POST /api/v1/trainer/sessions/{session_id}/patch
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+  - frontend_change_spec
+readiness_gate: >-
+  Both TW-02 trainer-controls routes are live and returning the published field
+  shape. Frontend implementation may proceed against the live route family. If
+  any required field diverges from the synced contract, emit the canonical TW-02
+  bff-gap handoff instead of inventing ranges, clipping values, or synthesizing
+  diffs client-side.
+front_actions_required:
+  - build the Parameter Controls surface in front-ai-trading-system
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - render control metadata, patch acceptance, rejection, and diff responses from Pantheon BFF only
+  - respect allowedActions.canPatchControls and degraded-state gating exactly as published
+  - do not invent control ranges, clipping, or local diff summaries
+  - emit a bff-gap handoff if any required field is absent
+  - publish ui-done and frontend-feedback from one Git-visible commit
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: true
+  patch_route_live: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true
+bff_spec_path: docs/bff/TW-02-parameter-controls.md
+frontend_change_spec_path: docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md
+examples:
+  - docs/examples/TW-02-parameter-controls.json

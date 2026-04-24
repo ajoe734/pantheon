@@ -41,6 +41,18 @@ def _yaml_dump(payload: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
+def _yaml_load(path: Path) -> dict[str, Any] | None:
+    text = path.read_text(encoding="utf-8")
+    if yaml is not None:
+        payload = yaml.safe_load(text)
+        return payload if isinstance(payload, dict) else None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _require_git_checkout(path: Path, display_name: str) -> None:
     result = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
@@ -85,11 +97,62 @@ def _default_request_templates(config: dict[str, Any], feature_id: str) -> list[
         return []
 
     templates: list[Path] = []
-    for suffix in ("bff-gap.example.yaml", "ui-done.example.yaml"):
+    for suffix in ("bff-gap.example.yaml", "ui-done.example.yaml", "frontend-feedback.example.yaml"):
         candidate = requests_dir / f"{feature_id}-{suffix}"
         if candidate.exists():
             templates.append(candidate)
     return templates
+
+
+def mirror_backend_delivery_bundle(
+    config: dict[str, Any],
+    delivery_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    feature_id = str(delivery_payload.get("feature_id") or "").strip()
+    if not feature_id:
+        return None
+
+    target_repo_id = "front_ai_trading_system"
+    responses_dir = coordination_responses_dir(config, target_repo_id)
+    target_root = repository_local_path(config, target_repo_id)
+    pantheon_root = repository_local_path(config, "pantheon")
+    if responses_dir is None or target_root is None or pantheon_root is None:
+        return None
+    _require_git_checkout(target_root, "front-ai-trading-system")
+
+    changed = False
+    mirrored_paths: list[str] = []
+
+    for key in ("delivery_note_path", "contract_lock_path"):
+        rel = str(delivery_payload.get(key) or "").strip()
+        if not rel:
+            continue
+        source = pantheon_root / rel
+        target = target_root / rel
+        if not source.is_file():
+            continue
+        changed = _copy_if_changed(source, target) or changed
+        mirrored_paths.append(str(target.relative_to(target_root)))
+
+    mirrored_delivery = dict(delivery_payload)
+    mirrored_delivery.update(
+        {
+            "mirror_only": True,
+            "mirrored_from_repo": "pantheon",
+            "mirrored_target_repo": "front-ai-trading-system",
+        }
+    )
+
+    delivery_path = responses_dir / f"{feature_id}-backend-delivery.yaml"
+    changed = _write_if_changed(delivery_path, _yaml_dump(mirrored_delivery)) or changed
+    mirrored_paths.append(str(delivery_path.relative_to(target_root)))
+
+    return {
+        "target_repo_id": target_repo_id,
+        "target_repo_path": str(target_root),
+        "changed": changed,
+        "mirrored_paths": mirrored_paths,
+    }
 
 
 def mirror_contract_ready_bundle(
@@ -157,6 +220,21 @@ def mirror_contract_ready_bundle(
         local_example_refs.append(rel)
     if local_example_refs and "example_payload" in local_artifacts:
         local_artifacts["example_payload"] = local_example_refs[0]
+
+    backend_delivery_ref = str(artifacts.get("backend_delivery") or "").strip()
+    if backend_delivery_ref and pantheon_root is not None:
+        backend_source = pantheon_root / backend_delivery_ref
+        if backend_source.is_file():
+            backend_payload = _yaml_load(backend_source)
+            if backend_payload is not None:
+                mirrored_backend = mirror_backend_delivery_bundle(config, backend_payload)
+                if mirrored_backend:
+                    changed = bool(mirrored_backend.get("changed")) or changed
+                    for mirrored_path in mirrored_backend.get("mirrored_paths", []):
+                        if mirrored_path not in mirrored_paths:
+                            mirrored_paths.append(str(mirrored_path))
+            else:
+                record_copy(backend_source, target_root / backend_delivery_ref)
 
     mirrored_contract = dict(contract_payload)
     mirrored_contract.update(

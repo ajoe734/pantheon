@@ -1,0 +1,18 @@
+feature_id: RW-05-artifact-compare
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: artifact-compare
+blocking: true
+
+summary: Artifact Compare UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - endpoint: GET /api/v1/artifacts/compare
+    field: compare.summary
+    reason: Compare summaries must come from Pantheon BFF; the frontend must not derive them client-side.
+
+acceptance:
+  - Pantheon publishes a refreshed RW-05-artifact-compare contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

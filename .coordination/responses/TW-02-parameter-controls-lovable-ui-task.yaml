@@ -1,0 +1,50 @@
+feature_id: TW-02-parameter-controls
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: trainer-workbench
+screen: parameter-controls
+screen_id: screen-parameter-controls
+ui_spec_path: docs/screens/TW-02-parameter-controls.md
+frontend_change_spec_path: docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/trainer/sessions/{session_id}/controls
+- POST /api/v1/trainer/sessions/{session_id}/patch
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- build the Parameter Controls surface in front-ai-trading-system
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- render control metadata, patch acceptance, rejection, and diff responses from Pantheon
+  BFF only
+- respect allowedActions.canPatchControls and degraded-state gating exactly as published
+- do not invent control ranges, clipping, or local diff summaries
+- emit a bff-gap handoff if any required field is absent
+- publish ui-done and frontend-feedback from one Git-visible commit
+required_feedback:
+- docs/pantheon-feedback/TW-02-parameter-controls/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/TW-02-parameter-controls/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/TW-02-parameter-controls/UI_DECISIONS.md
+- docs/pantheon-feedback/TW-02-parameter-controls/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/TW-02-parameter-controls-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/TW-02-parameter-controls.md
+  ui_spec_path: docs/screens/TW-02-parameter-controls.md
+  frontend_change_spec_path: docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/TW-02-parameter-controls.json
+  handoff_bundle_dir: docs/pantheon-handoffs/TW-02-parameter-controls
+gap_handoff_path: .coordination/requests/TW-02-parameter-controls-bff-gap.yaml
+gap_handoff_template: .coordination/requests/TW-02-parameter-controls-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/TW-02-parameter-controls-ui-done.yaml
+completion_handoff_template: .coordination/requests/TW-02-parameter-controls-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/TW-02-parameter-controls-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/TW-02-parameter-controls-frontend-feedback.example.yaml

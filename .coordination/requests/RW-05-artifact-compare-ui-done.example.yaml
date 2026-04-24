@@ -1,0 +1,29 @@
+feature_id: RW-05-artifact-compare
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: artifact-compare
+blocking: false
+
+summary: Artifact Compare UI is implemented against the published Pantheon route family and is ready for Pantheon review.
+
+changed_files:
+  - .coordination/requests/RW-05-artifact-compare-ui-done.yaml
+  - .coordination/requests/RW-05-artifact-compare-frontend-feedback.yaml
+  - docs/pantheon-feedback/RW-05-artifact-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/RW-05-artifact-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/RW-05-artifact-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/RW-05-artifact-compare/QA_STATUS.md
+  - src/lib/bffClient.ts
+  - src/App.tsx
+
+follow_up_requested:
+  - review the Artifact Compare screen against the latest Pantheon contract and example payload
+  - confirm the Git-visible source_commit is replayable from the returned branch
+  - decide whether the feature can close or needs another follow-up cycle
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the feedback bundle is available for Pantheon review
+  - follow-up state is written back through GitHub-visible coordination artifacts
