@@ -6,7 +6,7 @@
 **Parent Status**: `review_approved` (as of 2026-04-24T06:01:57Z)
 **Sidecar Task**: `APP-003-TRUTH-SYNC-004-SIDECAR-ACCEPTANCE`
 **Sidecar Owner**: `Codex`
-**Sidecar Reviewer**: `Codex3`
+**Sidecar Reviewer**: `Claude`
 **Helper Kind**: `acceptance_packet`
 **Generated**: `2026-04-24`
 **Mutates canonical**: `no`
@@ -175,7 +175,7 @@ request to mutate task-board dependencies.
 | Historical-vs-active boundary made explicit | PASS | Sections 4, 5, and 7 distinguish the reopened active-surface wording from downstream coordination-record derivations and from archived historical wording. |
 | Non-blocking caveat about derived coordination rows is called out rather than hidden | PASS | Section 5 rows 4 and Section 7 row 2 both flag the `current-work.md` Lovable Coordination rows as out-of-scope, so reviewer can decide whether to widen scope. |
 
-## 9. Handoff to Reviewer (`Codex3`)
+## 9. Handoff to Reviewer (`Claude`)
 
 This sidecar packet is the acceptance packet for
 `APP-003-TRUTH-SYNC-004-SIDECAR-ACCEPTANCE` and the reviewer-facing support
