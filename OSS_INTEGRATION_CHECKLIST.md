@@ -96,6 +96,15 @@ When adding a new task for any named OSS component, include these acceptance poi
 
 These are the remaining non-code gates for OSS rows that are already beyond `criteria-defined`.
 
+### Current Working Default (2026-04-24)
+
+- `Qlib` is the next activation candidate.
+- `TRL` stays `smoke-tested` until its data and downstream-consumer gates are satisfied together.
+- `FinRL`, `RLlib`, `Ray Tune`, and `W&B` remain deferred unless a reopened task cites the exact
+  gate that turned true.
+- Use `docs/reviews/2026-04-24-ep5-runtime-oss-decision-package.md` as the operator-facing summary
+  of this ordering.
+
 ### Qlib Production Activation
 
 Do not promote Qlib from `smoke-tested` to an active production path until all of the following are

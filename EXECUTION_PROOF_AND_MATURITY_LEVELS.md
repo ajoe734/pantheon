@@ -95,6 +95,23 @@ is archived in one replayable bundle.
 - the operator has reviewed the current `current-work.md`, `ai-status.json`, and the active
   deployment target tuple
 
+### Current Working Default (2026-04-24)
+
+Until a reviewed exception is recorded, the first `EP5-002` proof should be a `canary`, not
+`live`.
+
+Use one runtime tuple for the whole packet:
+
+- code commit
+- env-file revision
+- credentials revision
+- broker / venue target
+- capital and gross scale envelope
+
+Run the governed deployment and the rollback drill against that same tuple. Use the prepared
+readiness bundle in `docs/deployment/ep5-canary-ready/` and archive the final closeout packet under
+`docs/deployment/evidence/ep5-*`.
+
 ### Required Operator Run Steps
 
 1. record the target runtime tuple: code commit, env file revision, credentials revision, and
@@ -146,6 +163,33 @@ For each feature still missing runtime verification:
 4. attach the proof reference back into the tracked payload or follow-up review
 5. rerun `python3 scripts/ai_status.py sync`
 6. confirm the feature increments the `Runtime verified` count without regressing stage truth
+
+### Current Working Default (2026-04-24)
+
+Raise runtime coverage in two batches instead of one all-at-once pass.
+
+Batch 1: consultation and knowledge surfaces
+
+- `CW-01-consult-request`
+- `CW-02-debate-transcript`
+- `CW-03-committee-board`
+- `CW-04-redteam-memo`
+- `KW-01-institutional-memory`
+- `KW-02-research-notes`
+- `KW-03-evidence-refs`
+- `KW-04-insight-cards`
+
+Batch 2: operator and trainer residuals
+
+- `PKT-004-deployment-approval-drilldowns`
+- `PKT-004-persona-management`
+- `PKT-005-degradation-banner`
+- `PKT-010-runtime-state-board`
+- `TW-02-parameter-controls`
+- `TW-03-before-after-compare`
+
+Use one tracked packet or review reference per feature. If a runtime proof artifact is intentionally
+shared across multiple features, the review packet must explicitly say so.
 
 ### Do Not Do
 
