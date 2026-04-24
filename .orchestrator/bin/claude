@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+resolve_user_home() {
+  if [[ -n "${PANTHEON_CLAUDE_EXTENSION_HOME:-}" ]]; then
+    printf '%s\n' "${PANTHEON_CLAUDE_EXTENSION_HOME}"
+    return
+  fi
+  if command -v getent >/dev/null 2>&1; then
+    local passwd_home
+    passwd_home="$(getent passwd "$(id -un)" | cut -d: -f6 || true)"
+    if [[ -n "${passwd_home}" ]]; then
+      printf '%s\n' "${passwd_home}"
+      return
+    fi
+  fi
+  printf '%s\n' "${HOME}"
+}
+
+user_home="$(resolve_user_home)"
+cli="$(ls -d "${user_home}"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | sort -V | tail -n1)"
+if [[ -z "${cli}" ]]; then
+  echo "Claude CLI binary not found under ~/.vscode-server/extensions." >&2
+  exit 1
+fi
+
+exec "${cli}" "$@"

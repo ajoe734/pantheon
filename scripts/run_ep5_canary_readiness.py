@@ -1,0 +1,689 @@
+#!/usr/bin/env python3
+"""Prepare and rehearse the EP5-001 canary-ready entry path.
+
+This script is prerequisite-only tooling. It packages three things:
+
+1. a runnable operator checklist
+2. a concrete canary DeploymentPlan artifact with policy-default scale guards
+3. a rollback drill harness that can archive dry-run or real request/response
+   artifacts without claiming EP5 proof by itself
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+GOVERNANCE_DIR = ROOT / "services" / "control-plane" / "governance"
+if str(GOVERNANCE_DIR) not in sys.path:
+    sys.path.insert(0, str(GOVERNANCE_DIR))
+
+from deployment_plan import DeploymentScale, RollbackRef, StagePlanner  # noqa: E402
+
+
+class ReadinessError(RuntimeError):
+    """Raised when the readiness bundle cannot be produced truthfully."""
+
+
+@dataclass
+class ChecklistItem:
+    name: str
+    passed: bool
+    detail: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "status": "pass" if self.passed else "fail",
+            "detail": self.detail,
+        }
+
+
+def iso_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def dump_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def sanitize_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        if key.lower() == "authorization":
+            sanitized[key] = "Bearer ***redacted***"
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def load_env_map(env_file: str | None) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if env_file:
+        values.update(parse_env_file(Path(env_file)))
+    for key, value in os.environ.items():
+        values[key] = value
+    return values
+
+
+def make_output_dir(path_str: str | None, prefix: str) -> Path:
+    if path_str:
+        path = Path(path_str)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return Path(tempfile.mkdtemp(prefix=prefix))
+
+
+def bool_from_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def require(env_map: dict[str, str], key: str) -> str:
+    value = str(env_map.get(key, "")).strip()
+    if not value:
+        raise ReadinessError(f"Missing required value: {key}")
+    return value
+
+
+def optional(env_map: dict[str, str], key: str, default: str = "") -> str:
+    return str(env_map.get(key, default)).strip()
+
+
+def parse_float(env_map: dict[str, str], key: str, *, default: float | None = None) -> float:
+    raw = optional(env_map, key)
+    if not raw:
+        if default is None:
+            raise ReadinessError(f"Missing numeric value: {key}")
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ReadinessError(f"{key} must be numeric, got {raw!r}") from exc
+
+
+def request_json(
+    method: str,
+    url: str,
+    *,
+    body: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 15,
+) -> tuple[int, Any]:
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    request_headers = {"Accept": "application/json"}
+    if payload is not None:
+        request_headers["Content-Type"] = "application/json"
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(url, data=payload, headers=request_headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            return response.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            parsed = {"raw": raw}
+        return exc.code, parsed
+
+
+def write_http_artifact(
+    output_dir: Path,
+    stem: str,
+    method: str,
+    url: str,
+    *,
+    body: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    allowed_statuses: set[int] | None = None,
+    timeout: int = 15,
+) -> tuple[int, Any]:
+    dump_json(
+        output_dir / f"{stem}.request.json",
+        {"method": method, "url": url, "headers": sanitize_headers(headers), "body": body},
+    )
+    status, payload = request_json(method, url, body=body, headers=headers, timeout=timeout)
+    dump_json(output_dir / f"{stem}.response.json", {"status": status, "payload": payload})
+    if allowed_statuses is not None and status not in allowed_statuses:
+        raise ReadinessError(
+            f"{stem} failed with HTTP {status}: {json.dumps(payload, ensure_ascii=False)}"
+        )
+    return status, payload
+
+
+def infer_local_url(env_map: dict[str, str], env_key: str, port_key: str) -> str | None:
+    explicit = optional(env_map, env_key)
+    if explicit:
+        return explicit
+    port = optional(env_map, port_key)
+    if not port:
+        return None
+    return f"http://127.0.0.1:{port}"
+
+
+def evaluate_checklist(
+    env_map: dict[str, str],
+    *,
+    allow_empty_secrets: bool,
+    check_health: bool,
+) -> list[ChecklistItem]:
+    items: list[ChecklistItem] = []
+
+    execution_mode = optional(env_map, "PANTHEON_EXECUTION_MODE")
+    items.append(
+        ChecklistItem(
+            "execution_mode",
+            execution_mode == "canary",
+            f"PANTHEON_EXECUTION_MODE={execution_mode or '<missing>'}",
+        )
+    )
+
+    broker_mode = optional(env_map, "BROKER_ADAPTER_MODE")
+    exchange_mode = optional(env_map, "EXCHANGE_ADAPTER_MODE")
+    items.append(
+        ChecklistItem(
+            "real_broker_and_exchange_modes",
+            broker_mode == "real" and exchange_mode == "real",
+            f"BROKER_ADAPTER_MODE={broker_mode or '<missing>'}, EXCHANGE_ADAPTER_MODE={exchange_mode or '<missing>'}",
+        )
+    )
+
+    secrets_optional = optional(env_map, "PANTHEON_SECRETS_OPTIONAL")
+    items.append(
+        ChecklistItem(
+            "secrets_boundary_enforced",
+            secrets_optional.lower() == "false",
+            f"PANTHEON_SECRETS_OPTIONAL={secrets_optional or '<missing>'}",
+        )
+    )
+
+    boundary_refs = [
+        "CANARY_BROKER_ACCOUNT_REF",
+        "CANARY_VENUE_REF",
+        "CANARY_POOL_ID",
+        "CANARY_APPROVAL_DECISION_ID",
+        "CANARY_PERSONA_CAPITAL_BINDING_ID",
+        "CANARY_REGISTRY_ID",
+        "CANARY_REGISTRY_VERSION",
+        "CANARY_FALLBACK_ARTIFACT_ID",
+        "CANARY_FALLBACK_ARTIFACT_VERSION",
+    ]
+    missing_refs = [key for key in boundary_refs if not optional(env_map, key)]
+    items.append(
+        ChecklistItem(
+            "operator_owned_refs_present",
+            not missing_refs,
+            "missing: " + ", ".join(missing_refs) if missing_refs else "all required ids and refs are present",
+        )
+    )
+
+    capital_scale = parse_float(env_map, "CANARY_CAPITAL_SCALE_PCT", default=0.0)
+    gross_scale = parse_float(env_map, "CANARY_GROSS_SCALE_PCT", default=0.0)
+    scale_ok = 0 < capital_scale <= 5 and 0 < gross_scale <= 25
+    items.append(
+        ChecklistItem(
+            "canary_scale_within_policy",
+            scale_ok,
+            f"capital_scale_pct={capital_scale}, gross_scale_pct={gross_scale}",
+        )
+    )
+
+    rollback_action = optional(env_map, "CANARY_ROLLBACK_ACTION_TYPE", "pause_then_replace")
+    rollback_ok = rollback_action in {"replace", "pause_then_replace", "liquidate_then_replace"}
+    items.append(
+        ChecklistItem(
+            "rollback_action_type_valid",
+            rollback_ok,
+            f"CANARY_ROLLBACK_ACTION_TYPE={rollback_action or '<missing>'}",
+        )
+    )
+
+    secret_keys = [
+        "BROKER_API_KEY",
+        "BROKER_API_SECRET",
+        "EXCHANGE_API_KEY",
+        "EXCHANGE_API_SECRET",
+    ]
+    if allow_empty_secrets:
+        secret_name_keys = [
+            "BROKER_API_KEY_SECRET_NAME",
+            "BROKER_API_SECRET_SECRET_NAME",
+            "EXCHANGE_API_KEY_SECRET_NAME",
+            "EXCHANGE_API_SECRET_SECRET_NAME",
+        ]
+        missing_secret_names = [key for key in secret_name_keys if not optional(env_map, key)]
+        items.append(
+            ChecklistItem(
+                "vm2_secret_name_refs_present",
+                not missing_secret_names,
+                "missing: " + ", ".join(missing_secret_names)
+                if missing_secret_names
+                else "tracked example uses secret-name refs instead of raw values",
+            )
+        )
+    else:
+        missing_secrets = [key for key in secret_keys if not optional(env_map, key)]
+        items.append(
+            ChecklistItem(
+                "vm2_secret_material_present",
+                not missing_secrets,
+                "missing: " + ", ".join(missing_secrets) if missing_secrets else "all VM-2 secret values are populated",
+            )
+        )
+
+    runtime_url = optional(env_map, "PANTHEON_RUNTIME_MANAGER_URL")
+    runtime_token = optional(env_map, "PANTHEON_RUNTIME_MANAGER_TOKEN")
+    items.append(
+        ChecklistItem(
+            "runtime_manager_access_configured",
+            bool(runtime_url and runtime_token),
+            f"url={runtime_url or '<missing>'}, token={'set' if runtime_token else '<missing>'}",
+        )
+    )
+
+    if check_health:
+        health_targets = [
+            ("runtime_manager_health", optional(env_map, "PANTHEON_RUNTIME_MANAGER_URL")),
+            ("telemetry_health", optional(env_map, "PANTHEON_TELEMETRY_URL")),
+            ("broker_adapter_health", infer_local_url(env_map, "PANTHEON_BROKER_ADAPTER_URL", "BROKER_ADAPTER_PORT")),
+            ("exchange_adapter_health", infer_local_url(env_map, "PANTHEON_EXCHANGE_ADAPTER_URL", "EXCHANGE_ADAPTER_PORT")),
+        ]
+        headers = {"Authorization": f"Bearer {runtime_token}"} if runtime_token else {}
+        for name, base_url in health_targets:
+            if not base_url:
+                items.append(ChecklistItem(name, False, "URL unavailable"))
+                continue
+            url = f"{base_url.rstrip('/')}/__health__"
+            try:
+                status, payload = request_json("GET", url, headers=headers if "runtime_manager" in name else None, timeout=5)
+                passed = status == 200 and isinstance(payload, dict) and payload.get("status") == "ok"
+                detail = f"HTTP {status}"
+            except Exception as exc:  # noqa: BLE001
+                passed = False
+                detail = f"{type(exc).__name__}: {exc}"
+            items.append(ChecklistItem(name, passed, detail))
+
+    return items
+
+
+def command_run_operator_checklist(args: argparse.Namespace) -> int:
+    env_map = load_env_map(args.env_file)
+    output_dir = make_output_dir(args.output_dir, "pantheon-ep5-checklist-")
+    items = evaluate_checklist(
+        env_map,
+        allow_empty_secrets=args.allow_empty_secrets,
+        check_health=args.check_health,
+    )
+    passed = all(item.passed for item in items)
+    payload = {
+        "task_id": "EP5-001",
+        "generated_at": iso_now(),
+        "mode": "operator_checklist",
+        "env_file": args.env_file,
+        "status": "pass" if passed else "fail",
+        "allow_empty_secrets": args.allow_empty_secrets,
+        "check_health": args.check_health,
+        "items": [item.to_dict() for item in items],
+    }
+    dump_json(output_dir / "operator-checklist.json", payload)
+    print(json.dumps({"status": payload["status"], "output_dir": str(output_dir)}, ensure_ascii=False))
+    return 0 if passed else 1
+
+
+def build_registry_entry(env_map: dict[str, str]) -> dict[str, Any]:
+    return {
+        "registry_id": require(env_map, "CANARY_REGISTRY_ID"),
+        "version": require(env_map, "CANARY_REGISTRY_VERSION"),
+        "artifact_type": optional(env_map, "CANARY_ARTIFACT_TYPE", "model_artifact"),
+        "strategy_id": require(env_map, "CANARY_STRATEGY_ID"),
+        "artifact_state": "approved",
+        "checksum": require(env_map, "CANARY_ARTIFACT_CHECKSUM"),
+        "deployment_summary": {"current_stage": optional(env_map, "CANARY_CURRENT_STAGE", "paper")},
+        "approved_at": iso_now(),
+        "created_at": iso_now(),
+    }
+
+
+def build_canary_plan(env_map: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    planner = StagePlanner()
+    rollback = RollbackRef(
+        target_artifact_id=require(env_map, "CANARY_FALLBACK_ARTIFACT_ID"),
+        target_version=require(env_map, "CANARY_FALLBACK_ARTIFACT_VERSION"),
+        action_type=optional(env_map, "CANARY_ROLLBACK_ACTION_TYPE", "pause_then_replace"),
+        reason="EP5-001 rollback readiness target",
+        verified_at=iso_now(),
+    )
+    scale = DeploymentScale(
+        capital_scale_pct=parse_float(env_map, "CANARY_CAPITAL_SCALE_PCT"),
+        gross_scale_pct=parse_float(env_map, "CANARY_GROSS_SCALE_PCT"),
+        ramp_schedule=[
+            item.strip()
+            for item in optional(env_map, "CANARY_RAMP_SCHEDULE").split(";")
+            if item.strip()
+        ],
+    )
+    registry_entry = build_registry_entry(env_map)
+    plan = planner.create_plan(
+        plan_id=require(env_map, "CANARY_PLAN_ID"),
+        approval_decision_id=require(env_map, "CANARY_APPROVAL_DECISION_ID"),
+        registry_entry=registry_entry,
+        capital_pool_id=require(env_map, "CANARY_POOL_ID"),
+        current_stage=optional(env_map, "CANARY_CURRENT_STAGE", "paper"),
+        target_stage=optional(env_map, "CANARY_TARGET_STAGE", "canary"),
+        sponsor_persona_id=require(env_map, "CANARY_PERSONA_ID"),
+        runtime_config_ref=require(env_map, "CANARY_RUNTIME_CONFIG_REF"),
+        scale=scale,
+        rollback=rollback,
+        created_by=optional(env_map, "CANARY_OPERATOR_ID", "operator-oncall"),
+        pre_checks=[
+            "broker_venue_boundary_confirmed",
+            "capital_gate_within_policy",
+            "rollback_target_verified",
+            "runtime_manager_endpoint_reachable",
+        ],
+        post_checks=[
+            "operator_checklist_archived",
+            "rollback_drill_archived",
+        ],
+        metadata={
+            "source_task_id": "EP5-001",
+            "proof_boundary": "prerequisite_only",
+            "entry_bundle": "docs/deployment/ep5-canary-ready",
+        },
+    )
+    projection = planner.build_execution_projection(plan, registry_entry)
+    return plan.to_dict(), {
+        "metadata_key": projection.metadata_key,
+        "artifact_key": projection.artifact_key,
+        "metadata": projection.metadata,
+    }
+
+
+def command_emit_canary_plan(args: argparse.Namespace) -> int:
+    env_map = load_env_map(args.env_file)
+    output_dir = make_output_dir(args.output_dir, "pantheon-ep5-plan-")
+    plan, projection = build_canary_plan(env_map)
+    dump_json(output_dir / "canary-deployment-plan.json", plan)
+    dump_json(output_dir / "canary-execution-projection.json", projection)
+    dump_json(
+        output_dir / "summary.json",
+        {
+            "task_id": "EP5-001",
+            "generated_at": iso_now(),
+            "status": "prepared",
+            "target_stage": plan["target_stage"],
+            "capital_scale_pct": plan["scale"]["capital_scale_pct"],
+            "gross_scale_pct": plan["scale"]["gross_scale_pct"],
+            "rollback_action_type": plan["rollback"]["action_type"],
+            "proof_boundary": "entry path only; not EP5 proof",
+        },
+    )
+    print(json.dumps({"status": "prepared", "output_dir": str(output_dir)}, ensure_ascii=False))
+    return 0
+
+
+def build_auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def command_run_rollback_drill(args: argparse.Namespace) -> int:
+    env_map = load_env_map(args.env_file)
+    output_dir = make_output_dir(args.output_dir, "pantheon-ep5-drill-")
+    runtime_manager_url = require(env_map, "PANTHEON_RUNTIME_MANAGER_URL").rstrip("/")
+    runtime_manager_token = require(env_map, "PANTHEON_RUNTIME_MANAGER_TOKEN")
+    telemetry_url = optional(env_map, "PANTHEON_TELEMETRY_URL").rstrip("/")
+    pool_id = require(env_map, "CANARY_POOL_ID")
+    actor_id = optional(env_map, "CANARY_OPERATOR_ID", "operator-oncall")
+    binding_id = args.binding_id or optional(env_map, "CANARY_ACTIVE_BINDING_ID")
+    if not binding_id:
+        raise ReadinessError("run-rollback-drill requires --binding-id or CANARY_ACTIVE_BINDING_ID")
+
+    headers = build_auth_headers(runtime_manager_token)
+    kill_switch_payload = {
+        "reason": optional(env_map, "CANARY_KILL_SWITCH_REASON", "canary_underperformance"),
+        "capital_pool_id": pool_id,
+        "actor_id": actor_id,
+        "binding_id": binding_id,
+    }
+    rollback_payload = {
+        "current_binding_id": binding_id,
+        "action_type": optional(env_map, "CANARY_ROLLBACK_ACTION_TYPE", "pause_then_replace"),
+        "replacement_plan_id": optional(env_map, "CANARY_FALLBACK_PLAN_ID", f"{require(env_map, 'CANARY_PLAN_ID')}-rollback"),
+        "replacement_plan_status": "approved",
+        "replacement_deployment_mode": optional(env_map, "CANARY_FALLBACK_TARGET_STAGE", "paper"),
+        "replacement_artifact_id": require(env_map, "CANARY_FALLBACK_ARTIFACT_ID"),
+        "replacement_artifact_version": require(env_map, "CANARY_FALLBACK_ARTIFACT_VERSION"),
+        "replacement_persona_capital_binding_id": require(env_map, "CANARY_PERSONA_CAPITAL_BINDING_ID"),
+        "replacement_persona_capital_binding_status": "active",
+        "replacement_allowed_deployment_scope": optional(env_map, "CANARY_FALLBACK_ALLOWED_SCOPE", "paper"),
+        "replacement_runtime_id": require(env_map, "CANARY_FALLBACK_RUNTIME_ID"),
+        "loader_checks_passed": True,
+        "opened_by_artifact_id": require(env_map, "CANARY_REGISTRY_ID"),
+    }
+
+    dump_json(output_dir / "kill-switch.request.json", kill_switch_payload)
+    dump_json(output_dir / "rollback.request.json", rollback_payload)
+
+    summary: dict[str, Any] = {
+        "task_id": "EP5-001",
+        "generated_at": iso_now(),
+        "mode": "rollback_drill",
+        "dry_run": bool(args.dry_run),
+        "runtime_manager_url": runtime_manager_url,
+        "telemetry_url": telemetry_url or None,
+        "binding_id": binding_id,
+        "capital_pool_id": pool_id,
+        "notes": [
+            "This harness prepares or rehearses the rollback drill entry path only.",
+            "A successful run is not by itself an EP5 proof packet.",
+        ],
+    }
+
+    if args.dry_run:
+        if telemetry_url:
+            rollback_event = {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "rollback_completed",
+                "created_at": iso_now(),
+                "execution_mode": "live",
+                "environment": optional(env_map, "CANARY_FALLBACK_TARGET_STAGE", "paper"),
+                "deployment_stage": optional(env_map, "CANARY_FALLBACK_TARGET_STAGE", "paper"),
+                "binding_id": "replacement-binding-placeholder",
+                "runtime_id": rollback_payload["replacement_runtime_id"],
+                "capital_pool_id": pool_id,
+                "artifact_id": rollback_payload["replacement_artifact_id"],
+                "artifact_version": rollback_payload["replacement_artifact_version"],
+                "plan_id": rollback_payload["replacement_plan_id"],
+                "persona_capital_binding_id": rollback_payload["replacement_persona_capital_binding_id"],
+                "target": {
+                    "registry_id": rollback_payload["replacement_artifact_id"],
+                    "strategy_id": require(env_map, "CANARY_STRATEGY_ID"),
+                    "artifact_version": rollback_payload["replacement_artifact_version"],
+                    "artifact_type": require(env_map, "CANARY_ARTIFACT_TYPE"),
+                    "promotion_state": rollback_payload["replacement_deployment_mode"],
+                },
+                "rollback_parent": binding_id,
+                "rollback_action_type": rollback_payload["action_type"],
+                "metrics": {"action": "rollback_completed"},
+                "metadata": {"source_task_id": "EP5-001", "drill_mode": "dry_run"},
+            }
+            dump_json(output_dir / "telemetry-rollback.request.json", rollback_event)
+        summary["status"] = "prepared"
+        summary["message"] = "Dry-run payloads archived. No remote side effects were executed."
+        dump_json(output_dir / "summary.json", summary)
+        print(json.dumps({"status": "prepared", "output_dir": str(output_dir)}, ensure_ascii=False))
+        return 0
+
+    _, binding_payload = write_http_artifact(
+        output_dir,
+        "binding-detail",
+        "GET",
+        f"{runtime_manager_url}/api/runtime-bindings/{urllib.parse.quote(binding_id)}",
+        headers=headers,
+        allowed_statuses={200},
+    )
+    deployment_mode = str(binding_payload.get("deployment_mode") or "")
+    if deployment_mode != "canary":
+        raise ReadinessError(
+            f"Rollback drill expects an active canary binding; binding {binding_id} reported deployment_mode={deployment_mode!r}"
+        )
+
+    _, kill_switch_response = write_http_artifact(
+        output_dir,
+        "kill-switch",
+        "POST",
+        f"{runtime_manager_url}/api/kill-switch/dispatch",
+        body=kill_switch_payload,
+        headers=headers,
+        allowed_statuses={200},
+    )
+    _, safe_mode_response = write_http_artifact(
+        output_dir,
+        "safe-mode",
+        "GET",
+        f"{runtime_manager_url}/api/kill-switch/{urllib.parse.quote(pool_id)}/safe-mode",
+        headers=headers,
+        allowed_statuses={200},
+    )
+    _, audit_response = write_http_artifact(
+        output_dir,
+        "kill-switch-audit-log",
+        "GET",
+        f"{runtime_manager_url}/api/kill-switch/audit-log",
+        headers=headers,
+        allowed_statuses={200},
+    )
+    _, rollback_response = write_http_artifact(
+        output_dir,
+        "rollback",
+        "POST",
+        f"{runtime_manager_url}/api/rollback",
+        body=rollback_payload,
+        headers=headers,
+        allowed_statuses={201},
+    )
+
+    new_binding = rollback_response.get("new_binding") or {}
+    new_binding_id = str(new_binding.get("binding_id") or "")
+    if not new_binding_id:
+        raise ReadinessError("rollback response did not include new_binding.binding_id")
+
+    if telemetry_url:
+        rollback_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "rollback_completed",
+            "created_at": iso_now(),
+            "execution_mode": "live",
+            "environment": rollback_payload["replacement_deployment_mode"],
+            "deployment_stage": rollback_payload["replacement_deployment_mode"],
+            "binding_id": new_binding_id,
+            "runtime_id": rollback_payload["replacement_runtime_id"],
+            "capital_pool_id": pool_id,
+            "artifact_id": rollback_payload["replacement_artifact_id"],
+            "artifact_version": rollback_payload["replacement_artifact_version"],
+            "plan_id": rollback_payload["replacement_plan_id"],
+            "persona_capital_binding_id": rollback_payload["replacement_persona_capital_binding_id"],
+            "target": {
+                "registry_id": rollback_payload["replacement_artifact_id"],
+                "strategy_id": require(env_map, "CANARY_STRATEGY_ID"),
+                "artifact_version": rollback_payload["replacement_artifact_version"],
+                "artifact_type": require(env_map, "CANARY_ARTIFACT_TYPE"),
+                "promotion_state": rollback_payload["replacement_deployment_mode"],
+            },
+            "rollback_parent": binding_id,
+            "rollback_action_type": rollback_payload["action_type"],
+            "metrics": {"action": "rollback_completed"},
+            "metadata": {"source_task_id": "EP5-001", "drill_mode": "execute"},
+        }
+        write_http_artifact(
+            output_dir,
+            "telemetry-rollback",
+            "POST",
+            f"{telemetry_url}/api/telemetry/ingest",
+            body=rollback_event,
+            allowed_statuses={200, 202},
+        )
+
+    summary.update(
+        {
+            "status": "executed",
+            "kill_switch_safe_mode": safe_mode_response.get("safe_mode_state"),
+            "kill_switch_action_type": (kill_switch_response.get("command") or {}).get("action_type"),
+            "audit_entry_count": len((audit_response.get("entries") or [])),
+            "rollback_action_type": rollback_response.get("action_type"),
+            "old_binding_status": (rollback_response.get("old_binding") or {}).get("status"),
+            "new_binding_status": (rollback_response.get("new_binding") or {}).get("status"),
+            "replacement_binding_id": new_binding_id,
+        }
+    )
+    dump_json(output_dir / "summary.json", summary)
+    print(json.dumps({"status": "executed", "output_dir": str(output_dir)}, ensure_ascii=False))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Prepare and rehearse the EP5 canary-ready entry path.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    p_check = subparsers.add_parser("run-operator-checklist")
+    p_check.add_argument("--env-file", default=None)
+    p_check.add_argument("--output-dir", default=None)
+    p_check.add_argument("--allow-empty-secrets", action="store_true")
+    p_check.add_argument("--check-health", action="store_true")
+    p_check.set_defaults(func=command_run_operator_checklist)
+
+    p_plan = subparsers.add_parser("emit-canary-plan")
+    p_plan.add_argument("--env-file", default=None)
+    p_plan.add_argument("--output-dir", default=None)
+    p_plan.set_defaults(func=command_emit_canary_plan)
+
+    p_drill = subparsers.add_parser("run-rollback-drill")
+    p_drill.add_argument("--env-file", default=None)
+    p_drill.add_argument("--binding-id", default=None)
+    p_drill.add_argument("--output-dir", default=None)
+    p_drill.add_argument("--dry-run", action="store_true")
+    p_drill.set_defaults(func=command_run_rollback_drill)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv[1:])
+    try:
+        return int(args.func(args))
+    except ReadinessError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

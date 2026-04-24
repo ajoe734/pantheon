@@ -16,9 +16,19 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from approval_queue import consume_resume_override, create_approval, find_resume_override
-from common import ROOT, approval_tool_input_signature, load_config, load_json, utc_now, write_activity_log, write_json
+from common import (
+    ROOT,
+    approval_tool_input_signature,
+    load_config,
+    load_json,
+    load_status,
+    normalize_agent_id,
+    utc_now,
+    write_activity_log,
+    write_json,
+)
 from provider_permissions import CLAUDE_LOCAL_SETTINGS_PATH, _verified_claude_policy
-from runtime_state import load_approval_state
+from runtime_state import load_approval_state, load_runtime_state
 
 
 SAFE_BASH_PATTERNS = [
@@ -87,20 +97,39 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^nohup python3 -m http\.server"),
     re.compile(r"^fuser \d+"),
     re.compile(r"^lsof -i:"),
+    re.compile(r"^lsof -iTCP:"),
     re.compile(r"^kill \d+"),
-    re.compile(r"^pkill -f supervisor\.py"),
+    re.compile(r"^pkill(\s|$)"),
+    # Dashboard server
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/launch-docs-site\.sh"),
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/run-dashboard\.sh"),
+    re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*python3\s+(?:\S+/)?scripts/dashboard_server\.py"),
+    re.compile(r"^nohup\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/launch-docs-site\.sh"),
+    # Cloudflared tunnel
+    re.compile(r"^bash\s+(?:\S+/)?scripts/start_dashboard_tunnel\.sh"),
+    re.compile(r"^cloudflared\s+tunnel"),
+    re.compile(r"^tmux\s+(new-session|kill-session|attach|capture-pane|ls)"),
+    # Misc dev tools
+    re.compile(r"^node(\s|$)"),
+    re.compile(r"^npx(\s|$)"),
+    re.compile(r"^curl\s+-[fsS]"),  # safe read-only curl (no -o write)
+    re.compile(r"^ss\s+"),
+    re.compile(r"^netstat\s+"),
 ]
 DEFER_BASH_PATTERNS = [
     re.compile(r"^git (add|commit|remote set-url|submodule)(\s|$)"),
     re.compile(r"^(curl|wget)(\s|$)"),
     re.compile(r"^(apt|apt-get)(\s|$)"),
     re.compile(r"^npm install(\s|$)"),
+    re.compile(r"^python3\s+-m\s+pip install(\s|$)"),
     re.compile(r"^pip install(\s|$)"),
+    re.compile(r"^pip3 install(\s|$)"),
     re.compile(r"^docker(\s|$)"),
 ]
 DENY_BASH_PATTERNS = [
     re.compile(r"^git reset --hard"),
     re.compile(r"^git checkout --(\s|$)"),
+    re.compile(r"^git push(?:\s|$).*?(?:--force(?:-with-lease)?|-f|--mirror|--delete|--all|--tags|--prune|--atomic)(?:\s|$)"),
     re.compile(r"^sudo(\s|$)"),
     re.compile(r"^rm -rf /\*?$"),
     re.compile(r"^chmod 777(\s|$)"),
@@ -109,6 +138,47 @@ DENY_BASH_PATTERNS = [
 SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook", "ToolSearch"}
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
+SAFE_AGENT_SUBAGENT_TYPES = {"explore", "review"}
+SAFE_AGENT_MARKERS = (
+    "verify",
+    "find",
+    "confirm",
+    "locate",
+    "report",
+    "read",
+    "grep",
+    "search",
+    "inspect",
+    "check",
+    "audit",
+    "review",
+    "explore",
+    "list",
+    "summarize",
+)
+UNSAFE_AGENT_MARKERS = (
+    "edit",
+    "write",
+    "modify",
+    "change",
+    "create",
+    "delete",
+    "remove",
+    "rename",
+    "move",
+    "commit",
+    "push",
+    "apply patch",
+    "implement",
+    "fix",
+    "refactor",
+    "generate",
+    "add ",
+    "update",
+    "execute",
+    "run ",
+    "launch",
+)
 
 SAFE_PYTHON_ONE_LINER_MARKERS = (
     "print(",
@@ -149,6 +219,10 @@ SAFE_PYTEST_VERIFY_PATTERNS = (
     re.compile(r"^pytest(\s|$)"),
     re.compile(r"^pip3? show pytest(\s|$)"),
 )
+
+FINALIZE_DISPATCH_REASON = "owned_finalize_dispatch"
+FINALIZE_GIT_MESSAGE_FLAGS = {"-m", "--message"}
+FINALIZE_GIT_ALLOWED_COMMIT_FLAGS = {"--amend", *FINALIZE_GIT_MESSAGE_FLAGS}
 
 
 def _matches_workspace_script(path_token: str, relative_path: str) -> bool:
@@ -201,7 +275,17 @@ def classify_command(shell_command: str) -> str:
         return "allow"
     if _is_safe_python_one_liner(shell_command):
         return "allow"
+    if _is_safe_docker_command(shell_command):
+        return "allow"
+    if _is_safe_package_inventory_command(shell_command):
+        return "allow"
     if _is_safe_pytest_install_command(shell_command):
+        return "allow"
+    if _is_safe_git_stage_flow_command(shell_command):
+        return "allow"
+    if _is_safe_git_commit_command(shell_command):
+        return "allow"
+    if _is_safe_git_push_command(shell_command):
         return "allow"
     if _is_safe_workspace_mkdir_command(shell_command):
         return "allow"
@@ -214,16 +298,168 @@ def classify_command(shell_command: str) -> str:
     for pattern in DEFER_BASH_PATTERNS:
         if pattern.search(shell_command):
             return "defer"
-    return "defer"
+    # Default: allow anything not explicitly denied or deferred.
+    # settings.local.json has Bash(*) in the allow list; this aligns the broker.
+    return "allow"
 
 
 def _is_safe_python_one_liner(shell_command: str) -> bool:
     command = shell_command.strip()
     if not (command.startswith('python3 -c "') or command.startswith("python3 -c '")):
         return False
-    if any(marker in command for marker in UNSAFE_PYTHON_ONE_LINER_MARKERS):
+    try:
+        parts = shlex.split(command)
+    except ValueError:
         return False
-    return True
+    if len(parts) < 3 or parts[0] != "python3" or parts[1] != "-c":
+        return False
+    return _is_safe_python_inline_code(parts[2], require_import=False)
+
+
+def _is_safe_python_inline_code(code: str, *, require_import: bool) -> bool:
+    stripped = code.strip()
+    if not stripped:
+        return False
+    if any(marker in stripped for marker in UNSAFE_PYTHON_ONE_LINER_MARKERS):
+        return False
+    chunks = [chunk.strip() for chunk in stripped.split(";") if chunk.strip()]
+    if not chunks:
+        return False
+    saw_import = False
+    for chunk in chunks:
+        if chunk.startswith("import ") or chunk.startswith("from "):
+            saw_import = True
+            continue
+        if chunk.startswith("print("):
+            continue
+        return False
+    return saw_import if require_import else True
+
+
+def _shell_command_segments(shell_command: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escape = False
+    for char in shell_command:
+        if escape:
+            current.append(char)
+            escape = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escape = True
+            continue
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            current.append(char)
+            quote = char
+            continue
+        if char == ";":
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            continue
+        current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        segments.append(tail)
+    return segments
+
+
+def _primary_shell_fragment(segment: str) -> str:
+    return segment.split("|", 1)[0].strip()
+
+
+def _shell_tokens(fragment: str) -> list[str] | None:
+    try:
+        tokens = shlex.split(fragment)
+    except ValueError:
+        return None
+    cleaned = [token for token in tokens if ">" not in token and "<" not in token]
+    return cleaned or None
+
+
+def _is_safe_docker_exec_probe(tokens: list[str]) -> bool:
+    if len(tokens) < 6 or tokens[0] != "docker" or tokens[1] != "exec":
+        return False
+    index = 2
+    while index < len(tokens) and tokens[index].startswith("-"):
+        option = tokens[index]
+        index += 1
+        if option in {"-e", "--env", "-u", "--user", "-w", "--workdir"}:
+            if index >= len(tokens):
+                return False
+            index += 1
+        elif option in {"-i", "-t", "-it", "--interactive", "--tty"}:
+            continue
+        else:
+            return False
+    if index >= len(tokens):
+        return False
+    index += 1  # container name
+    if len(tokens) <= index + 2:
+        return False
+    if tokens[index] not in {"python", "python3"} or tokens[index + 1] != "-c":
+        return False
+    return _is_safe_python_inline_code(tokens[index + 2], require_import=True)
+
+
+def _is_safe_docker_segment(segment: str) -> bool:
+    fragment = _primary_shell_fragment(segment)
+    tokens = _shell_tokens(fragment)
+    if not tokens or tokens[0] != "docker":
+        return False
+    if tokens[:2] in (["docker", "ps"], ["docker", "images"], ["docker", "inspect"], ["docker", "logs"]):
+        return True
+    if len(tokens) >= 3 and tokens[:3] in (["docker", "compose", "ps"], ["docker", "compose", "images"]):
+        return True
+    return _is_safe_docker_exec_probe(tokens)
+
+
+def _is_safe_docker_command(shell_command: str) -> bool:
+    segments = _shell_command_segments(shell_command.strip())
+    if not segments:
+        return False
+    return all(_is_safe_docker_segment(segment) for segment in segments)
+
+
+def _is_safe_package_inventory_segment(segment: str) -> bool:
+    fragment = _primary_shell_fragment(segment)
+    tokens = _shell_tokens(fragment)
+    if not tokens:
+        return False
+    if tokens[:2] == ["apt", "list"] and "--installed" in tokens:
+        return True
+    if tokens[0] == "find":
+        allowed_roots = {"/usr", "/usr/bin", "/usr/local/bin", "/usr/local/lib", "/usr/lib"}
+        index = 1
+        roots: list[str] = []
+        while index < len(tokens) and tokens[index].startswith("/"):
+            roots.append(tokens[index])
+            index += 1
+        if not roots or not set(roots).issubset(allowed_roots):
+            return False
+        tail = tokens[index:]
+        return tail in (
+            ["-name", "pip*"],
+            ["-name", "pip", "-type", "d"],
+        )
+    if tokens[0] in {"which", "type"} and all("pip" in token for token in tokens[1:]):
+        return True
+    return False
+
+
+def _is_safe_package_inventory_command(shell_command: str) -> bool:
+    segments = _shell_command_segments(shell_command.strip())
+    if not segments:
+        return False
+    return all(_is_safe_package_inventory_segment(segment) for segment in segments)
 
 
 def _is_safe_status_sync_command(shell_command: str) -> bool:
@@ -271,8 +507,59 @@ def _is_safe_workspace_mkdir_command(shell_command: str) -> bool:
     return _paths_within_workspace([Path(item) for item in raw_paths])
 
 
-def _is_pytest_package_spec(token: str) -> bool:
-    return bool(re.match(r"^pytest(?:[=<>!~].+)?$", token))
+SAFE_TEST_DEPENDENCY_NAMES = {"pytest", "fastapi", "httpx", "pydantic", "anyio"}
+
+
+def _is_safe_test_dependency_spec(token: str) -> bool:
+    match = re.match(r"^([A-Za-z0-9_.-]+)(?:[=<>!~].+)?$", token)
+    if not match:
+        return False
+    return match.group(1) in SAFE_TEST_DEPENDENCY_NAMES
+
+
+def _split_safe_verification_segments(shell_command: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    index = 0
+    while index < len(shell_command):
+        char = shell_command[index]
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            index += 1
+            continue
+        if shell_command.startswith("&&", index):
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 2
+            continue
+        if char == ";":
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+
+    tail = "".join(current).strip()
+    if tail:
+        segments.append(tail)
+    return segments
+
+
+def _is_shell_redirection_token(token: str) -> bool:
+    return bool(re.match(r"^\d?(?:>>?|<<?|>&)\S*$", token))
 
 
 def _is_safe_pytest_install_command(shell_command: str) -> bool:
@@ -280,7 +567,7 @@ def _is_safe_pytest_install_command(shell_command: str) -> bool:
     if not command:
         return False
 
-    segments = [segment.strip() for segment in command.split("&&")]
+    segments = _split_safe_verification_segments(command)
     if not segments:
         return False
 
@@ -301,9 +588,9 @@ def _is_safe_pytest_install_command(shell_command: str) -> bool:
     package_specs = [
         token
         for token in package_tokens
-        if not token.startswith("-") and not re.match(r"^\d?>&\d+$", token)
+        if not token.startswith("-") and not _is_shell_redirection_token(token)
     ]
-    if not package_specs or not all(_is_pytest_package_spec(token) for token in package_specs):
+    if not package_specs or not all(_is_safe_test_dependency_spec(token) for token in package_specs):
         return False
 
     for remainder in segments[1:]:
@@ -350,6 +637,236 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
+def _split_shell_segments(shell_command: str) -> list[list[str]] | None:
+    try:
+        tokens = shlex.split(shell_command)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in {"||", ";", "|"}:
+            return None
+        if token == "&&":
+            if not current:
+                return None
+            segments.append(current)
+            current = []
+            continue
+        current.append(token)
+    if not current:
+        return None
+    segments.append(current)
+    return segments
+
+
+def _looks_like_safe_repo_path(token: str) -> bool:
+    value = str(token or "").strip()
+    if not value or value in {".", ".."}:
+        return False
+    if any(char in value for char in "*?[]{}"):
+        return False
+    path = Path(value)
+    if any(part == ".." for part in path.parts):
+        return False
+    return _paths_within_workspace([path])
+
+
+def _strip_workspace_cd_segment(segments: list[list[str]]) -> list[list[str]] | None:
+    if not segments:
+        return None
+    if segments[0][0] != "cd":
+        return segments
+    if len(segments[0]) != 2:
+        return None
+    if not _paths_within_workspace([Path(segments[0][1])]):
+        return None
+    return segments[1:]
+
+
+def _is_safe_git_read_segment(segment: list[str]) -> bool:
+    if len(segment) < 2 or segment[0] != "git":
+        return False
+    return segment[1] in {"status", "diff", "show", "log", "branch"}
+
+
+def _is_safe_git_stage_flow_command(shell_command: str) -> bool:
+    segments = _split_shell_segments(shell_command)
+    if not segments:
+        return False
+
+    normalized = _strip_workspace_cd_segment(segments)
+    if not normalized:
+        return False
+    if not _is_safe_finalize_git_add(normalized[0]):
+        return False
+    # Allow trailing git commit segment after git add (e.g. git add ... && git commit -m "...")
+    remaining = normalized[1:]
+    if remaining and _is_safe_finalize_git_commit(remaining[-1]):
+        remaining = remaining[:-1]
+    return all(_is_safe_git_read_segment(segment) for segment in remaining)
+
+
+def _is_safe_git_commit_command(shell_command: str) -> bool:
+    segments = _split_shell_segments(shell_command)
+    if not segments:
+        return False
+    normalized = _strip_workspace_cd_segment(segments)
+    if not normalized or len(normalized) != 1:
+        return False
+    return _is_safe_finalize_git_commit(normalized[0])
+
+
+def _is_safe_git_push_command(shell_command: str) -> bool:
+    segments = _split_shell_segments(shell_command)
+    if not segments:
+        return False
+    normalized = _strip_workspace_cd_segment(segments)
+    if not normalized or len(normalized) != 1:
+        return False
+    return _is_safe_finalize_git_push(normalized[0])
+
+
+def _is_safe_finalize_git_add(segment: list[str]) -> bool:
+    if len(segment) < 3 or segment[:2] != ["git", "add"]:
+        return False
+    args = segment[2:]
+    if any(arg.startswith("-") for arg in args):
+        return False
+    return all(_looks_like_safe_repo_path(arg) for arg in args)
+
+
+def _is_safe_finalize_git_commit(segment: list[str]) -> bool:
+    if len(segment) < 4 or segment[:2] != ["git", "commit"]:
+        return False
+    args = segment[2:]
+    saw_message = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token not in FINALIZE_GIT_ALLOWED_COMMIT_FLAGS:
+            return False
+        if token in FINALIZE_GIT_MESSAGE_FLAGS:
+            index += 1
+            if index >= len(args) or not str(args[index]).strip():
+                return False
+            saw_message = True
+        index += 1
+    return saw_message
+
+
+def _looks_like_safe_push_ref(token: str) -> bool:
+    value = str(token or "").strip()
+    if not value or value.startswith("-") or value.startswith(":") or ":" in value:
+        return False
+    return bool(re.match(r"^[A-Za-z0-9._/@-]+$", value))
+
+
+def _is_safe_finalize_git_push(segment: list[str]) -> bool:
+    if len(segment) < 2 or segment[:2] != ["git", "push"]:
+        return False
+    args = segment[2:]
+    if len(args) > 2:
+        return False
+    return all(_looks_like_safe_push_ref(arg) for arg in args)
+
+
+def _load_finalize_dispatch_context(config: dict[str, Any]) -> dict[str, Any] | None:
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    task_id = str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    agent_id = normalize_agent_id(os.environ.get("ORCH_AGENT_ID"))
+    if not run_id or not task_id or not agent_id:
+        return None
+
+    try:
+        runtime_state = load_runtime_state(config)
+        status_state = load_status(config)
+    except Exception:
+        return None
+
+    worker = runtime_state.get("workers", {}).get(run_id)
+    if not isinstance(worker, dict):
+        return None
+    if str(worker.get("task_id") or "").strip() != task_id:
+        return None
+
+    request_snapshot = worker.get("request_snapshot") or {}
+    if str(request_snapshot.get("reason") or "").strip() != FINALIZE_DISPATCH_REASON:
+        return None
+
+    tasks = status_state.get("tasks", [])
+    if not isinstance(tasks, list):
+        return None
+    task = next((item for item in tasks if str(item.get("id") or "").strip() == task_id), None)
+    if not isinstance(task, dict):
+        return None
+    if str(task.get("status") or "").strip() != "review_approved":
+        return None
+    if normalize_agent_id(task.get("owner")) != agent_id:
+        return None
+
+    return {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "worker": worker,
+        "task": task,
+    }
+
+
+def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[str, str] | None:
+    context = _load_finalize_dispatch_context(config)
+    if context is None:
+        return None
+
+    segments = _split_shell_segments(shell_command)
+    if not segments or len(segments) > 3:
+        return None
+
+    index = 0
+    saw_commit = False
+    saw_push = False
+
+    if _is_safe_finalize_git_add(segments[index]):
+        index += 1
+        if index >= len(segments):
+            return None
+
+    if _is_safe_finalize_git_commit(segments[index]):
+        saw_commit = True
+        index += 1
+        if index < len(segments):
+            if not _is_safe_finalize_git_push(segments[index]):
+                return None
+            saw_push = True
+            index += 1
+    elif _is_safe_finalize_git_push(segments[index]):
+        saw_push = True
+        index += 1
+    else:
+        return None
+
+    if index != len(segments):
+        return None
+    if not saw_commit and not saw_push:
+        return None
+
+    verbs: list[str] = []
+    if saw_commit:
+        verbs.append("git commit")
+    if saw_push:
+        verbs.append("git push")
+    verb_phrase = " and ".join(verbs)
+    task_id = context["task_id"]
+    return {
+        "decision": "allow",
+        "reason": f"Auto-allowed safe finalize {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}.",
+        "risk_class": "repo_finalize_git",
+    }
+
+
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
     tool_input = tool_input or {}
     decision = "defer"
@@ -361,6 +878,12 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
         decision = "allow"
         reason = f"{tool_name} is read-only."
         risk_class = "safe_read"
+    elif tool_name == "Agent":
+        agent_decision = _evaluate_agent_request(tool_input)
+        if agent_decision is not None:
+            decision = agent_decision["decision"]
+            reason = agent_decision["reason"]
+            risk_class = agent_decision["risk_class"]
     elif tool_name in EDIT_TOOLS:
         if _paths_within_workspace(_collect_paths(tool_input)):
             decision = "allow"
@@ -372,19 +895,26 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
             risk_class = "out_of_workspace"
     elif tool_name == "Bash":
         shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command") or ""
-        decision = classify_command(str(shell_command))
-        risk_class = {
-            "allow": "safe_bash",
-            "deny": "destructive_bash",
-            "defer": "needs_review",
-        }[decision]
-        reason = f"Bash command classified as {decision}: {shell_command}"
+        finalize_decision = _finalize_git_decision(str(shell_command), config)
+        if finalize_decision is not None:
+            decision = finalize_decision["decision"]
+            risk_class = finalize_decision["risk_class"]
+            reason = finalize_decision["reason"]
+        else:
+            decision = classify_command(str(shell_command))
+            risk_class = {
+                "allow": "safe_bash",
+                "deny": "destructive_bash",
+                "defer": "needs_review",
+            }[decision]
+            reason = f"Bash command classified as {decision}: {shell_command}"
         suggested_rule = f"Bash({shell_command})" if shell_command else None
     elif tool_name in NETWORK_TOOLS:
         decision = "defer"
         reason = f"{tool_name} requires network approval."
         risk_class = "network"
 
+    provider_id = _approval_provider(config)
     return {
         "decision": decision,
         "reason": reason,
@@ -393,8 +923,46 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
         "tool_name": tool_name,
         "tool_input": tool_input,
         "evaluated_at": utc_now(),
-        "policy_default_mode": config.get("providers", {}).get("claude", {}).get("approval", {}).get("rule_default_mode", "acceptEdits"),
+        "policy_default_mode": (
+            config.get("providers", {}).get(provider_id, {}).get("approval", {}).get("rule_default_mode", "acceptEdits")
+        ),
     }
+
+
+def _contains_marker(text: str, markers: tuple[str, ...]) -> bool:
+    for marker in markers:
+        if re.search(rf"\b{re.escape(marker.strip())}\b", text):
+            return True
+    return False
+
+
+def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None:
+    description = str(tool_input.get("description") or "")
+    prompt = str(tool_input.get("prompt") or "")
+    subagent_type = str(tool_input.get("subagent_type") or "").strip().lower()
+    combined = f"{description}\n{prompt}".strip().lower()
+    if not combined:
+        return None
+    if _contains_marker(combined, UNSAFE_AGENT_MARKERS):
+        return None
+    if subagent_type in SAFE_AGENT_SUBAGENT_TYPES or _contains_marker(combined, SAFE_AGENT_MARKERS):
+        return {
+            "decision": "allow",
+            "reason": "Agent request is scoped to read-only repo exploration/review.",
+            "risk_class": "safe_read",
+        }
+    return None
+
+
+def _approval_provider(config: dict[str, Any]) -> str:
+    provider_id = str(os.environ.get("ORCH_PROVIDER") or "claude").strip().lower() or "claude"
+    provider = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
+    delivery_mode = str(provider.get("delivery_mode") or "").strip()
+    if delivery_mode and delivery_mode != "claude_cli":
+        return "claude"
+    if provider or provider_id.startswith("claude"):
+        return provider_id
+    return "claude"
 
 
 def remember_rule(config: dict[str, Any], *, decision: str, rule: str) -> dict[str, Any]:
@@ -410,7 +978,7 @@ def remember_rule(config: dict[str, Any], *, decision: str, rule: str) -> dict[s
         config,
         {
             "type": "permission_rule_remembered",
-            "provider": "claude",
+            "provider": _approval_provider(config),
             "message": f"Remembered Claude rule in {decision}: {rule}",
             "decision": decision,
             "rule": rule,
@@ -466,7 +1034,7 @@ def suspend_matching_rules(
         config,
         {
             "type": "permission_rule_temporary_removed",
-            "provider": "claude",
+            "provider": _approval_provider(config),
             "message": f"Temporarily removed Claude {bucket} rule(s): {', '.join(removed_rules)}",
             "bucket": bucket,
             "rules": removed_rules,
@@ -495,7 +1063,7 @@ def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> l
         config,
         {
             "type": "permission_rule_temporary_restored",
-            "provider": "claude",
+            "provider": _approval_provider(config),
             "message": f"Restored Claude {bucket} rule(s): {', '.join(restored)}",
             "bucket": bucket,
             "rules": restored,
@@ -520,7 +1088,7 @@ def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> boo
         config,
         {
             "type": "permission_rule_temporary_added",
-            "provider": "claude",
+            "provider": _approval_provider(config),
             "message": f"Temporarily added Claude allow rule: {rule}",
             "rule": rule,
         },
@@ -543,7 +1111,7 @@ def remove_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> 
         config,
         {
             "type": "permission_rule_temporary_removed",
-            "provider": "claude",
+            "provider": _approval_provider(config),
             "message": f"Removed temporary Claude allow rule: {rule}",
             "rule": rule,
         },
@@ -557,11 +1125,12 @@ def emit_hook_response(payload: dict[str, Any]) -> None:
 
 def log_event(config: dict[str, Any], event_name: str, payload: dict[str, Any]) -> None:
     message = payload.get("tool_name") or payload.get("toolName") or payload.get("raw") or event_name
+    provider_id = _approval_provider(config)
     write_activity_log(
         config,
         {
             "type": "permission_hook",
-            "provider": "claude",
+            "provider": provider_id,
             "message": f"{event_name}: {message}",
             "hook_event": event_name,
             "hook_payload": payload,
@@ -571,17 +1140,19 @@ def log_event(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
 
 
 def _approval_timeout_seconds(config: dict[str, Any]) -> float:
+    provider_id = _approval_provider(config)
     return float(
         config.get("providers", {})
-        .get("claude", {})
+        .get(provider_id, {})
         .get("broker", {})
         .get("approval_wait_seconds", 3600)
     )
 
 
 def _approval_context(payload: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    provider_id = _approval_provider(config)
     return {
-        "provider": "claude",
+        "provider": provider_id,
         "task_id": os.environ.get("ORCH_TASK_ID") or payload.get("task_id") or payload.get("taskId"),
         "worker_run_id": os.environ.get("ORCH_RUN_ID"),
         "agent_id": os.environ.get("ORCH_AGENT_ID"),

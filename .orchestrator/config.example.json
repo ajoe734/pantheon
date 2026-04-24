@@ -24,7 +24,13 @@
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
-    "auto_refresh_provider_capabilities": false
+    "auto_refresh_provider_capabilities": true
+  },
+  "provider_guardrails": {
+    "pause_on_capacity_failure": true,
+    "pause_on_auth_failure": true,
+    "capacity_pause_seconds": 900,
+    "auth_pause_seconds": 900
   },
   "worker_retry": {
     "enabled": true,
@@ -65,7 +71,8 @@
     "eligible_statuses": [
       "todo",
       "in_progress",
-      "review"
+      "review",
+      "review_approved"
     ],
     "owner_fallbacks": {
       "Claude": [

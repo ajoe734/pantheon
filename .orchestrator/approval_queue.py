@@ -87,7 +87,18 @@ def _pid_is_alive(pid: Any) -> bool:
     return os.path.exists(f"/proc/{value}")
 
 
-def _orphaned_worker_note(item: dict[str, Any], workers: dict[str, Any]) -> str | None:
+def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -> bool:
+    normalized = str(provider_id or "").strip().lower()
+    if not normalized:
+        return False
+    provider = (config.get("providers", {}) or {}).get(normalized, {}) or {}
+    delivery_mode = str(provider.get("delivery_mode") or "").strip()
+    if delivery_mode:
+        return delivery_mode == "claude_cli"
+    return normalized.startswith("claude")
+
+
+def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers: dict[str, Any]) -> str | None:
     run_id = item.get("worker_run_id")
     if not run_id:
         return None
@@ -95,7 +106,7 @@ def _orphaned_worker_note(item: dict[str, Any], workers: dict[str, Any]) -> str 
     if worker is None:
         return "Auto-pruned orphaned approval after its worker state disappeared."
     if (
-        worker.get("provider") == "claude"
+        _provider_uses_claude_cli(config, worker.get("provider"))
         and worker.get("status") in {"waiting_approval", "suspended_approval"}
         and (worker.get("session_id") or worker.get("resume_token"))
     ):
@@ -131,7 +142,7 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
         workers = runtime_state.get("workers", {})
         keep: list[dict[str, Any]] = []
         for item in state.get("pending", []):
-            orphaned_note = _orphaned_worker_note(item, workers)
+            orphaned_note = _orphaned_worker_note(config, item, workers)
             if orphaned_note:
                 pruned_item = _pruned_pending_item(item, note=orphaned_note)
                 pruned_item["resolution_ref"] = write_approval_evidence(
@@ -351,7 +362,7 @@ def resolve_approval(
             "remember": remember,
             "resume_override_active": bool(
                 decision == "allow"
-                and item.get("provider") == "claude"
+                and _provider_uses_claude_cli(config, item.get("provider"))
                 and not remember
             ),
             "resume_override_consumed_at": None,

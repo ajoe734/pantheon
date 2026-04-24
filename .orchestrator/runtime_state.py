@@ -23,6 +23,7 @@ def default_state() -> dict[str, Any]:
         "initialized_at": None,
         "last_scan_at": None,
         "tasks": {},
+        "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
         "queue": {
@@ -76,6 +77,8 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
         return state
     state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination"}})
     state.setdefault("tasks", {})
+    recent_terminal_tasks = state.get("recent_terminal_tasks")
+    state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
     state.setdefault("queue", {})
@@ -203,6 +206,28 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
         if worker.get("status") == "manual_pending" and worker.get("queue_event_id") not in valid_pending_event_ids
     ]
     for run_id in stale_manual_workers:
+        workers.pop(run_id, None)
+
+    try:
+        pending_approval_runs = {
+            str(item.get("worker_run_id") or "")
+            for item in load_approval_state(config).get("pending", [])
+            if item.get("worker_run_id")
+        }
+    except KeyError:
+        pending_approval_runs = set()
+    # Approval-gated workers without a surviving queue event or pending approval
+    # are stale runtime leftovers. Once both coordination anchors are gone,
+    # keeping them around only causes dashboards and health checks to report
+    # ghost workers.
+    stale_approval_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if worker.get("status") in {"waiting_approval", "suspended_approval"}
+        and worker.get("queue_event_id") not in valid_pending_event_ids
+        and str(run_id) not in pending_approval_runs
+    ]
+    for run_id in stale_approval_workers:
         workers.pop(run_id, None)
 
     prune_worker_records(state)

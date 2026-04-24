@@ -1,0 +1,37 @@
+name: Coordination Drift Guard
+
+on:
+  push:
+    paths:
+      - "WORKBENCH_DELIVERY_BACKLOG.md"
+      - ".coordination/responses/*-contract-ready.yaml"
+      - "docs/pantheon-handoffs/**"
+      - "scripts/coordination_drift_guard.py"
+  pull_request:
+    paths:
+      - "WORKBENCH_DELIVERY_BACKLOG.md"
+      - ".coordination/responses/*-contract-ready.yaml"
+      - "docs/pantheon-handoffs/**"
+      - "scripts/coordination_drift_guard.py"
+
+permissions:
+  contents: read
+
+jobs:
+  drift-guard:
+    name: Check coordination truth drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Pantheon
+        uses: actions/checkout@v6
+
+      - name: Checkout front repo
+        uses: actions/checkout@v6
+        with:
+          repository: ajoe734/front-ai-trading-system
+          ref: main
+          token: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          path: front-repo
+
+      - name: Run drift guard
+        run: python3 scripts/coordination_drift_guard.py --front-repo "$GITHUB_WORKSPACE/front-repo"

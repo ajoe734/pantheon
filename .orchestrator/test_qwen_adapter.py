@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -89,6 +90,23 @@ class QwenAdapterTests(unittest.TestCase):
         self.assertIn("--debug", command)
         self.assertEqual(env["OPENAI_API_KEY"], "test-key")
         self.assertEqual(env["OPENAI_BASE_URL"], "http://127.0.0.1:8000/v1")
+
+    @mock.patch("adapters.qwen._today_utc", return_value=date(2026, 4, 21))
+    @mock.patch("adapters.qwen.command_exists", return_value="/usr/bin/qwen")
+    def test_qwen_oauth_is_not_auto_deliverable_after_discontinuation(
+        self,
+        _command_exists: mock.Mock,
+        _today_utc: mock.Mock,
+    ) -> None:
+        self.config["providers"]["qwen"]["qwen"]["auth_type"] = "qwen-oauth"
+
+        adapter = QwenAdapter(config=self.config, provider_capabilities={})
+        capability = adapter.capability("qwen")
+
+        self.assertFalse(capability.can_auto_deliver)
+        self.assertTrue(capability.requires_manual_confirmation)
+        self.assertEqual(capability.delivery_mode, "file_inbox")
+        self.assertIn("2026-04-15", capability.notes or "")
 
 
 if __name__ == "__main__":

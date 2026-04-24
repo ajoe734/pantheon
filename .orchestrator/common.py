@@ -7,12 +7,18 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 import uuid
 import hashlib
+import urllib.error
+import urllib.request
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from task_archive import TaskResolver
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -21,11 +27,27 @@ EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
-PLANNING_SHARED_FILES = [
+DEFAULT_PLANNING_SHARED_FILES = [
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "README.md",
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "planning-session.json",
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "pantheon-backend-completion-checklist.md",
 ]
+CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CLAUDE_OAUTH_SCOPES = (
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+)
+CLAUDE_OAUTH_REFRESH_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Origin": "https://claude.ai",
+    "Referer": "https://claude.ai/",
+    "User-Agent": "claude-code/2.1.117",
+}
 
 
 def utc_now() -> str:
@@ -39,32 +61,61 @@ def ensure_parent(path: Path) -> None:
 def load_json(path: Path, default: Any | None = None) -> Any:
     if not path.exists():
         return deepcopy(default)
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        return deepcopy(default)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        sanitized = re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
-        sanitized = re.sub(r"/\*.*?\*/", "", sanitized, flags=re.DOTALL)
-        sanitized = re.sub(r",(\s*[}\]])", r"\1", sanitized)
-        return json.loads(sanitized)
+    last_error: json.JSONDecodeError | None = None
+    for attempt in range(10):
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            return deepcopy(default)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            sanitized = re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
+            sanitized = re.sub(r"/\*.*?\*/", "", sanitized, flags=re.DOTALL)
+            sanitized = re.sub(r",(\s*[}\]])", r"\1", sanitized)
+            if sanitized != text:
+                try:
+                    return json.loads(sanitized)
+                except json.JSONDecodeError as sanitized_exc:
+                    last_error = sanitized_exc
+            else:
+                last_error = exc
+            if attempt < 9:
+                time.sleep(0.05 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+    return deepcopy(default)
 
 
 def write_json(path: Path, payload: Any) -> None:
     ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        handle.write(serialized)
+        handle.flush()
+        os.fsync(handle.fileno())
+        temp_path = Path(handle.name)
+    os.replace(temp_path, path)
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
-    return rows
+    last_error: json.JSONDecodeError | None = None
+    for attempt in range(10):
+        rows: list[dict[str, Any]] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+            return rows
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            if attempt < 9:
+                time.sleep(0.05 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+    return []
 
 
 def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -135,6 +186,7 @@ def run_command(
     cwd: Path | None = None,
     timeout: float | None = None,
     check: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -143,7 +195,112 @@ def run_command(
         timeout=timeout,
         text=True,
         capture_output=True,
+        env=env,
     )
+
+
+def claude_credentials_path(env: dict[str, str] | None = None) -> Path:
+    source = env or os.environ
+    configured = str(source.get("CLAUDE_CONFIG_DIR") or "").strip()
+    if configured:
+        config_dir = Path(os.path.expanduser(configured))
+    else:
+        home = str(source.get("HOME") or str(Path.home())).strip() or str(Path.home())
+        config_dir = Path(os.path.expanduser(home)) / ".claude"
+    return config_dir / ".credentials.json"
+
+
+def load_claude_oauth_tokens(env: dict[str, str] | None = None) -> tuple[dict[str, Any], dict[str, Any], Path] | None:
+    credentials_path = claude_credentials_path(env)
+    payload = load_json(credentials_path, default={}) or {}
+    oauth = payload.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return None
+    return payload, oauth, credentials_path
+
+
+def claude_oauth_token_expired(oauth: dict[str, Any], *, skew_seconds: int = 300) -> bool:
+    if not oauth.get("accessToken"):
+        return True
+    expires_at = oauth.get("expiresAt")
+    if expires_at in (None, ""):
+        return False
+    try:
+        expires_at_ms = int(expires_at)
+    except (TypeError, ValueError):
+        return True
+    return expires_at_ms <= int(time.time() * 1000) + (skew_seconds * 1000)
+
+
+def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: float = 15.0) -> dict[str, Any] | None:
+    loaded = load_claude_oauth_tokens(env)
+    if not loaded:
+        return None
+    payload, oauth, credentials_path = loaded
+    refresh_token = str(oauth.get("refreshToken") or "").strip()
+    if not refresh_token:
+        return None
+    request_body = json.dumps(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": CLAUDE_OAUTH_CLIENT_ID,
+            "scope": " ".join(CLAUDE_OAUTH_SCOPES),
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        CLAUDE_OAUTH_TOKEN_URL,
+        data=request_body,
+        headers=CLAUDE_OAUTH_REFRESH_HEADERS,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    updated = deepcopy(oauth)
+    updated["accessToken"] = response_payload.get("access_token") or updated.get("accessToken") or ""
+    updated["refreshToken"] = response_payload.get("refresh_token") or refresh_token
+    expires_in = response_payload.get("expires_in")
+    if expires_in is not None:
+        try:
+            updated["expiresAt"] = int(time.time() * 1000) + (int(expires_in) * 1000)
+        except (TypeError, ValueError):
+            pass
+    scopes = response_payload.get("scope")
+    if isinstance(scopes, str) and scopes.strip():
+        updated["scopes"] = scopes.split()
+    elif not updated.get("scopes"):
+        updated["scopes"] = list(CLAUDE_OAUTH_SCOPES)
+    payload["claudeAiOauth"] = updated
+    write_json(credentials_path, payload)
+    return updated
+
+
+def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, refresh_if_needed: bool = True) -> bool:
+    if not binary:
+        return False
+    status = run_command([binary, "auth", "status"], env=env)
+    if status.returncode != 0 or not status.stdout:
+        return False
+    try:
+        payload = json.loads(status.stdout)
+    except json.JSONDecodeError:
+        return False
+    if not payload.get("loggedIn"):
+        return False
+    loaded = load_claude_oauth_tokens(env)
+    if not loaded:
+        return True
+    _, oauth, _ = loaded
+    if not claude_oauth_token_expired(oauth):
+        return True
+    if not refresh_if_needed:
+        return False
+    refreshed = refresh_claude_oauth_tokens(env)
+    return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 
 
 def command_exists(name: str) -> str | None:
@@ -255,17 +412,40 @@ def load_status(config: dict[str, Any]) -> dict[str, Any]:
     return load_json(config_path(config, "status_file"), default={}) or {}
 
 
+def planning_shared_files(planning_state: dict[str, Any] | None = None) -> list[Path]:
+    state = planning_state if planning_state is not None else (load_json(PLANNING_STATE_PATH, default={}) or {})
+    if str(state.get("status") or "") not in {"active", "human_required"}:
+        return []
+
+    files: list[Path] = []
+    readme_path = resolve_path(((state.get("artifacts", {}) or {}).get("planning_readme", {}) or {}).get("path"))
+    session_path = resolve_path(state.get("session_file"))
+    for candidate in (readme_path, session_path):
+        if candidate and candidate.exists():
+            files.append(candidate)
+
+    if not files:
+        for path in DEFAULT_PLANNING_SHARED_FILES:
+            if path.exists():
+                files.append(path)
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in files:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
+
+
 def selected_shared_files(config: dict[str, Any]) -> list[Path]:
     files: list[Path] = []
     for key in ("status_file", "current_work", "activity_log", "dashboard"):
         path = config.get("paths", {}).get(key)
         if path:
             files.append(config_path(config, key))
-    planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
-    if str(planning_state.get("status") or "") in {"active", "human_required"}:
-        for path in PLANNING_SHARED_FILES:
-            if path.exists():
-                files.append(path)
+    files.extend(planning_shared_files())
     return files
 
 
@@ -322,8 +502,12 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         return {"kind": "unknown", "summary": f"{provider_label} failure", "detail": ""}
 
     lowered = raw.lower()
+    if "qwen oauth free tier was discontinued" in lowered:
+        return {"kind": "quota", "summary": "Qwen OAuth free tier discontinued", "detail": raw[: max(420, limit)]}
     if "you have no quota" in lowered:
         return {"kind": "quota", "summary": "402 You have no quota", "detail": raw[: max(420, limit)]}
+    if "credit balance is too low" in lowered or "billing_error" in lowered:
+        return {"kind": "quota", "summary": "Credit balance is too low", "detail": raw[: max(420, limit)]}
     if "free daily quota has been reached" in lowered:
         return {"kind": "quota", "summary": "Daily quota exceeded", "detail": raw[: max(420, limit)]}
     if "hit your limit" in lowered:
@@ -343,13 +527,51 @@ def task_brief_path(task_id: str | None) -> Path:
 
 
 def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
+    path = config_path(config, "activity_log")
+    if not path.exists():
+        return []
+
     entries: list[dict[str, Any]] = []
-    for entry in reversed(load_jsonl(config_path(config, "activity_log"))):
-        if str(entry.get("task_id") or "").strip() != task_id:
-            continue
-        entries.append(entry)
-        if len(entries) >= limit:
-            break
+    chunk_size = 64 * 1024
+    max_scan_bytes = 16 * 1024 * 1024
+    scanned = 0
+
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        buffer = b""
+
+        while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            handle.seek(position)
+            chunk = handle.read(read_size)
+            scanned += read_size
+            buffer = chunk + buffer
+            lines = buffer.splitlines()
+
+            if position > 0:
+                buffer = lines[0] if lines else buffer
+                complete_lines = lines[1:]
+            else:
+                buffer = b""
+                complete_lines = lines
+
+            for raw_line in reversed(complete_lines):
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    # Ignore a partially-written tail line rather than stalling dispatch.
+                    continue
+                if str(entry.get("task_id") or "").strip() != task_id:
+                    continue
+                entries.append(entry)
+                if len(entries) >= limit:
+                    break
+
     entries.reverse()
     return entries
 
@@ -362,8 +584,8 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     task = next((item for item in tasks if str(item.get("id") or "").strip() == task_id), None)
     if task is None:
         return None
-    task_map = {str(item.get("id") or "").strip(): item for item in tasks}
-    deps = [task_map.get(dep_id) for dep_id in (task.get("depends_on") or [])]
+    resolver = TaskResolver(tasks)
+    deps = [resolver.get(dep_id) for dep_id in (task.get("depends_on") or [])]
     deps = [item for item in deps if item]
     planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
     planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
@@ -395,7 +617,7 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     ]
     if deps:
         body.extend(
-            f"- {dep.get('id')}: {dep.get('status')} · {compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
+            f"- {dep.get('id')}: {resolver.dependency_status(dep.get('id'))} · {compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
             for dep in deps
         )
     else:
@@ -417,7 +639,9 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         if session_file:
             body.append(f"- {session_file}")
         else:
-            body.append(f"- {PLANNING_SHARED_FILES[1].relative_to(ROOT)}")
+            fallback_planning_files = planning_shared_files(planning_state)
+            if fallback_planning_files:
+                body.append(f"- {relpath(fallback_planning_files[0])}")
     if source_plane or source_ref:
         body.extend(["", "## Planning Origin"])
         body.append(f"- Source plane: {source_plane or '-'}")
@@ -451,7 +675,18 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
 
 def execution_context_files(config: dict[str, Any], task_id: str | None) -> list[str]:
     files = ["AI_COLLABORATION_GUIDE.md", "ai-status.json"]
-    brief = write_task_brief(config, task_id)
+    try:
+        brief = write_task_brief(config, task_id)
+    except Exception as exc:
+        write_activity_log(
+            config,
+            {
+                "type": "task_brief_generation_failed",
+                "task_id": task_id,
+                "message": f"Fell back to minimal execution context after task brief generation failed: {type(exc).__name__}: {exc}",
+            },
+        )
+        return unique_strings(files)
     if brief is not None:
         files.insert(1, relpath(brief))
     return unique_strings(files)

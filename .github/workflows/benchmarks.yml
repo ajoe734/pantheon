@@ -15,10 +15,10 @@ jobs:
         volumes:
           - /nas:/Data
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
 
       - name: Checkout Lean Master
-        uses: actions/checkout@v2
+        uses: actions/checkout@v6
         with:
           repository: QuantConnect/Lean
           path: LeanMaster

@@ -76,15 +76,27 @@ def approval_context() -> dict[str, Any]:
     }
 
 
+def approval_provider(config: dict[str, Any]) -> str:
+    provider_id = str(os.environ.get("ORCH_PROVIDER") or "claude").strip().lower() or "claude"
+    provider = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
+    delivery_mode = str(provider.get("delivery_mode") or "").strip()
+    if delivery_mode and delivery_mode != "claude_cli":
+        return "claude"
+    if provider or provider_id.startswith("claude"):
+        return provider_id
+    return "claude"
+
+
 def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     tool_name = args.get("tool_name") or args.get("toolName")
     tool_input = args.get("input") or args.get("tool_input") or args.get("toolInput") or {}
     decision = evaluate_tool_request(str(tool_name or ""), tool_input, config)
     context = approval_context()
+    provider_id = approval_provider(config)
 
     timeout = float(
         config.get("providers", {})
-        .get("claude", {})
+        .get(provider_id, {})
         .get("broker", {})
         .get("approval_wait_seconds", 3600)
     )
@@ -96,7 +108,7 @@ def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, 
             config,
             {
                 "type": "approval_auto_allow",
-                "provider": "claude",
+                "provider": provider_id,
                 "task_id": context.get("task_id"),
                 "message": f"Auto-approved {tool_name}",
                 "worker_run_id": context.get("worker_run_id"),
@@ -110,7 +122,7 @@ def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, 
             config,
             {
                 "type": "approval_auto_deny",
-                "provider": "claude",
+                "provider": provider_id,
                 "task_id": context.get("task_id"),
                 "message": f"Auto-denied {tool_name}",
                 "worker_run_id": context.get("worker_run_id"),
@@ -122,7 +134,7 @@ def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, 
     approval = create_approval(
         config,
         {
-            "provider": "claude",
+            "provider": provider_id,
             "task_id": context.get("task_id"),
             "worker_run_id": context.get("worker_run_id"),
             "agent_id": context.get("agent_id"),
