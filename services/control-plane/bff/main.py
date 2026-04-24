@@ -10,7 +10,7 @@ import uuid
 from collections import deque
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Header, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -35,6 +35,7 @@ from models import (
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from read_store import ReadSurfaceStore
+from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 os.makedirs(BFF_DATA_DIR, exist_ok=True)
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 read_store = ReadSurfaceStore(os.path.join(BFF_DATA_DIR, "read_surfaces.json"))
+settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 
 # --------------------------------------------------------------------------- #
 # Auth / identity helpers
@@ -69,6 +71,20 @@ def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
             suggestion="Re-authenticate and include a valid Bearer token",
         )
     token = authorization[len("Bearer "):]
+    if ":" not in token:
+        lowered = token.lower()
+        inferred_roles = ["operator"]
+        if lowered.startswith("admin_"):
+            inferred_roles = ["admin"]
+        elif lowered.startswith("analyst_"):
+            inferred_roles = ["analyst"]
+        elif lowered.startswith("viewer_"):
+            inferred_roles = ["viewer"]
+        return OperatorIdentity(
+            operator_id=token,
+            roles=inferred_roles,
+            mfa_verified="mfa" in lowered,
+        )
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
@@ -311,6 +327,27 @@ def _require_read_role(identity: OperatorIdentity) -> None:
         )
 
 
+def _require_admin_with_mfa(identity: OperatorIdentity, action_name: str) -> None:
+    if "admin" not in identity.roles:
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            f"{action_name} requires admin role",
+            "Operator does not hold the admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to an admin-role operator",
+        )
+    if not identity.mfa_verified:
+        raise _bff_error(
+            403,
+            ErrorCode.MFA_REQUIRED,
+            f"{action_name} requires MFA verification",
+            "Admin action requires MFA validation",
+            precondition_failed="mfa_check",
+            suggestion="Provide a valid MFA token in your session",
+        )
+
+
 def _read_surface_state() -> str:
     return os.getenv("BFF_READ_SURFACE_STATE", "fresh")
 
@@ -442,6 +479,82 @@ async def health():
         "version": "0.2.0",
         "timestamp": utc_now(),
     }
+
+
+@app.get("/api/v1/settings")
+async def get_settings(authorization: Optional[str] = Header(default=None)):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return settings_store.get()
+
+
+@app.post("/api/v1/settings")
+async def update_settings(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_admin_with_mfa(identity, "UpdateSettings")
+
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required field: settings",
+            "settings must be an object",
+            precondition_failed="settings",
+        )
+
+    try:
+        updated = settings_store.update(settings)
+    except ValueError as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid settings payload",
+            str(exc),
+        )
+
+    return {"settings": updated}
+
+
+@app.get("/api/v1/settings/export")
+async def export_settings(authorization: Optional[str] = Header(default=None)):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return {"jsonData": settings_store.export_json()}
+
+
+@app.post("/api/v1/settings/import")
+async def import_settings(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_admin_with_mfa(identity, "ImportSettings")
+
+    json_data = payload.get("jsonData")
+    if not isinstance(json_data, str) or not json_data.strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required field: jsonData",
+            "jsonData must be a non-empty JSON string",
+            precondition_failed="jsonData",
+        )
+
+    try:
+        imported = settings_store.import_json(json_data)
+    except ValueError as exc:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid settings import payload",
+            str(exc),
+        )
+
+    return {"settings": imported}
 
 
 # --------------------------------------------------------------------------- #
