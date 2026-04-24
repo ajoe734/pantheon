@@ -1,0 +1,105 @@
+feature_id: PKT-004-persona-drilldowns
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-24T12:08:13Z'
+reviewed_commit: 0ee754bf0228a6998ace115f3277fdc30bcb15e1
+reviewed_source_commit: f47e01008c7c4c378101c53788aaa68c544ea470
+request_pair_commit: 68fc766daf6f7d0eecafed38b965894de35a42e6
+ui_done_source_commit: f47e01008c7c4c378101c53788aaa68c544ea470
+frontend_feedback_source_commit: f47e01008c7c4c378101c53788aaa68c544ea470
+verified_remote_publish_commit: 68fc766daf6f7d0eecafed38b965894de35a42e6
+feedback_bundle_transport: >-
+  Git-visible `origin/main` head `68fc766daf6f7d0eecafed38b965894de35a42e6`
+  now publishes the canonical PKT-004 request pair together with
+  `docs/pantheon-feedback/PKT-004-persona-drilldowns/*`, all anchored to the
+  reviewed Persona Drilldowns source snapshot
+  `f47e01008c7c4c378101c53788aaa68c544ea470`.
+screen: persona-drilldowns
+workbench: persona-workbench
+screen_id: screen-persona-drilldowns
+
+status: loop-complete
+disposition: close
+review_result: publication-bundle-complete
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed PKT-004 Persona Drilldowns against the current
+  Git-visible front `main` publication. The earlier mounted-route blocker was
+  already resolved, and the remaining issue was publication hygiene only. That
+  is now closed: the default-branch tuple publishes the request pair together
+  with the full PKT-004 feedback bundle, all pinned to the reviewed Persona
+  Drilldowns UI snapshot. No new Pantheon API, BFF, or route work is required
+  for this loop.
+
+acceptance_verified:
+  - criterion: mount `/personas/:id` on the Pantheon-backed detail surface
+    status: pass
+    note: >-
+      `src/App.tsx` routes `/personas/:id` through
+      `src/pages/persona/Detail.tsx`, and that file re-exports the
+      Pantheon-backed `PersonaDetail` surface.
+  - criterion: use only the existing BFF client on the mounted PKT-004 route family
+    status: pass
+    note: >-
+      The mounted Persona Drilldowns route family stays on the shared
+      `personaDrilldownApi` client with no demo-provider fallback.
+  - criterion: request pair and referenced feedback bundle are replay-clean on the Git-visible default branch
+    status: pass
+    note: >-
+      `origin/main@68fc766daf6f7d0eecafed38b965894de35a42e6` contains both
+      canonical request files and the full
+      `docs/pantheon-feedback/PKT-004-persona-drilldowns/*` bundle.
+  - criterion: advertised source_commit remains Git-visible and replayable
+    status: pass
+    note: >-
+      `f47e01008c7c4c378101c53788aaa68c544ea470` remains contained in current
+      Git-visible history and still matches the mounted Persona Drilldowns UI
+      slice referenced by the request pair.
+  - criterion: front TypeScript compile passes on the current publication tuple
+    status: pass
+    note: >-
+      `cd /tmp/front-prompt-publish-main && /home/edna/code/front-ai-trading-system/node_modules/.bin/tsc --noEmit`
+      completed successfully at `origin/main@68fc766daf6f7d0eecafed38b965894de35a42e6`.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify current default-branch route wiring and mounted detail surface
+    path: /tmp/front-prompt-publish-main/src/App.tsx
+    note: >-
+      Confirmed the mounted Persona Drilldowns route family still resolves to
+      the Pantheon-backed detail surface.
+  - action: verify Git-visible default-branch publication tuple
+    path: /tmp/front-prompt-publish-main
+    note: >-
+      Confirmed current `origin/main` publishes the canonical request pair and
+      the full PKT-004 feedback bundle from one replay-clean tuple.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Live browser QA against a mounted Pantheon BFF remains non-blocking after
+      this closeout.
+
+required_front_repo_updates: []
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. The current Git-visible front `main` publication now includes the
+  canonical PKT-004 request pair together with the full feedback bundle, all
+  anchored to the reviewed Persona Drilldowns source snapshot
+  `f47e01008c7c4c378101c53788aaa68c544ea470`.
+
+risk_note: >-
+  Remaining risk is limited to non-blocking deployed browser QA and future
+  regressions outside this approved publication tuple, not an open Pantheon
+  route, BFF, or transport blocker.
+
+blocking: false
+lovable_ui_task_status: closed
+next_action: none
+delivery_artifact_ref: .coordination/responses/PKT-004-persona-drilldowns-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/PKT-004-persona-drilldowns-review.md

@@ -2,13 +2,12 @@
   "project": "pantheon",
   "sprint": "2026-04-12-blueprint-gap-convergence-planning",
   "objective": "Run the blueprint gap convergence planning session, compare repo reality against the gap review and market-data scope plan, and converge the next execution wave without overwriting the accepted phase1 planning history.",
-  "updated_at": "2026-04-13T04:25:21Z",
+  "updated_at": "2026-04-24T12:18:44Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
       "ai-status.json",
-      "ai-activity-log.jsonl",
-      "current-work.md"
+      "ai-activity-log.jsonl"
     ],
     "L1 Platform Architecture & Policy": [
       "TARGET_ARCHITECTURE.md",
@@ -45,13 +44,15 @@
       "Pantheon_總索引版系統分析文件.md",
       "Pantheon_資料表_Schema_設計版.md",
       "Pantheon_API_Service_Contract_設計版.md"
+    ],
+    "L0.5 Derived Narrative": [
+      "current-work.md"
     ]
   },
   "canonical_files": [
     "AI_COLLABORATION_GUIDE.md",
     "ai-status.json",
     "ai-activity-log.jsonl",
-    "current-work.md",
     "TARGET_ARCHITECTURE.md",
     "OPENCLAW_RUNTIME_CONTRACT.md",
     "PERSONA_RUNTIME_MODEL.md",
@@ -81,7 +82,8 @@
     "WORK_REBASELINE.md",
     "Pantheon_總索引版系統分析文件.md",
     "Pantheon_資料表_Schema_設計版.md",
-    "Pantheon_API_Service_Contract_設計版.md"
+    "Pantheon_API_Service_Contract_設計版.md",
+    "current-work.md"
   ],
   "agents": [
     {
