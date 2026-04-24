@@ -23,7 +23,9 @@ packet and a later human-gated `EP5-002` proof run:
    `scripts/run_ep5_canary_readiness.py`
 5. gives operators one helper to materialize VM-2 env files from Secret
    Manager via `scripts/materialize_exec_env_from_secret_manager.py`
-6. gives closeout owners an evidence scaffold in `evidence-packet-template.md`
+6. gives operators one helper to seed Secret Manager versions from local files
+   via `scripts/seed_ep5_execution_secrets.py`
+7. gives closeout owners an evidence scaffold in `evidence-packet-template.md`
 
 ## What This Bundle Does Not Prove
 
@@ -49,10 +51,18 @@ Those still belong to later gated `EP5` proof work.
 | `env/canary-exec.env.example` | repo-local template for canary readiness variables and secret names |
 | `scripts/run_ep5_canary_readiness.py` | validates readiness, emits a canary DeploymentPlan artifact, and rehearses the rollback drill |
 | `scripts/materialize_exec_env_from_secret_manager.py` | resolves Secret Manager refs into a machine-local VM-2 env file without tracking raw credentials |
+| `scripts/seed_ep5_execution_secrets.py` | adds the four EP5 broker/exchange secret versions from local files without copying the values into git |
 
 ## Recommended Flow
 
 ```bash
+python3 scripts/seed_ep5_execution_secrets.py \
+  --project pantheon-493602 \
+  --broker-api-key-file /secure-inputs/broker_api_key.txt \
+  --broker-api-secret-file /secure-inputs/broker_api_secret.txt \
+  --exchange-api-key-file /secure-inputs/exchange_api_key.txt \
+  --exchange-api-secret-file /secure-inputs/exchange_api_secret.txt
+
 cp env/canary-exec.env.example env/canary-exec.env
 
 python3 scripts/materialize_exec_env_from_secret_manager.py \

@@ -6,6 +6,13 @@ This checklist is the operator-facing runbook for the prerequisite-only
 ## 1. Prepare The VM-2 Env File
 
 ```bash
+python3 scripts/seed_ep5_execution_secrets.py \
+  --project pantheon-493602 \
+  --broker-api-key-file /secure-inputs/broker_api_key.txt \
+  --broker-api-secret-file /secure-inputs/broker_api_secret.txt \
+  --exchange-api-key-file /secure-inputs/exchange_api_key.txt \
+  --exchange-api-secret-file /secure-inputs/exchange_api_secret.txt
+
 python3 scripts/materialize_exec_env_from_secret_manager.py \
   --template env/canary-exec.env.example \
   --output env/canary-exec.env \
