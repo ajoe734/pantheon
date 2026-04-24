@@ -11,10 +11,15 @@ import unittest
 from pathlib import Path
 from jsonschema import Draft7Validator, FormatChecker
 
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
 # Handle hyphenated directory name
 _DATA_PLANE = Path(__file__).resolve().parent.parent
 if str(_DATA_PLANE.parent) not in sys.path:
     sys.path.insert(0, str(_DATA_PLANE.parent))
+_ADAPTERS_DIR = ROOT / "services" / "research" / "adapters"
+if str(_ADAPTERS_DIR) not in sys.path:
+    sys.path.insert(0, str(_ADAPTERS_DIR))
 
 # Import models using importlib due to hyphen in directory name
 import importlib.util
@@ -34,6 +39,9 @@ market_calendar_mod = _load_module("market_calendar_session", _models / "market_
 dataset_lineage_mod = _load_module("dataset_lineage", _models / "dataset_lineage.py")
 taiwan_reference_mod = _load_module("taiwan_reference", _DATA_PLANE / "taiwan_reference.py")
 us_reference_mod = _load_module("us_equity_reference", _DATA_PLANE / "us_equity_reference.py")
+crypto_reference_mod = _load_module("crypto_reference", _DATA_PLANE / "crypto_reference.py")
+from coingecko_client import CoinGeckoClient
+from services.execution.kraken_adapter import KrakenAdapter, KrakenConfig
 
 SecurityMaster = security_master_mod.SecurityMaster
 ContractMaster = contract_master_mod.ContractMaster
@@ -45,13 +53,21 @@ DatasetVersion = dataset_lineage_mod.DatasetVersion
 build_tw_security_master = taiwan_reference_mod.build_tw_security_master
 build_tw_calendar_session = taiwan_reference_mod.build_tw_calendar_session
 build_tw_dataset_lineage_source = taiwan_reference_mod.build_tw_dataset_lineage_source
+build_tw_symbol_mapping_record = taiwan_reference_mod.build_tw_symbol_mapping_record
+build_shioaji_raw_dataset = taiwan_reference_mod.build_shioaji_raw_dataset
+build_tw_normalized_dataset = taiwan_reference_mod.build_tw_normalized_dataset
+join_tw_quote_with_reference = taiwan_reference_mod.join_tw_quote_with_reference
 build_us_security_master = us_reference_mod.build_us_security_master
 build_us_calendar_session = us_reference_mod.build_us_calendar_session
 build_polygon_raw_dataset = us_reference_mod.build_polygon_raw_dataset
 build_us_normalized_dataset = us_reference_mod.build_us_normalized_dataset
 build_us_dataset_lineage_source = us_reference_mod.build_us_dataset_lineage_source
+build_crypto_security_master = crypto_reference_mod.build_crypto_security_master
+build_kraken_raw_dataset = crypto_reference_mod.build_kraken_raw_dataset
+build_crypto_normalized_dataset = crypto_reference_mod.build_crypto_normalized_dataset
+build_crypto_dataset_lineage_source = crypto_reference_mod.build_crypto_dataset_lineage_source
+join_kraken_quote_with_reference = crypto_reference_mod.join_kraken_quote_with_reference
 
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SCHEMAS_DIR = _DATA_PLANE / "schemas"
 FORMAT_CHECKER = FormatChecker()
 
@@ -327,6 +343,7 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
         )
         self.assertEqual(sec.security_id, "SEC-TW-2330-TWSE")
         self.assertEqual(sec.symbol_canonical, "2330.TWSE")
+        self.assertEqual(sec.metadata_json["market_segment"], "listed")
         self.assertEqual(_validate_schema("security_master", sec.to_dict()), [])
 
     def test_build_tw_calendar_session_handles_holidays_and_early_close(self):
@@ -349,6 +366,127 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
         )
         self.assertEqual(lineage["market"], "TW")
         self.assertEqual(lineage["symbol_universe"], ["2330", "2317"])
+
+    def test_build_tw_symbol_mapping_record_preserves_market_segment(self):
+        mapping = build_tw_symbol_mapping_record(
+            symbol="6488",
+            venue="OTC",
+            market_segment="OTC",
+            source_keys=["tpex", "tej"],
+        )
+        self.assertEqual(mapping["symbol_canonical"], "6488.TPEX")
+        self.assertEqual(mapping["market_segment"], "otc")
+        self.assertEqual(mapping["source_keys"], ["tpex", "tej"])
+
+        normalized = build_tw_symbol_mapping_record(
+            symbol="2330",
+            venue="TWSE",
+            market_segment="上市",
+        )
+        self.assertEqual(normalized["market_segment"], "listed")
+
+    def test_build_tw_raw_and_normalized_dataset(self):
+        raw = build_shioaji_raw_dataset(
+            dataset_id="RAW-TW-SHIOAJI-TICK-20260424",
+            instrument_scope=["SEC-TW-2330-TWSE", "SEC-TW-6488-TPEX"],
+            coverage_start="2026-04-24",
+            coverage_end="2026-04-24",
+            ingest_time="2026-04-24T01:35:00Z",
+            storage_ref="gs://pantheon-data/raw/tw/shioaji/tick-20260424.parquet",
+            checksum="sha256:aaa111",
+        )
+        valid, errors = RawDataset.validate(raw)
+        self.assertTrue(valid, errors)
+        self.assertEqual(raw.source_class, "broker_execution")
+        self.assertEqual(raw.metadata_json["provider"], "Shioaji")
+
+        norm = build_tw_normalized_dataset(
+            dataset_id="NORM-TW-SHIOAJI-TICK-20260424-v1",
+            parent_raw_dataset_id=raw.dataset_id,
+            storage_ref="gs://pantheon-data/norm/tw/shioaji/tick-20260424-v1.parquet",
+            checksum="sha256:bbb222",
+            symbol_mapping_version="tw-symbol-map-v1",
+            calendar_version="tw-calendar-2026-v1",
+            disclosure_join_version="mops-monthly-revenue-v1",
+            fundamentals_join_version="tej-aprcd1-v1",
+        )
+        valid, errors = NormalizedDataset.validate(norm)
+        self.assertTrue(valid, errors)
+        self.assertEqual(norm.normalization_version, "tw-equity-v1")
+        self.assertEqual(norm.metadata_json["source_role"], "broker_quote_plus_official_reference_join")
+
+    def test_join_tw_quote_with_reference(self):
+        rows = join_tw_quote_with_reference(
+            quote_snapshots=[
+                {
+                    "symbol": "2330",
+                    "venue": "TSE",
+                    "ts": "2026-04-24T09:05:00+08:00",
+                    "close": 952.0,
+                    "bid": 951.0,
+                    "ask": 952.0,
+                    "day_volume": 1024,
+                },
+                {
+                    "symbol": "6488",
+                    "venue": "OTC",
+                    "ts": "2026-04-24T09:05:00+08:00",
+                    "close": 388.5,
+                    "bid": 388.0,
+                    "ask": 389.0,
+                    "day_volume": 128,
+                },
+            ],
+            listings=[
+                {
+                    "symbol": "2330",
+                    "venue": "TWSE",
+                    "company_name": "台積電",
+                    "market_segment": "listed",
+                    "governance_metadata": {"source_key": "twse"},
+                },
+                {
+                    "symbol": "6488",
+                    "venue": "TPEx",
+                    "company_name": "環球晶",
+                    "governance_metadata": {"source_key": "tpex"},
+                },
+            ],
+            disclosures=[
+                {
+                    "symbol": "2330",
+                    "filing_code": "monthly_revenue",
+                    "disclosure_date": "2026-04-10",
+                },
+                {
+                    "symbol": "2330",
+                    "filing_code": "board_resolution",
+                    "disclosure_date": "2026-04-18",
+                },
+            ],
+            tej_records=[
+                {
+                    "dataset_code": "TWN/APRCD1",
+                    "symbol": "2330",
+                    "as_of_date": "2026-04-24",
+                    "values": {"pe_ratio": 18.2},
+                },
+                {
+                    "dataset_code": "TWN/OWNERSHIP",
+                    "symbol": "6488",
+                    "as_of_date": "2026-04-24",
+                    "values": {"foreign_holding_pct": 21.5},
+                },
+            ],
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["symbol_canonical"], "2330.TWSE")
+        self.assertEqual(rows[0]["market_segment"], "listed")
+        self.assertEqual(rows[0]["disclosure_count"], 2)
+        self.assertEqual(rows[0]["latest_disclosure_date"], "2026-04-18")
+        self.assertEqual(rows[0]["tej_latest_values"]["pe_ratio"], 18.2)
+        self.assertEqual(rows[1]["symbol_canonical"], "6488.TPEX")
+        self.assertEqual(rows[1]["market_segment"], "otc")
 
 
 class TestUSReferenceHelpers(unittest.TestCase):
@@ -390,6 +528,7 @@ class TestUSReferenceHelpers(unittest.TestCase):
         valid, errors = RawDataset.validate(raw)
         self.assertTrue(valid, errors)
         self.assertEqual(raw.source_class, "research_grade")
+        self.assertEqual(raw.metadata_json["governed_role"], "us_research_grade_primary")
 
         norm = build_us_normalized_dataset(
             dataset_id="NORM-US-POLYGON-1MIN-2026Q1-v1",
@@ -403,6 +542,7 @@ class TestUSReferenceHelpers(unittest.TestCase):
         valid, errors = NormalizedDataset.validate(norm)
         self.assertTrue(valid, errors)
         self.assertEqual(norm.metadata_json["provider"], "Massive / Polygon")
+        self.assertEqual(norm.metadata_json["source_role"], "primary_research_grade")
 
     def test_build_us_dataset_lineage_source(self):
         lineage = build_us_dataset_lineage_source(
@@ -414,6 +554,198 @@ class TestUSReferenceHelpers(unittest.TestCase):
         )
         self.assertEqual(lineage["market"], "US")
         self.assertEqual(lineage["source_class"], "research_grade")
+
+
+class TestCryptoReferenceHelpers(unittest.TestCase):
+    """Crypto-specific canonical normalization helpers."""
+
+    def test_build_crypto_security_master_from_kraken_listing(self):
+        sec = build_crypto_security_master(
+            {
+                "base_asset": "BTC",
+                "quote_asset": "USD",
+                "venue": "KRAKEN",
+                "pair_status": "online",
+                "coingecko_id": "bitcoin",
+                "governance_metadata": {"source_key": "kraken_asset_pairs"},
+            }
+        )
+        self.assertEqual(sec.security_id, "SEC-CRYPTO-BTCUSD-KRAKEN")
+        self.assertEqual(sec.symbol_native, "BTC/USD")
+        self.assertEqual(sec.symbol_canonical, "BTCUSD.KRAKEN")
+        self.assertEqual(sec.metadata_json["coingecko_id"], "bitcoin")
+        self.assertEqual(_validate_schema("security_master", sec.to_dict()), [])
+
+    def test_build_kraken_raw_and_crypto_normalized_dataset(self):
+        raw = build_kraken_raw_dataset(
+            dataset_id="RAW-CRYPTO-KRAKEN-SPOT-20260424",
+            instrument_scope=["SEC-CRYPTO-BTCUSD-KRAKEN"],
+            coverage_start="2026-04-24",
+            coverage_end="2026-04-24",
+            ingest_time="2026-04-24T04:00:00Z",
+            storage_ref="gs://pantheon-data/raw/crypto/kraken/spot-20260424.parquet",
+            checksum="sha256:ccc333",
+            dataset_type="spot_ohlcv",
+        )
+        valid, errors = RawDataset.validate(raw)
+        self.assertTrue(valid, errors)
+        self.assertEqual(raw.metadata_json["provider"], "Kraken")
+
+        norm = build_crypto_normalized_dataset(
+            dataset_id="NORM-CRYPTO-KRAKEN-SPOT-20260424-v1",
+            parent_raw_dataset_id=raw.dataset_id,
+            storage_ref="gs://pantheon-data/norm/crypto/kraken/spot-20260424-v1.parquet",
+            checksum="sha256:ddd444",
+            symbol_mapping_version="crypto-symbol-map-v1",
+            reference_join_version="coingecko-asset-ref-v1",
+        )
+        valid, errors = NormalizedDataset.validate(norm)
+        self.assertTrue(valid, errors)
+        self.assertEqual(norm.normalization_version, "crypto-v1")
+        self.assertEqual(norm.metadata_json["execution_truth_provider"], "Kraken")
+        self.assertEqual(norm.metadata_json["reference_provider"], "CoinGecko")
+
+    def test_build_crypto_dataset_lineage_source(self):
+        lineage = build_crypto_dataset_lineage_source(
+            dataset_name="kraken_spot_ohlcv",
+            source_key="kraken",
+            source_class="broker_execution",
+            frequency="1m",
+            symbol_universe=["BTCUSD", "ETHUSD"],
+        )
+        self.assertEqual(lineage["market"], "CRYPTO")
+        self.assertEqual(lineage["symbol_universe"], ["BTCUSD", "ETHUSD"])
+
+    def test_join_kraken_quote_with_reference(self):
+        metadata_row = CoinGeckoClient(rate_limit_delay=0).normalize_asset(
+            {
+                "id": "bitcoin",
+                "symbol": "btc",
+                "name": "Bitcoin",
+                "market_cap_rank": 1,
+                "categories": ["Smart Contract Platform"],
+            }
+        ).to_dict()
+        quote_snapshot = KrakenAdapter(
+            KrakenConfig(api_key="key", api_secret="secret")
+        ).normalize_quote(
+            {
+                "ts": "2026-04-24T16:00:00Z",
+                "close": "64320.4",
+                "bid": "64320.1",
+                "ask": "64321.0",
+                "volume": "128.55",
+            },
+            "BTCUSD.KRAKEN",
+        )
+        rows = join_kraken_quote_with_reference(
+            quote_snapshots=[quote_snapshot.to_dict()],
+            asset_metadata=[metadata_row],
+        )
+        self.assertEqual(rows[0]["quote_close"], 64320.4)
+        self.assertEqual(rows[0]["quote_last"], 64320.4)
+        self.assertEqual(rows[0]["execution_provider"], "Kraken")
+        self.assertEqual(rows[0]["quote_transport"], "rest")
+        self.assertEqual(rows[0]["replay_source"], "rest_snapshot")
+        self.assertFalse(rows[0]["runtime_replay_ready"])
+        self.assertEqual(rows[0]["reference_provider"], "CoinGecko")
+        self.assertEqual(rows[0]["coingecko_id"], "bitcoin")
+
+    def test_join_kraken_quote_with_reference_preserves_payload_close_when_last_differs(self):
+        metadata_row = CoinGeckoClient(rate_limit_delay=0).normalize_asset(
+            {
+                "id": "bitcoin",
+                "symbol": "btc",
+                "name": "Bitcoin",
+                "market_cap_rank": 1,
+            }
+        ).to_dict()
+        quote_snapshot = KrakenAdapter(
+            KrakenConfig(api_key="key", api_secret="secret")
+        ).normalize_quote(
+            {
+                "ts": "2026-04-24T16:00:00Z",
+                "last": "64321.1",
+                "close": "64320.4",
+                "bid": "64320.1",
+                "ask": "64321.0",
+                "volume": "128.55",
+            },
+            "BTCUSD.KRAKEN",
+        )
+        rows = join_kraken_quote_with_reference(
+            quote_snapshots=[quote_snapshot.to_dict()],
+            asset_metadata=[metadata_row],
+        )
+        self.assertEqual(rows[0]["quote_close"], 64320.4)
+        self.assertEqual(rows[0]["quote_last"], 64321.1)
+        self.assertEqual(quote_snapshot.last, 64321.1)
+        self.assertEqual(quote_snapshot.close, 64320.4)
+
+    def test_join_kraken_quote_with_reference_preserves_websocket_replay_metadata(self):
+        metadata_row = CoinGeckoClient(rate_limit_delay=0).normalize_asset(
+            {
+                "id": "bitcoin",
+                "symbol": "btc",
+                "name": "Bitcoin",
+                "market_cap_rank": 1,
+            }
+        ).to_dict()
+        adapter = KrakenAdapter(KrakenConfig(api_key="key", api_secret="secret"))
+        sync_state = adapter.reconcile_execution_sync(
+            symbol="BTCUSD.KRAKEN",
+            rest_payload={
+                "ts": "2026-04-24T16:00:00Z",
+                "close": "64320.4",
+            },
+            websocket_payload={
+                "channel": "ticker",
+                "ts": "2026-04-24T16:00:03Z",
+                "a": ["64321.0", "1", "1.0"],
+                "b": ["64320.1", "2", "2.0"],
+                "c": ["64320.9", "0.3"],
+                "v": ["120.0", "128.55"],
+            },
+        )
+        rows = join_kraken_quote_with_reference(
+            quote_snapshots=[sync_state.to_dict()],
+            asset_metadata=[metadata_row],
+        )
+        self.assertEqual(rows[0]["quote_timestamp"], "2026-04-24T16:00:03Z")
+        self.assertEqual(rows[0]["quote_last"], 64320.9)
+        self.assertEqual(rows[0]["quote_close"], 64320.4)
+        self.assertEqual(rows[0]["quote_transport"], "websocket")
+        self.assertEqual(rows[0]["quote_channel"], "ticker")
+        self.assertEqual(rows[0]["replay_source"], "websocket_backed_sync")
+        self.assertTrue(rows[0]["runtime_replay_ready"])
+
+    def test_join_kraken_quote_with_reference_supports_non_usd_quote_suffixes(self):
+        metadata_row = CoinGeckoClient(rate_limit_delay=0).normalize_asset(
+            {
+                "id": "matic-network",
+                "symbol": "matic",
+                "name": "Polygon",
+                "market_cap_rank": 42,
+            }
+        ).to_dict()
+        quote_snapshot = KrakenAdapter(
+            KrakenConfig(api_key="key", api_secret="secret")
+        ).normalize_quote(
+            {
+                "ts": "2026-04-24T16:00:00Z",
+                "close": "0.55",
+                "bid": "0.54",
+                "ask": "0.56",
+            },
+            "MATICGBP.KRAKEN",
+        )
+        rows = join_kraken_quote_with_reference(
+            quote_snapshots=[quote_snapshot.to_dict()],
+            asset_metadata=[metadata_row],
+        )
+        self.assertEqual(rows[0]["symbol_canonical"], "MATICGBP.KRAKEN")
+        self.assertEqual(rows[0]["coingecko_id"], "matic-network")
+        self.assertEqual(rows[0]["asset_name"], "Polygon")
 
 
 class TestRawDataset(unittest.TestCase):

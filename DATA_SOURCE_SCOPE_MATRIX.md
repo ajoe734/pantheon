@@ -40,8 +40,8 @@ The source-class model remains canonical. The following vendor fill is the curre
 | Market | Source Class | Canonical provider / vendor | Current role |
 |---|---|---|---|
 | US equities / derivatives | `broker_execution` | `IBKR` | primary execution broker, broker-aligned execution-sync data, paper/canary bootstrap path |
-| US equities / derivatives | `research_grade` | `Massive / Polygon` | preferred research-grade and historical market-data vendor once governed activation completes |
-| US equities / derivatives | `broker_execution` fallback | `IBKR market data` | broker-aligned fallback while `Massive / Polygon` activation is still in progress |
+| US equities / derivatives | `research_grade` | `Massive / Polygon` | primary research-grade and historical market-data vendor for US coverage |
+| US equities / derivatives | `broker_execution` fallback | `IBKR market data` | broker-aligned execution-sync fallback only; not the canonical research-grade US history source |
 | Taiwan equities / derivatives | `broker_execution` | `Shioaji` | primary execution broker plus quote/simulation path |
 | Taiwan equities / derivatives | `official_reference` | `TWSE OpenAPI` | official listed-market reference / EOD source |
 | Taiwan equities / derivatives | `official_reference` | `TPEx E-Data` | official OTC / TPEx reference / EOD source |
