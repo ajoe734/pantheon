@@ -8,9 +8,10 @@ It prepares the entry path that sits between the archived `EP4` governed paper
 packet and a later human-gated `EP5-002` proof run:
 
 - real broker / venue config boundary
-- truthful US datasource boundary for `IBKR` and `Massive / Polygon`
+- truthful governed datasource boundary for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
 - scaled canary capital gate
 - runnable operator approval checklist
+- runnable provider smoke validation
 - runnable rollback drill harness
 
 ## What This Bundle Does
@@ -63,6 +64,11 @@ python3 scripts/run_ep5_canary_readiness.py \
   --output-dir /tmp/pantheon/ep5-canary-ready/plan
 
 python3 scripts/run_ep5_canary_readiness.py \
+  run-datasource-smoke \
+  --env-file env/canary-exec.env \
+  --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke
+
+python3 scripts/run_ep5_canary_readiness.py \
   run-rollback-drill \
   --env-file env/canary-exec.env \
   --binding-id rb-canary-active-001 \
@@ -75,5 +81,5 @@ Use `--dry-run` until a human gate and real canary infrastructure are available.
 ## Proof Boundary
 
 The outputs produced here are readiness artifacts only. They are acceptable
-closeout evidence for `EP5-001` because they prepare the path, but they must
-not be cited as the first `EP5` proof packet.
+closeout evidence for `EP5-001` and datasource-ops bring-up because they
+prepare the path, but they must not be cited as the first `EP5` proof packet.

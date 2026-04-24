@@ -14,6 +14,7 @@ Fill in the machine-local file with:
 
 - real broker / exchange secrets on VM-2 only
 - broker account ref and venue ref
+- governed provider refs for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
 - the chosen US market-data provider ref (`Massive / Polygon` when enabled, otherwise explicit `IBKR market data` fallback)
 - approval, pool, persona-binding, and fallback artifact refs
 
@@ -33,10 +34,31 @@ Expected outcome:
 - canary capital gate passes
 - runtime-manager health passes
 - broker / exchange sidecar health passes when published
-- US datasource boundary is recorded truthfully in the output bundle
+- governed datasource provider matrix is recorded truthfully in the output bundle
 - output bundle contains `operator-checklist.json`
 
-## 3. Emit The Canary DeploymentPlan Artifact
+## 3. Run The Provider Smoke Validation
+
+```bash
+python3 scripts/run_ep5_canary_readiness.py \
+  run-datasource-smoke \
+  --env-file env/canary-exec.env \
+  --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke
+```
+
+Expected artifacts:
+
+- `datasource-smoke.json`
+- `summary.json`
+
+Review before any later human gate:
+
+- `IBKR` order and market-data payloads are materialized from the env-backed boundary
+- `Shioaji` order and quote-subscription payloads are materialized from the env-backed boundary
+- `Kraken` order and venue quote payloads are materialized from the env-backed boundary
+- `TEJ` dataset normalization stays on the `research_grade` vendor boundary
+
+## 4. Emit The Canary DeploymentPlan Artifact
 
 ```bash
 python3 scripts/run_ep5_canary_readiness.py \
@@ -59,7 +81,7 @@ Review before any later human gate:
 - `rollback.action_type = pause_then_replace` unless a stricter rule is approved
 - fallback artifact refs are present
 
-## 4. Rehearse The Rollback Drill
+## 5. Rehearse The Rollback Drill
 
 Dry-run first:
 
@@ -90,7 +112,7 @@ Expected real-drill outcomes:
 - replacement binding becomes `active`
 - archived drill output contains request/response JSON and `summary.json`
 
-## 5. Degraded-Path Fallback
+## 6. Degraded-Path Fallback
 
 If the BFF is unavailable, operators may still rehearse the same boundary via
 the admin CLI / internal API path already documented elsewhere.
@@ -113,7 +135,7 @@ python3 tools/pantheon_admin/cli.py --dry-run kill-switch activate \
   --force
 ```
 
-## 6. Scope Guardrail
+## 7. Scope Guardrail
 
 Closing this checklist does not mean `EP5` is achieved.
 
