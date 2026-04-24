@@ -21,7 +21,9 @@ packet and a later human-gated `EP5-002` proof run:
 3. gives operators a stepwise checklist in `operator-approval-checklist.md`
 4. gives the repo one runnable entrypoint at
    `scripts/run_ep5_canary_readiness.py`
-5. gives closeout owners an evidence scaffold in `evidence-packet-template.md`
+5. gives operators one helper to materialize VM-2 env files from Secret
+   Manager via `scripts/materialize_exec_env_from_secret_manager.py`
+6. gives closeout owners an evidence scaffold in `evidence-packet-template.md`
 
 ## What This Bundle Does Not Prove
 
@@ -46,11 +48,18 @@ Those still belong to later gated `EP5` proof work.
 | `evidence-packet-template.md` | defines the minimum archive layout for the later `EP5-002` packet |
 | `env/canary-exec.env.example` | repo-local template for canary readiness variables and secret names |
 | `scripts/run_ep5_canary_readiness.py` | validates readiness, emits a canary DeploymentPlan artifact, and rehearses the rollback drill |
+| `scripts/materialize_exec_env_from_secret_manager.py` | resolves Secret Manager refs into a machine-local VM-2 env file without tracking raw credentials |
 
 ## Recommended Flow
 
 ```bash
 cp env/canary-exec.env.example env/canary-exec.env
+
+python3 scripts/materialize_exec_env_from_secret_manager.py \
+  --template env/canary-exec.env.example \
+  --output env/canary-exec.env \
+  --project pantheon-493602 \
+  --generate-runtime-manager-token
 
 python3 scripts/run_ep5_canary_readiness.py \
   run-operator-checklist \

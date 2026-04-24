@@ -6,13 +6,16 @@ This checklist is the operator-facing runbook for the prerequisite-only
 ## 1. Prepare The VM-2 Env File
 
 ```bash
-cp env/canary-exec.env.example env/canary-exec.env
-chmod 600 env/canary-exec.env
+python3 scripts/materialize_exec_env_from_secret_manager.py \
+  --template env/canary-exec.env.example \
+  --output env/canary-exec.env \
+  --project pantheon-493602 \
+  --generate-runtime-manager-token
 ```
 
 Fill in the machine-local file with:
 
-- real broker / exchange secrets on VM-2 only
+- any remaining machine-local overrides after secret hydration
 - broker account ref and venue ref
 - approval, pool, persona-binding, and fallback artifact refs
 
