@@ -1,0 +1,71 @@
+{
+  "task_id": "EP5-001",
+  "generated_at": "2026-04-24T14:26:36Z",
+  "mode": "operator_checklist",
+  "env_file": "/tmp/pantheon/ep5-canary-ready/dual-vm-evidence-20260424T1425Z-v2/dual-vm-canary.env",
+  "status": "pass",
+  "allow_empty_secrets": true,
+  "check_health": true,
+  "items": [
+    {
+      "name": "execution_mode",
+      "status": "pass",
+      "detail": "PANTHEON_EXECUTION_MODE=canary"
+    },
+    {
+      "name": "real_broker_and_exchange_modes",
+      "status": "pass",
+      "detail": "BROKER_ADAPTER_MODE=real, EXCHANGE_ADAPTER_MODE=real"
+    },
+    {
+      "name": "secrets_boundary_enforced",
+      "status": "pass",
+      "detail": "PANTHEON_SECRETS_OPTIONAL=false"
+    },
+    {
+      "name": "operator_owned_refs_present",
+      "status": "pass",
+      "detail": "all required ids and refs are present"
+    },
+    {
+      "name": "canary_scale_within_policy",
+      "status": "pass",
+      "detail": "capital_scale_pct=5.0, gross_scale_pct=25.0"
+    },
+    {
+      "name": "rollback_action_type_valid",
+      "status": "pass",
+      "detail": "CANARY_ROLLBACK_ACTION_TYPE=pause_then_replace"
+    },
+    {
+      "name": "vm2_secret_name_refs_present",
+      "status": "pass",
+      "detail": "tracked example uses secret-name refs instead of raw values"
+    },
+    {
+      "name": "runtime_manager_access_configured",
+      "status": "pass",
+      "detail": "url=http://10.140.0.5:28081, token=set"
+    },
+    {
+      "name": "runtime_manager_health",
+      "status": "pass",
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "telemetry_health",
+      "status": "pass",
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "broker_adapter_health",
+      "status": "pass",
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "exchange_adapter_health",
+      "status": "pass",
+      "detail": "HTTP 200"
+    }
+  ]
+}
