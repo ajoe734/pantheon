@@ -9,7 +9,7 @@
 **Prepared by:** `Codex`
 **Reviewer:** `Claude`
 **Date:** `2026-04-24`
-**Status:** `review_ready`
+**Status:** `done`
 
 > Scope constraint: support artifact only. This packet summarizes the final
 > repo-local acceptance state for the `Kraken` plus `CoinGecko` crypto
@@ -53,8 +53,8 @@ Repo-local final state:
 6. Parent closeout evidence now shows both historical blockers are resolved
    and the full slice is recorded as completed in the archived parent task.
 
-Disposition: this refreshed sidecar is ready for re-review as a support
-artifact. Approval of this packet only means the support material is current
+Disposition: this refreshed sidecar has been reviewed and approved as a
+support artifact. That approval only means the support material is current
 and accurate; it does not alter the already-closed parent task.
 
 ## Acceptance Read
@@ -177,9 +177,14 @@ Verification note:
 2. The earlier routing risk around stale `Coinbase` / `Binance` crypto defaults
    remains resolved by the landed `Market.Kraken` mapping in
    `services/execution/lean_runtime/symbol_parser.py`.
-3. The durable sidecar reviewer assignment is `Claude`; this refresh aligns
-   the packet header with the current `ai-status.json` task record.
-4. Because the parent task is already archived as `done`, this packet now
+3. The final sidecar reviewer assignment for this approved pass is `Claude`;
+   the packet header now matches the current `ai-status.json` task record and
+   the refreshed review file.
+4. Older `Codex2` reviewer metadata in collaboration state belongs to an
+   intermediate reassignment window before the final approval returned to
+   `Claude`; treat the latest `Claude` approval and this finalized header as
+   the authoritative review target.
+5. Because the parent task is already archived as `done`, this packet now
    functions as support evidence for record consistency rather than as a live
    blocker-tracking aid.
 
@@ -197,6 +202,8 @@ Before approving this refreshed sidecar, confirm:
 4. The verification snapshot records the actual tests rerun for this refresh:
    80 unittest cases, 47 / 47 smoke checks, and the direct distinct-price
    reproduction.
-5. Approval of this sidecar should be interpreted only as "the refreshed
+5. Historical intermediate reviewer reassignments are not the current
+   decision point; the approved reviewer for this pass is `Claude`.
+6. Approval of this sidecar should be interpreted only as "the refreshed
    support packet is current and accurate," not as a change to the already
    completed parent task.
