@@ -91,3 +91,57 @@ When adding a new task for any named OSS component, include these acceptance poi
 - dependency or repo path added
 - local adapter boundary defined
 - smoke test described or implemented
+
+## Activation Closeout Checklists
+
+These are the remaining non-code gates for OSS rows that are already beyond `criteria-defined`.
+
+### Qlib Production Activation
+
+Do not promote Qlib from `smoke-tested` to an active production path until all of the following are
+archived in one reviewed bundle:
+
+1. governed dataset proof for the target universe (`>=50` instruments, `>=2` years data)
+2. RS-003 replication gate pass for the chosen alpha workflow
+3. at least one approved LightGBM-first research artifact from the governed pipeline
+4. explicit operator decision that Qlib is the active supervised-alpha production path
+5. linked rollback / disable procedure if the promoted alpha lane misbehaves
+
+Required artifacts to archive:
+
+- dataset manifest and freshness window
+- smoke or candidate run identifiers
+- approved artifact id / strategy candidate reference
+- operator signoff note
+- any activation rollback note or guardrail exception
+
+### TRL Production Activation
+
+Do not promote TRL from `smoke-tested` to an active production path until all of the following are
+archived in one reviewed bundle:
+
+1. `>=200` valid FB-002 events
+2. `>=100` valid governed preference pairs
+3. active LP-002 imitation baseline available for comparison
+4. one downstream consumer ready to consume the governed TRL artifact
+5. explicit operator decision that the DPO lane is active for the selected use case
+
+Required artifacts to archive:
+
+- feedback / preference-pair count proof
+- governed DPO run id
+- comparison note versus the imitation baseline
+- downstream consumer acceptance note
+- operator signoff note
+
+### RL / W&B Deferred Re-entry Rule
+
+The following rows remain intentionally closed until their documented re-entry gates are met:
+
+- `FinRL`
+- `RLlib`
+- `Ray Tune`
+- `W&B`
+
+For those rows, a reopened task must cite the exact gate that has now become true. A generic claim
+that the framework is “useful now” is not enough to reopen the lane.

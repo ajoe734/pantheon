@@ -81,3 +81,75 @@ EP4 is stable as of 2026-04-19. The next proof-raising steps are:
    surfaces have broader replayable evidence before any EP5 proof claim
 4. address the telemetry event-trace read-model gap (local dev 404 on port 38083) if EP5 requires
    queryable event-trace projections beyond counter-level ingest proof
+
+## 7. EP5-002 Closeout Checklist
+
+`EP5-002` is not complete until a human-approved canary/live packet exists and all evidence below
+is archived in one replayable bundle.
+
+### Preconditions
+
+- `EP4` packet remains the latest approved governed-paper baseline
+- production or canary credentials are injected through the approved operator path
+- rollback drill tooling is available and tested against the target environment
+- the operator has reviewed the current `current-work.md`, `ai-status.json`, and the active
+  deployment target tuple
+
+### Required Operator Run Steps
+
+1. record the target runtime tuple: code commit, env file revision, credentials revision, and
+   broker/venue target
+2. execute one canary or live deployment through the governed deployment path, not a direct OSS
+   bypass
+3. verify the runtime reaches the intended stage and emits telemetry, lineage, and governance events
+4. execute one rollback drill against the same runtime tuple
+5. confirm the rollback restores the expected runtime state and leaves an auditable lineage trail
+6. capture explicit operator signoff, including whether the proof was canary or live
+
+### Required Evidence Bundle
+
+Archive all of the following under a new `docs/deployment/evidence/ep5-*` packet:
+
+- deployment plan / runtime binding identifiers
+- runtime stage transition proof
+- telemetry and lineage excerpt proving the execution path was real
+- rollback drill transcript or command log
+- post-rollback state snapshot
+- operator acceptance note with timestamp and approver identity
+- any exception, partial failure, or follow-up required after the run
+
+### Close Condition
+
+`EP5-002` closes only when the packet above is committed, reviewable, and explicitly linked from
+this file or its successor evidence index. A successful run without archived evidence is still not
+an `EP5` claim.
+
+## 8. Runtime Verification 32 → 46 Checklist
+
+The coordination count is operational proof coverage, not a higher execution-proof level. To raise
+coverage from `32` to full tracked coverage, each remaining feature must have one runtime-visible
+verification artifact attached to its tracked packet family.
+
+### Accepted Runtime Proof Types
+
+- `needs-runtime` request resolved with `runtime_verified_at` or equivalent proof field
+- `frontend-feedback` / `backend-delivery` payload with a concrete runtime verification reference
+- a review packet that explicitly verifies runtime behavior against a Git-visible request pair
+
+### Per-Feature Checklist
+
+For each feature still missing runtime verification:
+
+1. identify the canonical feature id from `ai-status.json` / `current-work.md`
+2. locate the request pair or closeout response in `.coordination/`
+3. run the smallest truthful runtime proof for that feature family
+4. attach the proof reference back into the tracked payload or follow-up review
+5. rerun `python3 scripts/ai_status.py sync`
+6. confirm the feature increments the `Runtime verified` count without regressing stage truth
+
+### Do Not Do
+
+- do not mark runtime proof complete from unit or contract tests alone
+- do not backfill proof counts from memory if no payload or review packet records the verification
+- do not count the same runtime artifact against unrelated features unless the packet explicitly says
+  the proof is shared
