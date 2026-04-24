@@ -1,8 +1,34 @@
-# Promotion Gate (REG-002)
+# Registry Service and Promotion Gate
 
-This directory is the canonical home for the promotion gate implementation.
+This directory is the canonical home for the Pantheon registry service and legacy promotion gate.
 
-Current contents:
+## Current Service Implementation (BP5-SVC-002)
+
+The split artifact_state / deployment_stage service is now implemented:
+
+| File | Purpose |
+|---|---|
+| `models.py` | Pydantic models: ArtifactState, DeploymentStage, RegistryEntry, DeploymentSummary |
+| `storage.py` | In-memory store with deployment-view projection and strategy indexing |
+| `split_api.py` | Core operations: register, get, list_by_strategy, advance_artifact_state, resolve_latest_approved, resolve_deployment_view |
+| `service.py` | FastAPI service exposing the split API (§8 of contract.md) |
+| `test_service.py` | Smoke tests covering split model, transitions, deployment view, FastAPI endpoints |
+
+### Running the service
+
+```bash
+uvicorn services.registry.service:app --reload
+```
+
+### Running the tests
+
+```bash
+pytest services/registry/test_service.py -v
+```
+
+## Legacy Promotion Gate (REG-002)
+
+The following files implement the earlier legacy model with `lifecycle_state` / `promotion_state`:
 
 - `gate.py`: lifecycle transition and metadata checks
 - `cli.py`: CLI entrypoint for promoting a registry entry JSON document

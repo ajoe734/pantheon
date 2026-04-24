@@ -1,9 +1,9 @@
-# QuantLib Integration — Derivatives Pricing and Risk Analytics Baseline
+# QuantLib Integration — Governed Derivatives Pricing and Risk Analytics
 
-Last updated: 2026-04-17
-Owner: OSS-NEXT-007 (Claude)
-Reviewer: Codex2
-Status: version-pinned — execution-ready task family materialized
+Last updated: 2026-04-21
+Owner: EXEC-OSS-QUANTLIB-001 (Codex)
+Reviewer: Claude
+Status: governed — smoke and governance evidence committed
 Implementation home: `services/research/quantlib/`
 
 ## 1. Locked Upstream Selection
@@ -50,24 +50,50 @@ These outputs are research evidence, not live actions.
 
 ## 4. Materialized Local Surface
 
-The repo now contains the baseline needed to stop treating QuantLib as
-planning debt only:
+The repo now contains the governed surface required for Pantheon to treat
+QuantLib as an active OSS integration:
 
 - `services/research/quantlib/ACTIVATION_CRITERIA.md`
 - `services/research/quantlib/requirements.txt`
+- `services/research/quantlib/adapter/`
+- `services/research/quantlib/smoke_test.py`
+- `services/research/quantlib/test_adapter.py`
+- `services/research/quantlib/worker.py`
+- `services/research/quantlib/examples/pricing_dataset_sample.json`
 - `integrations/quantlib/integration.md`
+- `integrations/quantlib/governance.md`
+- `integrations/quantlib/smoke_test.md`
 
-The adapter, worker, smoke test, and governance overlay are intentionally
-deferred to the follow-on implementation slice.
-
-## 5. Next Implementation Gate
-
-Before QuantLib can move from `version-pinned` to `smoke-tested`, Pantheon
-must add:
+Implemented governed workflow surface:
 
 - `GovernedQuantLibInputAdapter`
 - `StubQuantLibBackend`
 - `QuantLibBackend`
 - `run_quantlib_workflow()`
-- smoke and unit tests
-- governance and smoke evidence docs
+
+## 5. Verified Smoke and Test Status
+
+The current governed claim is backed by reproducible local evidence:
+
+- smoke command: `python3 services/research/quantlib/smoke_test.py`
+- latest local verification: `2026-04-21`
+- smoke result: passed with governed `pricing_report` output
+- unit coverage: `python3 -m pytest services/research/quantlib/test_adapter.py -q`
+- latest default-workspace result: `17 passed, 1 skipped`
+- worker entrypoint: `python3 services/research/quantlib/worker.py`
+- latest worker verification: `2026-04-21` (sample dataset fallback path)
+- recorded real-backend rerun: `2026-04-17`, passing with `18 passed`
+
+## 6. What Advances the Status
+
+| From | To | Gate |
+|---|---|---|
+| `version-pinned` | `smoke-tested` | adapter + smoke path + unit coverage landed |
+| `smoke-tested` | `governed` | `governance.md` + `smoke_test.md` committed; evidence pack complete |
+
+## 7. Evidence References
+
+- version pin: `services/research/quantlib/requirements.txt`
+- activation criteria: `services/research/quantlib/ACTIVATION_CRITERIA.md`
+- governance overlay: `integrations/quantlib/governance.md`
+- smoke evidence: `integrations/quantlib/smoke_test.md`

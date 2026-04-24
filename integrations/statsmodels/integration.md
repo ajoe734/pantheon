@@ -1,9 +1,9 @@
-# statsmodels Integration — Econometrics and Regime Research Baseline
+# statsmodels Integration — Governed Econometrics and Regime Research
 
-Last updated: 2026-04-17
-Owner: OSS-NEXT-006 (Codex2)
+Last updated: 2026-04-21
+Owner: OSS-GATE2-001 (Codex2)
 Reviewer: Codex
-Status: version-pinned — execution-ready task family materialized
+Status: governed — smoke and governance evidence committed
 Implementation home: `services/research/statsmodels/`
 
 ## 1. Locked Upstream Selection
@@ -49,24 +49,48 @@ These outputs are research evidence, not live actions.
 
 ## 4. Materialized Local Surface
 
-The repo now contains the baseline needed to stop treating statsmodels as
-planning debt only:
+The repo now contains the governed surface required for Pantheon to treat
+statsmodels as an active OSS integration rather than planning debt:
 
 - `services/research/statsmodels/ACTIVATION_CRITERIA.md`
 - `services/research/statsmodels/requirements.txt`
+- `services/research/statsmodels/adapter/statsmodels_adapter.py`
+- `services/research/statsmodels/smoke_test.py`
+- `services/research/statsmodels/test_adapter.py`
+- `services/research/statsmodels/worker.py`
+- `services/research/statsmodels/examples/regime_dataset_sample.json`
 - `integrations/statsmodels/integration.md`
+- `integrations/statsmodels/governance.md`
+- `integrations/statsmodels/smoke_test.md`
 
-The adapter, worker, smoke test, and governance overlay are intentionally
-deferred to the follow-on implementation slice.
-
-## 5. Next Implementation Gate
-
-Before statsmodels can move from `version-pinned` to `smoke-tested`, Pantheon
-must add:
+Implemented governed workflow surface:
 
 - `GovernedStatsmodelsInputAdapter`
 - `StubStatsmodelsBackend`
 - `StatsmodelsBackend`
 - `run_statsmodels_workflow()`
-- smoke and unit tests
-- governance and smoke evidence docs
+
+## 5. Verified Smoke and Test Status
+
+The current governed claim is backed by reproducible local evidence:
+
+- smoke command: `python3 services/research/statsmodels/smoke_test.py`
+- worker command: `python3 services/research/statsmodels/worker.py`
+- latest local verification: `2026-04-21`
+- smoke result: passed; all three analysis paths present
+- unit coverage: `python3 -m pytest services/research/statsmodels/test_adapter.py -q`
+- latest unit result: `20 passed`
+
+## 6. What Advances the Status
+
+| From | To | Gate |
+|---|---|---|
+| `version-pinned` | `smoke-tested` | adapter + smoke path + unit coverage landed |
+| `smoke-tested` | `governed` | `governance.md` + `smoke_test.md` committed; evidence pack complete |
+
+## 7. Evidence References
+
+- version pin: `services/research/statsmodels/requirements.txt`
+- activation criteria: `services/research/statsmodels/ACTIVATION_CRITERIA.md`
+- governance overlay: `integrations/statsmodels/governance.md`
+- smoke evidence: `integrations/statsmodels/smoke_test.md`
