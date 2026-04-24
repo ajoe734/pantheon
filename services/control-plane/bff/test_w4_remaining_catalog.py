@@ -13,7 +13,7 @@ from read_store import ReadSurfaceStore
 def test_w4_remaining_catalog():
     with tempfile.TemporaryDirectory() as td:
         store_path = os.path.join(td, "read_surfaces.json")
-        store = ReadSurfaceStore(store_path)
+        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
 
         # ------------------------------------------------------------------ #
         # Persona surfaces (PS-01 – PS-06)

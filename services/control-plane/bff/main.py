@@ -4,21 +4,28 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Query
+from fastapi import Body, FastAPI, HTTPException, BackgroundTasks, Header, Query
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import ValidationError
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from models import (
+    ApproveMutationCommandPayload,
+    AuditContext,
     BFFError,
     CommandReceipt,
+    CommandReceiptStatus,
     CommandResultMeta,
+    CommandRoutingPath,
     CommandStatus,
     CommandSubmissionResponse,
     CommandStatusResponse,
@@ -29,12 +36,16 @@ from models import (
     ObjectType,
     OperatorCommand,
     OperatorIdentity,
+    RecordSponsorDecisionCommandPayload,
+    RejectMutationCommandPayload,
     StalenessWarning,
+    TargetObject,
     utc_now,
 )
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from read_store import ReadSurfaceStore
+from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -48,7 +59,14 @@ app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 os.makedirs(BFF_DATA_DIR, exist_ok=True)
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
-read_store = ReadSurfaceStore(os.path.join(BFF_DATA_DIR, "read_surfaces.json"))
+read_store = ReadSurfaceStore(
+    os.path.join(BFF_DATA_DIR, "read_surfaces.json"),
+    allow_local_snapshot_fallback=(
+        os.getenv("PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK", "true").strip().lower()
+        != "false"
+    ),
+)
+settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 
 # --------------------------------------------------------------------------- #
 # Auth / identity helpers
@@ -69,6 +87,20 @@ def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
             suggestion="Re-authenticate and include a valid Bearer token",
         )
     token = authorization[len("Bearer "):]
+    if ":" not in token:
+        lowered = token.lower()
+        inferred_roles = ["operator"]
+        if lowered.startswith("admin_"):
+            inferred_roles = ["admin"]
+        elif lowered.startswith("analyst_"):
+            inferred_roles = ["analyst"]
+        elif lowered.startswith("viewer_"):
+            inferred_roles = ["viewer"]
+        return OperatorIdentity(
+            operator_id=token,
+            roles=inferred_roles,
+            mfa_verified="mfa" in lowered,
+        )
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
@@ -95,7 +127,7 @@ def _bff_error(
             ),
         )
     )
-    return HTTPException(status_code=status_code, detail=body.dict())
+    return HTTPException(status_code=status_code, detail=body.model_dump())
 
 
 # --------------------------------------------------------------------------- #
@@ -104,12 +136,28 @@ def _bff_error(
 
 _APPROVE_DEPLOYMENT_REQUIRED = {"deployment_plan_id", "approval_decision"}
 _VALID_APPROVAL_DECISIONS = {"approve", "reject"}
+_APPROVE_DECISION_REQUIRED = {"decision_id"}
+_REJECT_DECISION_REQUIRED = {"decision_id", "rejection_reason"}
+_REQUEST_APPROVAL_REVISION_REQUIRED = {"decision_id", "revision_notes"}
+_ESCALATE_DIFF_REQUIRED = {"plan_id", "escalation_reason"}
 
 _PAUSE_RUNTIME_REQUIRED = {"runtime_binding_id", "pause_action"}
 _VALID_PAUSE_ACTIONS = {"pause", "resume"}
+_PAUSE_EXECUTION_REQUIRED = {"pause_new_entries", "cancel_open_orders"}
 
 _ROLLBACK_REQUIRED = {"rollback_target_type", "target_id", "rollback_to_version"}
 _VALID_ROLLBACK_TARGET_TYPES = {"deployment", "runtime"}
+_APPROVE_ROLLBACK_REQUIRED = {"rollback_id"}
+_REJECT_ROLLBACK_REQUIRED = {"rollback_id", "rejection_reason"}
+_RISK_OFF_REQUIRED = {"reduce_exposure_pct"}
+_SAFE_MODE_LEVELS = {"soft"}
+_DRAWER_RUNTIME_COMMANDS = {
+    CommandType.PAUSE_EXECUTION,
+    CommandType.ISSUE_RISK_OFF,
+    CommandType.LIQUIDATE_ALL,
+    CommandType.HARD_ROLLBACK,
+    CommandType.ISSUE_SAFE_MODE,
+}
 
 _KILL_SWITCH_REQUIRED = {"scope", "activate"}
 _VALID_SCOPES = {"persona", "pool", "all"}
@@ -117,9 +165,417 @@ _VALID_SEVERITIES = {"critical", "high", "medium"}
 
 _APPROVE_EVO_REQUIRED = {"evolution_decision_id", "approval_action"}
 _VALID_EVO_APPROVAL_ACTIONS = {"approve", "reject"}
+_APPROVE_MUTATION_REQUIRED = {"decision_id"}
+_REJECT_MUTATION_REQUIRED = {"decision_id"}
+_RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
+_VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
 
 _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
 _VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "mutate", "retire"}
+
+_OPERATOR_ALERTS_ROUTE = "/alerts"
+_OPERATOR_INCIDENT_HOME_ROUTE = "/operator/incidents"
+_OPERATOR_DEPLOYMENT_REVIEW_ROUTE = "/operator/deployment-review"
+_OPERATOR_DEPLOYMENT_PLAN_ROUTE_PREFIX = "/operator/deployment-plans"
+_OPERATOR_HEALTH_STATUS_ROUTE = "/operator/health-status"
+_OPERATOR_POST_INCIDENT_REVIEW_ROUTE = "/operator/post-incident-review"
+_OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
+_CONSULTATION_WORKBENCH_ROUTE = "/consultation"
+_KNOWLEDGE_WORKBENCH_ROUTE = "/knowledge"
+_TRAINER_WORKBENCH_ROUTE = "/trainer"
+_GOVERNANCE_REVIEW_QUEUE_ROUTE = "/governance-review-queue"
+_GOVERNANCE_APPROVAL_QUEUE_ROUTE = "/governance-approval-queue"
+_MUTATION_REVIEW_ROUTE = "/operator/mutation-review"
+
+_MUTATION_APPROVAL_ROLES = {
+    "low": {"reviewer", "approver", "admin"},
+    "medium": {"operator", "approver", "admin"},
+    "high": {"approver", "admin"},
+}
+
+_MUTATION_REJECTION_ROLES = {
+    "low": {"reviewer", "approver", "admin"},
+    "medium": {"reviewer", "operator", "approver", "admin"},
+    "high": {"approver", "admin"},
+}
+
+
+def _require_admin_mfa(identity: OperatorIdentity, command_name: str) -> None:
+    if "admin" not in identity.roles:
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            f"{command_name} requires 'admin' role",
+            "Operator does not hold the admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to an admin-role operator",
+        )
+    if not identity.mfa_verified:
+        raise _bff_error(
+            403,
+            ErrorCode.MFA_REQUIRED,
+            f"{command_name} requires MFA verification",
+            "Admin action requires MFA validation",
+            precondition_failed="mfa_check",
+            suggestion="Provide a valid MFA token in your session",
+        )
+
+
+def _deployment_review_href(plan_id: str) -> str:
+    return f"{_OPERATOR_DEPLOYMENT_REVIEW_ROUTE}?plan={plan_id}"
+
+
+def _deployment_plan_href(plan_id: str) -> str:
+    return f"{_OPERATOR_DEPLOYMENT_PLAN_ROUTE_PREFIX}/{plan_id}"
+
+
+def _incident_detail_href(incident_id: str) -> str:
+    return f"{_OPERATOR_INCIDENT_HOME_ROUTE}/{incident_id}"
+
+
+def _post_incident_review_href(incident_id: str) -> str:
+    return f"{_OPERATOR_POST_INCIDENT_REVIEW_ROUTE}?incident={incident_id}"
+
+
+def _runtime_command_context(runtime_id: str, incident_id: Optional[str] = None) -> Dict[str, Optional[str]]:
+    runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
+    binding_id = None
+    capital_pool_id = None
+    artifact_id = None
+    artifact_version = None
+    plan_id = None
+
+    if runtime_binding:
+        binding_id = str(runtime_binding.get("id") or runtime_binding.get("binding_id") or runtime_id)
+        capital_pool_id = runtime_binding.get("capital_pool_id")
+        artifact_id = runtime_binding.get("artifact_id")
+        artifact_version = runtime_binding.get("artifact_version")
+        plan_id = runtime_binding.get("plan_id")
+
+    if incident_id:
+        incident = read_store.get_incident(incident_id)
+        if incident and str(incident.get("runtime_id") or "") == runtime_id:
+            capital_pool_id = capital_pool_id or incident.get("capital_pool_id")
+            artifact_id = artifact_id or incident.get("artifact_id")
+            artifact_version = artifact_version or incident.get("artifact_version")
+
+    if plan_id and not capital_pool_id:
+        plan = read_store.get_deployment_plan(plan_id)
+        if plan:
+            capital_pool_id = plan.get("capital_pool_id")
+
+    return {
+        "runtime_id": runtime_id,
+        "runtime_binding_id": binding_id or runtime_id,
+        "capital_pool_id": capital_pool_id,
+        "artifact_id": artifact_id,
+        "artifact_version": artifact_version,
+    }
+
+
+def _validate_drawer_runtime_target(cmd: OperatorCommand) -> None:
+    if cmd.command not in _DRAWER_RUNTIME_COMMANDS:
+        return
+    if cmd.target.type != ObjectType.RUNTIME:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"{cmd.command.value} requires target.type = Runtime",
+            "Drawer commands only accept Runtime targets",
+        )
+    if not str(cmd.target.id or "").strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"{cmd.command.value} requires a runtime target id",
+            "target.id must be a non-empty runtime id",
+        )
+
+
+def _validate_audit_context(cmd: OperatorCommand) -> None:
+    if str(cmd.audit_context.reason or "").strip():
+        return
+    raise _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        "audit_context.reason is required",
+        "audit_context.reason must be a non-empty string",
+    )
+
+
+def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
+    command_type = payload.get("command_type")
+    if command_type:
+        try:
+            if command_type == CommandType.APPROVE_MUTATION.value:
+                mutation = ApproveMutationCommandPayload.model_validate(payload)
+                note = str(mutation.note or "").strip() or None
+                params: Dict[str, Any] = {"decision_id": mutation.decision_id}
+                if note:
+                    params["note"] = note
+                return OperatorCommand(
+                    command=CommandType.APPROVE_MUTATION,
+                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
+                    action="approve_mutation",
+                    params=params,
+                    audit_context=AuditContext(reason=note or mutation.command_type),
+                )
+            if command_type == CommandType.REJECT_MUTATION.value:
+                mutation = RejectMutationCommandPayload.model_validate(payload)
+                note = str(mutation.note or "").strip() or None
+                params = {"decision_id": mutation.decision_id}
+                if note:
+                    params["note"] = note
+                return OperatorCommand(
+                    command=CommandType.REJECT_MUTATION,
+                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
+                    action="reject_mutation",
+                    params=params,
+                    audit_context=AuditContext(reason=note or mutation.command_type),
+                )
+            if command_type == CommandType.RECORD_SPONSOR_DECISION.value:
+                decision = RecordSponsorDecisionCommandPayload.model_validate(payload)
+                note = str(decision.note or "").strip() or None
+                params = {
+                    "committee_id": decision.committee_id,
+                    "sponsor_decision": decision.sponsor_decision,
+                    "rationale_ref": decision.rationale_ref,
+                }
+                if note:
+                    params["note"] = note
+                return OperatorCommand(
+                    command=CommandType.RECORD_SPONSOR_DECISION,
+                    target=TargetObject(type=ObjectType.COMMITTEE_BOARD, id=decision.committee_id),
+                    action="record_sponsor_decision",
+                    params=params,
+                    audit_context=AuditContext(reason=note or decision.command_type),
+                )
+        except ValidationError as exc:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                f"Invalid {command_type} payload",
+                str(exc),
+            ) from exc
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Unknown command_type",
+            f"Unsupported command_type: {command_type}",
+        )
+
+    try:
+        return OperatorCommand.model_validate(payload)
+    except ValidationError as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid operator command payload",
+            str(exc),
+        ) from exc
+
+
+def _validate_pause_execution(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _PAUSE_EXECUTION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for PauseExecution",
+            f"Missing fields: {sorted(missing)}",
+        )
+    for field in sorted(_PAUSE_EXECUTION_REQUIRED):
+        if not isinstance(params.get(field), bool):
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                f"Invalid {field} value",
+                f"{field} must be a boolean",
+            )
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "PauseExecution requires 'operator' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator or admin role",
+        )
+
+
+def _validate_issue_risk_off(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _RISK_OFF_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for IssueRiskOff",
+            f"Missing fields: {sorted(missing)}",
+        )
+    exposure_pct = params.get("reduce_exposure_pct")
+    if not isinstance(exposure_pct, (int, float)) or exposure_pct <= 0 or exposure_pct > 100:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid reduce_exposure_pct value",
+            "reduce_exposure_pct must be a number between 1 and 100",
+        )
+    if not {"operator", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "IssueRiskOff requires 'operator' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator or admin role",
+        )
+
+
+def _validate_liquidate_all(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    if params:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "LiquidateAll does not accept params",
+            "params must be an empty object for LiquidateAll",
+        )
+    _require_admin_mfa(identity, "LiquidateAll")
+
+
+def _validate_hard_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    target_artifact_id = str(params.get("target_artifact_id") or "").strip()
+    if not target_artifact_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for HardRollback",
+            "target_artifact_id must be a non-empty string",
+        )
+    if not {"admin", "approver"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "HardRollback requires 'admin' or 'approver' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with admin or approver role",
+        )
+
+
+def _validate_issue_safe_mode(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    safe_mode_level = str(params.get("safe_mode_level") or "").strip().lower()
+    if safe_mode_level not in _SAFE_MODE_LEVELS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid safe_mode_level",
+            f"safe_mode_level must be one of {sorted(_SAFE_MODE_LEVELS)}",
+        )
+    _require_admin_mfa(identity, "IssueSafeMode")
+
+
+def _derive_drawer_execution_params(
+    command: CommandType,
+    runtime_id: str,
+    params: Dict[str, Any],
+    *,
+    actor_id: Optional[str],
+    reason: Optional[str],
+    incident_id: Optional[str],
+) -> Dict[str, Any]:
+    context = _runtime_command_context(runtime_id, incident_id)
+    base = {
+        "runtime_id": runtime_id,
+        "runtime_binding_id": context["runtime_binding_id"],
+        "capital_pool_id": context["capital_pool_id"],
+        "actor_id": actor_id or "operator-command",
+        "reason": reason or "",
+        "incident_id": incident_id,
+    }
+
+    if command == CommandType.PAUSE_EXECUTION:
+        return {
+            **base,
+            "pause_action": "pause",
+            "pause_new_entries": params["pause_new_entries"],
+            "cancel_open_orders": params["cancel_open_orders"],
+        }
+
+    if command == CommandType.ISSUE_RISK_OFF:
+        if not context["capital_pool_id"]:
+            raise ValueError(
+                f"Runtime {runtime_id} cannot be routed to a capital pool."
+            )
+        return {
+            **base,
+            "scope": "pool",
+            "scope_id": context["capital_pool_id"],
+            "action_override": "risk_off",
+            "trigger_reason": "operator_emergency_stop",
+            "reduce_exposure_pct": params["reduce_exposure_pct"],
+        }
+
+    if command == CommandType.LIQUIDATE_ALL:
+        if not context["capital_pool_id"]:
+            raise ValueError(
+                f"Runtime {runtime_id} cannot be routed to a capital pool."
+            )
+        return {
+            **base,
+            "scope": "pool",
+            "scope_id": context["capital_pool_id"],
+            "action_override": "liquidate",
+            "trigger_reason": "operator_emergency_stop",
+        }
+
+    if command == CommandType.HARD_ROLLBACK:
+        return {
+            **base,
+            "rollback_target_type": "runtime",
+            "target_id": context["runtime_binding_id"],
+            "rollback_to_version": params["target_artifact_id"],
+            "rollback_action_type": "pause_then_replace",
+            "target_artifact_id": params["target_artifact_id"],
+        }
+
+    if not context["capital_pool_id"]:
+        raise ValueError(
+            f"Runtime {runtime_id} cannot be routed to a capital pool."
+        )
+    return {
+        **base,
+        "safe_mode_level": params["safe_mode_level"],
+        "target_state": "guarded",
+    }
+
+
+def _stored_command_params(cmd: OperatorCommand, identity: OperatorIdentity) -> Dict[str, Any]:
+    if cmd.command in _DRAWER_RUNTIME_COMMANDS:
+        return dict(cmd.params)
+    del identity
+    return dict(cmd.params)
+
+
+def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    command_type = CommandType(record["type"])
+    params = dict(record.get("params") or {})
+    if command_type not in _DRAWER_RUNTIME_COMMANDS:
+        return params
+
+    target = record.get("target") or {}
+    audit = record.get("audit") or {}
+    runtime_id = str(target.get("id") or "").strip()
+    if not runtime_id:
+        raise ValueError(f"{command_type.value} is missing target.id.")
+
+    return _derive_drawer_execution_params(
+        command_type,
+        runtime_id,
+        params,
+        actor_id=audit.get("operator_id"),
+        reason=audit.get("reason"),
+        incident_id=audit.get("incident_id"),
+    )
 
 
 def _validate_approve_deployment(params: Dict[str, Any], identity: OperatorIdentity) -> None:
@@ -140,6 +596,80 @@ def _validate_approve_deployment(params: Dict[str, Any], identity: OperatorIdent
         raise _bff_error(
             403, ErrorCode.INSUFFICIENT_ROLE,
             "ApproveDeployment requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_approve_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _APPROVE_DECISION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for ApproveDecision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "ApproveDecision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REJECT_DECISION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for RejectDecision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("rejection_reason") or "").strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "RejectDecision requires a non-empty rejection_reason",
+            "rejection_reason must be a non-empty string",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "RejectDecision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_request_approval_revision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REQUEST_APPROVAL_REVISION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for RequestApprovalRevision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("revision_notes") or "").strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "RequestApprovalRevision requires non-empty revision_notes",
+            "revision_notes must be a non-empty string",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "RequestApprovalRevision requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
             suggestion="Escalate to a user with approver or admin role",
@@ -194,6 +724,48 @@ def _validate_execute_rollback(params: Dict[str, Any], identity: OperatorIdentit
         )
 
 
+def _validate_approve_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _APPROVE_ROLLBACK_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS,
+            "Missing required params for ApproveRollback",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403, ErrorCode.INSUFFICIENT_ROLE,
+            "ApproveRollback requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
+def _validate_reject_rollback(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REJECT_ROLLBACK_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS,
+            "Missing required params for RejectRollback",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("rejection_reason") or "").strip():
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS,
+            "RejectRollback requires a non-empty rejection_reason",
+            "rejection_reason must be a non-empty string",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403, ErrorCode.INSUFFICIENT_ROLE,
+            "RejectRollback requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
 def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIdentity) -> None:
     missing = _KILL_SWITCH_REQUIRED - params.keys()
     if missing:
@@ -232,6 +804,33 @@ def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIde
             "Admin action requires MFA validation",
             precondition_failed="mfa_check",
             suggestion="Provide a valid MFA token in your session",
+        )
+
+
+def _validate_escalate_diff(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _ESCALATE_DIFF_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for EscalateDiff",
+            f"Missing fields: {sorted(missing)}",
+        )
+    if not str(params.get("escalation_reason") or "").strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "EscalateDiff requires a non-empty escalation_reason",
+            "escalation_reason must be a non-empty string",
+        )
+    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "EscalateDiff requires operator-level governance access",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
         )
 
 
@@ -283,13 +882,689 @@ def _validate_execute_evolution_action(params: Dict[str, Any], identity: Operato
         )
 
 
+def _mutation_review_surface_state(
+    decision: Dict[str, Any],
+    approval_decision: Optional[Dict[str, Any]],
+    linked_incident: Optional[Dict[str, Any]],
+    linked_postmortem: Optional[Dict[str, Any]],
+) -> str:
+    required_sources_available = True
+    decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
+    approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
+    linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
+    linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
+
+    if read_store.dataset_source("evolution_decisions") == "missing":
+        required_sources_available = False
+    if decision_state in {"reviewed", "approved", "executed", "rejected", "superseded"}:
+        if not approval_decision_id or approval_decision is None:
+            required_sources_available = False
+    if linked_incident_id and linked_incident is None:
+        required_sources_available = False
+    if linked_postmortem_id and linked_postmortem is None:
+        required_sources_available = False
+
+    read_surface_state = _read_surface_state()
+    if read_surface_state == "unavailable" or not required_sources_available:
+        return "unavailable"
+    if read_surface_state in {"degraded", "stale"}:
+        return "stale"
+
+    dataset_names = ["evolution_decisions"]
+    if approval_decision_id:
+        dataset_names.append("approval_decisions")
+    if linked_incident_id:
+        dataset_names.append("incidents")
+    if linked_postmortem_id:
+        dataset_names.append("postmortems")
+    if any(read_store.dataset_source(dataset) == "local_snapshot" for dataset in dataset_names):
+        return "stale"
+    return "fresh"
+
+
+def _mutation_review_roles_for(
+    risk_level: str,
+    *,
+    action: str,
+) -> set[str]:
+    normalized_risk = str(risk_level or "").lower()
+    if action == "approve":
+        return _MUTATION_APPROVAL_ROLES.get(normalized_risk, {"admin"})
+    return _MUTATION_REJECTION_ROLES.get(normalized_risk, {"admin"})
+
+
+def _mutation_review_allowed_actions(
+    decision: Dict[str, Any],
+    identity: OperatorIdentity,
+    surface_state: str,
+) -> Dict[str, bool]:
+    if surface_state == "unavailable":
+        return {
+            "canApproveMutation": False,
+            "canRejectMutation": False,
+        }
+
+    decision_state = str(decision.get("decision_state") or decision.get("status") or "").lower()
+    risk_level = str(decision.get("risk_level") or "").lower()
+    identity_roles = set(identity.roles)
+
+    can_approve = (
+        decision_state == "reviewed"
+        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="approve")))
+    )
+    can_reject = (
+        decision_state in {"proposed", "reviewed"}
+        and bool(identity_roles.intersection(_mutation_review_roles_for(risk_level, action="reject")))
+    )
+    return {
+        "canApproveMutation": can_approve,
+        "canRejectMutation": can_reject,
+    }
+
+
+def _mutation_threshold_triggers(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+    risk_assessment = decision.get("risk_assessment") or {}
+    explicit = risk_assessment.get("threshold_triggers")
+    if isinstance(explicit, list):
+        return explicit
+
+    triggers: List[Dict[str, Any]] = []
+    for snapshot in decision.get("threshold_snapshots") or []:
+        if not isinstance(snapshot, dict):
+            continue
+        triggers.append(
+            {
+                "trigger_type": snapshot.get("signal_type"),
+                "metric": snapshot.get("metric_name"),
+                "observed_value": str(snapshot.get("observed_value")),
+                "threshold_value": str(snapshot.get("threshold_value")),
+                "threshold_source": snapshot.get("policy_source"),
+            }
+        )
+    return triggers
+
+
+def _mutation_required_approvals(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+    explicit = decision.get("required_approvals")
+    if isinstance(explicit, list):
+        return explicit
+
+    risk_level = str(decision.get("risk_level") or "").lower()
+    if risk_level == "low":
+        required_roles = ["reviewer_on_duty"]
+    elif risk_level == "medium":
+        required_roles = ["reviewer", "risk_owner"]
+    elif risk_level == "high":
+        required_roles = ["governance_committee"]
+    else:
+        required_roles = []
+
+    approvals: List[Dict[str, Any]] = []
+    review_chain = decision.get("review_chain") or []
+    for role in required_roles:
+        matched_step = next(
+            (
+                step for step in review_chain
+                if isinstance(step, dict)
+                and str(step.get("actor_role") or "").lower() == role
+                and str(step.get("step_type") or step.get("action") or "").lower() in {"reviewed", "approved"}
+            ),
+            None,
+        )
+        approvals.append(
+            {
+                "role": role,
+                "approved_by": matched_step.get("actor_id") if matched_step else None,
+                "approved_at": matched_step.get("timestamp") if matched_step else None,
+                "status": "approved" if matched_step else "pending",
+            }
+        )
+    return approvals
+
+
+def _mutation_review_projection(
+    decision: Dict[str, Any],
+    *,
+    approval_decision: Optional[Dict[str, Any]],
+    linked_incident: Optional[Dict[str, Any]],
+    linked_postmortem: Optional[Dict[str, Any]],
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    surface_state = _mutation_review_surface_state(
+        decision,
+        approval_decision,
+        linked_incident,
+        linked_postmortem,
+    )
+    allowed_actions = _mutation_review_allowed_actions(decision, identity, surface_state)
+    proposed_changes = dict(decision.get("proposed_changes") or {})
+    risk_assessment = dict(decision.get("risk_assessment") or {})
+    evidence_refs = list(decision.get("evidence_refs") or [])
+
+    if linked_incident and not any(ref.get("ref_id") == linked_incident.get("incident_id") for ref in evidence_refs if isinstance(ref, dict)):
+        evidence_refs.append(
+            {
+                "ref_type": "incident",
+                "ref_id": linked_incident.get("incident_id"),
+                "summary": linked_incident.get("evidence_summary") or linked_incident.get("title"),
+            }
+        )
+    postmortem_id = (
+        linked_postmortem.get("postmortem_id")
+        or linked_postmortem.get("report_id")
+        or linked_postmortem.get("id")
+        if linked_postmortem
+        else None
+    )
+    if linked_postmortem and not any(ref.get("ref_id") == postmortem_id for ref in evidence_refs if isinstance(ref, dict)):
+        evidence_refs.append(
+            {
+                "ref_type": "postmortem",
+                "ref_id": postmortem_id,
+                "summary": linked_postmortem.get("summary") or linked_postmortem.get("title"),
+            }
+        )
+
+    if "summary" not in proposed_changes:
+        proposed_changes["summary"] = decision.get("rationale") or decision.get("notes") or ""
+    proposed_changes.setdefault("target_stage", decision.get("target_stage"))
+    proposed_changes.setdefault("downstream_plane", (decision.get("execution_result") or {}).get("plane"))
+    proposed_changes.setdefault("change_details", [])
+
+    risk_assessment.setdefault(
+        "risk_summary",
+        decision.get("notes") or decision.get("rationale") or "",
+    )
+    risk_assessment.setdefault("severity", None)
+    risk_assessment["threshold_triggers"] = _mutation_threshold_triggers(decision)
+
+    review_chain = [
+        {
+            "action": step.get("action") or step.get("step_type"),
+            "actor_role": step.get("actor_role"),
+            "actor_id": step.get("actor_id"),
+            "acted_at": step.get("acted_at") or step.get("timestamp"),
+            "note": step.get("note"),
+        }
+        for step in (decision.get("review_chain") or [])
+        if isinstance(step, dict)
+    ]
+
+    rollback_followthrough = decision.get("rollback_followthrough")
+    if rollback_followthrough is None:
+        linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
+        rollbacks = read_store.get_rollbacks_by_incident(linked_incident_id) if linked_incident_id else []
+        if rollbacks:
+            first_rollback = rollbacks[0]
+            rollback_followthrough = {
+                "rollback_request_ref": first_rollback.get("rollback_id") or first_rollback.get("id"),
+                "rollback_action_type": first_rollback.get("action_type"),
+                "followthrough_note": first_rollback.get("reason"),
+            }
+
+    return {
+        "decision_id": decision.get("decision_id") or decision.get("id"),
+        "target_type": decision.get("target_type"),
+        "target_id": decision.get("target_id") or decision.get("artifact_id"),
+        "target_version": decision.get("target_version"),
+        "action_type": decision.get("action_type"),
+        "decision_state": decision.get("decision_state") or decision.get("status"),
+        "risk_level": decision.get("risk_level"),
+        "created_at": decision.get("created_at"),
+        "approval_decision_id": decision.get("approval_decision_id"),
+        "proposed_changes": proposed_changes,
+        "risk_assessment": risk_assessment,
+        "required_approvals": _mutation_required_approvals(decision),
+        "review_chain": review_chain,
+        "linked_incident_id": decision.get("linked_incident_id"),
+        "linked_postmortem_id": decision.get("linked_postmortem_id"),
+        "evidence_refs": evidence_refs,
+        "rollback_followthrough": rollback_followthrough,
+        "allowedActions": allowed_actions,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "mutation_review": surface_state,
+            },
+        },
+    }
+
+
+def _mutation_review_inputs(
+    decision_id: str,
+) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    decision = read_store.get_evolution_decision_by_id(decision_id)
+    if decision is None:
+        return None, None, None, None
+
+    approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
+    approval_decision = (
+        read_store.get_approval_decision(approval_decision_id)
+        if approval_decision_id
+        else None
+    )
+    linked_incident_id = str(decision.get("linked_incident_id") or "").strip()
+    linked_incident = read_store.get_incident(linked_incident_id) if linked_incident_id else None
+    linked_postmortem_id = str(decision.get("linked_postmortem_id") or "").strip()
+    linked_postmortem = (
+        read_store.get_postmortem(linked_postmortem_id)
+        if linked_postmortem_id
+        else None
+    )
+    return decision, approval_decision, linked_incident, linked_postmortem
+
+
+def _cw03_committee_surface_state(
+    committee: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> str:
+    committee_surface = _dataset_surface_status(
+        "consultation_sessions",
+        snapshot_at=snapshot_at,
+        has_data=bool(committee),
+        missing_message="Committee board state is unavailable.",
+    )
+    if committee_surface.get("status") == "unavailable":
+        return "unavailable"
+    if committee.get("surface_state") == "degraded":
+        return "degraded"
+    if committee_surface.get("source") == "local_snapshot":
+        return "degraded"
+    if committee_surface.get("status") == "degraded":
+        return "stale"
+    return "ok"
+
+
+def _cw03_allowed_actions(
+    committee: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    surface_state: str,
+) -> Dict[str, bool]:
+    if surface_state == "unavailable":
+        return {
+            "canRecordSponsorDecision": False,
+        }
+    sponsor_decision = committee.get("sponsor_decision")
+    consensus_state = str(committee.get("consensus_state") or "").strip().lower()
+    roles = set(identity.roles)
+    sponsor_assignment = committee.get("sponsor_assignment") or {}
+    sponsor_participant_id = str(sponsor_assignment.get("participant_id") or "").strip()
+    return {
+        "canRecordSponsorDecision": (
+            sponsor_decision in (None, "")
+            and consensus_state == "sponsor_required"
+            and bool(sponsor_participant_id)
+            and bool(roles.intersection({"operator", "approver", "admin"}))
+        )
+    }
+
+
+def _cw03_committee_projection(
+    committee: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    surface_state = _cw03_committee_surface_state(committee, snapshot_at=snapshot_at)
+    allowed_actions = _cw03_allowed_actions(committee, identity=identity, surface_state=surface_state)
+    return {
+        "committee_id": committee.get("committee_id"),
+        "committee_ref": committee.get("committee_ref"),
+        "linked_request_id": committee.get("linked_request_id"),
+        "linked_session_id": committee.get("linked_session_id"),
+        "started_at": committee.get("started_at"),
+        "escalation_reason": json.loads(json.dumps(committee.get("escalation_reason") or {})),
+        "quorum_state": committee.get("quorum_state"),
+        "consensus_state": committee.get("consensus_state"),
+        "participant_roster": json.loads(json.dumps(committee.get("participant_roster") or [])),
+        "sponsor_assignment": json.loads(json.dumps(committee.get("sponsor_assignment") or {})),
+        "sponsor_decision": committee.get("sponsor_decision"),
+        "sponsor_decided_at": committee.get("sponsor_decided_at"),
+        "sponsor_decided_by": committee.get("sponsor_decided_by"),
+        "synthesis_summary": json.loads(json.dumps(committee.get("synthesis_summary") or {})),
+        "linked_evidence": json.loads(json.dumps(committee.get("linked_evidence") or [])),
+        "allowedActions": allowed_actions,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "committee_board": surface_state,
+            },
+        },
+    }
+
+
+_CW04_ALLOWED_STATUSES = {"draft", "published"}
+_CW04_GOVERNANCE_ROLES = {"reviewer", "approver", "admin", "governance_committee"}
+_CW04_SUPPORTED_TARGET_TYPES = {"strategy", "artifact", "deployment_plan"}
+
+
+def _cw04_collection_surface_state(snapshot_at: str) -> str:
+    surface = _dataset_surface_status(
+        "consult_memos",
+        snapshot_at=snapshot_at,
+        missing_message="Red-team memo list is unavailable.",
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "degraded"
+    return "ok"
+
+
+def _cw04_memo_surface_state(
+    memo: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> str:
+    dataset_state = _cw04_collection_surface_state(snapshot_at)
+    explicit_state = str(memo.get("surface_state") or "").strip().lower()
+    if explicit_state == "unavailable":
+        return "unavailable"
+    if explicit_state == "degraded":
+        return "degraded"
+    return dataset_state
+
+
+def _cw04_memo_staleness(
+    surface_state: str,
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "fresh" if surface_state == "ok" else "stale",
+        "as_of": snapshot_at,
+    }
+
+
+def _cw04_governance_target(
+    memo: Dict[str, Any],
+) -> tuple[str, str, bool]:
+    target = memo.get("governance_target") if isinstance(memo.get("governance_target"), dict) else {}
+    target_type = str(target.get("target_type") or "").strip().lower()
+    target_id = str(target.get("target_id") or "").strip()
+
+    strategy_id = str(target.get("strategy_id") or "").strip()
+    artifact_id = str(target.get("artifact_id") or "").strip()
+    deployment_plan_id = str(target.get("deployment_plan_id") or "").strip()
+
+    if not target_type:
+        if strategy_id:
+            target_type = "strategy"
+            target_id = strategy_id
+        elif artifact_id:
+            target_type = "artifact"
+            target_id = artifact_id
+        elif deployment_plan_id:
+            target_type = "deployment_plan"
+            target_id = deployment_plan_id
+
+    has_valid_target = bool(strategy_id or artifact_id or deployment_plan_id or target_id)
+    return target_type, target_id, has_valid_target
+
+
+def _cw04_allowed_actions(
+    memo: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    surface_state: str,
+) -> Dict[str, bool]:
+    if surface_state != "ok":
+        return {
+            "canInitiateGovernanceReview": False,
+        }
+
+    lifecycle_state = str(memo.get("lifecycle_state") or memo.get("status") or "").strip().lower()
+    target_type, _target_id, has_valid_target = _cw04_governance_target(memo)
+    roles = set(identity.roles)
+    has_authority = bool(roles.intersection(_CW04_GOVERNANCE_ROLES))
+    has_active_review = bool(str(memo.get("active_governance_review_id") or "").strip())
+    suppressed = bool(memo.get("suppressed"))
+    withdrawn = bool(memo.get("withdrawn"))
+    governance_accepts_target_type = target_type in _CW04_SUPPORTED_TARGET_TYPES
+
+    return {
+        "canInitiateGovernanceReview": (
+            lifecycle_state == "published"
+            and has_valid_target
+            and has_authority
+            and not has_active_review
+            and not suppressed
+            and not withdrawn
+            and governance_accepts_target_type
+        )
+    }
+
+
+def _cw04_memo_projection(
+    memo: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    surface_state = _cw04_memo_surface_state(memo, snapshot_at=snapshot_at)
+    allowed_actions = _cw04_allowed_actions(memo, identity=identity, surface_state=surface_state)
+    hide_memo_content = surface_state == "unavailable"
+
+    return {
+        "object_ref": json.loads(json.dumps(memo.get("object_ref") or {})),
+        "memo_id": memo.get("memo_id"),
+        "memo_type": memo.get("memo_type") or "red_team",
+        "status": memo.get("status"),
+        "lifecycle_state": memo.get("lifecycle_state"),
+        "author_ref": memo.get("author_ref"),
+        "linked_request_id": memo.get("linked_request_id"),
+        "linked_session_id": memo.get("linked_session_id"),
+        "session_to_memo_mapping": json.loads(json.dumps(memo.get("session_to_memo_mapping") or {})),
+        "summary": None if hide_memo_content else memo.get("summary"),
+        "recommendations": [] if hide_memo_content else list(memo.get("recommendations") or []),
+        "evidence_refs": [] if hide_memo_content else json.loads(json.dumps(memo.get("evidence_refs") or [])),
+        "published_at": memo.get("published_at"),
+        "created_at": memo.get("created_at"),
+        "supersedes_memo_id": memo.get("supersedes_memo_id"),
+        "superseded_by_memo_id": memo.get("superseded_by_memo_id"),
+        "allowedActions": allowed_actions,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "staleness": _cw04_memo_staleness(surface_state, snapshot_at=snapshot_at),
+            "surfaces": {
+                "redteam_memo": {
+                    "state": surface_state,
+                },
+            },
+        },
+    }
+
+
+def _cw04_validate_status_filters(status_values: Optional[List[str]]) -> Optional[List[str]]:
+    if not status_values:
+        return None
+    invalid = [
+        value
+        for value in status_values
+        if str(value).strip().lower() not in _CW04_ALLOWED_STATUSES
+    ]
+    if invalid:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid memo status filter",
+            "status must be draft or published",
+            precondition_failed="status",
+        )
+    return [str(value).strip().lower() for value in status_values if str(value).strip()]
+
+
+def _validate_record_sponsor_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _RECORD_SPONSOR_DECISION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for RecordSponsorDecision",
+            f"Missing fields: {sorted(missing)}",
+        )
+    sponsor_decision = str(params.get("sponsor_decision") or "").strip().lower()
+    if sponsor_decision not in _VALID_SPONSOR_DECISIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid sponsor_decision value",
+            f"sponsor_decision must be one of {sorted(_VALID_SPONSOR_DECISIONS)}",
+        )
+    rationale_ref = str(params.get("rationale_ref") or "").strip()
+    if not rationale_ref:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "RecordSponsorDecision requires a non-empty rationale_ref",
+            "rationale_ref must be a non-empty string",
+        )
+    committee_id = str(params.get("committee_id") or "").strip()
+    committee = read_store.get_committee(committee_id)
+    if committee is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee board not found",
+            f"Committee {committee_id} does not exist",
+        )
+    projection = _cw03_committee_projection(
+        committee,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection["meta"]["surfaces"]["committee_board"] == "unavailable":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "RecordSponsorDecision is blocked while the committee board is unavailable",
+            "Committee evidence cannot be composed reliably",
+            precondition_failed="committee_board_surface",
+        )
+    if not projection["allowedActions"]["canRecordSponsorDecision"]:
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "RecordSponsorDecision is not allowed for this operator and committee state",
+            "allowedActions.canRecordSponsorDecision is false for the current read projection",
+            precondition_failed="allowedActions.canRecordSponsorDecision",
+        )
+
+
+def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _APPROVE_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for ApproveMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    if decision is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "ApproveMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canApproveMutation"]:
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "ApproveMutation is not allowed for this operator and decision state",
+            "allowedActions.canApproveMutation is false for the current read projection",
+            precondition_failed="allowedActions.canApproveMutation",
+        )
+
+
+def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REJECT_MUTATION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for RejectMutation",
+            f"Missing fields: {sorted(missing)}",
+        )
+    decision_id = str(params.get("decision_id") or "").strip()
+    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    if decision is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Mutation review decision not found",
+            f"Evolution decision {decision_id} does not exist",
+        )
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "RejectMutation is blocked while the mutation-review surface is unavailable",
+            "Mutation-review evidence cannot be composed reliably",
+            precondition_failed="mutation_review_surface",
+        )
+    if not projection["allowedActions"]["canRejectMutation"]:
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "RejectMutation is not allowed for this operator and decision state",
+            "allowedActions.canRejectMutation is false for the current read projection",
+            precondition_failed="allowedActions.canRejectMutation",
+        )
+
+
 _VALIDATORS = {
     CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
+    CommandType.APPROVE_DECISION: _validate_approve_decision,
+    CommandType.REJECT_DECISION: _validate_reject_decision,
+    CommandType.REQUEST_APPROVAL_REVISION: _validate_request_approval_revision,
     CommandType.PAUSE_RUNTIME: _validate_pause_runtime,
+    CommandType.PAUSE_EXECUTION: _validate_pause_execution,
+    CommandType.ESCALATE_DIFF: _validate_escalate_diff,
+    CommandType.ISSUE_RISK_OFF: _validate_issue_risk_off,
+    CommandType.LIQUIDATE_ALL: _validate_liquidate_all,
+    CommandType.HARD_ROLLBACK: _validate_hard_rollback,
+    CommandType.ISSUE_SAFE_MODE: _validate_issue_safe_mode,
     CommandType.EXECUTE_ROLLBACK: _validate_execute_rollback,
+    CommandType.APPROVE_ROLLBACK: _validate_approve_rollback,
+    CommandType.REJECT_ROLLBACK: _validate_reject_rollback,
     CommandType.ACTIVATE_KILL_SWITCH: _validate_activate_kill_switch,
     CommandType.APPROVE_EVOLUTION_DECISION: _validate_approve_evolution_decision,
     CommandType.EXECUTE_EVOLUTION_ACTION: _validate_execute_evolution_action,
+    CommandType.APPROVE_MUTATION: _validate_approve_mutation,
+    CommandType.REJECT_MUTATION: _validate_reject_mutation,
+    CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
 }
 
 # --------------------------------------------------------------------------- #
@@ -340,6 +1615,3695 @@ def _surface_status() -> Dict[str, Any]:
             "staleness": _meta_staleness(),
         }
     return {"status": "ok"}
+
+
+def _dataset_surface_status(
+    dataset: str,
+    *,
+    snapshot_at: Optional[str] = None,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    surface = dict(_surface_status())
+    source = source or read_store.dataset_source(dataset)
+    surface["source"] = source
+
+    if source == "local_snapshot":
+        if surface.get("status") == "ok":
+            surface["status"] = "degraded"
+        surface["note"] = "Served from local BFF snapshot fallback instead of a backend-owned read store."
+        surface["staleness"] = {
+            "served_from": "local_snapshot",
+            "last_known_at": snapshot_at or utc_now(),
+        }
+    elif source == "missing":
+        surface["status"] = "unavailable"
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+        )
+
+    if has_data is False:
+        if surface.get("status") == "ok":
+            surface["status"] = "unavailable"
+        if missing_message:
+            surface["message"] = missing_message
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+        )
+
+    return surface
+
+
+def _composed_surface_status(
+    *,
+    snapshot_at: Optional[str] = None,
+    available: bool = True,
+    missing_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    surface = dict(_surface_status())
+    surface["source"] = "bff_composed"
+    if available:
+        return surface
+
+    if surface.get("status") == "ok":
+        surface["status"] = "degraded"
+    if missing_message:
+        surface["message"] = missing_message
+    surface.setdefault(
+        "staleness",
+        {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+    )
+    return surface
+
+
+_INCIDENT_SEVERITY_MAP = {
+    "critical": "sev1",
+    "high": "sev1",
+    "medium": "sev2",
+    "low": "sev3",
+    "sev1": "sev1",
+    "sev2": "sev2",
+    "sev3": "sev3",
+}
+
+_KILL_SWITCH_STATUS_MAP = {
+    "armed": "armed",
+    "off": "armed",
+    "normal": "armed",
+    "triggered": "triggered",
+    "guarded": "triggered",
+    "risk_off": "triggered",
+    "cooling_down": "cooling_down",
+    "cooldown": "cooling_down",
+    "paused": "cooling_down",
+}
+
+_ACTION_DRAWER_PRIMARY_ALLOWED_ACTIONS = {
+    "canPause": True,
+    "canRiskOff": True,
+    "canLiquidateAll": False,
+    "canHardRollback": False,
+    "canIssueSafeMode": True,
+}
+
+
+def _incident_home_severity(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    return _INCIDENT_SEVERITY_MAP.get(str(value).strip().lower(), str(value))
+
+
+def _project_incident_home_item(incident: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "incident_id": incident.get("incident_id"),
+        "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")),
+        "status": incident.get("status"),
+        "artifact_id": incident.get("artifact_id"),
+        "opened_at": incident.get("opened_at") or incident.get("created_at"),
+        "resolved_at": incident.get("resolved_at"),
+    }
+
+
+def _project_incident_detail_incident(incident: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "incident_id": incident.get("incident_id"),
+        "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")),
+        "status": incident.get("status"),
+        "artifact_id": incident.get("artifact_id"),
+        "artifact_version": incident.get("artifact_version"),
+        "runtime_id": incident.get("runtime_id"),
+        "trace_id": incident.get("trace_id"),
+        "opened_at": incident.get("opened_at") or incident.get("created_at"),
+    }
+
+
+def _project_affected_binding(
+    binding: Dict[str, Any],
+    incident: Dict[str, Any],
+    runtime_binding: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    raw_stage = (
+        incident.get("deployment_stage")
+        or binding.get("stage")
+        or binding.get("deployment_stage")
+        or (runtime_binding or {}).get("deployment_stage")
+        or binding.get("allowed_deployment_scope")
+    )
+    stage = str(raw_stage or "").strip().lower()
+    if stage not in {"paper", "live"}:
+        stage = "paper"
+
+    return {
+        "binding_id": binding.get("id") or binding.get("binding_id"),
+        "persona_id": binding.get("persona_id"),
+        "capital_pool_id": binding.get("capital_pool_id"),
+        "stage": stage,
+        "binding_status": binding.get("binding_status") or binding.get("status"),
+    }
+
+
+def _project_affected_bindings(
+    incident: Dict[str, Any],
+    runtime_binding: Optional[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], bool]:
+    candidate_ids: List[str] = []
+    for value in [
+        incident.get("persona_capital_binding_id"),
+        (runtime_binding or {}).get("persona_capital_binding_id"),
+    ]:
+        if value in (None, ""):
+            continue
+        string_value = str(value)
+        if string_value not in candidate_ids:
+            candidate_ids.append(string_value)
+
+    affected_bindings: List[Dict[str, Any]] = []
+    for binding_id in candidate_ids:
+        binding = read_store.get_binding(binding_id)
+        if not binding:
+            continue
+        affected_bindings.append(
+            _project_affected_binding(binding, incident, runtime_binding)
+        )
+
+    return affected_bindings, bool(candidate_ids)
+
+
+def _default_incident_allowed_actions() -> Dict[str, bool]:
+    return {
+        "canPause": False,
+        "canRiskOff": False,
+        "canLiquidateAll": False,
+        "canHardRollback": False,
+        "canIssueSafeMode": False,
+        "canOpenActionDrawer": False,
+    }
+
+
+def _derive_incident_allowed_actions(
+    identity: OperatorIdentity,
+    incident: Dict[str, Any],
+) -> Dict[str, bool]:
+    actions = _default_incident_allowed_actions()
+    incident_status = str(incident.get("status") or "").lower()
+    runtime_id = incident.get("runtime_id")
+    if incident_status not in {"open", "in_progress"} or not runtime_id:
+        return actions
+
+    if not {"operator", "admin"}.intersection(identity.roles):
+        return actions
+
+    actions["canPause"] = True
+    actions["canRiskOff"] = True
+    actions["canIssueSafeMode"] = True
+    actions["canOpenActionDrawer"] = True
+    return actions
+
+
+def _decode_page_token(page_token: Optional[str]) -> int:
+    if page_token in (None, ""):
+        return 0
+    try:
+        offset = int(page_token)
+    except (TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid page_token",
+            "page_token must be a non-negative integer offset",
+        ) from exc
+    if offset < 0:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid page_token",
+            "page_token must be a non-negative integer offset",
+        )
+    return offset
+
+
+def _page_slice(items: List[Dict[str, Any]], page_token: Optional[str], page_size: int) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    start = _decode_page_token(page_token)
+    end = start + page_size
+    next_page_token = str(end) if end < len(items) else None
+    return items[start:end], next_page_token
+
+
+_RUNTIME_STATE_SORT_FIELDS = {"last_updated_at", "runtime_id", "deployment_stage", "status"}
+_RUNTIME_STATE_SORT_ORDERS = {"asc", "desc"}
+_HEALTH_GROUP_LABELS = {
+    "runtime": "Runtime",
+    "telemetry": "Telemetry",
+    "incident": "Incident",
+    "governance": "Governance",
+    "kill_switch": "Kill Switch",
+}
+_HEALTH_SURFACE_ORDER = ("runtime", "telemetry", "incident", "governance", "kill_switch")
+_INCIDENT_SEVERITY_ORDER = {"sev1": 3, "sev2": 2, "sev3": 1}
+_GOVERNANCE_RISK_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_ALERT_SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_ALERT_CATEGORY_ORDER = {"incident": 4, "kill_switch": 3, "governance": 2, "runtime": 1}
+_SECONDARY_CONTROL_PATH_ADVISORY_TARGETS = (
+    {
+        "operation": "Health diagnostics",
+        "channel": "admin_cli",
+        "command": "pantheon admin health",
+        "api_path": "GET /admin/health",
+        "required_role": "operator",
+        "requires_mfa": False,
+    },
+    {
+        "operation": "Runtime status",
+        "channel": "admin_cli",
+        "command": "pantheon admin runtime status --runtime={runtime_id}",
+        "api_path": "GET /admin/runtimes/{runtime_id}/status",
+        "required_role": "operator",
+        "requires_mfa": False,
+    },
+    {
+        "operation": "Kill-switch status",
+        "channel": "admin_cli",
+        "command": "pantheon admin kill-switch status",
+        "api_path": "GET /admin/kill-switch/status",
+        "required_role": "operator",
+        "requires_mfa": False,
+    },
+)
+_RUNTIME_STATUS_ALERT_SEVERITY = {
+    "failed": "critical",
+    "error": "critical",
+    "degraded": "high",
+    "paused": "medium",
+}
+_TELEMETRY_DRAWDOWN_THRESHOLDS = (
+    (0.10, "critical"),
+    (0.05, "high"),
+)
+_TELEMETRY_FILL_RATE_THRESHOLDS = (
+    (0.90, "critical"),
+    (0.95, "high"),
+)
+_TELEMETRY_SLIPPAGE_THRESHOLDS = (
+    (4.0, "critical"),
+    (3.0, "high"),
+)
+_SECONDARY_CONTROL_PATH_RECOMMENDED_TARGETS = _SECONDARY_CONTROL_PATH_ADVISORY_TARGETS + (
+    {
+        "operation": "Runtime pause",
+        "channel": "admin_cli",
+        "command": "pantheon admin runtime pause --runtime={runtime_id}",
+        "api_path": "POST /admin/runtimes/{runtime_id}/pause",
+        "required_role": "admin",
+        "requires_mfa": True,
+    },
+    {
+        "operation": "Runtime rollback",
+        "channel": "admin_cli",
+        "command": "pantheon admin runtime rollback --runtime={runtime_id} --target={version}",
+        "api_path": "POST /admin/runtimes/{runtime_id}/rollback",
+        "required_role": "admin",
+        "requires_mfa": True,
+    },
+    {
+        "operation": "Kill-switch activation",
+        "channel": "admin_cli",
+        "command": "pantheon admin kill-switch activate --runtime={runtime_id}",
+        "api_path": "POST /admin/kill-switch/activate",
+        "required_role": "admin",
+        "requires_mfa": True,
+    },
+)
+
+
+def _split_csv_query(value: Optional[str]) -> Optional[List[str]]:
+    if not value:
+        return None
+    tokens = [token.strip() for token in value.split(",") if token.strip()]
+    return tokens or None
+
+
+def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not summary:
+        return None
+    return {
+        "window": summary.get("window"),
+        "collected_at": summary.get("collected_at"),
+        "metrics": {
+            "pnl": summary.get("pnl"),
+            "drawdown": summary.get("drawdown"),
+            "sharpe_ratio": summary.get("sharpe_ratio"),
+            "fill_rate": summary.get("fill_rate"),
+            "avg_slippage_bps": summary.get("avg_slippage_bps"),
+            "total_trades": summary.get("total_trades"),
+        },
+    }
+
+
+def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not rollbacks:
+        return None
+    latest = max(
+        rollbacks,
+        key=lambda rollback: (
+            rollback.get("completed_at")
+            or rollback.get("executed_at")
+            or rollback.get("initiated_at")
+            or ""
+        ),
+    )
+    return {
+        "rollback_id": latest.get("rollback_id") or latest.get("id"),
+        "action_type": latest.get("action_type"),
+        "status": latest.get("status"),
+        "from_version": latest.get("from_version"),
+        "to_version": latest.get("to_version"),
+        "initiated_at": latest.get("initiated_at"),
+        "completed_at": latest.get("completed_at") or latest.get("executed_at"),
+    }
+
+
+def _derive_runtime_state_last_updated_at(
+    binding: Dict[str, Any],
+    telemetry_summary: Optional[Dict[str, Any]],
+    latest_rollback: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    candidates = [
+        binding.get("last_updated_at"),
+        binding.get("updated_at"),
+        binding.get("started_at"),
+        binding.get("created_at"),
+        (telemetry_summary or {}).get("collected_at"),
+        (latest_rollback or {}).get("completed_at"),
+        (latest_rollback or {}).get("initiated_at"),
+    ]
+    values = [candidate for candidate in candidates if candidate]
+    if not values:
+        return None
+    return max(values)
+
+
+def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, Any]:
+    runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+    telemetry_summary = _project_runtime_state_telemetry_summary(
+        read_store.get_telemetry_summary(runtime_id)
+    )
+    rollbacks = read_store.get_rollbacks(runtime_id)
+    latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
+    artifact_id = binding.get("artifact_id")
+    artifact_version = binding.get("artifact_version") or binding.get("version")
+    plan_id = binding.get("plan_id")
+
+    return {
+        "runtime_id": runtime_id,
+        "runtime_binding_id": binding.get("id"),
+        "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
+        "status": binding.get("status"),
+        "capital_pool_id": binding.get("capital_pool_id"),
+        "plan_ref": (
+            {
+                "plan_id": plan_id,
+                "href": _deployment_review_href(str(plan_id)),
+            }
+            if plan_id
+            else None
+        ),
+        "artifact_ref": (
+            {
+                "artifact_id": artifact_id,
+                "artifact_version": artifact_version,
+            }
+            if artifact_id or artifact_version
+            else None
+        ),
+        "telemetry_summary": telemetry_summary,
+        "rollback_summary": {
+            "count": len(rollbacks),
+            "latest": latest_rollback,
+            "href": f"/api/v1/runtimes/{runtime_id}/rollbacks",
+        },
+        "last_updated_at": _derive_runtime_state_last_updated_at(
+            binding,
+            telemetry_summary,
+            latest_rollback,
+        ),
+    }
+
+
+def _sort_runtime_state_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    sort_by: str,
+    sort_order: str,
+) -> List[Dict[str, Any]]:
+    reverse = sort_order == "desc"
+
+    def _sort_key(row: Dict[str, Any]) -> tuple[str, str]:
+        primary = row.get(sort_by)
+        if primary is None:
+            primary = ""
+        return (str(primary), str(row.get("runtime_id") or ""))
+
+    ordered_rows = sorted(rows, key=_sort_key, reverse=reverse)
+    present = [row for row in ordered_rows if row.get(sort_by)]
+    missing = [row for row in ordered_rows if not row.get(sort_by)]
+    return present + missing
+
+
+def _highest_ranked_value(
+    values: List[Optional[str]],
+    order: Dict[str, int],
+) -> Optional[str]:
+    best_value: Optional[str] = None
+    best_rank = -1
+    for value in values:
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        rank = order.get(normalized)
+        if rank is None:
+            continue
+        if rank > best_rank:
+            best_rank = rank
+            best_value = normalized
+    return best_value
+
+
+def _aggregate_group_surface(
+    surface_key: str,
+    source_surfaces: List[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+    unavailable_message: str,
+    degraded_message: str,
+) -> Dict[str, Any]:
+    surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    surface["source"] = "bff_composed"
+    statuses = [entry.get("status", "ok") for entry in source_surfaces]
+    if statuses and all(status == "ok" for status in statuses):
+        return surface
+    if statuses and all(status == "unavailable" for status in statuses):
+        surface["status"] = "unavailable"
+        surface["message"] = unavailable_message
+        return surface
+    surface["status"] = "degraded"
+    surface["message"] = degraded_message
+    return surface
+
+
+def _project_health_surface_ref(surface_key: str, surface: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {
+        "surface_key": surface_key,
+        "status": surface.get("status"),
+        "source": surface.get("source"),
+    }
+    if surface.get("message"):
+        payload["message"] = surface.get("message")
+    return payload
+
+
+def _build_runtime_health_group(snapshot_at: str) -> tuple[Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]:
+    bindings = read_store.list_runtime_bindings()
+    runtime_roster_surface = _dataset_surface_status(
+        "runtime_bindings",
+        snapshot_at=snapshot_at,
+    )
+    by_stage: Dict[str, int] = {}
+    by_status: Dict[str, int] = {}
+    for binding in bindings:
+        stage = str(binding.get("deployment_stage") or binding.get("deployment_mode") or "unknown")
+        status = str(binding.get("status") or "unknown")
+        by_stage[stage] = by_stage.get(stage, 0) + 1
+        by_status[status] = by_status.get(status, 0) + 1
+
+    group_surface = _aggregate_group_surface(
+        "runtime",
+        [runtime_roster_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Runtime roster unavailable.",
+        degraded_message="Runtime roster degraded or stale.",
+    )
+    if runtime_roster_surface.get("status") == "unavailable":
+        summary = "Runtime roster unavailable."
+    elif not bindings:
+        summary = "No runtimes reported."
+    else:
+        summary = f"{len(bindings)} runtime(s) tracked across {len(by_stage)} stage(s)."
+
+    group = {
+        "group_id": "runtime",
+        "label": _HEALTH_GROUP_LABELS["runtime"],
+        "status": group_surface.get("status"),
+        "summary": summary,
+        "details": {
+            "total_runtime_count": len(bindings),
+            "by_stage": by_stage,
+            "by_status": by_status,
+        },
+        "surface_refs": [
+            _project_health_surface_ref("runtime_roster", runtime_roster_surface),
+        ],
+        "target_refs": [
+            {
+                "label": "Runtime State Board",
+                "href": _OPERATOR_RUNTIME_STATE_ROUTE,
+            },
+        ],
+    }
+    return group, group_surface, bindings
+
+
+def _build_telemetry_health_group(
+    snapshot_at: str,
+    bindings: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    telemetry_surface = _dataset_surface_status(
+        "telemetry_summaries",
+        snapshot_at=snapshot_at,
+    )
+    covered_runtime_count = 0
+    latest_collected_at: Optional[str] = None
+    for binding in bindings:
+        runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+        if not runtime_id:
+            continue
+        summary = read_store.get_telemetry_summary(runtime_id)
+        if not summary:
+            continue
+        covered_runtime_count += 1
+        collected_at = summary.get("collected_at")
+        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
+            latest_collected_at = collected_at
+
+    total_runtime_count = len(bindings)
+    missing_runtime_count = max(total_runtime_count - covered_runtime_count, 0)
+    if (
+        total_runtime_count > 0
+        and missing_runtime_count > 0
+        and telemetry_surface.get("status") == "ok"
+    ):
+        telemetry_surface["status"] = "degraded"
+        telemetry_surface["message"] = (
+            "Telemetry summary missing for one or more runtimes."
+        )
+        telemetry_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+
+    group_surface = _aggregate_group_surface(
+        "telemetry",
+        [telemetry_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Telemetry summary unavailable.",
+        degraded_message="Telemetry summary coverage is degraded or stale.",
+    )
+    if telemetry_surface.get("status") == "unavailable":
+        summary = "Telemetry summary unavailable."
+    elif total_runtime_count == 0:
+        summary = "No runtimes available for telemetry coverage."
+    elif missing_runtime_count == 0:
+        summary = f"Telemetry coverage available for all {covered_runtime_count} runtime(s)."
+    else:
+        summary = (
+            f"Telemetry coverage available for {covered_runtime_count} of "
+            f"{total_runtime_count} runtime(s)."
+        )
+
+    group = {
+        "group_id": "telemetry",
+        "label": _HEALTH_GROUP_LABELS["telemetry"],
+        "status": group_surface.get("status"),
+        "summary": summary,
+        "details": {
+            "total_runtime_count": total_runtime_count,
+            "covered_runtime_count": covered_runtime_count,
+            "missing_runtime_count": missing_runtime_count,
+            "latest_collected_at": latest_collected_at,
+        },
+        "surface_refs": [
+            _project_health_surface_ref("telemetry_summary", telemetry_surface),
+        ],
+        "target_refs": [
+            {
+                "label": "Runtime State Board",
+                "href": _OPERATOR_RUNTIME_STATE_ROUTE,
+            },
+        ],
+    }
+    return group, group_surface
+
+
+def _build_incident_health_group(snapshot_at: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    incidents = read_store.list_incidents()
+    active_incidents = [
+        incident
+        for incident in incidents
+        if str(incident.get("status") or "").lower() in {"open", "in_progress"}
+    ]
+    highest_severity = _highest_ranked_value(
+        [_incident_home_severity(incident.get("severity")) for incident in active_incidents],
+        _INCIDENT_SEVERITY_ORDER,
+    )
+    open_count = sum(
+        1
+        for incident in active_incidents
+        if str(incident.get("status") or "").lower() == "open"
+    )
+    in_progress_count = sum(
+        1
+        for incident in active_incidents
+        if str(incident.get("status") or "").lower() == "in_progress"
+    )
+
+    group_surface = _aggregate_group_surface(
+        "incident",
+        [incident_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Incident surface unavailable.",
+        degraded_message="Incident surface degraded or stale.",
+    )
+    if incident_surface.get("status") == "unavailable":
+        summary = "Incident surface unavailable."
+    elif not active_incidents:
+        summary = "No active incidents."
+    else:
+        summary = (
+            f"{len(active_incidents)} active incident(s); highest severity "
+            f"{highest_severity or 'unknown'}."
+        )
+
+    group = {
+        "group_id": "incident",
+        "label": _HEALTH_GROUP_LABELS["incident"],
+        "status": group_surface.get("status"),
+        "summary": summary,
+        "details": {
+            "total_incident_count": len(incidents),
+            "active_incident_count": len(active_incidents),
+            "open_count": open_count,
+            "in_progress_count": in_progress_count,
+            "highest_severity": highest_severity,
+        },
+        "surface_refs": [
+            _project_health_surface_ref("incident_list", incident_surface),
+        ],
+        "target_refs": [
+            {
+                "label": "Incident Home",
+                "href": _OPERATOR_INCIDENT_HOME_ROUTE,
+            },
+        ],
+    }
+    return group, group_surface
+
+
+def _build_governance_health_group(snapshot_at: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    review_queue_surface = _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    approval_queue_surface = _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    review_items = read_store.list_governance_review_queue_items()
+    approval_items = read_store.list_approval_queue_items()
+    highest_risk_level = _highest_ranked_value(
+        [item.get("risk_level") for item in review_items + approval_items],
+        _GOVERNANCE_RISK_ORDER,
+    )
+
+    group_surface = _aggregate_group_surface(
+        "governance",
+        [review_queue_surface, approval_queue_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Governance health unavailable.",
+        degraded_message="Governance review or approval surfaces are degraded.",
+    )
+    total_pending_items = len(review_items) + len(approval_items)
+    if group_surface.get("status") == "unavailable":
+        summary = "Governance health unavailable."
+    elif total_pending_items == 0:
+        summary = "No pending governance reviews or approvals."
+    else:
+        summary = f"{total_pending_items} governance item(s) pending review or approval."
+
+    group = {
+        "group_id": "governance",
+        "label": _HEALTH_GROUP_LABELS["governance"],
+        "status": group_surface.get("status"),
+        "summary": summary,
+        "details": {
+            "review_queue_count": len(review_items),
+            "approval_queue_count": len(approval_items),
+            "total_pending_items": total_pending_items,
+            "highest_risk_level": highest_risk_level,
+        },
+        "surface_refs": [
+            _project_health_surface_ref("review_queue", review_queue_surface),
+            _project_health_surface_ref("approval_queue", approval_queue_surface),
+        ],
+        "target_refs": [
+            {
+                "label": "Governance Review Queue",
+                "href": _GOVERNANCE_REVIEW_QUEUE_ROUTE,
+            },
+            {
+                "label": "Governance Approval Queue",
+                "href": _GOVERNANCE_APPROVAL_QUEUE_ROUTE,
+            },
+        ],
+    }
+    return group, group_surface
+
+
+def _build_kill_switch_health_group(
+    snapshot_at: str,
+) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+    kill_switch = (
+        read_store.get_kill_switch_status()
+        if kill_switch_surface.get("status") != "unavailable"
+        else {}
+    )
+    safe_mode_status = kill_switch.get("safe_mode_status")
+    kill_switch_status = kill_switch.get("status")
+
+    group_surface = _aggregate_group_surface(
+        "kill_switch",
+        [kill_switch_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Kill-switch and safe-mode state unavailable.",
+        degraded_message="Kill-switch or safe-mode state is degraded or stale.",
+    )
+    if kill_switch_surface.get("status") == "unavailable":
+        summary = "Kill-switch and safe-mode state unavailable."
+    else:
+        summary = (
+            f"Kill-switch {kill_switch_status or 'unknown'}; "
+            f"safe mode {safe_mode_status or 'unknown'}."
+        )
+
+    safe_mode_state = {
+        "status": None if kill_switch_surface.get("status") == "unavailable" else safe_mode_status,
+        "kill_switch_status": None if kill_switch_surface.get("status") == "unavailable" else kill_switch_status,
+        "active": None if kill_switch_surface.get("status") == "unavailable" else kill_switch.get("active"),
+        "last_confirmed_at": None if kill_switch_surface.get("status") == "unavailable" else kill_switch.get("last_confirmed_at"),
+        "last_triggered_at": None if kill_switch_surface.get("status") == "unavailable" else kill_switch.get("last_triggered_at"),
+        "secondary_path_available": None if kill_switch_surface.get("status") == "unavailable" else kill_switch.get("secondary_path_available"),
+    }
+
+    group = {
+        "group_id": "kill_switch",
+        "label": _HEALTH_GROUP_LABELS["kill_switch"],
+        "status": group_surface.get("status"),
+        "summary": summary,
+        "details": {
+            "kill_switch_status": safe_mode_state["kill_switch_status"],
+            "safe_mode_status": safe_mode_state["status"],
+            "active_command_count": (
+                len(kill_switch.get("active_commands") or [])
+                if kill_switch_surface.get("status") != "unavailable"
+                else None
+            ),
+            "last_confirmed_at": safe_mode_state["last_confirmed_at"],
+            "last_triggered_at": safe_mode_state["last_triggered_at"],
+            "secondary_path_available": safe_mode_state["secondary_path_available"],
+        },
+        "surface_refs": [
+            _project_health_surface_ref("kill_switch", kill_switch_surface),
+        ],
+        "target_refs": [
+            {
+                "label": "Health Status Board",
+                "href": _OPERATOR_HEALTH_STATUS_ROUTE,
+            },
+        ],
+    }
+    return group, group_surface, safe_mode_state
+
+
+def _build_secondary_control_path(
+    *,
+    overall_status: str,
+    safe_mode_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    safe_mode_status = str(safe_mode_state.get("status") or "").lower()
+    kill_switch_status = str(safe_mode_state.get("kill_switch_status") or "").lower()
+    safe_mode_active = safe_mode_status not in {"", "off", "released", "none", "null"}
+    if overall_status == "ok" and not safe_mode_active and kill_switch_status not in {"triggered", "cooling_down"}:
+        return {
+            "mode": "hidden",
+            "reason": None,
+            "targets": [],
+        }
+
+    if overall_status == "unavailable" or safe_mode_active or kill_switch_status in {"triggered", "cooling_down"}:
+        mode = "recommended"
+        reason = (
+            "One or more critical health groups are unavailable or safe mode is active. "
+            "Use the secondary control path for verification or intervention."
+        )
+        targets = _SECONDARY_CONTROL_PATH_RECOMMENDED_TARGETS
+    else:
+        mode = "advisory"
+        reason = (
+            "Some health groups are degraded. Use the secondary control path to verify "
+            "current control-plane state before critical decisions."
+        )
+        targets = _SECONDARY_CONTROL_PATH_ADVISORY_TARGETS
+
+    return {
+        "mode": mode,
+        "reason": reason,
+        "targets": json.loads(json.dumps(list(targets))),
+    }
+
+
+def _health_status_headline(overall_status: str, safe_mode_state: Dict[str, Any]) -> str:
+    safe_mode_status = str(safe_mode_state.get("status") or "").lower()
+    kill_switch_status = str(safe_mode_state.get("kill_switch_status") or "").lower()
+    if safe_mode_status not in {"", "off", "released", "none", "null"}:
+        return "Safe mode active"
+    if kill_switch_status == "cooling_down":
+        return "Kill-switch cooling down"
+    if kill_switch_status == "triggered":
+        return "Kill-switch triggered"
+    if overall_status == "ok":
+        return "Control plane healthy"
+    if overall_status == "degraded":
+        return "Some services degraded"
+    return "Control plane health unavailable"
+
+
+def _alert_target_ref(
+    *,
+    surface_id: str,
+    label: str,
+    href: str,
+    target_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "surface_id": surface_id,
+        "label": label,
+        "href": href,
+    }
+    if target_id not in (None, ""):
+        payload["target_id"] = target_id
+    return payload
+
+
+def _max_alert_severity(values: List[Optional[str]]) -> Optional[str]:
+    return _highest_ranked_value(values, _ALERT_SEVERITY_ORDER)
+
+
+def _alert_sort_key(alert: Dict[str, Any]) -> tuple[str, int, int, str]:
+    severity = str(alert.get("severity") or "").lower()
+    category = str(alert.get("category") or "").lower()
+    return (
+        str(alert.get("raised_at") or ""),
+        _ALERT_SEVERITY_ORDER.get(severity, 0),
+        _ALERT_CATEGORY_ORDER.get(category, 0),
+        str(alert.get("alert_id") or ""),
+    )
+
+
+def _alert_severity_for_incident(incident: Dict[str, Any]) -> str:
+    normalized = _incident_home_severity(incident.get("severity"))
+    if normalized == "sev1":
+        return "critical"
+    if normalized == "sev2":
+        return "high"
+    return "medium"
+
+
+def _alert_severity_for_risk_level(
+    risk_level: Optional[str],
+    *,
+    elevated: bool = False,
+) -> str:
+    mapping = {
+        "critical": "critical",
+        "high": "high",
+        "medium": "medium",
+        "low": "low",
+    }
+    severity = mapping.get(str(risk_level or "").strip().lower(), "medium")
+    if elevated and _ALERT_SEVERITY_ORDER.get(severity, 0) < _ALERT_SEVERITY_ORDER["high"]:
+        return "high"
+    return severity
+
+
+def _build_incident_alerts(snapshot_at: str) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    if incident_surface.get("status") == "unavailable":
+        return [], incident_surface
+
+    alerts: List[Dict[str, Any]] = []
+    incidents = read_store.list_incidents()
+    for incident in incidents:
+        incident_status = str(incident.get("status") or "").lower()
+        if incident_status not in {"open", "in_progress"}:
+            continue
+        incident_id = str(incident.get("incident_id") or "")
+        severity = _alert_severity_for_incident(incident)
+        title = str(incident.get("title") or incident_id or "Unnamed incident")
+        status_prefix = "Active" if incident_status == "open" else "In-progress"
+        alerts.append(
+            {
+                "alert_id": f"alert-incident-{incident_id}",
+                "severity": severity,
+                "category": "incident",
+                "raised_at": incident.get("opened_at") or incident.get("created_at") or snapshot_at,
+                "summary": f"{status_prefix} incident: {title}.",
+                "target_ref": _alert_target_ref(
+                    surface_id="PKT-002",
+                    label="Open incident response",
+                    href=_incident_detail_href(incident_id),
+                    target_id=incident_id,
+                ),
+            }
+        )
+    return alerts, incident_surface
+
+
+def _build_governance_alerts(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    review_queue_surface = _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    approval_queue_surface = _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    alerts: List[Dict[str, Any]] = []
+
+    if review_queue_surface.get("status") != "unavailable":
+        for item in read_store.list_governance_review_queue_items():
+            item_id = str(item.get("item_id") or "")
+            status = str(item.get("status") or "").lower()
+            if status not in {"pending", "in_review", "escalated"}:
+                continue
+            severity = _alert_severity_for_risk_level(
+                item.get("risk_level"),
+                elevated=status == "escalated",
+            )
+            item_type = str(item.get("item_type") or "Governance item")
+            if status == "escalated":
+                summary = f"Escalated governance review: {item_type} {item_id}."
+            elif status == "in_review":
+                summary = f"Governance review in progress: {item_type} {item_id}."
+            else:
+                summary = f"Pending governance review: {item_type} {item_id}."
+            alerts.append(
+                {
+                    "alert_id": f"alert-governance-review-{item_id}",
+                    "severity": severity,
+                    "category": "governance",
+                    "raised_at": item.get("submitted_at") or snapshot_at,
+                    "summary": summary,
+                    "target_ref": _alert_target_ref(
+                        surface_id="PKT-001",
+                        label="Open governance review queue",
+                        href=_GOVERNANCE_REVIEW_QUEUE_ROUTE,
+                        target_id=item_id,
+                    ),
+                }
+            )
+
+    if approval_queue_surface.get("status") != "unavailable":
+        for item in read_store.list_approval_queue_items():
+            decision_id = str(item.get("decision_id") or "")
+            decision_state = str(item.get("decision_state") or "").lower()
+            if decision_state not in {"pending", "in_review"}:
+                continue
+            severity = _alert_severity_for_risk_level(
+                item.get("risk_level"),
+                elevated=decision_state == "in_review",
+            )
+            decision_type = str(item.get("decision_type") or "Approval item")
+            if decision_state == "in_review":
+                summary = f"Approval decision in review: {decision_type} {decision_id}."
+            else:
+                summary = f"Approval required: {decision_type} {decision_id}."
+            alerts.append(
+                {
+                    "alert_id": f"alert-approval-{decision_id}",
+                    "severity": severity,
+                    "category": "governance",
+                    "raised_at": item.get("submitted_at") or snapshot_at,
+                    "summary": summary,
+                    "target_ref": _alert_target_ref(
+                        surface_id="GV-02",
+                        label="Open approval queue",
+                        href=_GOVERNANCE_APPROVAL_QUEUE_ROUTE,
+                        target_id=decision_id,
+                    ),
+                }
+            )
+
+    return alerts, {
+        "review_queue": review_queue_surface,
+        "approval_queue": approval_queue_surface,
+    }
+
+
+def _build_kill_switch_alerts(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+    if kill_switch_surface.get("status") == "unavailable":
+        return [], kill_switch_surface, {}
+
+    kill_switch = read_store.get_kill_switch_status()
+    safe_mode_status = str(kill_switch.get("safe_mode_status") or "").lower()
+    kill_switch_status = str(kill_switch.get("status") or "").lower()
+    safe_mode_active = safe_mode_status not in {"", "off", "released", "none", "null"}
+    alerts: List[Dict[str, Any]] = []
+
+    if kill_switch.get("active") or kill_switch_status == "triggered":
+        severity = "critical"
+        summary = "Kill-switch active; operator intervention is required."
+    elif kill_switch_status == "cooling_down":
+        severity = "high"
+        summary = "Kill-switch cooling down; verify runtime stability before resuming operations."
+    elif safe_mode_active:
+        severity = "high"
+        summary = f"Safe mode active ({safe_mode_status}); use the health board to verify current restrictions."
+    else:
+        return [], kill_switch_surface, kill_switch
+
+    alerts.append(
+        {
+            "alert_id": "alert-kill-switch-state",
+            "severity": severity,
+            "category": "kill_switch",
+            "raised_at": kill_switch.get("last_triggered_at")
+            or kill_switch.get("last_confirmed_at")
+            or snapshot_at,
+            "summary": summary,
+            "target_ref": _alert_target_ref(
+                surface_id="OC-03",
+                label="Open health status board",
+                href=_OPERATOR_HEALTH_STATUS_ROUTE,
+                target_id=kill_switch_status or safe_mode_status or "kill-switch",
+            ),
+        }
+    )
+    return alerts, kill_switch_surface, kill_switch
+
+
+def _runtime_anomaly_reasons(
+    binding: Dict[str, Any],
+    telemetry_summary: Optional[Dict[str, Any]],
+) -> tuple[List[str], Optional[str]]:
+    reasons: List[str] = []
+    severities: List[Optional[str]] = []
+
+    runtime_status = str(binding.get("status") or "").lower()
+    runtime_status_severity = _RUNTIME_STATUS_ALERT_SEVERITY.get(runtime_status)
+    if runtime_status_severity:
+        severities.append(runtime_status_severity)
+        reasons.append(f"runtime status is {runtime_status}")
+
+    if telemetry_summary:
+        drawdown = telemetry_summary.get("drawdown")
+        if isinstance(drawdown, (int, float)):
+            for threshold, severity in _TELEMETRY_DRAWDOWN_THRESHOLDS:
+                if drawdown >= threshold:
+                    severities.append(severity)
+                    reasons.append(f"drawdown is {drawdown:.3f}")
+                    break
+
+        fill_rate = telemetry_summary.get("fill_rate")
+        if isinstance(fill_rate, (int, float)):
+            for threshold, severity in _TELEMETRY_FILL_RATE_THRESHOLDS:
+                if fill_rate < threshold:
+                    severities.append(severity)
+                    reasons.append(f"fill rate dropped to {fill_rate:.2f}")
+                    break
+
+        avg_slippage_bps = telemetry_summary.get("avg_slippage_bps")
+        if isinstance(avg_slippage_bps, (int, float)):
+            for threshold, severity in _TELEMETRY_SLIPPAGE_THRESHOLDS:
+                if avg_slippage_bps >= threshold:
+                    severities.append(severity)
+                    reasons.append(f"average slippage reached {avg_slippage_bps:.1f} bps")
+                    break
+
+    return reasons, _max_alert_severity(severities)
+
+
+def _build_runtime_alerts(
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    runtime_roster_surface = _dataset_surface_status(
+        "runtime_bindings",
+        snapshot_at=snapshot_at,
+    )
+    telemetry_surface = _dataset_surface_status(
+        "telemetry_summaries",
+        snapshot_at=snapshot_at,
+    )
+    if runtime_roster_surface.get("status") == "unavailable":
+        return [], {
+            "runtime_roster": runtime_roster_surface,
+            "telemetry_summary": telemetry_surface,
+        }
+
+    alerts: List[Dict[str, Any]] = []
+    bindings = read_store.list_runtime_bindings()
+    missing_telemetry = False
+    for binding in bindings:
+        runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+        telemetry_summary = None
+        if runtime_id and telemetry_surface.get("status") != "unavailable":
+            telemetry_summary = read_store.get_telemetry_summary(runtime_id)
+            if telemetry_summary is None:
+                missing_telemetry = True
+        reasons, severity = _runtime_anomaly_reasons(binding, telemetry_summary)
+        if not reasons or not severity:
+            continue
+        alerts.append(
+            {
+                "alert_id": f"alert-runtime-{runtime_id}",
+                "severity": severity,
+                "category": "runtime",
+                "raised_at": (telemetry_summary or {}).get("collected_at")
+                or binding.get("updated_at")
+                or binding.get("last_updated_at")
+                or binding.get("started_at")
+                or snapshot_at,
+                "summary": f"Runtime {runtime_id} anomaly: {'; '.join(reasons[:2])}.",
+                "target_ref": _alert_target_ref(
+                    surface_id="OC-04",
+                    label="Open runtime state board",
+                    href=_OPERATOR_RUNTIME_STATE_ROUTE,
+                    target_id=runtime_id,
+                ),
+            }
+        )
+
+    if bindings and missing_telemetry and telemetry_surface.get("status") == "ok":
+        telemetry_surface["status"] = "degraded"
+        telemetry_surface["message"] = "Telemetry summary missing for one or more runtimes."
+        telemetry_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+
+    return alerts, {
+        "runtime_roster": runtime_roster_surface,
+        "telemetry_summary": telemetry_surface,
+    }
+
+
+def _build_alert_summary(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_severity = {key: 0 for key in _ALERT_SEVERITY_ORDER}
+    by_category = {key: 0 for key in _ALERT_CATEGORY_ORDER}
+    for alert in alerts:
+        severity = str(alert.get("severity") or "").lower()
+        category = str(alert.get("category") or "").lower()
+        if severity in by_severity:
+            by_severity[severity] += 1
+        if category in by_category:
+            by_category[category] += 1
+    return {
+        "total_active": len(alerts),
+        "highest_severity": _max_alert_severity(
+            [str(alert.get("severity") or "").lower() for alert in alerts]
+        ),
+        "by_severity": by_severity,
+        "by_category": by_category,
+    }
+
+
+def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
+    incident_alerts, incident_surface = _build_incident_alerts(snapshot_at)
+    governance_alerts, governance_surfaces = _build_governance_alerts(snapshot_at)
+    kill_switch_alerts, kill_switch_surface, _ = _build_kill_switch_alerts(snapshot_at)
+    runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
+
+    source_surfaces = [
+        incident_surface,
+        governance_surfaces["review_queue"],
+        governance_surfaces["approval_queue"],
+        kill_switch_surface,
+        runtime_surfaces["runtime_roster"],
+        runtime_surfaces["telemetry_summary"],
+    ]
+    alerts_surface = _aggregate_group_surface(
+        "alerts",
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message="Operator alert feed unavailable.",
+        degraded_message="Operator alert feed is available, but one or more contributing surfaces are degraded.",
+    )
+
+    alerts = sorted(
+        incident_alerts + governance_alerts + kill_switch_alerts + runtime_alerts,
+        key=_alert_sort_key,
+        reverse=True,
+    )
+    if alerts_surface.get("status") == "unavailable":
+        alerts = []
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["acknowledgement_supported"] = False
+    meta["surfaces"] = {
+        "alerts": alerts_surface,
+        "incident_feed": incident_surface,
+        "review_queue": governance_surfaces["review_queue"],
+        "approval_queue": governance_surfaces["approval_queue"],
+        "kill_switch": kill_switch_surface,
+        "runtime_roster": runtime_surfaces["runtime_roster"],
+        "telemetry_summary": runtime_surfaces["telemetry_summary"],
+    }
+    return {
+        "alerts": alerts,
+        "summary": _build_alert_summary(alerts),
+        "meta": meta,
+    }
+
+
+def _build_operator_health_status_payload(snapshot_at: str) -> Dict[str, Any]:
+    runtime_group, runtime_surface, runtime_bindings = _build_runtime_health_group(snapshot_at)
+    telemetry_group, telemetry_surface = _build_telemetry_health_group(
+        snapshot_at,
+        runtime_bindings,
+    )
+    incident_group, incident_surface = _build_incident_health_group(snapshot_at)
+    governance_group, governance_surface = _build_governance_health_group(snapshot_at)
+    kill_switch_group, kill_switch_surface, safe_mode_state = _build_kill_switch_health_group(
+        snapshot_at
+    )
+
+    group_surfaces = {
+        "runtime": runtime_surface,
+        "telemetry": telemetry_surface,
+        "incident": incident_surface,
+        "governance": governance_surface,
+        "kill_switch": kill_switch_surface,
+    }
+    overall_surface = _aggregate_group_surface(
+        "health_status",
+        list(group_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="All health groups are unavailable.",
+        degraded_message="One or more health groups are degraded or unavailable.",
+    )
+    overall_status = overall_surface.get("status", "ok")
+
+    group_counts = {
+        "ok": sum(1 for surface in group_surfaces.values() if surface.get("status") == "ok"),
+        "degraded": sum(
+            1 for surface in group_surfaces.values() if surface.get("status") == "degraded"
+        ),
+        "unavailable": sum(
+            1 for surface in group_surfaces.values() if surface.get("status") == "unavailable"
+        ),
+    }
+    secondary_control_path = _build_secondary_control_path(
+        overall_status=overall_status,
+        safe_mode_state=safe_mode_state,
+    )
+
+    if overall_status == "ok":
+        message = "All health groups are responding normally."
+    elif overall_status == "degraded":
+        message = (
+            f"{group_counts['degraded'] + group_counts['unavailable']} of "
+            f"{len(group_surfaces)} health groups need attention."
+        )
+    else:
+        message = "Primary health surfaces are unavailable; rely on the secondary control path."
+
+    groups = [
+        runtime_group,
+        telemetry_group,
+        incident_group,
+        governance_group,
+        kill_switch_group,
+    ]
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "health_status": overall_surface,
+        **group_surfaces,
+    }
+    return {
+        "overall_status": overall_status,
+        "headline": _health_status_headline(overall_status, safe_mode_state),
+        "message": message,
+        "group_counts": group_counts,
+        "safe_mode_state": safe_mode_state,
+        "secondary_control_path": secondary_control_path,
+        "groups": groups,
+        "meta": meta,
+    }
+
+
+def _build_home_card(
+    *,
+    card_id: str,
+    label: str,
+    status: str,
+    summary: str,
+    details: Dict[str, Any],
+    target_refs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
+        "card_id": card_id,
+        "label": label,
+        "status": status,
+        "summary": summary,
+        "details": details,
+        "target_refs": target_refs,
+    }
+
+
+def _build_operator_home_payload(snapshot_at: str) -> Dict[str, Any]:
+    alerts_payload = _build_operator_alerts_payload(snapshot_at)
+    health_payload = _build_operator_health_status_payload(snapshot_at)
+    groups_by_id = {
+        str(group.get("group_id") or ""): group
+        for group in health_payload["groups"]
+    }
+    alert_summary = alerts_payload["summary"]
+    safe_mode_state = health_payload["safe_mode_state"]
+
+    alert_surface = alerts_payload["meta"]["surfaces"]["alerts"]
+    incident_group = groups_by_id["incident"]
+    governance_group = groups_by_id["governance"]
+    runtime_group = groups_by_id["runtime"]
+    telemetry_group = groups_by_id["telemetry"]
+
+    runtime_card_status = _aggregate_group_surface(
+        "operator_home_runtime",
+        [
+            health_payload["meta"]["surfaces"]["runtime"],
+            health_payload["meta"]["surfaces"]["telemetry"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Runtime overview unavailable.",
+        degraded_message="Runtime or telemetry coverage is degraded.",
+    )["status"]
+
+    cards = [
+        _build_home_card(
+            card_id="alerts",
+            label="Alerts",
+            status=alert_surface.get("status", "ok"),
+            summary=(
+                "Operator alert feed unavailable."
+                if alert_surface.get("status") == "unavailable"
+                else (
+                    "No active operator alerts."
+                    if alert_summary["total_active"] == 0
+                    else f"{alert_summary['total_active']} active alert(s); highest severity {alert_summary['highest_severity']}."
+                )
+            ),
+            details=alert_summary,
+            target_refs=[
+                _alert_target_ref(
+                    surface_id="OC-02",
+                    label="Open alerts rail",
+                    href=_OPERATOR_ALERTS_ROUTE,
+                )
+            ],
+        ),
+        _build_home_card(
+            card_id="incidents",
+            label="Incidents",
+            status=str(incident_group.get("status") or "ok"),
+            summary=str(incident_group.get("summary") or "Incident summary unavailable."),
+            details=dict(incident_group.get("details") or {}),
+            target_refs=list(incident_group.get("target_refs") or []),
+        ),
+        _build_home_card(
+            card_id="governance",
+            label="Governance",
+            status=str(governance_group.get("status") or "ok"),
+            summary=str(governance_group.get("summary") or "Governance summary unavailable."),
+            details=dict(governance_group.get("details") or {}),
+            target_refs=list(governance_group.get("target_refs") or []),
+        ),
+        _build_home_card(
+            card_id="runtime",
+            label="Runtime",
+            status=runtime_card_status,
+            summary=(
+                "Runtime overview unavailable."
+                if runtime_card_status == "unavailable"
+                else (
+                    str(runtime_group.get("summary") or "Runtime overview unavailable.")
+                    if telemetry_group.get("status") == "ok"
+                    else f"{runtime_group.get('summary')} Telemetry: {telemetry_group.get('summary')}"
+                )
+            ),
+            details={
+                "runtime": dict(runtime_group.get("details") or {}),
+                "telemetry": dict(telemetry_group.get("details") or {}),
+            },
+            target_refs=[
+                _alert_target_ref(
+                    surface_id="OC-04",
+                    label="Open runtime state board",
+                    href=_OPERATOR_RUNTIME_STATE_ROUTE,
+                )
+            ],
+        ),
+        _build_home_card(
+            card_id="health",
+            label="Health",
+            status=str(health_payload.get("overall_status") or "ok"),
+            summary=str(health_payload.get("message") or "Health summary unavailable."),
+            details={
+                "headline": health_payload.get("headline"),
+                "group_counts": dict(health_payload.get("group_counts") or {}),
+                "safe_mode_state": dict(safe_mode_state),
+            },
+            target_refs=[
+                _alert_target_ref(
+                    surface_id="OC-03",
+                    label="Open health status board",
+                    href=_OPERATOR_HEALTH_STATUS_ROUTE,
+                )
+            ],
+        ),
+    ]
+
+    safe_mode_status = str(safe_mode_state.get("status") or "").lower()
+    kill_switch_status = str(safe_mode_state.get("kill_switch_status") or "").lower()
+    safe_mode_active = safe_mode_status not in {"", "off", "released", "none", "null"}
+
+    home_surface = _aggregate_group_surface(
+        "operator_home",
+        [
+            alert_surface,
+            health_payload["meta"]["surfaces"]["health_status"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Operator home summary unavailable.",
+        degraded_message="Operator home summary is degraded because alerts or health inputs are degraded.",
+    )
+    overall_status = home_surface.get("status", "ok")
+
+    if safe_mode_active or kill_switch_status in {"triggered", "cooling_down"}:
+        headline = "Operator attention required"
+        message = "Safe mode or kill-switch activity requires immediate review."
+    elif overall_status == "unavailable":
+        headline = "Operator home unavailable"
+        message = "Primary operator summary surfaces are unavailable."
+    elif alert_summary["total_active"] > 0:
+        headline = f"{alert_summary['total_active']} active operator alert(s)"
+        message = "Review the alerts rail before making deployment or runtime decisions."
+    elif overall_status == "degraded":
+        headline = "Operator home degraded"
+        message = "One or more operator summary surfaces are degraded."
+    else:
+        headline = "Operator console stable"
+        message = "No active incidents, governance bottlenecks, or runtime alerts require attention."
+
+    escalation_shortcuts: List[Dict[str, Any]] = []
+    if alert_summary["total_active"] > 0:
+        escalation_shortcuts.append(
+            {
+                "shortcut_id": "open-alerts-rail",
+                "label": "Open alerts rail",
+                "reason": "There are active operator alerts that need triage.",
+                "href": _OPERATOR_ALERTS_ROUTE,
+                "priority": "high",
+            }
+        )
+    if int((incident_group.get("details") or {}).get("active_incident_count") or 0) > 0:
+        escalation_shortcuts.append(
+            {
+                "shortcut_id": "open-incident-home",
+                "label": "Open incident home",
+                "reason": "Active incidents are open and may require response.",
+                "href": _OPERATOR_INCIDENT_HOME_ROUTE,
+                "priority": "high",
+            }
+        )
+    if health_payload.get("overall_status") != "ok" or safe_mode_active:
+        escalation_shortcuts.append(
+            {
+                "shortcut_id": "open-health-status",
+                "label": "Open health status board",
+                "reason": "Health status or safe-mode state needs verification.",
+                "href": _OPERATOR_HEALTH_STATUS_ROUTE,
+                "priority": "high" if safe_mode_active else "medium",
+            }
+        )
+    if int((governance_group.get("details") or {}).get("total_pending_items") or 0) > 0:
+        escalation_shortcuts.append(
+            {
+                "shortcut_id": "open-approval-queue",
+                "label": "Open approval queue",
+                "reason": "Pending governance items may block execution changes.",
+                "href": _GOVERNANCE_APPROVAL_QUEUE_ROUTE,
+                "priority": "medium",
+            }
+        )
+    if int((runtime_group.get("details") or {}).get("total_runtime_count") or 0) > 0:
+        escalation_shortcuts.append(
+            {
+                "shortcut_id": "open-runtime-state",
+                "label": "Open runtime state board",
+                "reason": "Inspect current runtime and telemetry status.",
+                "href": _OPERATOR_RUNTIME_STATE_ROUTE,
+                "priority": "medium",
+            }
+        )
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "operator_home": home_surface,
+        "alerts": alert_surface,
+        "health_status": health_payload["meta"]["surfaces"]["health_status"],
+        "incident": health_payload["meta"]["surfaces"]["incident"],
+        "governance": health_payload["meta"]["surfaces"]["governance"],
+        "runtime": health_payload["meta"]["surfaces"]["runtime"],
+        "telemetry": health_payload["meta"]["surfaces"]["telemetry"],
+        "kill_switch": health_payload["meta"]["surfaces"]["kill_switch"],
+    }
+    return {
+        "overall_status": overall_status,
+        "headline": headline,
+        "message": message,
+        "safe_mode_state": safe_mode_state,
+        "cards": cards,
+        "escalation_shortcuts": escalation_shortcuts,
+        "meta": meta,
+    }
+
+
+def _unavailable_surface(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    message: str,
+) -> Dict[str, Any]:
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    surface["status"] = "unavailable"
+    surface["message"] = message
+    surface.setdefault(
+        "staleness",
+        {"served_from": "unverifiable", "last_known_at": snapshot_at},
+    )
+    return surface
+
+
+def _browser_href_for_drift_evidence_ref(
+    ref: Dict[str, Any],
+    *,
+    plan_id: Optional[str],
+    primary_incident_id: Optional[str],
+) -> Optional[str]:
+    ref_type = str(ref.get("type") or "").strip().lower()
+    ref_id = str(ref.get("ref_id") or "").strip()
+    if ref_type == "approvaldecision":
+        return _GOVERNANCE_APPROVAL_QUEUE_ROUTE
+    if ref_type == "incidentcase" and ref_id:
+        return _incident_detail_href(ref_id)
+    if ref_type == "evolutiondecision" and primary_incident_id:
+        return _post_incident_review_href(primary_incident_id)
+    if ref_type == "drift_report":
+        return None
+    if plan_id and str(ref.get("href") or "").startswith("/api/v1/operator/deployment-review/"):
+        return _deployment_review_href(plan_id)
+    return ref.get("href")
+
+
+def _normalize_drift_evidence_refs(
+    refs: List[Dict[str, Any]],
+    *,
+    plan_id: Optional[str],
+    primary_incident_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    normalized = json.loads(json.dumps(refs))
+    for ref in normalized:
+        if not isinstance(ref, dict):
+            continue
+        ref["href"] = _browser_href_for_drift_evidence_ref(
+            ref,
+            plan_id=plan_id,
+            primary_incident_id=primary_incident_id,
+        )
+    return normalized
+
+
+def _normalize_drift_recommended_actions(
+    actions: List[Dict[str, Any]],
+    *,
+    plan_id: Optional[str],
+    primary_incident_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    normalized = json.loads(json.dumps(actions))
+    for action in normalized:
+        if not isinstance(action, dict):
+            continue
+        target_ref = action.get("target_ref")
+        if not isinstance(target_ref, dict):
+            continue
+        surface_id = str(target_ref.get("surface_id") or "").strip()
+        target_id = str(target_ref.get("target_id") or "").strip()
+        if surface_id == "PKT-001" and plan_id:
+            target_ref["href"] = _deployment_review_href(plan_id)
+        elif surface_id == "PKT-002" and target_id:
+            target_ref["href"] = _incident_detail_href(target_id)
+        elif surface_id == "PKT-003" and target_id:
+            target_ref["href"] = _post_incident_review_href(target_id)
+    return normalized
+
+
+def _build_operator_paper_live_drift_payload(
+    runtime_id: str,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
+    report = read_store.get_paper_live_drift_report(runtime_id)
+    plan_id = None
+    artifact_id = None
+    artifact_version = None
+
+    if runtime_binding:
+        plan_id = runtime_binding.get("plan_id")
+        artifact_id = runtime_binding.get("artifact_id")
+        artifact_version = runtime_binding.get("artifact_version")
+    if report:
+        plan_id = report.get("plan_id") or plan_id
+        artifact_id = report.get("artifact_id") or artifact_id
+        artifact_version = report.get("artifact_version") or artifact_version
+
+    plan = read_store.get_deployment_plan(plan_id) if plan_id else None
+    approval_decision = (
+        read_store.get_approval_decision(plan.get("approval_decision_id"))
+        if plan
+        else None
+    )
+    telemetry_summary = read_store.get_telemetry_summary(runtime_id)
+    telemetry_performance = (
+        read_store.get_telemetry_performance(str(artifact_id))
+        if artifact_id
+        else None
+    )
+    incidents = [
+        incident
+        for incident in read_store.list_incidents()
+        if str(incident.get("runtime_id") or "") == runtime_id
+        and str(incident.get("status") or "").lower() in {"open", "in_progress"}
+    ]
+    evolution_decisions = []
+    for incident in incidents:
+        evolution_decisions.extend(
+            read_store.get_evolution_decisions_by_incident(
+                str(incident.get("incident_id") or "")
+            )
+        )
+    primary_incident_id = (
+        str(incidents[0].get("incident_id") or "").strip() if incidents else None
+    )
+
+    report_surface = (
+        _dataset_surface_status("paper_live_drift_reports", snapshot_at=snapshot_at)
+        if report is not None
+        else _unavailable_surface(
+            "paper_live_drift_reports",
+            snapshot_at=snapshot_at,
+            message="Paper/live drift report unavailable for this runtime.",
+        )
+    )
+    runtime_surface = (
+        _dataset_surface_status(
+            "runtime_bindings",
+            snapshot_at=snapshot_at,
+            has_data=runtime_binding is not None,
+            missing_message="Runtime binding unavailable for this drift view.",
+        )
+        if runtime_binding is not None
+        else _unavailable_surface(
+            "runtime_bindings",
+            snapshot_at=snapshot_at,
+            message="Runtime binding unavailable for this drift view.",
+        )
+    )
+    telemetry_surface = (
+        _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=telemetry_summary is not None,
+            missing_message="Observed telemetry summary unavailable for this drift view.",
+        )
+        if telemetry_summary is not None
+        else _unavailable_surface(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            message="Observed telemetry summary unavailable for this drift view.",
+        )
+    )
+    performance_surface = (
+        _dataset_surface_status(
+            "telemetry_performance",
+            snapshot_at=snapshot_at,
+            has_data=telemetry_performance is not None,
+            missing_message="Paper baseline performance unavailable for this drift view.",
+        )
+        if telemetry_performance is not None
+        else _unavailable_surface(
+            "telemetry_performance",
+            snapshot_at=snapshot_at,
+            message="Paper baseline performance unavailable for this drift view.",
+        )
+    )
+    approval_surface = (
+        _dataset_surface_status(
+            "approval_decisions",
+            snapshot_at=snapshot_at,
+            has_data=approval_decision is not None,
+            missing_message="Approval decision unavailable for this drift view.",
+        )
+        if approval_decision is not None
+        else _unavailable_surface(
+            "approval_decisions",
+            snapshot_at=snapshot_at,
+            message="Approval decision unavailable for this drift view.",
+        )
+    )
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    evolution_surface = _dataset_surface_status(
+        "evolution_decisions",
+        snapshot_at=snapshot_at,
+    )
+
+    source_surfaces = [
+        report_surface,
+        runtime_surface,
+        telemetry_surface,
+        performance_surface,
+        approval_surface,
+        incident_surface,
+        evolution_surface,
+    ]
+    paper_live_drift_surface = _aggregate_group_surface(
+        "paper_live_drift",
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message="Paper/live drift view unavailable.",
+        degraded_message="Paper/live drift view is available, but one or more supporting surfaces are degraded.",
+    )
+    if report is None:
+        paper_live_drift_surface["status"] = "unavailable"
+        paper_live_drift_surface["message"] = "Paper/live drift view unavailable."
+        paper_live_drift_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+
+    recommended_actions = []
+    if report:
+        recommended_actions = _normalize_drift_recommended_actions(
+            report.get("recommended_actions") or [],
+            plan_id=str(plan_id) if plan_id else None,
+            primary_incident_id=primary_incident_id,
+        )
+    elif plan_id:
+        recommended_actions = [
+            {
+                "action_id": "open-deployment-review",
+                "label": "Open deployment review",
+                "reason": "A drift report is not yet available; inspect the current deployment context first.",
+                "target_ref": _alert_target_ref(
+                    surface_id="PKT-001",
+                    label="Open deployment review",
+                    href=_deployment_review_href(str(plan_id)),
+                    target_id=plan_id,
+                ),
+            }
+        ]
+
+    return {
+        "runtime_id": runtime_id,
+        "plan_ref": (
+            {
+                "plan_id": plan_id,
+                "href": _deployment_plan_href(str(plan_id)),
+            }
+            if plan_id
+            else None
+        ),
+        "artifact_ref": (
+            {
+                "artifact_id": artifact_id,
+                "artifact_version": artifact_version,
+            }
+            if artifact_id or artifact_version
+            else None
+        ),
+        "paper_baseline": json.loads(json.dumps((report or {}).get("paper_baseline")))
+        if report
+        else None,
+        "observed_state": json.loads(json.dumps((report or {}).get("observed_state")))
+        if report
+        else None,
+        "drift_groups": json.loads(json.dumps((report or {}).get("drift_groups") or [])),
+        "threshold_evaluation": json.loads(
+            json.dumps(
+                (report or {}).get("threshold_evaluation")
+                or {
+                    "overall_status": "unavailable",
+                    "summary": "Paper/live drift report unavailable for this runtime.",
+                    "breached_metric_ids": [],
+                }
+            )
+        ),
+        "evidence_refs": _normalize_drift_evidence_refs(
+            (report or {}).get("evidence_refs") or [],
+            plan_id=str(plan_id) if plan_id else None,
+            primary_incident_id=primary_incident_id,
+        ),
+        "recommended_actions": recommended_actions,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "paper_live_drift": paper_live_drift_surface,
+                "drift_report": report_surface,
+                "runtime_binding": runtime_surface,
+                "telemetry_summary": telemetry_surface,
+                "telemetry_performance": performance_surface,
+                "approval_decision": approval_surface,
+                "incident": incident_surface,
+                "evolution": evolution_surface,
+            },
+            "supporting_counts": {
+                "active_incident_count": len(incidents),
+                "evolution_decision_count": len(evolution_decisions),
+            },
+        },
+    }
+
+
+def _snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    return meta
+
+
+_RW01_ALLOWED_PRIORITIES = {"low", "normal", "high", "critical"}
+_RW01_ALLOWED_STATUSES = {"open", "in_progress", "closed", "archived"}
+_RW01_STATUS_TRANSITIONS = {
+    "open": {"in_progress", "closed"},
+    "in_progress": {"closed"},
+    "closed": {"archived"},
+    "archived": set(),
+}
+_RW02_ALLOWED_MATCH_TYPES = {"all", "ticket", "experiment", "artifact"}
+_RW02_ALLOWED_ADAPTER_STATES = {"fresh", "stale", "degraded", "unavailable"}
+_RW03_ALLOWED_STATUSES = {"queued", "running", "completed", "failed"}
+_RW03_ALLOWED_DATE_RANGES = {"24h", "7d", "30d", "90d"}
+_RW05_ALLOWED_STATUSES = {"pending", "sealed", "superseded", "failed"}
+_EW04_ALLOWED_SURFACE_STATES = {"fresh", "stale", "unavailable"}
+_KW02_ATTACHMENT_TYPES = {"research_ticket", "persona", "strategy_spec", "free_standing"}
+_KW02_ATTACHMENT_ID_PATTERNS = {
+    "research_ticket": re.compile(r"^tkt-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    "persona": re.compile(r"^persona-[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    "strategy_spec": re.compile(r"^strat-[A-Za-z0-9-]+$"),
+}
+_KW02_MEMORY_ANCHOR_PATTERN = re.compile(
+    r"^mem-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_KW03_LINKED_ENTITY_TYPES = {
+    "memory_entry",
+    "research_note",
+    "insight_card",
+    "strategy_spec",
+    "experiment",
+    "artifact",
+}
+_KW03_LINK_TYPES = {
+    "supporting_evidence",
+    "counter_evidence",
+    "citation",
+    "provenance",
+    "corroboration",
+}
+_KW03_CREDIBILITY_TIERS = {"primary", "secondary", "tertiary", "unverified"}
+_KW04_STATUSES = {"active", "superseded", "archived", "all"}
+_KW04_LINKED_ENTITY_TYPES = {
+    "memory_entry",
+    "research_note",
+    "evidence_ref",
+    "strategy_spec",
+    "experiment",
+}
+_KW04_RECENCY_VALUES = {"7d", "30d", "90d", "all"}
+_KW05_LIFECYCLE_STATES = {"draft", "candidate", "approved", "retired", "all"}
+
+
+def _ew04_inspiration_surface_state(
+    projection: Optional[Dict[str, Any]],
+    *,
+    artifact_exists: bool,
+) -> str:
+    source = read_store.dataset_source("inspiration_graphs")
+    base_status = _surface_status().get("status")
+
+    explicit_state = (
+        projection.get("meta", {})
+        .get("surfaces", {})
+        .get("inspiration")
+        if projection
+        else None
+    )
+    explicit_state = str(explicit_state or "").strip().lower()
+    if explicit_state in _EW04_ALLOWED_SURFACE_STATES:
+        return explicit_state
+
+    if source == "missing" or base_status == "unavailable":
+        return "unavailable"
+    if source == "local_snapshot" or base_status == "degraded":
+        return "stale"
+    if artifact_exists:
+        return "fresh"
+    return "unavailable"
+
+
+def _ew04_inspiration_payload(
+    artifact_id: str,
+    projection: Optional[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+    artifact_exists: bool,
+) -> Dict[str, Any]:
+    if projection:
+        payload = json.loads(json.dumps(projection))
+    else:
+        payload = {
+            "artifact_id": artifact_id,
+            "inspiration_edges": [],
+            "strategy_tags": [],
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {},
+            },
+        }
+
+    payload["artifact_id"] = artifact_id
+    payload["inspiration_edges"] = list(payload.get("inspiration_edges") or [])
+    if "strategy_tags" in payload:
+        payload["strategy_tags"] = list(payload.get("strategy_tags") or [])
+    else:
+        payload["strategy_tags"] = []
+
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        payload["meta"] = meta
+    meta["snapshot_at"] = str(meta.get("snapshot_at") or snapshot_at)
+    surfaces = meta.get("surfaces")
+    if not isinstance(surfaces, dict):
+        surfaces = {}
+        meta["surfaces"] = surfaces
+    surfaces["inspiration"] = _ew04_inspiration_surface_state(
+        projection,
+        artifact_exists=artifact_exists,
+    )
+    return payload
+
+
+def _rw01_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+    source: Optional[str] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+        source=source,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "stale"
+    return "fresh"
+
+
+_TW01_SESSION_STATUSES = {"active", "paused", "completed", "abandoned"}
+_TW04_REPLAY_TERMINAL_STATUSES = {"completed", "abandoned"}
+
+
+def _tw04_get_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
+    preview_events = sorted(
+        [
+            e for e in (replay.get("events") or [])
+            if isinstance(e, dict) and e.get("event_type") == "preview_trigger"
+        ],
+        key=lambda e: int(e.get("sequence_number") or 0),
+    )
+    if not preview_events:
+        return None
+    return (preview_events[-1].get("eval_ref") or {}).get("candidate_snapshot_at")
+
+
+def _tw04_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
+
+
+def _tw01_validate_session_status(value: Optional[str]) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _TW01_SESSION_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer session status",
+            f"status must be one of {sorted(_TW01_SESSION_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _tw01_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
+
+
+def _tw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid context_refs",
+            "context_refs must be an array of { type, id } objects",
+            precondition_failed="context_refs",
+        )
+    refs: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid context_refs entry",
+                "Each context_refs entry must be an object",
+                precondition_failed="context_refs",
+            )
+        refs.append(
+            {
+                "type": _tw01_required_text(item, "type"),
+                "id": _tw01_required_text(item, "id"),
+            }
+        )
+    return refs
+
+
+def _tw01_trainer_dialog_surface_state(
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        "teaching_sessions",
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "stale"
+    return "fresh"
+
+
+def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
+    refresh_mode = str(payload.get("refresh_mode") or "").strip().lower()
+    if refresh_mode != "manual":
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer preview refresh mode",
+            "refresh_mode must equal 'manual' for TW-03",
+            precondition_failed="refresh_mode",
+        )
+    return refresh_mode
+
+
+def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    allowed_fields = {"patches"}
+    unknown_fields = sorted(set(payload.keys()) - allowed_fields)
+    if unknown_fields:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer control patch payload",
+            f"Unsupported top-level fields: {unknown_fields}",
+            precondition_failed="payload_shape",
+        )
+
+    patches = payload.get("patches")
+    if not isinstance(patches, list) or not patches:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer control patch payload",
+            "patches must be a non-empty array of { parameter_key, proposed_value } objects",
+            precondition_failed="patches",
+        )
+
+    normalized: List[Dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for index, patch in enumerate(patches):
+        if not isinstance(patch, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch entry",
+                "Each patches[] entry must be an object",
+                precondition_failed=f"patches[{index}]",
+            )
+
+        unknown_patch_fields = sorted(set(patch.keys()) - {"parameter_key", "proposed_value"})
+        if unknown_patch_fields:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch entry",
+                f"Unsupported patch fields: {unknown_patch_fields}",
+                precondition_failed=f"patches[{index}]",
+            )
+
+        parameter_key = str(patch.get("parameter_key") or "").strip()
+        if not parameter_key:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch entry",
+                "parameter_key must be a non-empty string",
+                precondition_failed=f"patches[{index}].parameter_key",
+            )
+        if parameter_key in seen_keys:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid trainer control patch payload",
+                f"Duplicate parameter_key is not allowed: {parameter_key}",
+                precondition_failed=f"patches[{index}].parameter_key",
+            )
+
+        normalized.append(
+            {
+                "parameter_key": parameter_key,
+                "proposed_value": patch.get("proposed_value"),
+            }
+        )
+        seen_keys.add(parameter_key)
+
+    return normalized
+
+
+_CW01_TARGET_TYPES = {"persona", "committee", "red_team"}
+_CW01_PRIORITIES = {"low", "normal", "high", "critical"}
+_CW01_CONSULTATION_TYPES = {
+    "pre_deployment",
+    "risk_review",
+    "macro_regime_shift",
+    "incident_response",
+    "policy_change",
+    "general",
+}
+_CW01_CONTEXT_REF_TYPES = {
+    "artifact",
+    "deployment_plan",
+    "incident",
+    "lineage_edge",
+    "telemetry_ref",
+    "note",
+}
+
+
+def _cw01_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
+
+
+def _cw01_validate_target_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _CW01_TARGET_TYPES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid target_type",
+            f"target_type must be one of {sorted(_CW01_TARGET_TYPES)}",
+            precondition_failed="target_type",
+        )
+    return normalized
+
+
+def _cw01_validate_priority(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _CW01_PRIORITIES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid priority",
+            f"priority must be one of {sorted(_CW01_PRIORITIES)}",
+            precondition_failed="priority",
+        )
+    return normalized
+
+
+def _cw01_validate_consultation_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _CW01_CONSULTATION_TYPES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid consultation_type",
+            f"consultation_type must be one of {sorted(_CW01_CONSULTATION_TYPES)}",
+            precondition_failed="consultation_type",
+        )
+    return normalized
+
+
+def _cw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid context_refs",
+            "context_refs must be an array of { type, id } objects",
+            precondition_failed="context_refs",
+        )
+    refs: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid context_refs entry",
+                "Each context_refs entry must be an object with type and id",
+                precondition_failed="context_refs",
+            )
+        ref_type = str(item.get("type") or "").strip().lower()
+        if ref_type not in _CW01_CONTEXT_REF_TYPES:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid context_refs entry type",
+                f"context_refs[].type must be one of {sorted(_CW01_CONTEXT_REF_TYPES)}",
+                precondition_failed="context_refs",
+            )
+        ref_id = str(item.get("id") or "").strip()
+        if not ref_id:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Missing context_refs entry id",
+                "context_refs[].id must be a non-empty string",
+                precondition_failed="context_refs",
+            )
+        refs.append({"type": ref_type, "id": ref_id})
+    return refs
+
+
+def _cw01_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "stale"
+    return "fresh"
+
+
+def _rw01_validate_priority(priority: Any) -> str:
+    normalized = str(priority or "").strip().lower()
+    if normalized not in _RW01_ALLOWED_PRIORITIES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid research ticket priority",
+            f"priority must be one of {sorted(_RW01_ALLOWED_PRIORITIES)}",
+            precondition_failed="priority",
+        )
+    return normalized
+
+
+def _rw01_validate_status(status: Any) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized not in _RW01_ALLOWED_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid research ticket status",
+            f"status must be one of {sorted(_RW01_ALLOWED_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _kw02_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw02_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw02_optional_title(payload: Dict[str, Any]) -> Optional[str]:
+    title = payload.get("title")
+    if title in (None, ""):
+        return None
+    normalized = str(title).strip()
+    if not normalized:
+        return None
+    if len(normalized) > 256:
+        raise _kw02_bad_request(
+            "Invalid title",
+            "title must be 256 characters or fewer",
+            "title",
+        )
+    return normalized
+
+
+def _kw02_required_body(payload: Dict[str, Any]) -> str:
+    body = payload.get("body")
+    if body is None or not str(body).strip():
+        raise _kw02_bad_request(
+            "Missing required field: body",
+            "body must be a non-empty string",
+            "body",
+        )
+    return str(body).strip()
+
+
+def _kw02_validate_string_list(value: Any, field: str) -> List[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise _kw02_bad_request(
+            f"Invalid {field}",
+            f"{field} must be an array of strings",
+            field,
+        )
+    normalized: List[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if not text:
+            raise _kw02_bad_request(
+                f"Invalid {field} entry",
+                f"{field} entries must be non-empty strings",
+                field,
+            )
+        normalized.append(text)
+    return normalized
+
+
+def _kw02_validate_attachment_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW02_ATTACHMENT_TYPES:
+        raise _kw02_bad_request(
+            "Invalid attachment_type",
+            f"attachment_type must be one of {sorted(_KW02_ATTACHMENT_TYPES)}",
+            "attachment_type",
+        )
+    return normalized
+
+
+def _kw02_validate_attachment_ref(attachment_type: str, value: Any) -> Optional[str]:
+    if attachment_type == "free_standing":
+        if value not in (None, ""):
+            raise _kw02_bad_request(
+                "Invalid attachment_ref",
+                "attachment_ref must be null when attachment_type is free_standing",
+                "attachment_ref",
+            )
+        return None
+
+    ref = str(value or "").strip()
+    if not ref:
+        raise _kw02_bad_request(
+            "Missing attachment_ref",
+            "attachment_ref is required unless attachment_type is free_standing",
+            "attachment_ref",
+        )
+    pattern = _KW02_ATTACHMENT_ID_PATTERNS.get(attachment_type)
+    if pattern is not None and not pattern.match(ref):
+        raise _kw02_bad_request(
+            "Invalid attachment_ref",
+            f"attachment_ref does not match the identity format for {attachment_type}",
+            "attachment_ref",
+        )
+    return ref
+
+
+def _kw02_resolve_attachment_target(
+    attachment_type: str,
+    attachment_ref: Optional[str],
+) -> tuple[bool, Optional[str], Optional[str]]:
+    if attachment_type == "free_standing":
+        return True, None, None
+    if attachment_type == "research_ticket":
+        ticket = read_store.get_research_ticket(attachment_ref)
+        if not ticket:
+            return False, None, None
+        return True, ticket.get("title"), f"/research/tickets/{attachment_ref}"
+    if attachment_type == "persona":
+        persona = read_store.get_persona(attachment_ref)
+        if not persona:
+            return False, None, None
+        return True, persona.get("name"), f"/personas/{attachment_ref}"
+    strategy_spec = read_store.get_strategy_spec(attachment_ref)
+    if not strategy_spec:
+        return False, None, None
+    label = strategy_spec.get("title") or strategy_spec.get("name") or attachment_ref
+    return True, label, f"/knowledge/strategy-specs/{attachment_ref}"
+
+
+def _kw02_validate_memory_anchors(anchor_ids: List[str]) -> List[str]:
+    validated: List[str] = []
+    for entry_id in anchor_ids:
+        if not _KW02_MEMORY_ANCHOR_PATTERN.match(entry_id):
+            raise _kw02_bad_request(
+                "Invalid linked_memory_anchors entry",
+                "linked_memory_anchors items must use the mem-{UUID} format",
+                "linked_memory_anchors",
+            )
+        if read_store.get_institutional_memory_entry(entry_id) is None:
+            raise _kw02_bad_request(
+                "Unknown linked_memory_anchors entry",
+                f"linked_memory_anchors entry {entry_id} does not resolve to a known institutional memory entry",
+                "linked_memory_anchors",
+            )
+        validated.append(entry_id)
+    return validated
+
+
+def _kw02_operator_display_name(operator_id: str) -> str:
+    if operator_id == "op-001":
+        return "Alice Chen"
+    token = str(operator_id or "").strip()
+    if not token:
+        return "Operator"
+    if token.startswith("op-"):
+        return f"Operator {token}"
+    return " ".join(part.capitalize() for part in re.split(r"[-_]+", token) if part)
+
+
+def _kw02_strip_markdown(text: str) -> str:
+    plain = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    plain = re.sub(r"[`*_>#]", " ", plain)
+    plain = re.sub(r"\s+", " ", plain).strip()
+    return plain
+
+
+def _kw02_note_excerpt(body: str) -> str:
+    return _kw02_strip_markdown(body)[:280]
+
+
+def _kw02_attachment_payload(note: Dict[str, Any], *, include_route: bool) -> Dict[str, Any]:
+    attachment_type = str(note.get("attachment_type") or "free_standing")
+    attachment_ref = note.get("attachment_ref")
+    exists, display_label, route_href = _kw02_resolve_attachment_target(attachment_type, attachment_ref)
+    payload = {
+        "type": attachment_type,
+        "ref": attachment_ref,
+        "display_label": display_label if exists else None,
+    }
+    if include_route:
+        payload["route_href"] = route_href if exists else None
+    return payload
+
+
+def _kw02_note_list_item(note: Dict[str, Any]) -> Dict[str, Any]:
+    body = str(note.get("body") or "")
+    return {
+        "note_id": note.get("note_id"),
+        "title": note.get("title"),
+        "excerpt": _kw02_note_excerpt(body),
+        "owner_ref": json.loads(json.dumps(note.get("owner_ref") or {})),
+        "attachment": _kw02_attachment_payload(note, include_route=False),
+        "tags": list(note.get("tags") or []),
+        "created_at": note.get("created_at"),
+        "updated_at": note.get("updated_at"),
+        "route_href": f"/knowledge/notes/{note.get('note_id')}",
+    }
+
+
+def _kw02_resolve_evidence_links(
+    ref_ids: List[str],
+    *,
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], str]:
+    surface_state = _kw02_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    items: List[Dict[str, Any]] = []
+    for ref_id in ref_ids:
+        if surface_state == "unavailable":
+            items.append(
+                {
+                    "ref_id": ref_id,
+                    "resolution_state": "unavailable",
+                    "display_label": None,
+                    "route_href": None,
+                }
+            )
+            continue
+        evidence_ref = read_store.get_evidence_ref(ref_id)
+        if evidence_ref:
+            items.append(
+                {
+                    "ref_id": ref_id,
+                    "resolution_state": "resolved",
+                    "display_label": evidence_ref.get("display_label"),
+                    "route_href": evidence_ref.get("route_href") or f"/knowledge/evidence/{ref_id}",
+                }
+            )
+            continue
+        items.append(
+            {
+                "ref_id": ref_id,
+                "resolution_state": "unresolved",
+                "display_label": None,
+                "route_href": None,
+            }
+        )
+    return items, surface_state
+
+
+def _kw02_resolve_memory_anchors(
+    entry_ids: List[str],
+    *,
+    snapshot_at: str,
+) -> tuple[List[Dict[str, Any]], str]:
+    surface_state = _kw02_surface_state(
+        "institutional_memory_entries",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    items: List[Dict[str, Any]] = []
+    missing_entries = False
+    for entry_id in entry_ids:
+        entry = read_store.get_institutional_memory_entry(entry_id)
+        if not entry:
+            missing_entries = True
+            continue
+        content = entry.get("content") if isinstance(entry.get("content"), dict) else {}
+        lifecycle = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
+        items.append(
+            {
+                "entry_id": entry_id,
+                "headline": content.get("headline"),
+                "knowledge_type": entry.get("knowledge_type"),
+                "lifecycle_status": lifecycle.get("status"),
+                "route_href": f"/knowledge/memory/{entry_id}",
+            }
+        )
+    if missing_entries and surface_state == "ok":
+        surface_state = "degraded"
+    return items, surface_state
+
+
+def _kw03_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw03_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw03_validate_linked_entity_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_LINKED_ENTITY_TYPES:
+        raise _kw03_bad_request(
+            "Invalid linked_entity_type",
+            f"linked_entity_type must be one of {sorted(_KW03_LINKED_ENTITY_TYPES)}",
+            "linked_entity_type",
+        )
+    return normalized
+
+
+def _kw03_validate_link_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_LINK_TYPES:
+        raise _kw03_bad_request(
+            "Invalid link_type",
+            f"link_type must be one of {sorted(_KW03_LINK_TYPES)}",
+            "link_type",
+        )
+    return normalized
+
+
+def _kw03_validate_credibility_tier(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_CREDIBILITY_TIERS:
+        raise _kw03_bad_request(
+            "Invalid credibility_tier",
+            f"credibility_tier must be one of {sorted(_KW03_CREDIBILITY_TIERS)}",
+            "credibility_tier",
+        )
+    return normalized
+
+
+def _kw04_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw04_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw04_validate_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW04_STATUSES:
+        raise _kw04_bad_request(
+            "Invalid status",
+            f"status must be one of {sorted(_KW04_STATUSES)}",
+            "status",
+        )
+    return normalized
+
+
+def _kw04_validate_linked_entity_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW04_LINKED_ENTITY_TYPES:
+        raise _kw04_bad_request(
+            "Invalid linked_entity_type",
+            f"linked_entity_type must be one of {sorted(_KW04_LINKED_ENTITY_TYPES)}",
+            "linked_entity_type",
+        )
+    return normalized
+
+
+def _kw04_validate_recency(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW04_RECENCY_VALUES:
+        raise _kw04_bad_request(
+            "Invalid recency",
+            f"recency must be one of {sorted(_KW04_RECENCY_VALUES)}",
+            "recency",
+        )
+    return normalized
+
+
+def _kw04_validate_confidence_min(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise _kw04_bad_request(
+            "Invalid confidence_min",
+            "confidence_min must be a number between 0.0 and 1.0",
+            "confidence_min",
+        )
+    if parsed < 0.0 or parsed > 1.0:
+        raise _kw04_bad_request(
+            "Invalid confidence_min",
+            "confidence_min must be a number between 0.0 and 1.0",
+            "confidence_min",
+        )
+    return parsed
+
+
+def _kw04_recency_display_label(value: str) -> str:
+    labels = {
+        "7d": "Last 7 days",
+        "30d": "Last 30 days",
+        "90d": "Last 90 days",
+        "all": "All time",
+    }
+    return labels[value]
+
+
+def _kw04_within_recency(aggregated_at: Optional[str], recency: str, snapshot_at: str) -> bool:
+    if recency == "all":
+        return True
+    aggregated_dt = _parse_rfc3339(aggregated_at)
+    snapshot_dt = _parse_rfc3339(snapshot_at)
+    if aggregated_dt is None or snapshot_dt is None:
+        return False
+    days = {"7d": 7, "30d": 30, "90d": 90}[recency]
+    return aggregated_dt >= snapshot_dt - timedelta(days=days)
+
+
+def _kw04_filter_metadata(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    tag_counts: Dict[str, int] = {}
+    linked_entity_counts: Dict[str, int] = {}
+    for card in cards:
+        seen_tags = set()
+        for tag in card.get("tags") or []:
+            tag_value = str(tag or "").strip()
+            if not tag_value or tag_value in seen_tags:
+                continue
+            tag_counts[tag_value] = tag_counts.get(tag_value, 0) + 1
+            seen_tags.add(tag_value)
+        seen_entity_types = set()
+        for source in card.get("linked_sources") or []:
+            entity_type = str((source or {}).get("entity_type") or "").strip()
+            if not entity_type or entity_type in seen_entity_types:
+                continue
+            linked_entity_counts[entity_type] = linked_entity_counts.get(entity_type, 0) + 1
+            seen_entity_types.add(entity_type)
+
+    linked_entity_labels = {
+        "memory_entry": "Institutional Memory",
+        "research_note": "Research Note",
+        "evidence_ref": "Evidence Reference",
+        "strategy_spec": "Strategy Spec",
+        "experiment": "Experiment",
+    }
+    return {
+        "tags": [
+            {
+                "value": tag,
+                "display_label": tag.replace("-", " ").title(),
+                "count": count,
+            }
+            for tag, count in sorted(tag_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "linked_entity_types": [
+            {
+                "value": entity_type,
+                "display_label": linked_entity_labels.get(entity_type, entity_type.replace("_", " ").title()),
+                "count": count,
+            }
+            for entity_type, count in sorted(
+                linked_entity_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ],
+        "recency_options": [
+            {
+                "value": value,
+                "display_label": _kw04_recency_display_label(value),
+            }
+            for value in ["7d", "30d", "90d", "all"]
+        ],
+        "total_active_count": len(
+            [card for card in cards if str(card.get("status") or "") == "active"]
+        ),
+    }
+
+
+def _kw05_bad_request(message: str, reason: str, field: str) -> HTTPException:
+    return _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=field,
+    )
+
+
+def _kw05_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+) -> str:
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+        return "degraded"
+    return "ok"
+
+
+def _kw05_validate_lifecycle_state(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW05_LIFECYCLE_STATES:
+        raise _kw05_bad_request(
+            "Invalid lifecycle_state",
+            f"lifecycle_state must be one of {sorted(_KW05_LIFECYCLE_STATES)}",
+            "lifecycle_state",
+        )
+    return normalized
+
+
+def _kw05_compare_selectors(
+    *,
+    left_version: Optional[str],
+    right_version: Optional[str],
+    base_version: Optional[str],
+    target_version: Optional[str],
+) -> tuple[str, str]:
+    left = str(left_version or base_version or "").strip()
+    right = str(right_version or target_version or "").strip()
+    if not left or not right:
+        raise _kw05_bad_request(
+            "Missing compare versions",
+            "Provide either left_version/right_version or base_version/target_version",
+            "left_version",
+        )
+    if left_version and base_version and str(left_version).strip() != str(base_version).strip():
+        raise _kw05_bad_request(
+            "Conflicting compare aliases",
+            "left_version and base_version must reference the same version when both are provided",
+            "left_version",
+        )
+    if right_version and target_version and str(right_version).strip() != str(target_version).strip():
+        raise _kw05_bad_request(
+            "Conflicting compare aliases",
+            "right_version and target_version must reference the same version when both are provided",
+            "right_version",
+        )
+    return left, right
+
+
+def _kw04_supporting_evidence_surface(
+    supporting_evidence_refs: List[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> str:
+    surface_state = _kw04_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    if surface_state != "ok":
+        return surface_state
+    for item in supporting_evidence_refs:
+        if not item.get("ref_id") or not isinstance(item.get("resolved_link"), dict):
+            return "degraded"
+    return "ok"
+
+
+def _kw04_linked_sources_surface(
+    linked_sources: List[Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> str:
+    dataset_map = {
+        "memory_entry": "institutional_memory_entries",
+        "research_note": "research_notes",
+        "evidence_ref": "evidence_refs",
+        "strategy_spec": "strategy_specs",
+        "experiment": "research_experiments",
+    }
+    if not linked_sources:
+        return "ok"
+    overall = "ok"
+    for item in linked_sources:
+        entity_type = str(item.get("entity_type") or "").strip()
+        dataset = dataset_map.get(entity_type)
+        if not dataset:
+            return "degraded"
+        state = _kw04_surface_state(dataset, snapshot_at=snapshot_at, has_data=True)
+        if state == "unavailable":
+            return "unavailable"
+        if state == "degraded":
+            overall = "degraded"
+        if not item.get("display_label") or "route_href" not in item:
+            overall = "degraded"
+    return overall
+
+
+def _rw03_validate_status(status: Any) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized not in _RW03_ALLOWED_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid research analysis status",
+            f"status must be one of {sorted(_RW03_ALLOWED_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _rw03_validate_date_range(date_range: Any) -> str:
+    normalized = str(date_range or "").strip().lower()
+    if normalized not in _RW03_ALLOWED_DATE_RANGES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid research analysis date_range",
+            f"date_range must be one of {sorted(_RW03_ALLOWED_DATE_RANGES)}",
+            precondition_failed="date_range",
+        )
+    return normalized
+
+
+def _rw02_invalid_query(detail: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "invalid_search_query",
+            "detail": detail,
+        },
+    )
+
+
+def _rw02_validate_query(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError("q is required and must be non-empty")
+    return normalized
+
+
+def _rw02_validate_match_type(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    if normalized not in _RW02_ALLOWED_MATCH_TYPES:
+        raise ValueError(
+            f"match_type must be one of {sorted(_RW02_ALLOWED_MATCH_TYPES)}"
+        )
+    return normalized
+
+
+def _rw02_validate_status(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized not in _RW01_ALLOWED_STATUSES:
+        raise ValueError(
+            f"status must be one of {sorted(_RW01_ALLOWED_STATUSES)}"
+        )
+    return normalized
+
+
+def _rw02_validate_date_range(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized not in _RW03_ALLOWED_DATE_RANGES:
+        raise ValueError(
+            f"date_range must be one of {sorted(_RW03_ALLOWED_DATE_RANGES)}"
+        )
+    return normalized
+
+
+def _rw02_page_slice(
+    items: List[Dict[str, Any]],
+    page_token: Optional[str],
+    page_size: int,
+) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    if page_token in (None, ""):
+        start = 0
+    else:
+        try:
+            start = int(page_token)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("page_token must be a non-negative integer offset") from exc
+        if start < 0:
+            raise ValueError("page_token must be a non-negative integer offset")
+    end = start + page_size
+    next_page_token = str(end) if end < len(items) else None
+    return items[start:end], next_page_token
+
+
+def _rw02_adapter_state(index_adapter: Optional[Dict[str, Any]], *, snapshot_at: str) -> str:
+    derived_state = _rw01_surface_state("research_search_documents", snapshot_at=snapshot_at)
+    if derived_state in {"unavailable", "degraded"}:
+        return derived_state
+    if isinstance(index_adapter, dict):
+        state = str(index_adapter.get("adapter_state") or "").strip().lower()
+        if state in _RW02_ALLOWED_ADAPTER_STATES:
+            if derived_state == "stale" and state == "fresh":
+                return "stale"
+            return state
+    return derived_state
+
+
+def _rw01_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = str(payload.get(field) or "").strip()
+    if not value:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} is required and must be a non-empty string.",
+            precondition_failed=field,
+        )
+    return value
+
+
+def _rw01_validate_patch(
+    ticket: Dict[str, Any],
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    allowed_patch_fields = {"status", "title", "description", "priority", "owner"}
+    unknown_fields = sorted(set(payload.keys()) - allowed_patch_fields)
+    if unknown_fields:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid research ticket patch payload",
+            f"Unsupported patch fields: {unknown_fields}",
+            precondition_failed="payload_shape",
+        )
+
+    patch: Dict[str, Any] = {}
+    editable = bool((ticket.get("allowedActions") or {}).get("canEdit"))
+
+    for field in ("title", "description", "owner"):
+        if field in payload:
+            value = str(payload.get(field) or "").strip()
+            if not value:
+                raise _bff_error(
+                    422,
+                    ErrorCode.INVALID_PARAMS,
+                    f"Invalid research ticket field: {field}",
+                    f"{field} must be a non-empty string when provided.",
+                    precondition_failed=field,
+                )
+            if not editable:
+                raise _bff_error(
+                    409,
+                    ErrorCode.INVALID_STATE,
+                    "Research ticket is not editable in its current lifecycle state",
+                    f"{field} cannot be modified while allowedActions.canEdit is false.",
+                    precondition_failed="allowedActions.canEdit",
+                )
+            patch[field] = value
+
+    if "priority" in payload:
+        if not editable:
+            raise _bff_error(
+                409,
+                ErrorCode.INVALID_STATE,
+                "Research ticket is not editable in its current lifecycle state",
+                "priority cannot be modified while allowedActions.canEdit is false.",
+                precondition_failed="allowedActions.canEdit",
+            )
+        patch["priority"] = _rw01_validate_priority(payload.get("priority"))
+
+    if "status" in payload:
+        current_status = str(ticket.get("status") or "").strip().lower()
+        next_status = _rw01_validate_status(payload.get("status"))
+        if next_status != current_status:
+            if next_status == "closed" and not (ticket.get("allowedActions") or {}).get("canClose"):
+                raise _bff_error(
+                    409,
+                    ErrorCode.INVALID_STATE,
+                    "Research ticket cannot be closed in its current state",
+                    "allowedActions.canClose is false for this ticket.",
+                    precondition_failed="allowedActions.canClose",
+                )
+            if next_status == "archived" and not (ticket.get("allowedActions") or {}).get("canArchive"):
+                raise _bff_error(
+                    409,
+                    ErrorCode.INVALID_STATE,
+                    "Research ticket cannot be archived in its current state",
+                    "allowedActions.canArchive is false for this ticket.",
+                    precondition_failed="allowedActions.canArchive",
+                )
+            allowed_targets = _RW01_STATUS_TRANSITIONS.get(current_status, set())
+            if next_status not in allowed_targets:
+                raise _bff_error(
+                    409,
+                    ErrorCode.INVALID_STATE,
+                    "Invalid research ticket lifecycle transition",
+                    f"Cannot transition research ticket from {current_status} to {next_status}.",
+                    precondition_failed="status_transition",
+                )
+        patch["status"] = next_status
+
+    if not patch:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Empty research ticket patch payload",
+            "At least one accepted patch field is required.",
+            precondition_failed="payload_shape",
+        )
+    return patch
+
+
+def _build_consultation_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
+    modules = [
+        {
+            "module_id": "CW-01",
+            "label": "Consult Request",
+            "status": "ready",
+            "wave_order": 1,
+            "summary": "Request create/list/detail/cancel routes are live. Request-to-session lifecycle and linked_session_id contract are implemented.",
+            "live_routes": [
+                "POST /api/v1/consult/requests",
+                "GET /api/v1/consult/requests",
+                "GET /api/v1/consult/requests/{request_id}",
+                "POST /api/v1/consult/requests/{request_id}/cancel",
+            ],
+            "next_gate": "CW-01 is live. CW-02 (Debate Transcript) may proceed.",
+            "upstream_dependencies": [],
+        },
+        {
+            "module_id": "CW-02",
+            "label": "Debate Transcript",
+            "status": "ready",
+            "wave_order": 2,
+            "summary": "Transcript route is live. Ordered TranscriptEvent stream with actor identity, sequence_no ordering, from_sequence_no filtering, and degradation semantics are implemented.",
+            "live_routes": [
+                "GET /api/v1/consultations/{session_id}/transcript",
+            ],
+            "next_gate": "Activate the CW-02 transcript UI against the published frontend packet; CW-03 and CW-04 may continue consuming the live transcript truth.",
+            "upstream_dependencies": ["CW-01"],
+        },
+        {
+            "module_id": "CW-03",
+            "label": "Committee Board",
+            "status": "ready",
+            "wave_order": 3,
+            "summary": "Committee list/detail routes, sponsor-decision authority, and transcript dependency (CW-02) are all live. Full production handoff is unblocked.",
+            "live_routes": [
+                "GET /api/v1/committees",
+                "GET /api/v1/committees/{committee_id}",
+                "POST /api/v1/operator/commands (RecordSponsorDecision)",
+            ],
+            "next_gate": "CW-03 is fully live. Proceed with CW-04 Red-team Memo implementation.",
+            "upstream_dependencies": ["CW-01", "CW-02"],
+        },
+        {
+            "module_id": "CW-04",
+            "label": "Red-team Memo",
+            "status": "ready",
+            "wave_order": 4,
+            "summary": "Memo list/detail routes are live. Backend-owned mapping, evidence links, degradation semantics, and governance handoff authority are implemented.",
+            "live_routes": [
+                "GET /api/v1/consult/memos",
+                "GET /api/v1/consult/memos/{memo_id}",
+            ],
+            "next_gate": "Activate the CW-04 memo UI against the published frontend handoff packet and preserve backend-owned mapping, evidence, and governance semantics.",
+            "upstream_dependencies": ["CW-01", "CW-02"],
+        },
+    ]
+    return {
+        "workbench_id": "consultation-workbench",
+        "label": "Consultation Workbench",
+        "route_href": _CONSULTATION_WORKBENCH_ROUTE,
+        "overall_status": "partial_ready",
+        "headline": "CW-01 through CW-04 are live in the BFF, and both CW-02 and CW-04 frontend packets are published",
+        "summary": (
+            "CW-01 request create/list/detail/cancel routes are live. "
+            "CW-02 transcript route is live with ordered TranscriptEvent stream, actor identity, degradation semantics, and a published frontend activation packet. "
+            "CW-03 committee list/detail and sponsor-decision routes are fully live. "
+            "CW-04 memo list/detail routes are live with backend-owned mapping, evidence links, governance handoff gating, and a published module-local frontend handoff bundle. "
+            "The remaining work is UI activation and truthful loop closeout, not backend implementation."
+        ),
+        "packet_family": {
+            "family_id": "CW-008",
+            "path": "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
+            "lovable_readiness": "partial_ready",
+            "note": "All four consultation BFF modules are live. CW-02 and CW-04 both have published module-local frontend handoff bundles.",
+        },
+        "module_counts": {
+            "total": len(modules),
+            "ready": sum(1 for m in modules if m.get("status") == "ready"),
+            "not_ready": sum(1 for m in modules if m.get("status") != "ready"),
+        },
+        "modules": modules,
+        "support_refs": [
+            {
+                "ref_id": "consultation-surface-contract",
+                "label": "Consultation Surface Contract",
+                "ref_type": "document",
+                "value": "services/control-plane/bff/CONSULTATION_SURFACE_CONTRACT.md",
+                "note": "Existing CS-01 to CS-06 persona-side read surfaces; not a workbench IA.",
+            },
+            {
+                "ref_id": "persona-consultations",
+                "label": "Persona consultation list",
+                "ref_type": "endpoint",
+                "value": "/api/v1/personas/{persona_id}/consultations",
+                "note": "Existing persona-scoped consultation list and detail support.",
+            },
+            {
+                "ref_id": "persona-consult-policy",
+                "label": "Persona consult policy",
+                "ref_type": "endpoint",
+                "value": "/api/v1/personas/{persona_id}/consult-policy",
+                "note": "Existing consult-policy read surface used by persona-side consultation flows.",
+            },
+            {
+                "ref_id": "persona-runtime-model",
+                "label": "Persona Runtime Model",
+                "ref_type": "document",
+                "value": "PERSONA_RUNTIME_MODEL.md",
+                "note": "Canonical source for consultation roles, session metadata, and ConsultPolicy fields.",
+            },
+        ],
+        "next_steps": [
+            "Activate the CW-02 transcript UI against the published frontend packet now that the route family is live.",
+            "Activate the CW-04 memo UI against the published frontend packet and keep governance CTA authority backend-owned.",
+            "Keep this overview read-only; do not invent request forms or memo state in the browser.",
+        ],
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "overview": {"status": "ok", "source": "bff_static"},
+                "packet_family": {"status": "ok", "source": "canonical"},
+            },
+        },
+    }
+
+
+def _build_knowledge_workbench_overview(snapshot_at: str) -> Dict[str, Any]:
+    modules = [
+        {
+            "module_id": "KW-01",
+            "label": "Institutional Memory",
+            "status": "ready",
+            "wave_order": 1,
+            "summary": "List and detail routes are live. Browse projection, lifecycle state machine, and identity contract published via KW-01-FOUNDATION-001.",
+            "missing_contracts": [],
+            "next_gate": "BFF routes are implemented; Lovable may proceed with production UI using example payloads.",
+            "upstream_dependencies": [],
+        },
+        {
+            "module_id": "KW-02",
+            "label": "Research Notes",
+            "status": "ready",
+            "wave_order": 2,
+            "summary": "Research Notes create/list/detail routes are live. Ownership, attachment taxonomy, and referential integrity rules are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-02 routes.",
+            "upstream_dependencies": ["KW-01"],
+        },
+        {
+            "module_id": "KW-03",
+            "label": "Evidence Refs",
+            "status": "ready",
+            "wave_order": 3,
+            "summary": "Evidence Refs list/detail routes are live. Link taxonomy, credibility metadata, and resolved-link projection are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-03 routes and preserve backend-owned resolved-link semantics.",
+            "upstream_dependencies": ["KW-01", "KW-02"],
+        },
+        {
+            "module_id": "KW-04",
+            "label": "Insight Cards",
+            "status": "ready",
+            "wave_order": 4,
+            "summary": "Insight Cards list/detail routes are live. Aggregation/detail projection and backend-owned filter taxonomy are implemented in the current BFF.",
+            "missing_contracts": [],
+            "next_gate": "Activate the Lovable UI task against the live KW-04 routes without client-side filter synthesis; the frontend handoff bundle is published.",
+            "upstream_dependencies": ["KW-01", "KW-03"],
+        },
+        {
+            "module_id": "KW-05",
+            "label": "Strategy Spec",
+            "status": "ready",
+            "wave_order": 5,
+            "summary": "Strategy Spec browse/detail/version-history/compare routes are live. Version identity, ancestry, lifecycle, and compare semantics are implemented per the ratified contract.",
+            "missing_contracts": [],
+            "live_routes": [
+                "GET /api/v1/knowledge/strategy-specs",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+                "GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare",
+            ],
+            "next_gate": "Activate the Lovable UI task against the live KW-05 routes using backend-owned version identity, ancestry, and compare semantics.",
+            "upstream_dependencies": ["KW-01", "KW-03"],
+        },
+    ]
+    return {
+        "workbench_id": "knowledge-workbench",
+        "label": "Knowledge Workbench",
+        "route_href": _KNOWLEDGE_WORKBENCH_ROUTE,
+        "overall_status": "overview_ready",
+        "headline": "KW-01 to KW-05 are route-live",
+        "summary": (
+            "This overview is a truthful landing surface for the Knowledge Workbench. "
+            "All five Knowledge Workbench modules are route-live in the current BFF."
+        ),
+        "packet_family": {
+            "family_id": "KW-006",
+            "path": "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+            "lovable_readiness": "overview_ready",
+            "note": "KW-01 to KW-05 are route-live in the current BFF. KW-02 to KW-05 now carry published frontend handoff packets; remaining work is front-owned UI activation plus KW-01 hardening follow-up.",
+        },
+        "module_counts": {
+            "total": len(modules),
+            "ready": sum(1 for m in modules if m.get("status") == "ready"),
+            "not_ready": sum(1 for m in modules if m.get("status") != "ready"),
+        },
+        "modules": modules,
+        "support_refs": [
+            {
+                "ref_id": "memory-design-note",
+                "label": "Memory Layer Design Note",
+                "ref_type": "document",
+                "value": "services/memory/MEMORY_LAYER_DESIGN_NOTE.md",
+                "note": "Canonical Memory Plane split and retrieval-facade rules.",
+            },
+            {
+                "ref_id": "institutional-memory-schema",
+                "label": "InstitutionalMemoryEntry schema",
+                "ref_type": "document",
+                "value": "services/memory/institutional_memory_entry.schema.json",
+                "note": "Canonical shared-memory object shape; not a workbench browse contract.",
+            },
+            {
+                "ref_id": "strategy-spec-schema",
+                "label": "StrategySpec schema",
+                "ref_type": "document",
+                "value": "services/control-plane/specs/strategy_spec.schema.json",
+                "note": "Canonical StrategySpec object schema; version browsing, ancestry, lifecycle, and compare semantics are now ratified in docs/bff/KW-05-strategy-spec.md.",
+            },
+            {
+                "ref_id": "memory-retrieval-facade",
+                "label": "Memory retrieval facade",
+                "ref_type": "endpoint",
+                "value": "/memory/retrieve",
+                "note": "Session-facing retrieval API; not a substitute for workbench list/detail surfaces.",
+            },
+        ],
+        "next_steps": [
+            "Activate the Lovable UI task against the live KW-02 Research Notes routes.",
+            "Activate the Lovable UI task against the live KW-03 Evidence Refs routes.",
+            "Activate the Lovable UI task against the live KW-04 Insight Cards routes; the frontend handoff bundle is already published.",
+            "Activate the Lovable UI task against the live KW-05 Strategy Spec routes using backend-owned version identity, ancestry, and compare semantics.",
+            "Keep the Knowledge Workbench payload-owned; do not synthesize registry joins from raw schemas in the browser.",
+            "Use this overview to track the remaining workbench order without downgrading live routes back to pending-BFF text.",
+        ],
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "overview": {"status": "ok", "source": "bff_static"},
+                "packet_family": {"status": "ok", "source": "canonical"},
+            },
+        },
+    }
+
+
+def _project_evolution_decision_contract(decision: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(decision)
+    payload["updated_at"] = decision.get("updated_at")
+    payload["notes"] = decision.get("notes")
+    return payload
+
+
+def _project_freeze_order_contract(order: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(order)
+    payload["freeze_order_id"] = order.get("freeze_order_id") or order.get("id")
+    payload["issued_at"] = order.get("issued_at") or order.get("created_at")
+    return payload
+
+
+def _project_rollback_contract(rollback: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(rollback)
+    payload["rollback_id"] = rollback.get("rollback_id") or rollback.get("id")
+    payload["executed_at"] = rollback.get("executed_at") or rollback.get("initiated_at")
+    return payload
+
+
+def _surface_degradation_reason(
+    surface: Dict[str, Any],
+    *,
+    degraded_reason: str,
+    unavailable_reason: str,
+) -> Optional[str]:
+    status = surface.get("status")
+    if status == "ok":
+        return None
+    if status == "unavailable":
+        return unavailable_reason
+    if surface.get("message"):
+        return str(surface["message"])
+    if surface.get("note"):
+        return str(surface["note"])
+    return degraded_reason
+
+
+def _last_triggered_at(ks: Dict[str, Any]) -> Optional[str]:
+    explicit = ks.get("last_triggered_at")
+    if explicit:
+        return str(explicit)
+
+    timestamps: List[str] = []
+    for order in ks.get("active_freeze_orders", []):
+        if not isinstance(order, dict):
+            continue
+        value = order.get("triggered_at") or order.get("created_at")
+        if value:
+            timestamps.append(str(value))
+    return max(timestamps) if timestamps else None
+
+
+def _kill_switch_status_value(ks: Dict[str, Any]) -> str:
+    explicit = str(ks.get("status") or "").strip().lower()
+    if explicit:
+        mapped = _KILL_SWITCH_STATUS_MAP.get(explicit)
+        if mapped:
+            return mapped
+
+    safe_mode_status = str(ks.get("safe_mode_status") or "").strip().lower()
+    mapped = _KILL_SWITCH_STATUS_MAP.get(safe_mode_status)
+    if mapped:
+        if mapped == "armed" and ks.get("active"):
+            return "triggered"
+        return mapped
+
+    return "triggered" if ks.get("active") else "armed"
+
+
+def _kill_switch_active_commands(ks: Dict[str, Any]) -> List[str]:
+    active_commands = ks.get("active_commands")
+    if isinstance(active_commands, list):
+        return [str(value) for value in active_commands if value not in (None, "")]
+
+    derived: List[str] = []
+    for order in ks.get("active_freeze_orders", []):
+        if not isinstance(order, dict):
+            continue
+        value = order.get("command_id") or order.get("id") or order.get("target_id")
+        if value not in (None, ""):
+            derived.append(str(value))
+    return derived
+
+
+def _project_kill_switch_contract(ks: Dict[str, Any], surface: Dict[str, Any]) -> Dict[str, Any]:
+    if surface.get("status") == "unavailable":
+        return {
+            "status": None,
+            "last_triggered_at": None,
+            "last_confirmed_at": None,
+            "active_commands": [],
+        }
+
+    return {
+        "status": _kill_switch_status_value(ks),
+        "last_triggered_at": _last_triggered_at(ks),
+        "last_confirmed_at": ks.get("last_confirmed_at") or ks.get("last_checked_at"),
+        "active_commands": _kill_switch_active_commands(ks),
+    }
+
+
+def _action_drawer_allowed_actions_surface() -> Dict[str, Any]:
+    if _read_surface_state() == "unavailable":
+        return {
+            "status": "unavailable",
+            "message": "Action authority service is unavailable. All CTAs disabled for safety.",
+        }
+    return {"status": "ok"}
+
+
+def _project_action_drawer_allowed_actions(
+    kill_switch_surface: Dict[str, Any],
+    allowed_actions_surface: Dict[str, Any],
+) -> Dict[str, bool]:
+    allowed_actions = {
+        "canPause": False,
+        "canRiskOff": False,
+        "canLiquidateAll": False,
+        "canHardRollback": False,
+        "canIssueSafeMode": False,
+        "secondaryPathAvailable": False,
+    }
+
+    if allowed_actions_surface.get("status") != "ok":
+        return allowed_actions
+
+    secondary_path_available = kill_switch_surface.get("status") != "unavailable"
+    allowed_actions["secondaryPathAvailable"] = secondary_path_available
+
+    if kill_switch_surface.get("status") == "ok":
+        allowed_actions.update(_ACTION_DRAWER_PRIMARY_ALLOWED_ACTIONS)
+        return allowed_actions
+
+    if secondary_path_available:
+        allowed_actions["canPause"] = True
+        allowed_actions["canRiskOff"] = True
+
+    return allowed_actions
+
+
+_COMMAND_RECEIPT_STATUS_MAP = {
+    CommandStatus.SUBMITTED.value: CommandReceiptStatus.ACCEPTED,
+    CommandStatus.PROCESSING.value: CommandReceiptStatus.QUEUED,
+    CommandStatus.EXECUTED.value: CommandReceiptStatus.QUEUED,
+    CommandStatus.FAILED.value: CommandReceiptStatus.FAILED,
+    CommandStatus.TIMEOUT.value: CommandReceiptStatus.FAILED,
+}
+
+
+def _expected_completion_at(accepted_at: str, estimated_processing_time_ms: int) -> Optional[str]:
+    if not accepted_at or estimated_processing_time_ms < 0:
+        return None
+    try:
+        parsed = datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    completed_at = parsed + timedelta(milliseconds=estimated_processing_time_ms)
+    return completed_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _project_command_submission_response(
+    *,
+    command_id: str,
+    command: CommandType,
+    accepted_at: str,
+    status: CommandStatus,
+    staleness_warning: Optional[StalenessWarning],
+) -> CommandSubmissionResponse:
+    receipt_status = _COMMAND_RECEIPT_STATUS_MAP.get(status.value, CommandReceiptStatus.FAILED)
+    meta = CommandResultMeta()
+    receipt = CommandReceipt(
+        receipt_id=command_id,
+        command_id=command_id,
+        command=command.value,
+        status=receipt_status,
+        accepted_at=accepted_at,
+        routing_path=CommandRoutingPath.DIRECT,
+        expected_completion_at=_expected_completion_at(
+            accepted_at,
+            meta.estimated_processing_time_ms,
+        ),
+        error_message=None,
+    )
+    return CommandSubmissionResponse(
+        receipt_id=command_id,
+        command=command.value,
+        status=receipt_status,
+        accepted_at=accepted_at,
+        routing_path=CommandRoutingPath.DIRECT,
+        expected_completion_at=receipt.expected_completion_at,
+        error_message=None,
+        staleness_warning=staleness_warning,
+        receipt=receipt,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -442,6 +5406,75 @@ async def health():
         "version": "0.2.0",
         "timestamp": utc_now(),
     }
+
+
+@app.get("/api/v1/settings")
+async def get_settings(
+    authorization: Optional[str] = Header(default=None),
+):
+    _extract_identity(authorization)
+    return settings_store.get()
+
+
+@app.post("/api/v1/settings")
+async def update_settings(
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_admin_mfa(identity, "update_settings")
+    patch = body.get("settings", body)
+    try:
+        settings = settings_store.update(patch)
+    except ValueError as exc:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Settings update payload is invalid",
+            str(exc),
+            precondition_failed="settings_payload",
+            suggestion="Submit a complete settings object or a valid partial patch",
+        )
+    return {"settings": settings}
+
+
+@app.get("/api/v1/settings/export")
+async def export_settings(
+    authorization: Optional[str] = Header(default=None),
+):
+    _extract_identity(authorization)
+    return {"jsonData": settings_store.export_json()}
+
+
+@app.post("/api/v1/settings/import")
+async def import_settings(
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_admin_mfa(identity, "import_settings")
+    json_data = body.get("jsonData")
+    if not isinstance(json_data, str):
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Settings import payload is invalid",
+            "jsonData must be a string containing a settings JSON document",
+            precondition_failed="settings_import_payload",
+            suggestion="Send jsonData as a string",
+        )
+    try:
+        settings = settings_store.import_json(json_data)
+    except ValueError as exc:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Settings import payload is invalid",
+            str(exc),
+            precondition_failed="settings_import_payload",
+            suggestion="Upload a valid JSON export from the Pantheon settings surface",
+        )
+    return {"settings": settings}
 
 
 # --------------------------------------------------------------------------- #
@@ -624,6 +5657,580 @@ async def get_persona_capabilities(
     }
 
 
+@app.post("/api/v1/trainer/sessions")
+async def create_trainer_session(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona_id = _tw01_required_text(payload, "persona_id")
+    session_type = _tw01_required_text(payload, "session_type")
+    objective = _tw01_required_text(payload, "objective")
+    context_refs = _tw01_validate_context_refs(payload.get("context_refs"))
+
+    if session_type != "trainer":
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer session type",
+            "session_type must equal 'trainer' for TW-01",
+            precondition_failed="session_type",
+        )
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    session = read_store.create_trainer_session(
+        persona_id=persona_id,
+        objective=objective,
+        context_refs=context_refs,
+        actor_id=identity.operator_id,
+        created_at=utc_now(),
+    )
+    if session is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer session store unavailable",
+            "Trainer session creation store is unavailable.",
+        )
+
+    return {
+        "session_id": session["session_id"],
+        "persona_id": session["persona_id"],
+        "session_type": session["session_type"],
+        "objective": session["objective"],
+        "status": session["status"],
+        "started_at": session["started_at"],
+        "allowedActions": session["allowedActions"],
+        "links": session["links"],
+    }
+
+
+@app.get("/api/v1/trainer/sessions")
+async def list_trainer_sessions(
+    persona_id: str,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    normalized_status = _tw01_validate_session_status(status) if status is not None else None
+    sessions = read_store.list_trainer_sessions(persona_id=persona_id, status=normalized_status) or []
+    surface_state = _tw01_trainer_dialog_surface_state(snapshot_at=snapshot_at, has_data=sessions is not None)
+
+    total = len(sessions)
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(sessions, page_token, page_size)
+
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "trainer_dialog": surface_state,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}")
+async def get_trainer_session_detail(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    payload = dict(session)
+    payload["meta"] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "trainer_dialog": _tw01_trainer_dialog_surface_state(snapshot_at=snapshot_at, has_data=True),
+        },
+    }
+    return payload
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}/controls")
+async def get_trainer_controls(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
+    if not controls:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    return controls
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/patch")
+async def patch_trainer_controls(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    patches = _tw02_validate_patch_payload(payload)
+
+    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
+    if not controls:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    if str(controls.get("status") or "").strip().lower() != "active":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot patch controls",
+            "POST /patch is only allowed while the trainer session status is active",
+            precondition_failed="status",
+        )
+    if not (controls.get("allowedActions") or {}).get("canPatchControls"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Trainer control patch unavailable",
+            "allowedActions.canPatchControls is false for this trainer session",
+            precondition_failed="allowedActions.canPatchControls",
+        )
+
+    result = read_store.patch_trainer_controls(
+        session_id,
+        patches=patches,
+        patched_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer control store unavailable",
+            "Trainer control patch store is unavailable.",
+        )
+    return result
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/message")
+async def append_trainer_message(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+    if session["status"] != "active":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session is not active",
+            "POST /message is only allowed while the trainer session status is active",
+            precondition_failed="status",
+        )
+    if not session["allowedActions"].get("canSendMessage"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Trainer message submission unavailable",
+            "allowedActions.canSendMessage is false for this trainer session",
+            precondition_failed="allowedActions.canSendMessage",
+        )
+
+    message_body = _tw01_required_text(payload, "message_body")
+    result = read_store.append_trainer_message(
+        session_id,
+        message_body=message_body,
+        actor_id=identity.operator_id,
+        accepted_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer session store unavailable",
+            "Trainer message append store is unavailable.",
+        )
+
+    updated = result["session"]
+    return {
+        "session_id": updated["session_id"],
+        "status": updated["status"],
+        "accepted_at": result["accepted_at"],
+        "event": result["event"],
+        "session_summary": updated["session_summary"],
+        "allowedActions": updated["allowedActions"],
+    }
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}/preview")
+async def get_trainer_preview(
+    session_id: str,
+    eval_id: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    preview = read_store.get_trainer_preview(
+        session_id,
+        session_status=session.get("status"),
+        eval_id=eval_id,
+        snapshot_at=snapshot_at,
+    )
+    if preview is None and eval_id:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer preview evaluation not found",
+            f"Trainer preview evaluation {eval_id} does not exist for session {session_id}",
+        )
+    if preview is None:
+        preview = read_store.build_trainer_preview_unavailable(
+            session_id,
+            session_status=session.get("status"),
+            snapshot_at=snapshot_at,
+        )
+    return preview
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/preview")
+async def refresh_trainer_preview(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _tw03_validate_refresh_mode(payload)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    preview = read_store.get_trainer_preview(
+        session_id,
+        session_status=session.get("status"),
+        snapshot_at=utc_now(),
+    ) or read_store.build_trainer_preview_unavailable(
+        session_id,
+        session_status=session.get("status"),
+        snapshot_at=utc_now(),
+    )
+    if preview.get("status") == "pending":
+        return preview
+    if not preview.get("allowedActions", {}).get("canRefreshPreview"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Trainer preview refresh unavailable",
+            "allowedActions.canRefreshPreview is false for this trainer preview",
+            precondition_failed="allowedActions.canRefreshPreview",
+        )
+    if session.get("status") not in {"active", "paused"}:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot refresh preview",
+            "POST /preview is only allowed while the trainer session status is active or paused",
+            precondition_failed="status",
+        )
+
+    refreshed = read_store.refresh_trainer_preview(
+        session_id,
+        session_status=session.get("status"),
+        refreshed_at=utc_now(),
+    )
+    if refreshed is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer preview store unavailable",
+            "Trainer preview refresh store is unavailable.",
+        )
+    return refreshed
+
+
+@app.get("/api/v1/trainer/replay")
+async def list_trainer_replays(
+    persona_id: str,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+
+    if status is not None:
+        normalized_status = str(status).strip().lower()
+        if normalized_status not in _TW04_REPLAY_TERMINAL_STATUSES:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid replay status filter",
+                f"status must be one of {sorted(_TW04_REPLAY_TERMINAL_STATUSES)}",
+                precondition_failed="status",
+            )
+    else:
+        normalized_status = None
+
+    snapshot_at = utc_now()
+    items, surface_state = read_store.list_trainer_replays(
+        persona_id=persona_id,
+        status=normalized_status,
+        snapshot_at=snapshot_at,
+    )
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "trainer_replay": surface_state,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/trainer/replay/{session_id}")
+async def get_trainer_replay_detail(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    replay = read_store.get_trainer_replay(session_id, snapshot_at=snapshot_at)
+    if not replay:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer replay session not found",
+            f"Trainer replay session {session_id} does not exist",
+        )
+    return replay
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/commit")
+async def commit_trainer_replay(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    expected_candidate_snapshot_at = _tw04_required_text(payload, "expected_candidate_snapshot_at")
+    note = payload.get("note") or None
+
+    replay = read_store.get_trainer_replay(session_id)
+    if not replay:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer replay session not found",
+            f"Trainer replay session {session_id} does not exist",
+        )
+
+    if str(replay.get("status") or "").strip().lower() != "completed":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot be committed",
+            "commit is only allowed when session status is completed",
+            precondition_failed="status",
+        )
+
+    if not replay.get("allowedActions", {}).get("canCommit"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Commit not allowed",
+            "allowedActions.canCommit is false for this trainer replay session",
+            precondition_failed="allowedActions.canCommit",
+        )
+
+    candidate_snapshot_at = _tw04_get_candidate_snapshot_at(replay)
+    if candidate_snapshot_at != expected_candidate_snapshot_at:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Candidate snapshot mismatch",
+            "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
+            precondition_failed="expected_candidate_snapshot_at",
+        )
+
+    result = read_store.commit_trainer_replay(
+        session_id,
+        expected_candidate_snapshot_at=expected_candidate_snapshot_at,
+        note=note,
+        actor_id=identity.operator_id,
+        committed_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer replay store unavailable",
+            "Trainer replay commit store is unavailable.",
+        )
+    return result
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/discard")
+async def discard_trainer_replay(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    expected_candidate_snapshot_at = _tw04_required_text(payload, "expected_candidate_snapshot_at")
+    note = payload.get("note") or None
+
+    replay = read_store.get_trainer_replay(session_id)
+    if not replay:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer replay session not found",
+            f"Trainer replay session {session_id} does not exist",
+        )
+
+    if str(replay.get("status") or "").strip().lower() != "completed":
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot be discarded",
+            "discard is only allowed when session status is completed",
+            precondition_failed="status",
+        )
+
+    if not replay.get("allowedActions", {}).get("canDiscard"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Discard not allowed",
+            "allowedActions.canDiscard is false for this trainer replay session",
+            precondition_failed="allowedActions.canDiscard",
+        )
+
+    candidate_snapshot_at = _tw04_get_candidate_snapshot_at(replay)
+    if candidate_snapshot_at != expected_candidate_snapshot_at:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Candidate snapshot mismatch",
+            "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
+            precondition_failed="expected_candidate_snapshot_at",
+        )
+
+    result = read_store.discard_trainer_replay(
+        session_id,
+        expected_candidate_snapshot_at=expected_candidate_snapshot_at,
+        note=note,
+        actor_id=identity.operator_id,
+        discarded_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Trainer replay store unavailable",
+            "Trainer replay discard store is unavailable.",
+        )
+    return result
+
+
 @app.get("/api/v1/capital-pools")
 async def list_capital_pools(
     status: Optional[str] = None,
@@ -646,6 +6253,7 @@ async def list_capital_pools(
 
 @app.get("/api/v1/bindings")
 async def list_bindings(
+    persona_id: Optional[str] = None,
     capital_pool_id: Optional[str] = None,
     role: Optional[str] = None,
     validity: Optional[str] = None,
@@ -656,6 +6264,7 @@ async def list_bindings(
     _require_read_role(identity)
 
     bindings = read_store.list_bindings(
+        persona_id=persona_id,
         capital_pool_id=capital_pool_id,
         role=role,
         validity=validity,
@@ -671,15 +6280,18 @@ async def list_bindings(
 
 @app.get("/api/v1/deployment-plans")
 async def list_deployment_plans(
-    stage: Optional[str] = None,
-    target_pool_id: Optional[str] = None,
+    status: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
 ):
     """DP-01: Deployment plan list."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    plans = read_store.list_deployment_plans(stage=stage, target_pool_id=target_pool_id)
+    plans = read_store.list_deployment_plans(
+        status=status,
+        capital_pool_id=capital_pool_id,
+    )
     return {
         "data": plans,
         "meta": {
@@ -692,8 +6304,7 @@ async def list_deployment_plans(
 @app.get("/api/v1/approval-decisions")
 async def list_approval_decisions(
     outcome: Optional[str] = None,
-    reviewer: Optional[str] = None,
-    time_range: Optional[str] = None,
+    state: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
 ):
     """DP-03: Approval decision list."""
@@ -702,8 +6313,7 @@ async def list_approval_decisions(
 
     decisions = read_store.list_approval_decisions(
         outcome=outcome,
-        reviewer=reviewer,
-        time_range=time_range,
+        state=state,
     )
     return {
         "data": decisions,
@@ -913,6 +6523,212 @@ async def get_runtime_rollbacks(runtime_id: str, authorization: Optional[str] = 
     }
 
 
+_PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES = {"pending_review", "approved", "rejected"}
+
+
+def _pkt001_requested_plan_statuses(status: Optional[str]) -> Optional[set[str]]:
+    requested = _split_csv_query(status)
+    if requested is None:
+        return None
+    normalized = {token.lower() for token in requested}
+    invalid = normalized - _PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES
+    if invalid:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid deployment plan status filter",
+            f"status must be one of {sorted(_PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _pkt001_governance_outcome(
+    plan: Dict[str, Any],
+    approval_decision: Optional[Dict[str, Any]],
+    review: Optional[Dict[str, Any]],
+) -> str:
+    raw_value = str(
+        (review or {}).get("governanceOutcome")
+        or (approval_decision or {}).get("outcome")
+        or plan.get("status")
+        or ""
+    ).strip().lower()
+    if raw_value in {"", "pending_review", "under_review", "in_review"}:
+        return "pending"
+    if raw_value in {"approve", "approved_with_conditions"}:
+        return "approved"
+    if raw_value in {"reject"}:
+        return "rejected"
+    return raw_value
+
+
+def _pkt001_plan_filter_status(
+    plan: Dict[str, Any],
+    approval_decision: Optional[Dict[str, Any]],
+    review: Optional[Dict[str, Any]],
+) -> str:
+    governance_outcome = _pkt001_governance_outcome(plan, approval_decision, review)
+    if governance_outcome == "approved":
+        return "approved"
+    if governance_outcome == "rejected":
+        return "rejected"
+    return "pending_review"
+
+
+def _pkt001_plan_list_item(
+    plan: Dict[str, Any],
+    approval_decision: Optional[Dict[str, Any]],
+    review: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
+        "plan_id": plan.get("plan_id") or plan.get("id"),
+        "artifact_id": plan.get("artifact_id"),
+        "target_stage": plan.get("target_stage") or plan.get("stage"),
+        "risk_level": (approval_decision or {}).get("risk_level"),
+        "governance_outcome": _pkt001_governance_outcome(plan, approval_decision, review),
+        "submitted_at": (
+            plan.get("submitted_at")
+            or plan.get("created_at")
+            or (approval_decision or {}).get("decided_at")
+        ),
+    }
+
+
+def _pkt001_allowed_actions_present(allowed_actions: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(allowed_actions, dict):
+        return False
+    required_fields = ("canApprove", "canReject", "canPromoteToPaper")
+    return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
+
+
+def _pkt001_degradation_meta(surfaces: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    reason_templates = {
+        "deployment_plans": (
+            "Deployment plan list is degraded and may be stale.",
+            "Deployment plan list is currently unavailable.",
+        ),
+        "deployment_plan": (
+            "Deployment plan detail is degraded and may be stale.",
+            "Deployment plan detail is currently unavailable.",
+        ),
+        "approval_decision": (
+            "Approval decision detail is degraded and may be stale.",
+            "Approval decision detail is currently unavailable.",
+        ),
+        "capital_pool": (
+            "Capital pool detail is degraded and may be stale.",
+            "Capital pool detail is currently unavailable.",
+        ),
+        "bindings": (
+            "Binding detail is degraded and may be stale.",
+            "Binding detail is currently unavailable.",
+        ),
+        "runtime_binding": (
+            "Runtime binding detail is degraded and may be stale.",
+            "Runtime binding detail is currently unavailable.",
+        ),
+        "allowedActions": (
+            "Action authority is degraded. All CTAs disabled for safety.",
+            "Action authority service is unavailable. All CTAs disabled for safety.",
+        ),
+        "latestRun": (
+            "Latest run progress is degraded and may be stale.",
+            "Latest run progress is currently unavailable.",
+        ),
+        "review": (
+            "Review summary is degraded and may be stale.",
+            "Review summary is currently unavailable.",
+        ),
+    }
+    degradation: Dict[str, Any] = {}
+    for surface_name, surface in surfaces.items():
+        templates = reason_templates.get(surface_name)
+        if not templates:
+            continue
+        reason = _surface_degradation_reason(
+            surface,
+            degraded_reason=templates[0],
+            unavailable_reason=templates[1],
+        )
+        if reason is not None:
+            degradation[f"{surface_name}_reason"] = reason
+    if degradation and "allowedActions" in surfaces:
+        degradation["disable_ctas"] = surfaces["allowedActions"].get("status") != "ok"
+    return degradation
+
+
+@app.get("/api/v1/operator/deployment-plans")
+async def list_operator_deployment_plans(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    requested_statuses = _pkt001_requested_plan_statuses(status)
+    snapshot_at = utc_now()
+    deployment_plans_surface = _dataset_surface_status(
+        "deployment_plans",
+        snapshot_at=snapshot_at,
+    )
+
+    matched_items: List[Dict[str, Any]] = []
+    allowed_actions_complete = True
+    for plan in read_store.list_deployment_plans():
+        plan_id = str(plan.get("plan_id") or plan.get("id") or "")
+        approval_decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
+        review = read_store.get_review_summary(plan_id)
+        derived_status = _pkt001_plan_filter_status(plan, approval_decision, review)
+        if requested_statuses and derived_status not in requested_statuses:
+            continue
+        matched_items.append(_pkt001_plan_list_item(plan, approval_decision, review))
+        if not _pkt001_allowed_actions_present(read_store.get_allowed_actions(plan_id)):
+            allowed_actions_complete = False
+
+    matched_items.sort(
+        key=lambda item: (item.get("submitted_at") or "", item.get("plan_id") or ""),
+        reverse=True,
+    )
+
+    if deployment_plans_surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(matched_items, page_token, page_size)
+
+    allowed_actions_surface = _dataset_surface_status(
+        "approval_decisions",
+        snapshot_at=snapshot_at,
+        has_data=allowed_actions_complete if matched_items else None,
+        missing_message="Deployment action authority unavailable for this deployment-plan snapshot.",
+    )
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "deployment_plans": deployment_plans_surface,
+            "allowedActions": allowed_actions_surface,
+        },
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    degradation = _pkt001_degradation_meta(meta["surfaces"])
+    if degradation:
+        meta["degradation"] = degradation
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
+    }
+
+
 @app.get("/api/v1/operator/deployment-review/{plan_id}")
 async def get_deployment_review(plan_id: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
@@ -964,22 +6780,2680 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
         "review": review,
     }
 
+    surfaces = {
+        "deployment_plan": _dataset_surface_status(
+            "deployment_plans",
+            snapshot_at=snapshot_at,
+            has_data=plan is not None,
+        ),
+        "approval_decision": _dataset_surface_status(
+            "approval_decisions",
+            snapshot_at=snapshot_at,
+            has_data=approval_decision is not None,
+            missing_message="Approval decision unavailable for this deployment plan.",
+        ),
+        "capital_pool": _dataset_surface_status(
+            "capital_pools",
+            snapshot_at=snapshot_at,
+            has_data=pool is not None,
+            missing_message="Capital pool detail unavailable for this deployment plan.",
+        ),
+        "bindings": _dataset_surface_status(
+            "persona_bindings",
+            snapshot_at=snapshot_at,
+            has_data=bindings is not None,
+        ),
+        "runtime_binding": _dataset_surface_status(
+            "runtime_bindings",
+            snapshot_at=snapshot_at,
+            has_data=runtime_binding is not None,
+            missing_message="Runtime binding unavailable for this deployment plan.",
+        ),
+        "rollbacks": _dataset_surface_status("rollbacks", snapshot_at=snapshot_at),
+        "allowedActions": _dataset_surface_status(
+            "approval_decisions",
+            snapshot_at=snapshot_at,
+            has_data=_pkt001_allowed_actions_present(allowed_actions),
+            missing_message="Deployment action authority unavailable for this deployment plan.",
+        ),
+        "latestRun": _dataset_surface_status(
+            "latest_runs",
+            snapshot_at=snapshot_at,
+            has_data=latest_run is not None,
+        ),
+        "review": _dataset_surface_status(
+            "review_summaries",
+            snapshot_at=snapshot_at,
+            has_data=review is not None,
+        ),
+    }
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": surfaces,
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    degradation = _pkt001_degradation_meta(surfaces)
+    if degradation:
+        meta["degradation"] = degradation
+
     return {
         "data": data,
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/operator/runtime-state")
+async def list_operator_runtime_state(
+    deployment_stage: Optional[str] = None,
+    status: Optional[str] = None,
+    sort_by: str = Query(default="last_updated_at"),
+    sort_order: str = Query(default="desc"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if sort_by not in _RUNTIME_STATE_SORT_FIELDS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid sort_by",
+            f"sort_by must be one of {sorted(_RUNTIME_STATE_SORT_FIELDS)}",
+        )
+    if sort_order not in _RUNTIME_STATE_SORT_ORDERS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid sort_order",
+            f"sort_order must be one of {sorted(_RUNTIME_STATE_SORT_ORDERS)}",
+        )
+
+    requested_stages = {
+        value.lower() for value in (_split_csv_query(deployment_stage) or [])
+    }
+    requested_statuses = {
+        value.lower() for value in (_split_csv_query(status) or [])
+    }
+    snapshot_at = utc_now()
+
+    bindings = read_store.list_runtime_bindings()
+    if requested_stages:
+        bindings = [
+            binding
+            for binding in bindings
+            if str(
+                binding.get("deployment_stage") or binding.get("deployment_mode") or ""
+            ).lower() in requested_stages
+        ]
+    if requested_statuses:
+        bindings = [
+            binding
+            for binding in bindings
+            if str(binding.get("status") or "").lower() in requested_statuses
+        ]
+
+    runtimes = [
+        _project_operator_runtime_state_row(binding)
+        for binding in bindings
+    ]
+    runtimes = _sort_runtime_state_rows(
+        runtimes,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+    runtime_roster_surface = _dataset_surface_status(
+        "runtime_bindings",
+        snapshot_at=snapshot_at,
+    )
+    telemetry_surface = _dataset_surface_status(
+        "telemetry_summaries",
+        snapshot_at=snapshot_at,
+    )
+    if runtimes and any(row.get("telemetry_summary") is None for row in runtimes):
+        if telemetry_surface.get("status") == "ok":
+            telemetry_surface["status"] = "degraded"
+        telemetry_surface.setdefault(
+            "message",
+            "Telemetry summary unavailable for one or more runtimes on the runtime-state board.",
+        )
+        telemetry_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+
+    rollback_history_surface = _dataset_surface_status(
+        "rollbacks",
+        snapshot_at=snapshot_at,
+    )
+
+    runtime_state_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=runtime_roster_surface.get("status") != "unavailable",
+        missing_message="Runtime roster unavailable for the operator runtime-state board.",
+    )
+    if runtime_roster_surface.get("status") == "degraded":
+        runtime_state_surface["status"] = "degraded"
+    elif runtime_roster_surface.get("status") == "unavailable":
+        runtime_state_surface["status"] = "unavailable"
+    elif any(
+        surface.get("status") != "ok"
+        for surface in (telemetry_surface, rollback_history_surface)
+    ):
+        runtime_state_surface["status"] = "degraded"
+        runtime_state_surface.setdefault(
+            "message",
+            "Runtime-state board is available, but one or more supporting surfaces are degraded or unavailable.",
+        )
+        runtime_state_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+
+    total = len(runtimes)
+    if runtime_state_surface.get("status") == "unavailable":
+        runtimes = []
+        next_page_token = None
+    else:
+        runtimes, next_page_token = _page_slice(runtimes, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["total"] = total
+    meta["sort"] = {
+        "sort_by": sort_by,
+        "sort_order": sort_order,
+    }
+    meta["surfaces"] = {
+        "runtime_state": runtime_state_surface,
+        "runtime_roster": runtime_roster_surface,
+        "telemetry_summary": telemetry_surface,
+        "rollback_history": rollback_history_surface,
+    }
+
+    return {
+        "runtimes": runtimes,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/operator/alerts")
+async def list_operator_alerts(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_operator_alerts_payload(snapshot_at)
+
+
+@app.get("/api/v1/operator/home")
+async def get_operator_home(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_operator_home_payload(snapshot_at)
+
+
+@app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
+async def get_operator_paper_live_drift(
+    runtime_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
+    report = read_store.get_paper_live_drift_report(runtime_id)
+    if runtime_binding is None and report is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Runtime drift view not found",
+            f"Runtime {runtime_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return _build_operator_paper_live_drift_payload(runtime_id, snapshot_at)
+
+
+@app.get("/api/v1/operator/health-status")
+async def get_operator_health_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_operator_health_status_payload(snapshot_at)
+
+
+@app.get("/api/v1/workbench/consultation")
+async def get_consultation_workbench_overview(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_consultation_workbench_overview(utc_now())
+
+
+@app.post("/api/v1/consult/requests")
+async def create_consult_request(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: Create a consult request."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    from_persona_id = _cw01_required_text(payload, "from_persona_id")
+    target_type = _cw01_validate_target_type(payload.get("target_type"))
+    target_ref = _cw01_required_text(payload, "target_ref")
+    task = _cw01_required_text(payload, "task")
+    context_refs = _cw01_validate_context_refs(payload.get("context_refs"))
+    priority = _cw01_validate_priority(payload.get("priority"))
+    consultation_type = _cw01_validate_consultation_type(payload.get("consultation_type"))
+
+    req = read_store.create_consult_request(
+        from_persona_id=from_persona_id,
+        target_type=target_type,
+        target_ref=target_ref,
+        task=task,
+        context_refs=context_refs,
+        priority=priority,
+        consultation_type=consultation_type,
+        actor_id=identity.operator_id,
+        created_at=utc_now(),
+    )
+    return {
+        "request_id": req["request_id"],
+        "status": req["status"],
+        "created_at": req["created_at"],
+        "linked_session_id": req["linked_session_id"],
+        "request_to_session_status": req["request_to_session_status"],
+        "allowedActions": req["allowedActions"],
+    }
+
+
+@app.get("/api/v1/consult/requests")
+async def list_consult_requests(
+    status: Optional[str] = None,
+    target_type: Optional[str] = None,
+    consultation_type: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: List consult requests."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    statuses = _split_csv_query(status)
+    items = read_store.list_consult_requests(
+        statuses=statuses or None,
+        target_type=target_type or None,
+        consultation_type=consultation_type or None,
+    )
+    total = len(items)
+    surface_state = _cw01_surface_state("consult_requests", snapshot_at=snapshot_at)
+    if surface_state == "unavailable":
+        page_items: List[Dict[str, Any]] = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"consult_request_list": surface_state}
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/consult/requests/{request_id}")
+async def get_consult_request(
+    request_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: Get consult request detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    req = read_store.get_consult_request(request_id)
+    if not req:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consult request not found",
+            f"Consult request {request_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    payload = dict(req)
+    payload["links"] = {
+        "self": f"/api/v1/consult/requests/{request_id}",
+        "workbench_detail": f"/consultation/requests/{request_id}",
+    }
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "consult_request_detail": _cw01_surface_state(
+                "consult_requests",
+                snapshot_at=snapshot_at,
+                has_data=True,
+            ),
+        },
+    }
+    return payload
+
+
+@app.post("/api/v1/consult/requests/{request_id}/cancel")
+async def cancel_consult_request(
+    request_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-01: Cancel a consult request."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    req = read_store.get_consult_request(request_id)
+    if not req:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consult request not found",
+            f"Consult request {request_id} does not exist",
+        )
+
+    if not req.get("allowedActions", {}).get("canCancel"):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Consult request cannot be canceled",
+            f"allowedActions.canCancel is false for request {request_id}",
+            precondition_failed="allowedActions.canCancel",
+        )
+
+    canceled = read_store.cancel_consult_request(
+        request_id,
+        actor_id=identity.operator_id,
+        canceled_at=utc_now(),
+    )
+    if canceled is None:
+        refreshed = read_store.get_consult_request(request_id)
+        if refreshed and not refreshed.get("allowedActions", {}).get("canCancel"):
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_NOT_MET,
+                "Consult request cannot be canceled",
+                f"allowedActions.canCancel is false for request {request_id}",
+                precondition_failed="allowedActions.canCancel",
+            )
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Consult request store unavailable",
+            "Cancel operation could not be persisted.",
+        )
+    return {
+        "request_id": canceled["request_id"],
+        "status": canceled["status"],
+        "canceled_at": canceled["canceled_at"],
+        "linked_session_id": canceled["linked_session_id"],
+        "request_to_session_status": canceled["request_to_session_status"],
+        "allowedActions": canceled["allowedActions"],
+    }
+
+
+@app.get("/api/v1/committees")
+async def list_committees(
+    quorum_state: Optional[str] = None,
+    consensus_state: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    committees = read_store.list_committees(
+        quorum_states=_split_csv_query(quorum_state),
+        consensus_states=_split_csv_query(consensus_state),
+    )
+    surface_state = _dataset_surface_status(
+        "consultation_sessions",
+        snapshot_at=snapshot_at,
+        missing_message="Committee board list is unavailable.",
+    )
+
+    if surface_state.get("status") == "unavailable":
+        data = []
+        total = 0
+        next_page_token = None
+    else:
+        data, next_page_token = _page_slice(committees, page_token, page_size)
+        total = len(committees)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "committee_board": (
+            "degraded"
+            if surface_state.get("source") == "local_snapshot"
+            else surface_state.get("status")
+        ),
+    }
+
+    return {
+        "data": data,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/committees/{committee_id}")
+async def get_committee(
+    committee_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    committee = read_store.get_committee(committee_id)
+    if committee is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee board not found",
+            f"Committee {committee_id} does not exist",
+        )
+
+    return _cw03_committee_projection(
+        committee,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+
+
+@app.get("/api/v1/consult/memos")
+async def list_consult_memos(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=25, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    requested_statuses = _cw04_validate_status_filters(_split_csv_query(status))
+    memos = read_store.list_consult_memos(statuses=requested_statuses)
+    surface_state = _cw04_collection_surface_state(snapshot_at)
+
+    if surface_state == "unavailable":
+        items = []
+        total = 0
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(memos, page_token, page_size)
+        total = len(memos)
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "page_size": page_size,
+            "total": total,
+        },
         "meta": {
             "snapshot_at": snapshot_at,
+            "staleness": _cw04_memo_staleness(surface_state, snapshot_at=snapshot_at),
             "surfaces": {
-                "deployment_plan": _surface_status(),
-                "approval_decision": _surface_status(),
-                "capital_pool": _surface_status(),
-                "bindings": _surface_status(),
-                "runtime_binding": _surface_status(),
-                "rollbacks": _surface_status(),
-                "allowedActions": _surface_status(),
-                "latestRun": _surface_status(),
-                "review": _surface_status(),
+                "redteam_memo": {
+                    "state": surface_state,
+                },
             },
         },
+    }
+
+
+@app.get("/api/v1/consult/memos/{memo_id}")
+async def get_consult_memo(
+    memo_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    memo = read_store.get_consult_memo(memo_id)
+    if memo is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consult memo not found",
+            f"Consult memo {memo_id} does not exist",
+        )
+
+    return _cw04_memo_projection(
+        memo,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+
+
+@app.get("/api/v1/workbench/knowledge")
+async def get_knowledge_workbench_overview(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_knowledge_workbench_overview(utc_now())
+
+
+@app.post("/api/v1/research/tickets")
+async def create_research_ticket(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    title = _rw01_required_text(payload, "title")
+    description = _rw01_required_text(payload, "description")
+    owner = _rw01_required_text(payload, "owner")
+    priority = _rw01_validate_priority(payload.get("priority"))
+
+    ticket = read_store.create_research_ticket(
+        title=title,
+        description=description,
+        priority=priority,
+        owner=owner,
+        actor_id=identity.operator_id,
+        created_at=utc_now(),
+    )
+    return {
+        "ticket_id": ticket["ticket_id"],
+        "status": ticket["status"],
+        "created_at": ticket["created_at"],
+        "allowedActions": ticket["allowedActions"],
+    }
+
+
+@app.get("/api/v1/research/tickets")
+async def list_research_tickets(
+    status: Optional[str] = None,
+    owner: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    statuses = _split_csv_query(status)
+    if statuses:
+        statuses = [_rw01_validate_status(value) for value in statuses]
+
+    items = read_store.list_research_tickets(statuses=statuses, owner=owner)
+    total = len(items)
+    surface_state = _rw01_surface_state("research_tickets", snapshot_at=snapshot_at)
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "ticket_list": surface_state,
+    }
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/research/tickets/{ticket_id}")
+async def get_research_ticket(
+    ticket_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    ticket = read_store.get_research_ticket(
+        ticket_id,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
+    if not ticket:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Research ticket not found",
+            f"Research ticket {ticket_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    payload = dict(ticket)
+    payload["links"] = {
+        "self": f"/api/v1/research/tickets/{ticket_id}",
+        "workbench_detail": f"/research/tickets/{ticket_id}",
+    }
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "ticket_detail": _rw01_surface_state(
+                "research_tickets",
+                snapshot_at=snapshot_at,
+                has_data=True,
+            ),
+        },
+    }
+    return payload
+
+
+@app.patch("/api/v1/research/tickets/{ticket_id}")
+async def patch_research_ticket(
+    ticket_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    ticket = read_store.get_research_ticket(ticket_id)
+    if not ticket:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Research ticket not found",
+            f"Research ticket {ticket_id} does not exist",
+        )
+
+    patch = _rw01_validate_patch(ticket, payload)
+    updated = read_store.patch_research_ticket(
+        ticket_id,
+        patch=patch,
+        actor_id=identity.operator_id,
+        updated_at=utc_now(),
+    )
+    if updated is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Research ticket store unavailable",
+            "Research ticket update store is unavailable.",
+        )
+
+    return {
+        "ticket_id": updated["ticket_id"],
+        "status": updated["status"],
+        "updated_at": updated["updated_at"],
+        "allowedActions": updated["allowedActions"],
+    }
+
+
+@app.get("/api/v1/research/search")
+async def search_research_corpus(
+    q: str,
+    match_type: str = "all",
+    status: Optional[str] = None,
+    date_range: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=25, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    try:
+        query = _rw02_validate_query(q)
+        match_type = _rw02_validate_match_type(match_type)
+        status = _rw02_validate_status(status)
+        date_range = _rw02_validate_date_range(date_range)
+    except ValueError as exc:
+        return _rw02_invalid_query(str(exc))
+
+    snapshot_at = utc_now()
+    index_adapter = read_store.get_research_search_index()
+    adapter_state = _rw02_adapter_state(index_adapter, snapshot_at=snapshot_at)
+    if index_adapter is None or adapter_state == "unavailable":
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "search_unavailable",
+                "meta": {
+                    "surfaces": {
+                        "search_results": "unavailable",
+                    }
+                },
+            },
+        )
+
+    items = read_store.list_research_search_results(
+        query=query,
+        match_type=match_type,
+        status=status,
+        date_range=date_range,
+    )
+    total = len(items)
+    try:
+        page_items, next_page_token = _rw02_page_slice(items, page_token, page_size)
+    except ValueError as exc:
+        return _rw02_invalid_query(str(exc))
+
+    index_snapshot_at = str(index_adapter.get("snapshot_at") or snapshot_at)
+    source_watermarks = index_adapter.get("source_watermarks")
+    if not isinstance(source_watermarks, dict):
+        source_watermarks = {}
+    indexed_match_types = index_adapter.get("indexed_match_types")
+    if not isinstance(indexed_match_types, list):
+        indexed_match_types = []
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "search_results": adapter_state,
+    }
+    meta["index_adapter"] = {
+        "snapshot_at": index_snapshot_at,
+        "adapter_state": adapter_state,
+        "indexed_match_types": [
+            str(value)
+            for value in indexed_match_types
+            if str(value).strip()
+        ],
+        "source_watermarks": {
+            "tickets": source_watermarks.get("tickets"),
+            "experiments": source_watermarks.get("experiments"),
+            "artifacts": source_watermarks.get("artifacts"),
+        },
+    }
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/research/analysis")
+async def list_research_analysis(
+    ticket_id: Optional[str] = None,
+    experiment_id: Optional[str] = None,
+    status: Optional[str] = None,
+    date_range: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    statuses = _split_csv_query(status)
+    if statuses:
+        statuses = [_rw03_validate_status(value) for value in statuses]
+    if date_range is not None:
+        date_range = _rw03_validate_date_range(date_range)
+
+    source = read_store.dataset_source(
+        "research_analyses",
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
+    items = read_store.list_research_analyses(
+        ticket_id=ticket_id,
+        experiment_id=experiment_id,
+        statuses=statuses,
+        date_range=date_range,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
+    total = len(items)
+    surface_state = _rw01_surface_state(
+        "research_analyses",
+        snapshot_at=snapshot_at,
+        source=source,
+    )
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    for item in page_items:
+        analysis_id = str(item.get("analysis_id") or "")
+        ticket_ref = str(item.get("ticket_id") or "")
+        item["links"] = {
+            "self": f"/api/v1/research/analysis/{analysis_id}",
+            "workbench_detail": f"/research/analyze/{analysis_id}",
+            "linked_ticket_detail": f"/research/tickets/{ticket_ref}",
+        }
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "analysis_results": surface_state,
+    }
+    return {
+        "data": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/research/analysis/{analysis_id}")
+async def get_research_analysis(
+    analysis_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    source = read_store.dataset_source(
+        "research_analyses",
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
+    analysis = read_store.get_research_analysis(
+        analysis_id,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
+    if not analysis:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Research analysis not found",
+            f"Research analysis {analysis_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    ticket_ref = str(analysis.get("ticket_id") or "")
+    experiment_ref = analysis.get("experiment_id")
+    payload = dict(analysis)
+    payload["links"] = {
+        "self": f"/api/v1/research/analysis/{analysis_id}",
+        "workbench_detail": f"/research/analyze/{analysis_id}",
+        "linked_ticket_detail": f"/research/tickets/{ticket_ref}",
+        "linked_experiment_detail": (
+            f"/research/experiments/{experiment_ref}" if experiment_ref else None
+        ),
+    }
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "analysis_results": _rw01_surface_state(
+                "research_analyses",
+                snapshot_at=snapshot_at,
+                has_data=True,
+                source=source,
+            ),
+        },
+    }
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+# RW-04 — Experiment Launch helpers
+# --------------------------------------------------------------------------- #
+
+_RW04_ALLOWED_STATUSES = {"queued", "running", "completed", "failed", "canceled"}
+_RW04_ALLOWED_EXECUTION_MODES = {"paper", "backtest", "simulation"}
+_RW04_ALLOWED_PRIORITIES = {"normal", "high"}
+
+
+def _rw04_validate_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _RW04_ALLOWED_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid experiment status",
+            f"status must be one of {sorted(_RW04_ALLOWED_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _rw04_surface_state(snapshot_at: str, *, has_data: Optional[bool] = None) -> str:
+    return _rw01_surface_state("research_experiments", snapshot_at=snapshot_at, has_data=has_data)
+
+
+def _rw05_surface_state(snapshot_at: str, *, has_data: Optional[bool] = None) -> str:
+    surface = _dataset_surface_status(
+        "research_artifacts",
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("source") == "local_snapshot":
+        return "degraded"
+    if surface.get("status") == "degraded":
+        return "degraded"
+    return "ok"
+
+
+def _rw04_required_text(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or not str(value).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing required field: {field}",
+            f"{field} must be a non-empty string",
+            precondition_failed=field,
+        )
+    return str(value).strip()
+
+
+def _rw05_validate_status(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized not in _RW05_ALLOWED_STATUSES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid artifact status",
+            f"status must be one of {sorted(_RW05_ALLOWED_STATUSES)}",
+            precondition_failed="status",
+        )
+    return normalized
+
+
+def _rw04_required_dict(payload: Dict[str, Any], field: str) -> Dict[str, Any]:
+    value = payload.get(field)
+    if not isinstance(value, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"Missing or invalid field: {field}",
+            f"{field} must be an object",
+            precondition_failed=field,
+        )
+    return value
+
+
+def _rw04_validate_run_config(run_config: Dict[str, Any]) -> Dict[str, Any]:
+    dataset_ref = _rw04_required_text(run_config, "dataset_ref")
+    time_range = _rw04_required_dict(run_config, "time_range")
+    start_at = _rw04_required_text(time_range, "start_at")
+    end_at = _rw04_required_text(time_range, "end_at")
+    execution_mode = str(run_config.get("execution_mode") or "").strip().lower()
+    if execution_mode not in _RW04_ALLOWED_EXECUTION_MODES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid execution_mode",
+            f"execution_mode must be one of {sorted(_RW04_ALLOWED_EXECUTION_MODES)}",
+            precondition_failed="execution_mode",
+        )
+    priority = str(run_config.get("priority") or "normal").strip().lower()
+    if priority not in _RW04_ALLOWED_PRIORITIES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid priority",
+            f"priority must be one of {sorted(_RW04_ALLOWED_PRIORITIES)}",
+            precondition_failed="priority",
+        )
+    requested_by = _rw04_required_text(run_config, "requested_by")
+    return {
+        "dataset_ref": dataset_ref,
+        "time_range": {"start_at": start_at, "end_at": end_at},
+        "execution_mode": execution_mode,
+        "priority": priority,
+        "requested_by": requested_by,
+    }
+
+
+@app.post("/api/v1/experiments/launch")
+async def launch_experiment(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    ticket_id = _rw04_required_text(payload, "ticket_id")
+    experiment_name = _rw04_required_text(payload, "experiment_name")
+    strategy_selector = _rw04_required_dict(payload, "strategy_selector")
+    parameter_set = _rw04_required_dict(payload, "parameter_set")
+    run_config_raw = _rw04_required_dict(payload, "run_config")
+    run_config = _rw04_validate_run_config(run_config_raw)
+    launch_context_raw = payload.get("launch_context") or {}
+    analysis_refs = launch_context_raw.get("analysis_refs")
+    if analysis_refs is not None and not isinstance(analysis_refs, list):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid launch_context.analysis_refs",
+            "analysis_refs must be null or an array of strings",
+            precondition_failed="launch_context.analysis_refs",
+        )
+    launch_context = {"analysis_refs": list(analysis_refs) if analysis_refs is not None else None}
+
+    experiment = read_store.create_research_experiment(
+        ticket_id=ticket_id,
+        experiment_name=experiment_name,
+        strategy_selector=strategy_selector,
+        parameter_set=parameter_set,
+        run_config=run_config,
+        launch_context=launch_context,
+    )
+
+    experiment_id = experiment["experiment_id"]
+    return {
+        "experiment_id": experiment_id,
+        "ticket_id": experiment["ticket_id"],
+        "status": experiment["status"],
+        "queued_at": experiment["queued_at"],
+        "allowedActions": {"canCancel": True},
+        "links": {
+            "self": f"/api/v1/experiments/{experiment_id}",
+            "workbench_detail": f"/research/experiments/{experiment_id}",
+        },
+    }
+
+
+@app.get("/api/v1/experiments")
+async def list_experiments(
+    ticket_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_status: Optional[str] = None
+    if status is not None:
+        validated_status = _rw04_validate_status(status)
+
+    snapshot_at = utc_now()
+    items = read_store.list_research_experiments(
+        ticket_id=ticket_id,
+        status=validated_status,
+    )
+    total = len(items)
+    surface_state = _rw04_surface_state(snapshot_at)
+    if surface_state == "unavailable":
+        page_items: List[Dict[str, Any]] = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    for item in page_items:
+        exp_id = str(item.get("experiment_id") or "")
+        ticket_ref = str(item.get("ticket_id") or "")
+        item["links"] = {
+            "self": f"/api/v1/experiments/{exp_id}",
+            "workbench_detail": f"/research/experiments/{exp_id}",
+        }
+        item["allowedActions"] = {"canCancel": item.get("allowedActions", {}).get("canCancel", False)}
+        _ = ticket_ref
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"experiment_history": surface_state}
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/experiments/{experiment_id}")
+async def get_experiment(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    experiment = read_store.get_research_experiment(experiment_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    ticket_ref = str(experiment.get("ticket_id") or "")
+    payload = dict(experiment)
+    payload["links"] = {
+        "self": f"/api/v1/experiments/{experiment_id}",
+        "workbench_detail": f"/research/experiments/{experiment_id}",
+        "linked_ticket_detail": f"/research/tickets/{ticket_ref}",
+    }
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "experiment_status": _rw04_surface_state(snapshot_at, has_data=True),
+        },
+    }
+    return payload
+
+
+@app.post("/api/v1/experiments/{experiment_id}/cancel")
+async def cancel_experiment(
+    experiment_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required field: reason",
+            "reason must be a non-empty string",
+            precondition_failed="reason",
+        )
+
+    experiment = read_store.get_research_experiment(experiment_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+
+    status = str(experiment.get("status") or "")
+    if status not in {"queued", "running"}:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Experiment cannot be canceled",
+            f"Experiment {experiment_id} is in terminal state '{status}' and cannot be canceled",
+        )
+
+    canceled = read_store.cancel_research_experiment(experiment_id)
+    if not canceled:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Experiment cancel rejected",
+            f"Experiment {experiment_id} could not be canceled; it may have already reached a terminal state",
+        )
+
+    return {
+        "experiment_id": experiment_id,
+        "status": canceled["status"],
+        "completed_at": canceled["completed_at"],
+        "allowedActions": {"canCancel": False},
+    }
+
+
+@app.get("/api/v1/artifacts")
+async def list_artifacts(
+    experiment_id: Optional[str] = None,
+    ticket_id: Optional[str] = None,
+    lineage_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_status = _rw05_validate_status(status)
+    snapshot_at = utc_now()
+    items = read_store.list_research_artifacts(
+        experiment_id=experiment_id,
+        ticket_id=ticket_id,
+        lineage_id=lineage_id,
+        status=validated_status,
+    )
+    total = len(items)
+    surface_state = _rw05_surface_state(snapshot_at, has_data=bool(items))
+    if surface_state == "unavailable":
+        page_items: List[Dict[str, Any]] = []
+        next_page_token = None
+        total = 0
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    return {
+        "artifacts": page_items,
+        "next_page_token": next_page_token,
+        "total_count": total,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"artifact_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/artifacts/compare")
+async def compare_artifacts(
+    artifact_ids: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    requested_ids = [
+        str(artifact_id).strip()
+        for artifact_id in artifact_ids.split(",")
+        if str(artifact_id).strip()
+    ]
+    if len(requested_ids) < 2:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "At least two artifact_ids are required",
+            "artifact_ids must include between 2 and 4 artifact ids",
+            precondition_failed="artifact_ids",
+        )
+    if len(requested_ids) > 4:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Too many artifact_ids provided",
+            "artifact_ids must include between 2 and 4 artifact ids",
+            precondition_failed="artifact_ids",
+        )
+
+    artifacts: List[Dict[str, Any]] = []
+    for artifact_id in requested_ids:
+        artifact = read_store.get_research_artifact(artifact_id)
+        if not artifact:
+            raise _bff_error(
+                404,
+                ErrorCode.OBJECT_NOT_FOUND,
+                "Artifact not found",
+                f"Artifact {artifact_id} does not exist",
+            )
+        artifacts.append(artifact)
+
+    non_comparable = [
+        {
+            "artifact_id": artifact.get("artifact_id"),
+            "status": artifact.get("status"),
+            "reason": "Only sealed and superseded artifacts may be compared.",
+        }
+        for artifact in artifacts
+        if not (artifact.get("allowedActions") or {}).get("canCompare")
+    ]
+    if non_comparable:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": ErrorCode.INVALID_STATE.value,
+                    "message": "One or more artifacts cannot be compared",
+                    "details": {
+                        "reason": "Compare accepts only sealed or superseded artifacts.",
+                        "precondition_failed": "artifact_status",
+                    },
+                },
+                "non_comparable_artifacts": non_comparable,
+            },
+        )
+
+    snapshot_at = utc_now()
+    payload = read_store.compare_research_artifacts(requested_ids)
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "computed_at": utc_now(),
+        "surfaces": {"artifact_compare": _rw05_surface_state(snapshot_at, has_data=True)},
+    }
+    return payload
+
+
+@app.get("/api/v1/artifacts/{artifact_id}")
+async def get_artifact(
+    artifact_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    artifact = read_store.get_research_artifact(artifact_id)
+    if not artifact:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Artifact not found",
+            f"Artifact {artifact_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    payload = dict(artifact)
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {"artifact_detail": _rw05_surface_state(snapshot_at, has_data=True)},
+    }
+    return payload
+
+
+@app.post("/api/v1/knowledge/notes", status_code=201)
+async def create_research_note(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if "owner_ref" in payload:
+        raise _kw02_bad_request(
+            "Invalid owner_ref",
+            "owner_ref is server-assigned and must not be supplied by the caller",
+            "owner_ref",
+        )
+
+    title = _kw02_optional_title(payload)
+    body = _kw02_required_body(payload)
+    validated_attachment_type = _kw02_validate_attachment_type(payload.get("attachment_type"))
+    validated_attachment_ref = _kw02_validate_attachment_ref(
+        validated_attachment_type,
+        payload.get("attachment_ref"),
+    )
+    tags = _kw02_validate_string_list(payload.get("tags"), "tags")
+    linked_evidence_refs = _kw02_validate_string_list(
+        payload.get("linked_evidence_refs"),
+        "linked_evidence_refs",
+    )
+    linked_memory_anchors = _kw02_validate_memory_anchors(
+        _kw02_validate_string_list(payload.get("linked_memory_anchors"), "linked_memory_anchors")
+    )
+
+    attachment_exists, _, _ = _kw02_resolve_attachment_target(
+        validated_attachment_type,
+        validated_attachment_ref,
+    )
+    if not attachment_exists:
+        raise _bff_error(
+            422,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Attachment target does not exist",
+            f"{validated_attachment_type} target {validated_attachment_ref} could not be resolved",
+            precondition_failed="attachment_ref",
+        )
+
+    timestamp = utc_now()
+    note_id = f"note-{uuid.uuid4()}"
+    note = {
+        "note_id": note_id,
+        "title": title,
+        "body": body,
+        "attachment_type": validated_attachment_type,
+        "attachment_ref": validated_attachment_ref,
+        "owner_ref": {
+            "owner_type": "operator",
+            "owner_id": identity.operator_id,
+            "display_name": _kw02_operator_display_name(identity.operator_id),
+        },
+        "tags": tags,
+        "linked_evidence_refs": linked_evidence_refs,
+        "linked_memory_anchors": linked_memory_anchors,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+    created = read_store.create_research_note(note)
+    if created is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Research note store unavailable",
+            "Research note creation store is unavailable.",
+        )
+
+    return {
+        "note_id": note_id,
+        "created_at": timestamp,
+        "route_href": f"/knowledge/notes/{note_id}",
+    }
+
+
+@app.get("/api/v1/knowledge/notes")
+async def list_research_notes(
+    owner_ref: Optional[str] = None,
+    attachment_type: Optional[str] = None,
+    attachment_ref: Optional[str] = None,
+    tags: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_attachment_type = None
+    if attachment_type is not None:
+        validated_attachment_type = _kw02_validate_attachment_type(attachment_type)
+    if attachment_ref is not None and validated_attachment_type is None:
+        raise _kw02_bad_request(
+            "Invalid attachment_ref filter",
+            "attachment_ref requires attachment_type to be set",
+            "attachment_ref",
+        )
+    validated_attachment_ref = None
+    if validated_attachment_type is not None and attachment_ref is not None:
+        validated_attachment_ref = _kw02_validate_attachment_ref(
+            validated_attachment_type,
+            attachment_ref,
+        )
+
+    snapshot_at = utc_now()
+    notes = read_store.list_research_notes()
+    notes_dataset_available = read_store.dataset_source("research_notes") != "missing"
+    if owner_ref:
+        notes = [
+            note
+            for note in notes
+            if str(((note.get("owner_ref") or {}).get("owner_id")) or "") == owner_ref
+        ]
+    if validated_attachment_type:
+        notes = [
+            note
+            for note in notes
+            if str(note.get("attachment_type") or "") == validated_attachment_type
+        ]
+    if validated_attachment_type == "free_standing" or validated_attachment_ref is not None:
+        notes = [
+            note
+            for note in notes
+            if note.get("attachment_ref") == validated_attachment_ref
+        ]
+    if tags:
+        requested_tags = {value.strip() for value in tags.split(",") if value.strip()}
+        notes = [
+            note
+            for note in notes
+            if requested_tags.intersection(set(note.get("tags") or []))
+        ]
+
+    surface_state = _kw02_surface_state(
+        "research_notes",
+        snapshot_at=snapshot_at,
+        has_data=notes_dataset_available,
+    )
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(notes, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "notes": [_kw02_note_list_item(note) for note in page_items],
+        "pagination": {
+            "page_size": page_size,
+            "next_page_token": next_page_token,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"research_note_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/notes/{note_id}")
+async def get_research_note_detail(
+    note_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    note = read_store.get_research_note(note_id)
+    if not note:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Research note not found",
+            f"Research note {note_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    evidence_links, evidence_surface = _kw02_resolve_evidence_links(
+        list(note.get("linked_evidence_refs") or []),
+        snapshot_at=snapshot_at,
+    )
+    memory_anchors, memory_surface = _kw02_resolve_memory_anchors(
+        list(note.get("linked_memory_anchors") or []),
+        snapshot_at=snapshot_at,
+    )
+
+    return {
+        "note_id": note.get("note_id"),
+        "title": note.get("title"),
+        "body": note.get("body"),
+        "owner_ref": json.loads(json.dumps(note.get("owner_ref") or {})),
+        "attachment": _kw02_attachment_payload(note, include_route=True),
+        "tags": list(note.get("tags") or []),
+        "linked_evidence_refs": evidence_links,
+        "linked_memory_anchors": memory_anchors,
+        "created_at": note.get("created_at"),
+        "updated_at": note.get("updated_at"),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "research_note_detail": _kw02_surface_state(
+                    "research_notes",
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                ),
+                "evidence_links": evidence_surface,
+                "memory_anchors": memory_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/evidence")
+async def list_evidence_refs(
+    linked_entity_type: Optional[str] = None,
+    linked_entity_ref: Optional[str] = None,
+    link_type: Optional[str] = None,
+    credibility_tier: Optional[str] = None,
+    verified: Optional[bool] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_linked_entity_type = None
+    if linked_entity_type is not None:
+        validated_linked_entity_type = _kw03_validate_linked_entity_type(linked_entity_type)
+    if linked_entity_ref is not None and validated_linked_entity_type is None:
+        raise _kw03_bad_request(
+            "Invalid linked_entity_ref filter",
+            "linked_entity_ref requires linked_entity_type to be set",
+            "linked_entity_ref",
+        )
+
+    validated_link_type = _kw03_validate_link_type(link_type) if link_type is not None else None
+    validated_credibility_tier = (
+        _kw03_validate_credibility_tier(credibility_tier)
+        if credibility_tier is not None
+        else None
+    )
+
+    snapshot_at = utc_now()
+    evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+
+    if validated_linked_entity_type:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("linked_object_summary") or {}).get("entity_type")) or "")
+            == validated_linked_entity_type
+        ]
+    if linked_entity_ref is not None:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("linked_object_summary") or {}).get("entity_ref")) or "")
+            == str(linked_entity_ref)
+        ]
+    if validated_link_type:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(item.get("link_type") or "") == validated_link_type
+        ]
+    if validated_credibility_tier:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("credibility") or {}).get("tier")) or "")
+            == validated_credibility_tier
+        ]
+    if verified is not None:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if bool((item.get("credibility") or {}).get("verified")) is verified
+        ]
+
+    surface_state = _kw03_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+    )
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "evidence_refs": [
+            {
+                "ref_id": item.get("ref_id"),
+                "source_document": json.loads(json.dumps(item.get("source_document") or {})),
+                "link_type": item.get("link_type"),
+                "credibility": json.loads(json.dumps(item.get("credibility") or {})),
+                "linked_object_summary": json.loads(json.dumps(item.get("linked_object_summary") or {})),
+                "resolved_link": json.loads(json.dumps(item.get("resolved_link") or {})),
+                "route_href": item.get("route_href"),
+            }
+            for item in page_items
+        ],
+        "pagination": {
+            "page_size": page_size,
+            "next_page_token": next_page_token,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"evidence_refs_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/evidence/{ref_id}")
+async def get_evidence_ref_detail(
+    ref_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    evidence_ref = read_store.get_evidence_ref_detail(ref_id)
+    if not evidence_ref:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Evidence reference not found",
+            f"Evidence reference {ref_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    detail_surface = _kw03_surface_state(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+
+    return {
+        "ref_id": evidence_ref.get("ref_id"),
+        "source_document": json.loads(json.dumps(evidence_ref.get("source_document") or {})),
+        "link_type": evidence_ref.get("link_type"),
+        "credibility": json.loads(json.dumps(evidence_ref.get("credibility") or {})),
+        "resolved_link": json.loads(json.dumps(evidence_ref.get("resolved_link") or {})),
+        "linked_decisions": json.loads(json.dumps(evidence_ref.get("linked_decisions") or [])),
+        "source_note_context": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
+        "source_memory_context": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
+        "created_at": evidence_ref.get("created_at"),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "evidence_ref_detail": detail_surface,
+                "resolved_link": detail_surface,
+                "linked_decisions": detail_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/insights")
+async def list_insight_cards(
+    status: str = Query(default="active"),
+    tag: Optional[str] = None,
+    linked_entity_type: Optional[str] = None,
+    linked_entity_ref: Optional[str] = None,
+    recency: str = Query(default="all"),
+    confidence_min: Optional[float] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    include_inactive: bool = False,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_status = _kw04_validate_status(status)
+    validated_recency = _kw04_validate_recency(recency)
+    validated_linked_entity_type = None
+    if linked_entity_type is not None:
+        validated_linked_entity_type = _kw04_validate_linked_entity_type(linked_entity_type)
+    if linked_entity_ref is not None and validated_linked_entity_type is None:
+        raise _kw04_bad_request(
+            "Invalid linked_entity_ref filter",
+            "linked_entity_ref requires linked_entity_type to be set",
+            "linked_entity_ref",
+        )
+    validated_confidence_min = (
+        _kw04_validate_confidence_min(confidence_min)
+        if confidence_min is not None
+        else None
+    )
+
+    snapshot_at = utc_now()
+    cards = read_store.list_insight_cards()
+    cards_dataset_available = read_store.dataset_source("insight_cards") != "missing"
+    filter_metadata = _kw04_filter_metadata(cards) if cards_dataset_available else {
+        "tags": [],
+        "linked_entity_types": [],
+        "recency_options": [
+            {"value": value, "display_label": _kw04_recency_display_label(value)}
+            for value in ["7d", "30d", "90d", "all"]
+        ],
+        "total_active_count": 0,
+    }
+
+    filtered_cards = list(cards)
+    if not include_inactive and validated_status != "all":
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if str(card.get("status") or "") == validated_status
+        ]
+    elif not include_inactive and validated_status == "all":
+        filtered_cards = filtered_cards
+    elif include_inactive and validated_status != "all":
+        filtered_cards = filtered_cards
+
+    if tag is not None:
+        filtered_cards = [
+            card for card in filtered_cards if str(tag) in set(card.get("tags") or [])
+        ]
+    if validated_linked_entity_type is not None:
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if any(
+                str((source or {}).get("entity_type") or "") == validated_linked_entity_type
+                for source in card.get("linked_sources") or []
+            )
+        ]
+    if linked_entity_ref is not None:
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if any(
+                str((source or {}).get("entity_type") or "") == validated_linked_entity_type
+                and str((source or {}).get("entity_ref") or "") == str(linked_entity_ref)
+                for source in card.get("linked_sources") or []
+            )
+        ]
+    if validated_recency != "all":
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if _kw04_within_recency(card.get("aggregated_at"), validated_recency, snapshot_at)
+        ]
+    if validated_confidence_min is not None:
+        filtered_cards = [
+            card
+            for card in filtered_cards
+            if float(((card.get("confidence") or {}).get("score")) or 0.0) >= validated_confidence_min
+        ]
+
+    surface_state = _kw04_surface_state(
+        "insight_cards",
+        snapshot_at=snapshot_at,
+        has_data=cards_dataset_available,
+    )
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(filtered_cards, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "insight_cards": [
+            {
+                "insight_id": item.get("insight_id"),
+                "summary": item.get("summary"),
+                "scope": item.get("scope"),
+                "scope_ref": item.get("scope_ref"),
+                "status": item.get("status"),
+                "superseded_by_id": item.get("superseded_by_id"),
+                "confidence": json.loads(json.dumps(item.get("confidence") or {})),
+                "tags": list(item.get("tags") or []),
+                "evidence_count": item.get("evidence_count"),
+                "primary_evidence_count": item.get("primary_evidence_count"),
+                "aggregated_at": item.get("aggregated_at"),
+                "route_href": item.get("route_href"),
+            }
+            for item in page_items
+        ],
+        "filter_metadata": filter_metadata,
+        "pagination": {
+            "page_size": page_size,
+            "next_page_token": next_page_token,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"insight_cards": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/insights/{insight_id}")
+async def get_insight_card_detail(
+    insight_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    insight_card = read_store.get_insight_card_detail(insight_id)
+    if not insight_card:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Insight card not found",
+            f"Insight card {insight_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    detail_surface = _kw04_surface_state(
+        "insight_cards",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    supporting_evidence_surface = _kw04_supporting_evidence_surface(
+        list(insight_card.get("supporting_evidence_refs") or []),
+        snapshot_at=snapshot_at,
+    )
+    linked_sources_surface = _kw04_linked_sources_surface(
+        list(insight_card.get("linked_sources") or []),
+        snapshot_at=snapshot_at,
+    )
+
+    return {
+        "insight_id": insight_card.get("insight_id"),
+        "summary": insight_card.get("summary"),
+        "scope": insight_card.get("scope"),
+        "scope_context": json.loads(json.dumps(insight_card.get("scope_context") or {})),
+        "status": insight_card.get("status"),
+        "superseded_by": json.loads(json.dumps(insight_card.get("superseded_by") or {})),
+        "confidence": json.loads(json.dumps(insight_card.get("confidence") or {})),
+        "tags": list(insight_card.get("tags") or []),
+        "source_ref": insight_card.get("source_ref"),
+        "supporting_evidence_refs": json.loads(
+            json.dumps(insight_card.get("supporting_evidence_refs") or [])
+        ),
+        "linked_sources": json.loads(json.dumps(insight_card.get("linked_sources") or [])),
+        "aggregation_provenance": json.loads(
+            json.dumps(insight_card.get("aggregation_provenance") or {})
+        ),
+        "created_at": insight_card.get("created_at"),
+        "updated_at": insight_card.get("updated_at"),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "insight_card_detail": detail_surface,
+                "supporting_evidence_refs": supporting_evidence_surface,
+                "linked_sources": linked_sources_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs")
+async def list_strategy_specs(
+    lifecycle_state: str = Query(default="all"),
+    source_kind: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    include_retired: bool = False,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    validated_lifecycle_state = _kw05_validate_lifecycle_state(lifecycle_state)
+    snapshot_at = utc_now()
+    items = read_store.list_strategy_specs(
+        lifecycle_state=validated_lifecycle_state,
+        source_kind=source_kind,
+        persona_id=persona_id,
+        include_retired=include_retired,
+    )
+    dataset_available = read_store.dataset_source("strategy_specs") != "missing"
+    surface_state = _kw05_surface_state(
+        "strategy_specs",
+        snapshot_at=snapshot_at,
+        has_data=dataset_available,
+    )
+
+    if surface_state == "unavailable":
+        page_items = []
+        next_page_token = None
+        has_more = False
+    else:
+        page_items, next_page_token = _page_slice(items, page_token, page_size)
+        has_more = next_page_token is not None
+
+    return {
+        "items": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "page_size": page_size,
+            "has_more": has_more,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"strategy_spec_list": surface_state},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}")
+async def get_strategy_spec_detail(
+    strategy_id: str,
+    version: str = Query(default="current"),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    strategy_exists = read_store.get_strategy_spec(strategy_id)
+    if not strategy_exists:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec not found",
+            f"Strategy spec family {strategy_id} does not exist",
+        )
+
+    detail = read_store.get_strategy_spec_detail(strategy_id, version_selector=version)
+    if not detail:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec version not found",
+            f"Version {version} does not exist for strategy {strategy_id}",
+        )
+
+    snapshot_at = utc_now()
+    detail_surface = _kw05_surface_state(
+        "strategy_specs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    citation_bundle = json.loads(json.dumps(detail.get("citation_bundle") or {}))
+    citation_surface = "partial" if not any(citation_bundle.values()) else detail_surface
+    ancestry_surface = (
+        "degraded"
+        if detail.get("parent_spec_version_id") is None and str(version).strip() not in {"", "current"}
+        else detail_surface
+    )
+
+    return {
+        "object_ref": json.loads(json.dumps(detail.get("object_ref") or {})),
+        "strategy_id": detail.get("strategy_id"),
+        "spec_version_id": detail.get("spec_version_id"),
+        "spec_version": detail.get("spec_version"),
+        "parent_spec_version_id": detail.get("parent_spec_version_id"),
+        "derived_from_source_refs": list(detail.get("derived_from_source_refs") or []),
+        "lifecycle_state": detail.get("lifecycle_state"),
+        "title": detail.get("title"),
+        "hypothesis": detail.get("hypothesis"),
+        "objective": detail.get("objective"),
+        "market_scope": json.loads(json.dumps(detail.get("market_scope") or {})),
+        "execution_profile": json.loads(json.dumps(detail.get("execution_profile") or {})),
+        "evaluation_plan": json.loads(json.dumps(detail.get("evaluation_plan") or {})),
+        "governance": json.loads(json.dumps(detail.get("governance") or {})),
+        "citation_bundle": citation_bundle,
+        "allowedActions": json.loads(json.dumps(detail.get("allowedActions") or {})),
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "strategy_spec_detail": detail_surface,
+                "citation_bundle": citation_surface,
+                "version_ancestry": ancestry_surface,
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}/versions")
+async def list_strategy_spec_versions(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    versions = read_store.list_strategy_spec_versions(strategy_id)
+    if not versions and not read_store.get_strategy_spec(strategy_id):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec not found",
+            f"Strategy spec family {strategy_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return {
+        "strategy_id": strategy_id,
+        "versions": versions,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "version_history": _kw05_surface_state(
+                    "strategy_specs",
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                )
+            },
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}/compare")
+async def compare_strategy_spec_versions(
+    strategy_id: str,
+    left_version: Optional[str] = None,
+    right_version: Optional[str] = None,
+    base_version: Optional[str] = None,
+    target_version: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    left_selector, right_selector = _kw05_compare_selectors(
+        left_version=left_version,
+        right_version=right_version,
+        base_version=base_version,
+        target_version=target_version,
+    )
+    if left_selector == right_selector:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Compare requires two distinct versions",
+            "left_version and right_version must identify different versions",
+            precondition_failed="left_version",
+        )
+
+    left_detail = read_store.get_strategy_spec_detail(strategy_id, version_selector=left_selector)
+    right_detail = read_store.get_strategy_spec_detail(strategy_id, version_selector=right_selector)
+    if not left_detail or not right_detail:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec version not found",
+            f"Cannot compare missing versions for strategy {strategy_id}",
+        )
+    if not (left_detail.get("allowedActions") or {}).get("canCompare") or not (
+        right_detail.get("allowedActions") or {}
+    ).get("canCompare"):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_STATE,
+            "One or more versions cannot be compared",
+            "Compare accepts only candidate, approved, or retired strategy spec versions",
+            precondition_failed="lifecycle_state",
+        )
+
+    payload = read_store.compare_strategy_spec_versions(
+        strategy_id,
+        left_selector=left_selector,
+        right_selector=right_selector,
+    )
+    if not payload:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy spec version not found",
+            f"Cannot compare missing versions for strategy {strategy_id}",
+        )
+
+    snapshot_at = utc_now()
+    payload["meta"] = {
+        **_snapshot_meta(snapshot_at),
+        "surfaces": {
+            "strategy_spec_compare": _kw05_surface_state(
+                "strategy_specs",
+                snapshot_at=snapshot_at,
+                has_data=True,
+            )
+        },
+    }
+    return payload
+
+
+def _kw01_surface_state(
+    dataset: str,
+    *,
+    snapshot_at: str,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+) -> str:
+    source = read_store.dataset_source(
+        dataset,
+        include_snapshot_fallback=False,
+        include_local_fallback=False,
+    )
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+        source=source,
+    )
+    if surface.get("status") == "unavailable":
+        return "unavailable"
+    if surface.get("status") == "degraded":
+        return "degraded"
+    return "ok"
+
+
+@app.get("/api/v1/knowledge/memory")
+async def list_institutional_memory(
+    knowledge_type: Optional[str] = None,
+    scope: Optional[str] = None,
+    scope_filter: Optional[str] = None,
+    tags: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    authorization: Optional[str] = Header(default=None),
+):
+    """KW-01: Paginated list of institutional memory entries."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    entries = read_store.list_institutional_memory_entries()
+
+    if knowledge_type:
+        entries = [e for e in entries if e["knowledge_type"] == knowledge_type]
+    if scope:
+        entries = [e for e in entries if e["scope"] == scope]
+    if scope_filter:
+        entries = [e for e in entries if e.get("scope_filter") == scope_filter]
+    if tags:
+        requested = {t.strip() for t in tags.split(",") if t.strip()}
+        entries = [e for e in entries if requested.intersection(e.get("tags", []))]
+
+    total_count = len(entries)
+    start = (page - 1) * page_size
+    page_entries = entries[start : start + page_size]
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    memory_list_surface = _kw01_surface_state(
+        "institutional_memory_entries",
+        snapshot_at=snapshot_at,
+        has_data=bool(entries),
+        missing_message="Institutional memory list is unavailable.",
+    )
+    if memory_list_surface == "unavailable":
+        page_entries = []
+        total_count = 0
+        total_pages = 0
+
+    return {
+        "entries": page_entries,
+        "pagination": {
+            "total_count": total_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {"memory_list": memory_list_surface},
+        },
+    }
+
+
+@app.get("/api/v1/knowledge/memory/{entry_id}")
+async def get_institutional_memory_entry(
+    entry_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """KW-01: Full detail view for one institutional memory entry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    entry = read_store.get_institutional_memory_entry(
+        entry_id,
+        include_snapshot_fallback=False,
+    )
+    if entry is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "entry_not_found", "entry_id": entry_id},
+        )
+
+    source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
+    source_context_available = bool(source_event.get("type")) and bool(source_event.get("id"))
+
+    return {
+        **entry,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "entry_detail": _kw01_surface_state(
+                    "institutional_memory_entries",
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                ),
+                "source_context": _kw01_surface_state(
+                    "institutional_memory_entries",
+                    snapshot_at=snapshot_at,
+                    has_data=source_context_available,
+                    missing_message="Institutional memory source context is unavailable.",
+                ),
+            },
+        },
+    }
+
+
+def _governance_review_allowed_actions_present(item: Dict[str, Any]) -> bool:
+    allowed_actions = item.get("allowedActions")
+    if not isinstance(allowed_actions, dict):
+        return False
+    required_fields = (
+        "canReview",
+        "canForwardToApproval",
+        "canRequestChanges",
+        "canEscalate",
+    )
+    return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
+
+
+def _approval_queue_allowed_actions_present(item: Dict[str, Any]) -> bool:
+    allowed_actions = item.get("allowedActions")
+    if not isinstance(allowed_actions, dict):
+        return False
+    required_fields = (
+        "canApprove",
+        "canReject",
+        "canRequestRevision",
+    )
+    return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
+
+
+_DEPLOYMENT_DIFF_CATEGORIES = (
+    "parameters",
+    "bindings",
+    "capital_allocation",
+    "risk_controls",
+    "stage_transition",
+)
+
+
+def _default_deployment_diff_summary() -> Dict[str, Any]:
+    return {
+        "total_changes": 0,
+        "by_category": {
+            category: {"count": 0, "highest_risk_tier": None}
+            for category in _DEPLOYMENT_DIFF_CATEGORIES
+        },
+    }
+
+
+def _deployment_diff_allowed_actions_present(payload: Dict[str, Any]) -> bool:
+    allowed_actions = payload.get("allowedActions")
+    if not isinstance(allowed_actions, dict):
+        return False
+    required_fields = ("canProceedToApproval", "canEscalateDiff")
+    return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
+
+
+def _unavailable_deployment_diff_payload(plan_id: str, snapshot_at: str) -> Dict[str, Any]:
+    deployment_diff_surface = _dataset_surface_status(
+        "deployment_diffs",
+        snapshot_at=snapshot_at,
+        has_data=False,
+        missing_message="Deployment diff unavailable for this plan.",
+    )
+    allowed_actions_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=False,
+        missing_message="Deployment diff authority unavailable.",
+    )
+    allowed_actions_surface["status"] = deployment_diff_surface.get("status")
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "deployment_diff": deployment_diff_surface,
+        "allowedActions": allowed_actions_surface,
+    }
+    return {
+        "plan_id": plan_id,
+        "artifact_id": None,
+        "stage": None,
+        "submitted_at": None,
+        "submitted_by": None,
+        "previous_plan_id": None,
+        "first_deployment": False,
+        "changes": [],
+        "change_summary": _default_deployment_diff_summary(),
+        "allowedActions": {
+            "canProceedToApproval": False,
+            "canEscalateDiff": False,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/operator/governance/review-queue")
+async def list_governance_review_queue(
+    item_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    item_types = [value.strip() for value in item_type.split(",") if value.strip()] if item_type else None
+    risk_levels = [value.strip() for value in risk_level.split(",") if value.strip()] if risk_level else None
+    statuses = [value.strip() for value in status.split(",") if value.strip()] if status else None
+
+    items = read_store.list_governance_review_queue_items(
+        item_types=item_types,
+        risk_levels=risk_levels,
+        statuses=statuses,
+    )
+    review_queue_surface = _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+    )
+
+    if review_queue_surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    allowed_actions_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=all(_governance_review_allowed_actions_present(item) for item in items),
+        missing_message="Governance routing authority unavailable.",
+    )
+    if review_queue_surface.get("status") == "degraded":
+        allowed_actions_surface["status"] = "degraded"
+    elif review_queue_surface.get("status") == "unavailable":
+        allowed_actions_surface["status"] = "unavailable"
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "review_queue": review_queue_surface,
+        "allowedActions": allowed_actions_surface,
+    }
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/operator/governance/approval-queue")
+async def list_governance_approval_queue(
+    decision_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    decision_state: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    decision_types = [value.strip() for value in decision_type.split(",") if value.strip()] if decision_type else None
+    risk_levels = [value.strip() for value in risk_level.split(",") if value.strip()] if risk_level else None
+    decision_states = [value.strip() for value in decision_state.split(",") if value.strip()] if decision_state else None
+
+    items = read_store.list_approval_queue_items(
+        decision_types=decision_types,
+        risk_levels=risk_levels,
+        decision_states=decision_states,
+    )
+    approval_queue_surface = _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+    )
+
+    if approval_queue_surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    allowed_actions_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=all(_approval_queue_allowed_actions_present(item) for item in items),
+        missing_message="Approval queue authority unavailable.",
+    )
+    if approval_queue_surface.get("status") == "degraded":
+        allowed_actions_surface["status"] = "degraded"
+    elif approval_queue_surface.get("status") == "unavailable":
+        allowed_actions_surface["status"] = "unavailable"
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "approval_queue": approval_queue_surface,
+        "allowedActions": allowed_actions_surface,
+    }
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/api/v1/operator/deployment-diff/{plan_id}")
+async def get_deployment_diff(plan_id: str, authorization: Optional[str] = Header(default=None)):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    diff = read_store.get_deployment_diff(plan_id)
+    diff_source = read_store.dataset_source("deployment_diffs")
+    if not diff:
+        if diff_source == "missing":
+            return _unavailable_deployment_diff_payload(plan_id, utc_now())
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Deployment diff not found",
+            f"Deployment diff for plan {plan_id} does not exist",
+        )
+
+    snapshot_at = (((diff.get("meta") or {}).get("snapshot_at"))) or utc_now()
+    payload = dict(diff)
+    payload["plan_id"] = payload.get("plan_id") or plan_id
+    payload["changes"] = list(payload.get("changes") or [])
+
+    summary = dict(payload.get("change_summary") or {})
+    summary["total_changes"] = int(summary.get("total_changes") or len(payload["changes"]))
+    by_category = dict(summary.get("by_category") or {})
+    for category in _DEPLOYMENT_DIFF_CATEGORIES:
+        category_summary = dict(by_category.get(category) or {})
+        category_summary.setdefault("count", 0)
+        category_summary.setdefault("highest_risk_tier", None)
+        by_category[category] = category_summary
+    summary["by_category"] = by_category
+    payload["change_summary"] = summary
+
+    allowed_actions = dict(payload.get("allowedActions") or {})
+    allowed_actions.setdefault("canProceedToApproval", False)
+    allowed_actions.setdefault("canEscalateDiff", False)
+    payload["allowedActions"] = allowed_actions
+
+    deployment_diff_surface = _dataset_surface_status(
+        "deployment_diffs",
+        snapshot_at=snapshot_at,
+        has_data=True,
+    )
+    allowed_actions_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=_deployment_diff_allowed_actions_present(payload),
+        missing_message="Deployment diff authority unavailable.",
+    )
+    if deployment_diff_surface.get("status") == "degraded":
+        allowed_actions_surface["status"] = "degraded"
+    elif deployment_diff_surface.get("status") == "unavailable":
+        allowed_actions_surface["status"] = "unavailable"
+
+    meta = dict(payload.get("meta") or {})
+    meta["snapshot_at"] = snapshot_at
+    meta["surfaces"] = {
+        "deployment_diff": deployment_diff_surface,
+        "allowedActions": allowed_actions_surface,
+    }
+    payload["meta"] = meta
+    return payload
+
+
+@app.get("/api/v1/operator/rollback-review/{rollback_id}")
+async def get_rollback_review(rollback_id: str, authorization: Optional[str] = Header(default=None)):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    review = read_store.get_rollback_review(rollback_id)
+    if not review:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Rollback review not found",
+            f"Rollback review {rollback_id} does not exist",
+        )
+
+    snapshot_at = (
+        ((review.get("meta") or {}).get("snapshot_at"))
+        or utc_now()
+    )
+    meta = dict(review.get("meta") or {})
+    meta["snapshot_at"] = snapshot_at
+    surfaces = dict(meta.get("surfaces") or {})
+    surfaces.setdefault(
+        "rollback_review",
+        _composed_surface_status(snapshot_at=snapshot_at, available=True),
+    )
+    surfaces.setdefault(
+        "position_data",
+        _composed_surface_status(snapshot_at=snapshot_at, available=True),
+    )
+    surfaces.setdefault(
+        "allowedActions",
+        _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=review.get("allowedActions") is not None,
+            missing_message="Rollback approval authority unavailable.",
+        ),
+    )
+    meta["surfaces"] = surfaces
+
+    payload = dict(review)
+    payload["meta"] = meta
+    return payload
+
+
+@app.get("/api/v1/operator/governance/audit")
+async def list_governance_audit_trail(
+    actor: Optional[str] = None,
+    action_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    from_: Optional[datetime] = Query(default=None, alias="from"),
+    to: Optional[datetime] = Query(default=None),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    action_types = None
+    if action_type:
+        action_types = [value.strip() for value in action_type.split(",") if value.strip()]
+
+    entries = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_,
+        to_ts=to,
+    )
+    audit_surface = _dataset_surface_status(
+        "governance_audit_events",
+        snapshot_at=snapshot_at,
+    )
+    if audit_surface.get("status") == "unavailable":
+        entries = []
+        next_page_token = None
+    else:
+        entries, next_page_token = _page_slice(entries, page_token, page_size)
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "audit_trail": audit_surface,
+        },
+    }
+
+    return {
+        "entries": entries,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
     }
 
 
@@ -991,6 +9465,8 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
 @app.get("/api/v1/incidents")
 async def list_incidents(
     status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     severity: Optional[str] = None,
     affected_pool_id: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
@@ -999,15 +9475,42 @@ async def list_incidents(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incidents = read_store.list_incidents(
         status=status, severity=severity, affected_pool_id=affected_pool_id,
     )
-    return {
-        "data": incidents,
-        "meta": {
-            "total": len(incidents),
-            "staleness": _meta_staleness(),
+    items = [_project_incident_home_item(incident) for incident in incidents]
+    if surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "incident_list": surface,
         },
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    degradation_reason = _surface_degradation_reason(
+        surface,
+        degraded_reason="Incident list is degraded and may be stale.",
+        unavailable_reason="Incident list is currently unavailable.",
+    )
+    if degradation_reason is not None:
+        meta["degradation"] = {"reason": degradation_reason}
+
+    return {
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
+        },
+        "meta": meta,
     }
 
 
@@ -1098,18 +9601,47 @@ async def get_kill_switch_status(authorization: Optional[str] = Header(default=N
             suggestion="Escalate to an admin-role operator",
         )
 
+    snapshot_at = utc_now()
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+    allowed_actions_surface = _action_drawer_allowed_actions_surface()
     ks = read_store.get_kill_switch_status()
+    allowed_actions = _project_action_drawer_allowed_actions(
+        kill_switch_surface,
+        allowed_actions_surface,
+    )
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "kill_switch": kill_switch_surface,
+            "allowedActions": allowed_actions_surface,
+        },
+    }
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    degradation: Dict[str, Any] = {}
+    kill_switch_reason = _surface_degradation_reason(
+        kill_switch_surface,
+        degraded_reason="Kill switch status is degraded and may be stale.",
+        unavailable_reason="Kill switch status is currently unavailable.",
+    )
+    if kill_switch_reason is not None:
+        degradation["kill_switch_reason"] = kill_switch_reason
+    allowed_actions_reason = _surface_degradation_reason(
+        allowed_actions_surface,
+        degraded_reason="Action authority is degraded. All CTAs disabled for safety.",
+        unavailable_reason="Action authority service is unavailable. All CTAs disabled for safety.",
+    )
+    if allowed_actions_reason is not None:
+        degradation["allowedActions_reason"] = allowed_actions_reason
+    if degradation:
+        meta["degradation"] = degradation
+
     return {
-        "data": {
-            "active_freeze_orders": ks["active_freeze_orders"],
-            "affected_runtime_bindings": [],  # v1: populated from downstream in production
-            "safe_mode_status": ks["safe_mode_status"],
-        },
-        "meta": {
-            "active": ks["active"],
-            "last_checked_at": ks["last_checked_at"],
-            "staleness": _meta_staleness(),
-        },
+        "kill_switch": _project_kill_switch_contract(ks, kill_switch_surface),
+        "allowedActions": allowed_actions,
+        "meta": meta,
     }
 
 
@@ -1125,8 +9657,8 @@ async def get_incident_response(
     authorization: Optional[str] = Header(default=None),
 ):
     """
-    Composed view for active incident response.
-    Composes: IN-02, RT-03, TL-02, RT-04, EV-04, IN-05
+    Composed view for PKT-002 Incident Detail.
+    Composes: incident record, affected bindings, kill-switch state, and action authority.
     """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
@@ -1142,73 +9674,97 @@ async def get_incident_response(
         )
 
     snapshot_at = utc_now()
-    surfaces = {}
-
-    # RT-03: Runtime binding status
-    binding_id = incident.get("binding_id")
-    runtime_id = incident.get("runtime_id")  # fallback; production resolves from binding
     runtime_binding = None
-    runtime_binding_data = {}
+    binding_id = incident.get("binding_id")
     if binding_id:
         runtime_binding = read_store.get_runtime_binding(binding_id)
-        if runtime_binding:
-            runtime_binding_data = dict(runtime_binding)
+    if runtime_binding is None:
+        runtime_binding = read_store.get_runtime_binding_by_runtime_id(incident.get("runtime_id"))
 
-    if runtime_binding:
-        surfaces["runtime_binding"] = {"status": "ok"}
-    else:
-        surfaces["runtime_binding"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
-
-    # TL-02: Telemetry summary
-    telemetry_summary = None
-    telemetry_runtime_id = runtime_binding.get("runtime_id") if runtime_binding else runtime_id
-    if telemetry_runtime_id:
-        telemetry_summary = read_store.get_telemetry_summary(telemetry_runtime_id)
-
-    if telemetry_summary:
-        surfaces["telemetry_summary"] = {"status": "ok"}
-    else:
-        surfaces["telemetry_summary"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
-
-    # RT-04: Rollbacks
-    rollbacks = read_store.get_rollbacks_by_incident(incident_id)
-    surfaces["rollbacks"] = {"status": "ok"}
-
-    # EV-04: Evolution decisions for this incident
-    # Note: The contract lists EV-04 as rollbacks only. We additionally surface
-    # evolution decisions here to give operators full incident context in one view.
-    # This is an intentional v1 extension beyond the strict contract.
-    evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)
-    surfaces["evolution_decisions"] = {"status": "ok"}
-
-    # IN-05: Kill switch status
+    affected_bindings, binding_lookup_expected = _project_affected_bindings(
+        incident,
+        runtime_binding,
+    )
     ks = read_store.get_kill_switch_status()
-    surfaces["kill_switch"] = {"status": "ok"}
 
-    data = {
-        "incident": incident,
-        "runtime_binding": runtime_binding_data,
-        "telemetry_summary": telemetry_summary,
-        "rollbacks": rollbacks,
-        "evolution_decisions": evolution_decisions,
-        "kill_switch": {
-            "active_freeze_orders": ks["active_freeze_orders"],
-            "safe_mode_status": ks["safe_mode_status"],
+    incident_surface = _dataset_surface_status(
+        "incidents",
+        snapshot_at=snapshot_at,
+        has_data=incident is not None,
+    )
+    affected_bindings_surface = _dataset_surface_status(
+        "persona_bindings",
+        snapshot_at=snapshot_at,
+        has_data=(len(affected_bindings) > 0) if binding_lookup_expected else None,
+        missing_message="Affected bindings unavailable for this incident.",
+    )
+    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
+
+    action_derivation_available = bool(incident.get("runtime_id"))
+    allowed_actions_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=action_derivation_available,
+        missing_message="Action authority unavailable for this incident.",
+    )
+    if kill_switch_surface.get("status") == "unavailable":
+        allowed_actions_surface["status"] = "unavailable"
+        allowed_actions_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    allowed_actions = (
+        _derive_incident_allowed_actions(identity, incident)
+        if allowed_actions_surface.get("status") == "ok"
+        else _default_incident_allowed_actions()
+    )
+
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            "incident": incident_surface,
+            "affected_bindings": affected_bindings_surface,
+            "kill_switch": kill_switch_surface,
+            "allowedActions": allowed_actions_surface,
         },
     }
+    if snapshot == "preferred":
+        staleness = _meta_staleness()
+        if staleness is not None:
+            meta["staleness"] = staleness
+
+    degradation: Dict[str, str] = {}
+    affected_bindings_reason = _surface_degradation_reason(
+        affected_bindings_surface,
+        degraded_reason="Affected bindings are degraded and may be incomplete.",
+        unavailable_reason="Affected bindings are currently unavailable.",
+    )
+    if affected_bindings_reason is not None:
+        degradation["affected_bindings_reason"] = affected_bindings_reason
+    kill_switch_reason = _surface_degradation_reason(
+        kill_switch_surface,
+        degraded_reason="Kill switch status is degraded and may be stale.",
+        unavailable_reason="Kill switch status is currently unavailable.",
+    )
+    if kill_switch_reason is not None:
+        degradation["kill_switch_reason"] = kill_switch_reason
+    allowed_actions_reason = _surface_degradation_reason(
+        allowed_actions_surface,
+        degraded_reason="Action authority is degraded; all CTAs are disabled for safety.",
+        unavailable_reason="Action authority is currently unavailable; all CTAs are disabled.",
+    )
+    if allowed_actions_reason is not None:
+        degradation["allowedActions_reason"] = allowed_actions_reason
+    if degradation:
+        meta["degradation"] = degradation
 
     return {
-        "data": data,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": surfaces,
+        "data": {
+            "incident": _project_incident_detail_incident(incident),
+            "affected_bindings": affected_bindings,
+            "kill_switch": _project_kill_switch_contract(ks, kill_switch_surface),
         },
+        "allowedActions": allowed_actions,
+        "meta": meta,
     }
 
 
@@ -1246,14 +9802,15 @@ async def get_persona_management(
 
     # PS-02: Persona bindings (bindings where this persona is the owner)
     persona_bindings = read_store.get_bindings_for_persona(persona_id)
-    if persona_bindings is not None:
-        surfaces["persona_bindings"] = {"status": "ok"}
-    else:
+    persona_bindings_available = persona_bindings is not None
+    if persona_bindings is None:
         persona_bindings = []
-        surfaces["persona_bindings"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["persona_bindings"] = _dataset_surface_status(
+        "persona_bindings",
+        snapshot_at=snapshot_at,
+        has_data=persona_bindings_available,
+        missing_message="Persona bindings unavailable for this persona.",
+    )
 
     # CP-04: Enrich each binding with its capital pool detail
     enriched_bindings = []
@@ -1264,46 +9821,52 @@ async def get_persona_management(
             binding_detail["capital_pool"] = pool
         enriched_bindings.append(binding_detail)
 
-    if enriched_bindings:
-        surfaces["capital_pool_bindings"] = {"status": "ok"}
+    capital_pool_surface = _dataset_surface_status(
+        "capital_pools",
+        snapshot_at=snapshot_at,
+        has_data=bool(enriched_bindings),
+        missing_message="No capital pool bindings available for this persona.",
+    )
+    if surfaces["persona_bindings"]["status"] != "ok":
+        surfaces["capital_pool_bindings"] = dict(surfaces["persona_bindings"])
     else:
-        surfaces["capital_pool_bindings"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+        surfaces["capital_pool_bindings"] = capital_pool_surface
 
     # PS-03: Active sessions for this persona
     sessions = read_store.get_sessions_for_persona(persona_id)
-    if sessions is not None:
-        surfaces["persona_sessions"] = {"status": "ok"}
-    else:
+    sessions_available = sessions is not None
+    if sessions is None:
         sessions = []
-        surfaces["persona_sessions"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["persona_sessions"] = _dataset_surface_status(
+        "sessions",
+        snapshot_at=snapshot_at,
+        has_data=sessions_available,
+        missing_message="Persona sessions unavailable for this persona.",
+    )
 
     # PS-05: Teaching sessions for this persona
     teaching_sessions = read_store.get_teaching_sessions_for_persona(persona_id)
-    if teaching_sessions is not None:
-        surfaces["teaching_sessions"] = {"status": "ok"}
-    else:
+    teaching_sessions_available = teaching_sessions is not None
+    if teaching_sessions is None:
         teaching_sessions = []
-        surfaces["teaching_sessions"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["teaching_sessions"] = _dataset_surface_status(
+        "teaching_sessions",
+        snapshot_at=snapshot_at,
+        has_data=teaching_sessions_available,
+        missing_message="Teaching sessions unavailable for this persona.",
+    )
 
     # Backend-shaped allowed actions (acceptance: backend_shaped_persona_actions)
     allowed_actions = read_store.get_persona_allowed_actions(persona_id)
-    if allowed_actions is not None:
-        surfaces["allowed_actions"] = {"status": "ok"}
-    else:
+    allowed_actions_available = allowed_actions is not None
+    if allowed_actions is None:
         allowed_actions = {}
-        surfaces["allowed_actions"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        }
+    surfaces["allowed_actions"] = _dataset_surface_status(
+        "allowed_actions",
+        snapshot_at=snapshot_at,
+        has_data=allowed_actions_available,
+        missing_message="Allowed actions unavailable for this persona.",
+    )
 
     data = {
         "persona": persona,
@@ -1354,41 +9917,40 @@ async def get_post_incident_review(
 
     # IN-04: Postmortem report
     postmortem = read_store.get_postmortem_by_incident(incident_id)
-    if postmortem:
-        surfaces["postmortem"] = {"status": "ok"}
-    else:
-        surfaces["postmortem"] = {
-            "status": "degraded",
-            "message": "No postmortem report available yet",
-        }
+    surfaces["postmortem"] = _dataset_surface_status(
+        "postmortems",
+        snapshot_at=snapshot_at,
+        has_data=postmortem is not None,
+        missing_message="No postmortem report available yet",
+    )
 
     # EV-01/EV-02: Evolution decisions
     evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)
-    surfaces["evolution_decisions"] = {"status": "ok"}
+    surfaces["evolution_decisions"] = _dataset_surface_status(
+        "evolution_decisions",
+        snapshot_at=snapshot_at,
+    )
 
     # LN-01: Lineage edges — fetch by artifact_id from incident
     artifact_id = incident.get("artifact_id")
     lineage_edges = read_store.list_lineage_edges(artifact_id=artifact_id) if artifact_id else []
-    if lineage_edges:
-        surfaces["lineage"] = {"status": "ok"}
-    else:
-        surfaces["lineage"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
-            "note": "No lineage edges found for this artifact",
-        }
+    surfaces["lineage"] = _dataset_surface_status(
+        "lineage_edges",
+        snapshot_at=snapshot_at,
+        has_data=bool(lineage_edges),
+        missing_message="No lineage edges found for this artifact",
+    )
 
     # TL-03: Telemetry performance — use artifact_id (not runtime_id or summary)
     telemetry_performance = None
     if artifact_id:
         telemetry_performance = read_store.get_telemetry_performance(artifact_id)
-    if telemetry_performance:
-        surfaces["telemetry_performance"] = {"status": "ok"}
-    else:
-        surfaces["telemetry_performance"] = {
-            "status": "degraded",
-            "staleness": {"served_from": "unverifiable"},
-        }
+    surfaces["telemetry_performance"] = _dataset_surface_status(
+        "telemetry_performance",
+        snapshot_at=snapshot_at,
+        has_data=telemetry_performance is not None,
+        missing_message="Telemetry performance unavailable for this artifact.",
+    )
 
     data = {
         "incident": incident,
@@ -1417,21 +9979,30 @@ async def list_evolution_decisions(
     action_type: Optional[str] = None,
     risk_level: Optional[str] = None,
     status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
     """EV-01: Evolution Decision List with optional filters."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    decisions = read_store.list_evolution_decisions(
-        action_type=action_type, risk_level=risk_level, status=status,
-    )
+    snapshot_at = utc_now()
+    decisions = [
+        _project_evolution_decision_contract(decision)
+        for decision in read_store.list_evolution_decisions(
+            action_type=action_type,
+            risk_level=risk_level,
+            status=status,
+        )
+    ]
+    items, next_page_token = _page_slice(decisions, page_token, page_size)
     return {
-        "data": decisions,
-        "meta": {
-            "total": len(decisions),
-            "staleness": _meta_staleness(),
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
         },
+        "meta": _snapshot_meta(snapshot_at),
     }
 
 
@@ -1452,12 +10023,9 @@ async def get_evolution_decision(
             f"Evolution decision {decision_id} does not exist",
         )
 
-    return {
-        "data": decision,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
-    }
+    payload = _project_evolution_decision_contract(decision)
+    payload["meta"] = _snapshot_meta(utc_now())
+    return payload
 
 
 @app.get("/api/v1/freeze-orders")
@@ -1470,13 +10038,14 @@ async def list_freeze_orders(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    orders = read_store.list_freeze_orders(status=status, scope=scope)
+    snapshot_at = utc_now()
+    orders = [
+        _project_freeze_order_contract(order)
+        for order in read_store.list_freeze_orders(status=status, scope=scope)
+    ]
     return {
-        "data": orders,
-        "meta": {
-            "total": len(orders),
-            "staleness": _meta_staleness(),
-        },
+        "items": orders,
+        "meta": _snapshot_meta(snapshot_at),
     }
 
 
@@ -1491,16 +10060,85 @@ async def list_rollbacks(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    rollbacks = read_store.list_all_rollbacks(
-        runtime_id=runtime_id, action_type=action_type, time_range=time_range,
-    )
+    snapshot_at = utc_now()
+    rollbacks = [
+        _project_rollback_contract(rollback)
+        for rollback in read_store.list_all_rollbacks(
+            runtime_id=runtime_id,
+            action_type=action_type,
+            time_range=time_range,
+        )
+    ]
     return {
-        "data": rollbacks,
-        "meta": {
-            "total": len(rollbacks),
-            "staleness": _meta_staleness(),
-        },
+        "items": rollbacks,
+        "meta": _snapshot_meta(snapshot_at),
     }
+
+
+@app.get("/api/v1/operator/mutation-review/{decision_id}")
+async def get_mutation_review(
+    decision_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """EW-05: Compose the operator mutation-review projection."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    if decision is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "decision_not_found", "decision_id": decision_id},
+        )
+
+    payload = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+
+    if payload["meta"]["surfaces"]["mutation_review"] == "unavailable":
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "evidence_unavailable",
+                "meta": {
+                    "surfaces": {
+                        "mutation_review": "unavailable",
+                    }
+                },
+            },
+        )
+
+    required_fields = (
+        "decision_id",
+        "target_type",
+        "target_id",
+        "target_version",
+        "action_type",
+        "decision_state",
+        "risk_level",
+        "created_at",
+    )
+    missing_fields = [field for field in required_fields if payload.get(field) in (None, "")]
+    if missing_fields:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "evidence_unavailable",
+                "detail": f"Mutation review projection is missing required fields: {missing_fields}",
+                "meta": {
+                    "surfaces": {
+                        "mutation_review": "unavailable",
+                    }
+                },
+            },
+        )
+
+    return payload
 
 
 # --------------------------------------------------------------------------- #
@@ -1511,19 +10149,29 @@ async def list_rollbacks(
 @app.get("/api/v1/lineage")
 async def list_lineage(
     artifact_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
-    """LN-01: Lineage Edge List with optional artifact filter."""
+    """LN-01: Aggregated lineage list with optional artifact filter."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    edges = read_store.list_lineage_edges(artifact_id=artifact_id)
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("lineage_edges", snapshot_at=snapshot_at)
+    items = read_store.list_lineage_records(artifact_id=artifact_id)
+    if surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
     return {
-        "data": edges,
-        "meta": {
-            "total": len(edges),
-            "staleness": _meta_staleness(),
+        "items": items,
+        "page_info": {
+            "next_page_token": next_page_token,
         },
+        "meta": _snapshot_meta(snapshot_at),
     }
 
 
@@ -1545,18 +10193,15 @@ async def get_lineage_edge(
             f"Lineage edge {edge_id} does not exist",
         )
 
-    return {
-        "data": edge,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
-    }
+    payload = dict(edge)
+    payload["meta"] = _snapshot_meta(utc_now())
+    return payload
 
 
 @app.get("/api/v1/lineage/graph")
 async def get_lineage_graph(
     root_type: Optional[str] = None,
-    root_id: Optional[str] = None,
+    root_id: str = Query(...),
     depth: int = 3,
     authorization: Optional[str] = Header(default=None),
 ):
@@ -1567,15 +10212,52 @@ async def get_lineage_graph(
     # Clamp depth to allowed range (§4.3)
     depth = max(1, min(depth, 10))
 
+    snapshot_at = utc_now()
     edges = read_store.get_lineage_graph(root_type=root_type, root_id=root_id, depth=depth)
+    nodes = read_store.get_lineage_graph_nodes(edges)
     return {
-        "data": edges,
-        "meta": {
-            "total": len(edges),
-            "depth": depth,
-            "staleness": _meta_staleness(),
-        },
+        "nodes": nodes,
+        "edges": [
+            {
+                "id": edge.get("id"),
+                "from_artifact_id": edge.get("from_artifact_id"),
+                "to_artifact_id": edge.get("to_artifact_id"),
+                "relationship": edge.get("relationship"),
+            }
+            for edge in edges
+        ],
+        "meta": _snapshot_meta(snapshot_at),
     }
+
+
+@app.get("/api/v1/lineage/inspiration/{artifact_id}")
+async def get_inspiration_graph(
+    artifact_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """EW-04: BFF-composed inspiration graph for a target artifact."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    projection = read_store.get_inspiration_graph(artifact_id)
+    artifact_exists = read_store.artifact_exists(artifact_id)
+    dataset_source = read_store.dataset_source("inspiration_graphs")
+
+    if projection is None and not artifact_exists:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Artifact not found",
+            f"Artifact {artifact_id} does not exist",
+        )
+
+    return _ew04_inspiration_payload(
+        artifact_id,
+        projection,
+        snapshot_at=snapshot_at,
+        artifact_exists=artifact_exists or projection is not None,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1662,13 +10344,285 @@ async def get_telemetry_performance(
 
 
 # --------------------------------------------------------------------------- #
+# Consultation surfaces (CS-01 – CS-06)
+# Derived from PERSONA_RUNTIME_MODEL.md §6, §13, §14 via
+# CONSULTATION_SURFACE_CONTRACT.md.  All surfaces are GET-only —
+# writes are the Persona Plane's responsibility.
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/api/v1/personas/{persona_id}/consultations")
+def list_consultations(
+    persona_id: str,
+    consultation_type: Optional[str] = Query(default=None, alias="filter.consultation_type"),
+    status: Optional[str] = Query(default=None, alias="filter.status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-01: List consultation sessions for a persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if persona is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"No persona with id {persona_id}",
+        )
+
+    consultations = read_store.list_consultations_for_persona(
+        persona_id,
+        consultation_type=consultation_type,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
+    if consultations is None:
+        return {
+            "data": [],
+            "meta": {
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "staleness": {
+                    "served_from": "unavailable",
+                    "last_known_at": utc_now(),
+                },
+            },
+        }
+
+    start = (page - 1) * page_size
+    page_data = consultations[start: start + page_size]
+    return {
+        "data": [
+            {
+                **s,
+                "_links": {
+                    "self": f"/api/v1/consultations/{s['session_id']}",
+                    "participants": f"/api/v1/consultations/{s['session_id']}/participants",
+                    "outcome": f"/api/v1/consultations/{s['session_id']}/outcome",
+                },
+            }
+            for s in page_data
+        ],
+        "meta": {
+            "total": len(consultations),
+            "page": page,
+            "page_size": page_size,
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}")
+def get_consultation(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-02: Consultation session detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_consultation(session_id)
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": {
+            **session,
+            "_links": {
+                "self": f"/api/v1/consultations/{session_id}",
+                "participants": f"/api/v1/consultations/{session_id}/participants",
+                "outcome": f"/api/v1/consultations/{session_id}/outcome",
+                "evidence": f"/api/v1/consultations/{session_id}/evidence",
+            },
+        },
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}/participants")
+def get_consultation_participants(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-03: All participants in a consultation session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    participants = read_store.get_consultation_participants(session_id)
+    if participants is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": [
+            {
+                **p,
+                "_links": {
+                    "self": f"/api/v1/sessions/{p['session_id']}",
+                    "persona": f"/api/v1/personas/{p['persona_id']}",
+                },
+            }
+            for p in participants
+        ],
+        "meta": {
+            "total": len(participants),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}/outcome")
+def get_consultation_outcome(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-04: Consultation outcome projection."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    outcome = read_store.get_consultation_outcome(session_id)
+    if outcome is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": outcome,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}/evidence")
+def get_consultation_evidence(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-05: Evidence refs attached to a consultation session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    evidence = read_store.get_consultation_evidence(session_id)
+    if evidence is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return {
+        "data": evidence,
+        "meta": {
+            "total": len(evidence),
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/api/v1/consultations/{session_id}/transcript")
+def get_consultation_transcript(
+    session_id: str,
+    page_token: Optional[str] = None,
+    page_size: int = 50,
+    from_sequence_no: Optional[int] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CW-02: Ordered debate transcript for a consultation session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    transcript = read_store.get_consult_transcript(
+        session_id,
+        from_sequence_no=from_sequence_no,
+        page_size=page_size,
+        page_token=page_token,
+    )
+    if transcript is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Consultation session not found",
+            f"No consultation session with id {session_id}",
+        )
+
+    return transcript
+
+
+@app.get("/api/v1/personas/{persona_id}/consult-policy")
+def get_consult_policy(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """CS-06: Consult policy for a persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    persona = read_store.get_persona(persona_id)
+    if persona is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"No persona with id {persona_id}",
+        )
+
+    policy = read_store.get_consult_policy(persona_id)
+    if policy is None:
+        # Policy may not exist yet — return a safe empty structure rather than 404
+        # so operators always get a valid read (policy absence is itself informative)
+        return {
+            "data": {
+                "id": None,
+                "persona_id": persona_id,
+                "required_reviewers": 0,
+                "required_committees": [],
+                "trigger_rules": [],
+                "forbidden_solo_actions": [],
+                "escalation_rules": [],
+            },
+            "meta": {
+                "staleness": _meta_staleness(),
+                "note": "No consult policy found for this persona. Defaulting to empty policy.",
+            },
+        }
+
+    return {
+        "data": policy,
+        "meta": {
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Command submission (write path — async execution)
 # --------------------------------------------------------------------------- #
 
 @app.post("/api/v1/operator/commands", response_model=CommandSubmissionResponse, status_code=202)
 async def submit_command(
-    cmd: OperatorCommand,
     background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
     x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
 ):
@@ -1680,11 +10634,15 @@ async def submit_command(
     """
     # 1. Authenticate
     identity = _extract_identity(authorization)
+    cmd = _normalize_operator_command_payload(payload)
 
     # 2. Command-specific precondition validation (role + params shape)
+    _validate_audit_context(cmd)
+    _validate_drawer_runtime_target(cmd)
     validator = _VALIDATORS.get(cmd.command)
     if validator:
         validator(cmd.params, identity)
+    stored_params = _stored_command_params(cmd, identity)
 
     # 3. Concurrent modification check (§5.1)
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
@@ -1718,11 +10676,12 @@ async def submit_command(
         "roles_at_submission": identity.roles,
         "mfa_verified": identity.mfa_verified,
         "reason": cmd.audit_context.reason,
+        "incident_id": cmd.audit_context.incident_id,
         "preconditions_checked": [
             "authentication", "authorization", "params_shape", "concurrent_safety"
         ],
         "timestamp": submitted_at,
-        "staleness_warning": staleness_warning.dict() if staleness_warning else None,
+        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
         "auth_token": raw_token,
         "mfa_token": mfa_token,
     }
@@ -1732,7 +10691,7 @@ async def submit_command(
         command_type=cmd.command,
         target=cmd.target,
         submitted_at=submitted_at,
-        params=cmd.params,
+        params=stored_params,
         audit_context=audit_record,
     )
 
@@ -1744,17 +10703,11 @@ async def submit_command(
     # 6. Queue for async processing
     background_tasks.add_task(_process_command_stub, command_id)
 
-    receipt = CommandReceipt(
+    return _project_command_submission_response(
         command_id=command_id,
-        command_type=cmd.command,
-        target=cmd.target,
-        submitted_at=submitted_at,
+        command=cmd.command,
+        accepted_at=submitted_at,
         status=CommandStatus.SUBMITTED,
-        tracking_url=f"/api/v1/operator/commands/{command_id}",
-    )
-
-    return CommandSubmissionResponse(
-        receipt=receipt,
         staleness_warning=staleness_warning,
     )
 
@@ -1811,9 +10764,92 @@ async def _process_command(command_id: str):
     await asyncio.sleep(0.05)  # brief yield to event loop
     command_store.update_status(command_id, CommandStatus.PROCESSING)
 
+    try:
+        execution_params = _resolve_execution_params_for_record(record)
+    except Exception as exc:
+        failed_at = utc_now()
+        error = {
+            "code": "TARGET_CONTEXT_UNAVAILABLE",
+            "message": f"Unable to route command {command_id}: {exc}",
+            "started_at": failed_at,
+            "failed_at": failed_at,
+            "suggestion": (
+                "Refresh Pantheon runtime/incident read surfaces or use the secondary control path "
+                "until the runtime target can be resolved."
+            ),
+        }
+        audit["execution_completed_at"] = failed_at
+        audit["executor"] = "command_executor"
+        audit["failure_reason"] = error["message"]
+        audit["failure_suggestion"] = error["suggestion"]
+        command_store.update_status(
+            command_id,
+            CommandStatus.FAILED,
+            error=error,
+            audit=audit,
+        )
+        log.warning("Worker: command %s failed during routing resolution: %s", command_id, exc)
+        return
+
+    if command_type == CommandType.RECORD_SPONSOR_DECISION:
+        try:
+            committee_id = str(execution_params.get("committee_id") or "").strip()
+            updated = read_store.record_sponsor_decision(
+                committee_id,
+                sponsor_decision=str(execution_params.get("sponsor_decision") or "").strip().lower(),
+                rationale_ref=str(execution_params.get("rationale_ref") or "").strip(),
+                actor_id=str(audit.get("operator_id") or "operator-command"),
+                recorded_at=utc_now(),
+            )
+            if updated is None:
+                raise ValueError(f"Committee {committee_id} could not be updated.")
+            result = {
+                "command_id": command_id,
+                "committee_id": updated.get("committee_id"),
+                "committee_ref": updated.get("committee_ref"),
+                "sponsor_decision": updated.get("sponsor_decision"),
+                "sponsor_decided_at": updated.get("sponsor_decided_at"),
+                "sponsor_decided_by": updated.get("sponsor_decided_by"),
+                "consensus_state": updated.get("consensus_state"),
+                "rationale_ref": (updated.get("synthesis_summary") or {}).get("rationale_ref"),
+                "execution_completed_at": utc_now(),
+            }
+            audit["execution_completed_at"] = result["execution_completed_at"]
+            audit["executor"] = "bff_read_store"
+            audit["downstream_verified"] = True
+            command_store.update_status(
+                command_id,
+                CommandStatus.EXECUTED,
+                result=result,
+                audit=audit,
+            )
+            log.info("Worker: command %s completed with status=%s", command_id, CommandStatus.EXECUTED.value)
+            return
+        except Exception as exc:
+            failed_at = utc_now()
+            error = {
+                "code": "COMMITTEE_UPDATE_FAILED",
+                "message": f"Unable to record sponsor decision: {exc}",
+                "started_at": failed_at,
+                "failed_at": failed_at,
+                "suggestion": "Refresh the committee board projection and retry once the committee surface is available.",
+            }
+            audit["execution_completed_at"] = failed_at
+            audit["executor"] = "bff_read_store"
+            audit["failure_reason"] = error["message"]
+            audit["failure_suggestion"] = error["suggestion"]
+            command_store.update_status(
+                command_id,
+                CommandStatus.FAILED,
+                error=error,
+                audit=audit,
+            )
+            log.warning("Worker: command %s failed during committee update: %s", command_id, exc)
+            return
+
     # Execute via real executor with propagated auth headers
     status, result, error = execute_command_with_status(
-        command_id, command_type, params,
+        command_id, command_type, execution_params,
         auth_token=auth_token, mfa_token=mfa_token,
     )
 
@@ -1864,6 +10900,7 @@ async def degraded_control_guidance():
     state = _read_surface_state()
     guidance = {
         "current_state": state,
+        "command_backend_configured": bool(os.getenv("PANTHEON_INTERNAL_API_URL", "").strip()),
         "primary_path": {
             "url": "/api/v1/operator/commands",
             "status": "available" if state == "fresh" else "degraded",
@@ -1886,7 +10923,7 @@ async def degraded_control_guidance():
             },
             "protected_internal_api": {
                 "description": "Direct HTTP access to control-plane internal API",
-                "base_url": os.getenv("PANTHEON_INTERNAL_API_URL", "http://localhost:5001"),
+                "base_url": os.getenv("PANTHEON_INTERNAL_API_URL", "").strip() or None,
                 "endpoints": {
                     "pause_runtime": "POST /api/internal/v1/runtimes/{binding_id}/pause",
                     "execute_rollback": "POST /api/internal/v1/rollbacks/execute",

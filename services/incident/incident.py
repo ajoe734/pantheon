@@ -382,9 +382,17 @@ class IncidentStore:
         if path and path.exists():
             self._load(path)
 
+    def _refresh_from_disk(self) -> None:
+        if not self._path or not self._path.exists():
+            return
+        self._incidents.clear()
+        self._postmortems.clear()
+        self._load(self._path)
+
     # ---- IncidentCase reads ----
 
     def get_incident(self, incident_id: str) -> Optional[IncidentCase]:
+        self._refresh_from_disk()
         return self._incidents.get(incident_id)
 
     def require_incident(self, incident_id: str) -> IncidentCase:
@@ -394,20 +402,25 @@ class IncidentStore:
         return inc
 
     def list_incidents(self) -> List[IncidentCase]:
+        self._refresh_from_disk()
         return list(self._incidents.values())
 
     def find_incidents_by_binding(self, binding_id: str) -> List[IncidentCase]:
+        self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.binding_id == binding_id]
 
     def find_incidents_by_pool(self, capital_pool_id: str) -> List[IncidentCase]:
+        self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.capital_pool_id == capital_pool_id]
 
     def find_open_incidents(self) -> List[IncidentCase]:
+        self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.is_open()]
 
     # ---- IncidentCase writes ----
 
     def create_incident(self, inc: IncidentCase) -> IncidentCase:
+        self._refresh_from_disk()
         errors = validate_incident_case(inc)
         if errors:
             raise IncidentError(f"Invalid IncidentCase: {errors}")
@@ -425,6 +438,7 @@ class IncidentStore:
         resolved_at: Optional[str] = None,
     ) -> IncidentCase:
         """Transition an incident to a new status."""
+        self._refresh_from_disk()
         inc = self.require_incident(incident_id)
         try:
             IncidentStatus(new_status)
@@ -446,6 +460,7 @@ class IncidentStore:
     # ---- Postmortem reads ----
 
     def get_postmortem(self, postmortem_id: str) -> Optional[Postmortem]:
+        self._refresh_from_disk()
         return self._postmortems.get(postmortem_id)
 
     def require_postmortem(self, postmortem_id: str) -> Postmortem:
@@ -455,9 +470,11 @@ class IncidentStore:
         return pm
 
     def list_postmortems(self) -> List[Postmortem]:
+        self._refresh_from_disk()
         return list(self._postmortems.values())
 
     def find_postmortem_for_incident(self, incident_id: str) -> Optional[Postmortem]:
+        self._refresh_from_disk()
         matches = [p for p in self._postmortems.values() if p.incident_id == incident_id]
         return matches[0] if matches else None
 
@@ -470,6 +487,7 @@ class IncidentStore:
         The referenced IncidentCase must exist in this store before a
         Postmortem can be created.
         """
+        self._refresh_from_disk()
         errors = validate_postmortem(pm)
         if errors:
             raise IncidentError(f"Invalid Postmortem: {errors}")
@@ -492,6 +510,7 @@ class IncidentStore:
         *,
         published_at: Optional[str] = None,
     ) -> Postmortem:
+        self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
         try:
             PostmortemStatus(new_status)
@@ -521,6 +540,7 @@ class IncidentStore:
         Called by EVO-003 when an EvolutionDecision is created referencing
         this postmortem (evolution_decision.postmortem lineage edge).
         """
+        self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
         updated = Postmortem(**{**pm.to_dict(), "linked_evolution_decision_id": evolution_decision_id})
         self._postmortems[postmortem_id] = updated

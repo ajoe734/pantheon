@@ -1,10 +1,8 @@
 """Unit tests for command_executor module."""
-import json
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -13,15 +11,26 @@ from command_executor import (
     execute_command,
     execute_command_with_status,
     _execute_approve_deployment,
+    _execute_approve_decision,
+    _execute_reject_decision,
+    _execute_request_approval_revision,
     _execute_pause_runtime,
+    _execute_escalate_diff,
     _execute_rollback,
+    _execute_approve_rollback,
+    _execute_reject_rollback,
     _execute_activate_kill_switch,
     _execute_approve_evolution_decision,
+    _execute_approve_mutation,
     _execute_evolution_action,
+    _execute_reject_mutation,
 )
 
 
 class TestApproveDeploymentExecutor(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
     @patch("command_executor._post_json")
     def test_approve_deployment_success(self, mock_post):
         mock_post.return_value = {
@@ -42,6 +51,9 @@ class TestApproveDeploymentExecutor(unittest.TestCase):
 
 
 class TestPauseRuntimeExecutor(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
     @patch("command_executor._post_json")
     def test_pause_runtime_success(self, mock_post):
         mock_post.return_value = {
@@ -60,7 +72,86 @@ class TestPauseRuntimeExecutor(unittest.TestCase):
         self.assertEqual(result["command_id"], "cmd-002")
 
 
+class TestApprovalDecisionExecutors(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
+    @patch("command_executor._post_json")
+    def test_approve_decision_success(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "appr-001",
+            "decision_state": "approved",
+            "status": "submitted",
+            "audit_id": "audit-appr-001",
+            "approved_at": "2026-04-18T06:00:00Z",
+        }
+        result = _execute_approve_decision("cmd-approve-decision", {
+            "decision_id": "appr-001",
+            "approval_notes": "Looks good",
+        })
+        self.assertEqual(result["decision_id"], "appr-001")
+        self.assertEqual(result["decision_state"], "approved")
+        self.assertEqual(result["command_id"], "cmd-approve-decision")
+
+    @patch("command_executor._post_json")
+    def test_reject_decision_success(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "appr-001",
+            "decision_state": "rejected",
+            "status": "submitted",
+            "audit_id": "audit-appr-001",
+            "rejected_at": "2026-04-18T06:05:00Z",
+        }
+        result = _execute_reject_decision("cmd-reject-decision", {
+            "decision_id": "appr-001",
+            "rejection_reason": "Risk evidence insufficient",
+        })
+        self.assertEqual(result["decision_id"], "appr-001")
+        self.assertEqual(result["decision_state"], "rejected")
+        self.assertEqual(result["command_id"], "cmd-reject-decision")
+
+    @patch("command_executor._post_json")
+    def test_request_revision_success(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "appr-001",
+            "decision_state": "pending_revision",
+            "status": "submitted",
+            "audit_id": "audit-appr-001",
+            "requested_at": "2026-04-18T06:10:00Z",
+        }
+        result = _execute_request_approval_revision("cmd-request-revision", {
+            "decision_id": "appr-001",
+            "revision_notes": "Need clearer evidence links",
+        })
+        self.assertEqual(result["decision_id"], "appr-001")
+        self.assertEqual(result["decision_state"], "pending_revision")
+        self.assertEqual(result["command_id"], "cmd-request-revision")
+
+
+class TestDeploymentDiffExecutor(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
+    @patch("command_executor._post_json")
+    def test_escalate_diff_success(self, mock_post):
+        mock_post.return_value = {
+            "plan_id": "plan-dp-001",
+            "status": "submitted",
+            "audit_id": "audit-plan-dp-001",
+            "escalated_at": "2026-04-18T06:20:00Z",
+        }
+        result = _execute_escalate_diff("cmd-escalate-diff", {
+            "plan_id": "plan-dp-001",
+            "escalation_reason": "Binding change requires committee review",
+        })
+        self.assertEqual(result["plan_id"], "plan-dp-001")
+        self.assertEqual(result["command_id"], "cmd-escalate-diff")
+
+
 class TestRollbackExecutor(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
     @patch("command_executor._post_json")
     def test_rollback_success(self, mock_post):
         mock_post.return_value = {
@@ -77,7 +168,49 @@ class TestRollbackExecutor(unittest.TestCase):
         self.assertEqual(result["command_id"], "cmd-003")
 
 
+class TestRollbackReviewCommandExecutors(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
+    @patch("command_executor._post_json")
+    def test_approve_rollback_success(self, mock_post):
+        mock_post.return_value = {
+            "rollback_id": "rollback-rb-001",
+            "decision": "approved",
+            "status": "submitted",
+            "audit_id": "audit-rb-001",
+            "approved_at": "2026-04-17T07:00:00Z",
+        }
+        result = _execute_approve_rollback("cmd-003a", {
+            "rollback_id": "rollback-rb-001",
+            "approval_notes": "Looks safe",
+        })
+        self.assertEqual(result["rollback_id"], "rollback-rb-001")
+        self.assertEqual(result["decision"], "approved")
+        self.assertEqual(result["command_id"], "cmd-003a")
+
+    @patch("command_executor._post_json")
+    def test_reject_rollback_success(self, mock_post):
+        mock_post.return_value = {
+            "rollback_id": "rollback-rb-001",
+            "decision": "rejected",
+            "status": "submitted",
+            "audit_id": "audit-rb-001",
+            "rejected_at": "2026-04-17T07:05:00Z",
+        }
+        result = _execute_reject_rollback("cmd-003b", {
+            "rollback_id": "rollback-rb-001",
+            "rejection_reason": "Impact summary insufficient",
+        })
+        self.assertEqual(result["rollback_id"], "rollback-rb-001")
+        self.assertEqual(result["decision"], "rejected")
+        self.assertEqual(result["command_id"], "cmd-003b")
+
+
 class TestKillSwitchExecutor(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
     @patch("command_executor._post_json")
     def test_kill_switch_success(self, mock_post):
         mock_post.return_value = {
@@ -95,30 +228,159 @@ class TestKillSwitchExecutor(unittest.TestCase):
 
 
 class TestEvolutionDecisionExecutor(unittest.TestCase):
-    def test_approve_evolution_decision_local(self):
+    def setUp(self):
+        os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+
+    @patch("command_executor._post_json")
+    def test_approve_evolution_decision_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-001",
+            "decision_state": "approved",
+            "approval_decision_id": "approval-777",
+            "risk_level": "medium",
+        }
+        auth_token = "op-reviewer:reviewer"
         result = _execute_approve_evolution_decision("cmd-005", {
             "evolution_decision_id": "evo-001",
             "approval_action": "approve",
-            "approved_by_role": "reviewer",
             "rationale": "Looks good",
-        })
+        }, auth_token=auth_token)
         self.assertEqual(result["evolution_decision_id"], "evo-001")
         self.assertEqual(result["command_id"], "cmd-005")
-        self.assertIn("timestamp", result)
+        self.assertEqual(result["decision_state"], "approved")
+        self.assertEqual(result["approval_decision_id"], "approval-777")
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-001/approve",
+            {
+                "actor_id": "op-reviewer",
+                "actor_role": "reviewer",
+                "note": "Looks good",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
 
 
 class TestEvolutionActionExecutor(unittest.TestCase):
-    def test_execute_evolution_action_local(self):
-        result = _execute_evolution_action("cmd-006", {
-            "evolution_action_id": "ea-001",
+    def setUp(self):
+        os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+
+    @patch("command_executor._post_json")
+    def test_execute_evolution_action_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-002",
             "action_type": "deploy",
-        })
-        self.assertEqual(result["evolution_action_id"], "ea-001")
+            "decision_state": "executed",
+            "execution_result": {
+                "status": "submitted",
+                "plane": "governance",
+                "executed_at": "2026-04-11T12:05:00Z",
+                "execution_ref_id": "exec-002",
+            },
+            "cooldown_ends_at": "2026-04-12T12:05:00Z",
+        }
+        auth_token = "op-admin:admin"
+        result = _execute_evolution_action("cmd-006", {
+            "evolution_decision_id": "evo-002",
+            "action_type": "deploy",
+            "has_active_runtime": True,
+            "active_binding_id": "rb-002",
+            "freeze_mode": "governance_only",
+            "note": "Execute approved evolution action",
+        }, auth_token=auth_token)
+        self.assertEqual(result["evolution_decision_id"], "evo-002")
         self.assertEqual(result["action_type"], "deploy")
         self.assertEqual(result["command_id"], "cmd-006")
+        self.assertEqual(result["decision_state"], "executed")
+        self.assertEqual(result["execution_ref_id"], "exec-002")
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-002/execute",
+            {
+                "actor_id": "op-admin",
+                "actor_role": "admin",
+                "has_active_runtime": True,
+                "active_binding_id": "rb-002",
+                "freeze_mode": "governance_only",
+                "note": "Execute approved evolution action",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
+
+
+class TestMutationReviewExecutors(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+
+    @patch("command_executor._post_json")
+    def test_approve_mutation_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-dec-88f3a2c1",
+            "decision_state": "approved",
+            "approval_decision_id": "approval-777",
+            "risk_level": "medium",
+            "decided_at": "2026-04-19T06:00:00Z",
+        }
+        auth_token = "op-approver:approver"
+        result = _execute_approve_mutation(
+            "cmd-mutation-approve",
+            {
+                "decision_id": "evo-dec-88f3a2c1",
+                "note": "Ready for final approval",
+            },
+            auth_token=auth_token,
+        )
+        self.assertEqual(result["decision_id"], "evo-dec-88f3a2c1")
+        self.assertEqual(result["new_state"], "approved")
+        self.assertTrue(result["command_accepted"])
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-dec-88f3a2c1/approve",
+            {
+                "actor_id": "op-approver",
+                "actor_role": "approver",
+                "note": "Ready for final approval",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
+
+    @patch("command_executor._post_json")
+    def test_reject_mutation_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-dec-88f3a2c1",
+            "decision_state": "rejected",
+            "approval_decision_id": "approval-777",
+            "risk_level": "medium",
+            "decided_at": "2026-04-19T06:05:00Z",
+        }
+        auth_token = "op-operator:operator"
+        result = _execute_reject_mutation(
+            "cmd-mutation-reject",
+            {
+                "decision_id": "evo-dec-88f3a2c1",
+                "note": "Risk evidence still incomplete",
+            },
+            auth_token=auth_token,
+        )
+        self.assertEqual(result["decision_id"], "evo-dec-88f3a2c1")
+        self.assertEqual(result["new_state"], "rejected")
+        self.assertTrue(result["command_accepted"])
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-dec-88f3a2c1/reject",
+            {
+                "actor_id": "op-operator",
+                "actor_role": "operator",
+                "note": "Risk evidence still incomplete",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
 
 
 class TestExecuteCommandDispatch(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
     @patch("command_executor._post_json")
     def test_dispatch_approve_deployment(self, mock_post):
         mock_post.return_value = {
@@ -134,12 +396,40 @@ class TestExecuteCommandDispatch(unittest.TestCase):
         })
         self.assertEqual(result["state_after"], "approved")
 
+    @patch("command_executor._post_json")
+    def test_dispatch_approve_decision(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "appr-001",
+            "decision_state": "approved",
+            "status": "submitted",
+        }
+        result = execute_command("cmd-approval-queue", CommandType.APPROVE_DECISION, {
+            "decision_id": "appr-001",
+            "approval_notes": "Proceed",
+        })
+        self.assertEqual(result["decision_state"], "approved")
+
+    @patch("command_executor._post_json")
+    def test_dispatch_escalate_diff(self, mock_post):
+        mock_post.return_value = {
+            "plan_id": "plan-dp-001",
+            "status": "submitted",
+        }
+        result = execute_command("cmd-deployment-diff", CommandType.ESCALATE_DIFF, {
+            "plan_id": "plan-dp-001",
+            "escalation_reason": "Diff exceeds policy threshold",
+        })
+        self.assertEqual(result["plan_id"], "plan-dp-001")
+
     def test_dispatch_unknown_command_type(self):
         with self.assertRaises(ValueError):
             execute_command("cmd-001", "FakeCommand", {})
 
 
 class TestExecuteCommandWithStatus(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
     @patch("command_executor._post_json")
     def test_success_returns_executed(self, mock_post):
         mock_post.return_value = {

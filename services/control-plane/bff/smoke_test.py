@@ -12,24 +12,27 @@ Covers:
   - Kill-switch with invalid scope → INVALID_PARAMS
   - Concurrent modification detection → CONCURRENT_MODIFICATION
   - Degraded read surface → staleness_warning in response
-  - All six command types submit successfully with correct roles
+  - All eight command types submit successfully with correct roles
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 # Use a temp dir so tests don't share state with each other
 os.environ["BFF_DATA_DIR"] = "/tmp/pantheon/bff_test"
 os.environ.setdefault("BFF_READ_SURFACE_STATE", "fresh")
-
 from fastapi.testclient import TestClient
+import main as bff_main
 from main import app, command_store
-from models import CommandStatus, CommandType, ErrorCode
+from models import CommandReceiptStatus, CommandRoutingPath, CommandStatus, CommandType, ErrorCode
+from read_store import ReadSurfaceStore
 
 # ------------------------------------------------------------------ helpers --
 
@@ -63,6 +66,13 @@ class TestOperatorBFF(unittest.TestCase):
         self.client = TestClient(app)
         # Reset env to fresh each test
         os.environ["BFF_READ_SURFACE_STATE"] = "fresh"
+        os.makedirs(os.path.dirname(command_store.file_path), exist_ok=True)
+        with open(command_store.file_path, "w", encoding="utf-8") as handle:
+            handle.write("")
+        self._seeded_read_store = ReadSurfaceStore(
+            os.path.join("/tmp/pantheon", "bff_test_seeded_read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
 
     # ---------------------------------------------------------------------- #
     # Health
@@ -76,10 +86,15 @@ class TestOperatorBFF(unittest.TestCase):
     # Read surfaces (Wave 1)
     # ---------------------------------------------------------------------- #
     def test_deployment_review_composed_view(self):
-        r = self.client.get(
-            "/api/v1/operator/deployment-review/plan-F-042",
-            headers={"Authorization": OPERATOR_TOKEN},
-        )
+        original_read_store = bff_main.read_store
+        bff_main.read_store = self._seeded_read_store
+        try:
+            r = self.client.get(
+                "/api/v1/operator/deployment-review/plan-F-042",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+        finally:
+            bff_main.read_store = original_read_store
         self.assertEqual(r.status_code, 200, r.text)
         payload = r.json()
         data = payload.get("data", {})
@@ -97,6 +112,78 @@ class TestOperatorBFF(unittest.TestCase):
         self.assertIn("snapshot_at", meta)
         self.assertIn("surfaces", meta)
 
+    def test_deployment_review_requires_backend_owned_plan_in_honest_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            original_read_store = bff_main.read_store
+            with patch.dict(
+                os.environ,
+                {
+                    "PANTHEON_GOVERNANCE_DATA_DIR": "",
+                    "PANTHEON_RUNTIME_DATA_DIR": "",
+                },
+                clear=False,
+            ):
+                bff_main.read_store = store
+                try:
+                    r = self.client.get(
+                        "/api/v1/operator/deployment-review/plan-F-042",
+                        headers={"Authorization": OPERATOR_TOKEN},
+                    )
+                finally:
+                    bff_main.read_store = original_read_store
+
+            self.assertEqual(r.status_code, 404, r.text)
+
+    def test_rollback_review_composed_view(self):
+        original_read_store = bff_main.read_store
+        bff_main.read_store = self._seeded_read_store
+        try:
+            r = self.client.get(
+                "/api/v1/operator/rollback-review/rollback-rb-001",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+        finally:
+            bff_main.read_store = original_read_store
+        self.assertEqual(r.status_code, 200, r.text)
+        payload = r.json()
+        for key in [
+            "rollback_id",
+            "target_plan_id",
+            "trigger_reason",
+            "position_impact",
+            "affected_bindings",
+            "trigger_evidence",
+            "allowedActions",
+            "meta",
+        ]:
+            self.assertIn(key, payload)
+        self.assertIn("surfaces", payload["meta"])
+
+    def test_governance_review_queue_composed_view(self):
+        original_read_store = bff_main.read_store
+        bff_main.read_store = self._seeded_read_store
+        try:
+            r = self.client.get(
+                "/api/v1/operator/governance/review-queue",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+        finally:
+            bff_main.read_store = original_read_store
+        self.assertEqual(r.status_code, 200, r.text)
+        payload = r.json()
+        self.assertIn("items", payload)
+        self.assertIn("page_info", payload)
+        self.assertIn("meta", payload)
+        self.assertIn("snapshot_at", payload["meta"])
+        self.assertIn("surfaces", payload["meta"])
+        self.assertIn("review_queue", payload["meta"]["surfaces"])
+        self.assertIn("allowedActions", payload["meta"]["surfaces"])
+        self.assertGreaterEqual(len(payload["items"]), 1)
+
     # ---------------------------------------------------------------------- #
     # Happy path — submit + poll
     # ---------------------------------------------------------------------- #
@@ -105,12 +192,15 @@ class TestOperatorBFF(unittest.TestCase):
         r = _submit(self.client, APPROVER_TOKEN)
         self.assertEqual(r.status_code, 202, r.text)
         body = r.json()
-        self.assertIn("receipt", body)
-        self.assertEqual(body["receipt"]["status"], CommandStatus.SUBMITTED.value)
-        self.assertEqual(body["receipt"]["command_type"], CommandType.APPROVE_DEPLOYMENT.value)
+        self.assertEqual(body["status"], CommandReceiptStatus.ACCEPTED.value)
+        self.assertEqual(body["command"], CommandType.APPROVE_DEPLOYMENT.value)
+        self.assertEqual(body["routing_path"], CommandRoutingPath.DIRECT.value)
+        self.assertIn("accepted_at", body)
+        self.assertIsNotNone(body["expected_completion_at"])
+        self.assertIsNone(body["error_message"])
         self.assertIsNone(body.get("staleness_warning"))
 
-        command_id = body["receipt"]["command_id"]
+        command_id = body["receipt_id"]
 
         # Poll
         r2 = self.client.get(
@@ -260,6 +350,8 @@ class TestOperatorBFF(unittest.TestCase):
             params={"deployment_plan_id": target_id, "approval_decision": "approve"},
         )
         self.assertEqual(r1.status_code, 202, r1.text)
+        command_id = r1.json()["receipt_id"]
+        command_store.update_status(command_id, CommandStatus.SUBMITTED)
 
         # Second command on same target while first is submitted/processing → CONCURRENT_MODIFICATION
         r2 = _submit(
@@ -284,7 +376,7 @@ class TestOperatorBFF(unittest.TestCase):
         self.assertEqual(body["staleness_warning"]["read_surface_state"], "degraded")
 
     # ---------------------------------------------------------------------- #
-    # All six command types submit successfully with appropriate roles
+    # All eight command types submit successfully with appropriate roles
     # ---------------------------------------------------------------------- #
     def test_pause_runtime_submit(self):
         r = self.client.post(
@@ -315,6 +407,40 @@ class TestOperatorBFF(unittest.TestCase):
                 "audit_context": {"reason": "test"},
             },
             headers={"Authorization": ADMIN_TOKEN},
+        )
+        self.assertEqual(r.status_code, 202, r.text)
+
+    def test_approve_rollback_submit(self):
+        r = self.client.post(
+            "/api/v1/operator/commands",
+            json={
+                "command": "ApproveRollback",
+                "target": {"type": "Rollback", "id": "rollback-rb-001"},
+                "action": "approve",
+                "params": {
+                    "rollback_id": "rollback-rb-001",
+                    "approval_notes": "Approved after manual review",
+                },
+                "audit_context": {"reason": "test"},
+            },
+            headers={"Authorization": APPROVER_TOKEN},
+        )
+        self.assertEqual(r.status_code, 202, r.text)
+
+    def test_reject_rollback_submit(self):
+        r = self.client.post(
+            "/api/v1/operator/commands",
+            json={
+                "command": "RejectRollback",
+                "target": {"type": "Rollback", "id": "rollback-rb-001"},
+                "action": "reject",
+                "params": {
+                    "rollback_id": "rollback-rb-001",
+                    "rejection_reason": "Position evidence is incomplete",
+                },
+                "audit_context": {"reason": "test"},
+            },
+            headers={"Authorization": APPROVER_TOKEN},
         )
         self.assertEqual(r.status_code, 202, r.text)
 

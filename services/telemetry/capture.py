@@ -100,7 +100,8 @@ class TelemetryCapture:
         binding_context : dict, optional
             Active RuntimeBinding context to inject into every telemetry event.
             Expected keys: binding_id, runtime_id, capital_pool_id, artifact_id,
-            artifact_version, deployment_stage, plan_id, persona_capital_binding_id.
+            artifact_version, deployment_stage, plan_id,
+            persona_capital_binding_id, authority_refs.
             If not provided, binding fields will be omitted from events (legacy mode).
         """
         self.schema_path = schema_path
@@ -620,6 +621,7 @@ class TelemetryCapture:
             artifact_version = self.binding_context.get("artifact_version")
             plan_id = self.binding_context.get("plan_id")
             persona_capital_binding_id = self.binding_context.get("persona_capital_binding_id")
+            authority_refs = self.binding_context.get("authority_refs")
             ctx_deployment_stage = self.binding_context.get("deployment_stage", deployment_stage)
 
             # Strict validation: require minimal binding identity (E-1)
@@ -649,6 +651,8 @@ class TelemetryCapture:
             event["deployment_stage"] = ctx_deployment_stage
             event["plan_id"] = plan_id
             event["persona_capital_binding_id"] = persona_capital_binding_id
+            if authority_refs:
+                event["authority_refs"] = authority_refs
             # environment MUST equal deployment_stage per TEL-001A evidence contract
             event["environment"] = event["deployment_stage"]
             # Update execution_mode alias to match deployment_stage
