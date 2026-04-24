@@ -14,6 +14,7 @@ Fill in the machine-local file with:
 
 - real broker / exchange secrets on VM-2 only
 - broker account ref and venue ref
+- the chosen US market-data provider ref (`Massive / Polygon` when enabled, otherwise explicit `IBKR market data` fallback)
 - approval, pool, persona-binding, and fallback artifact refs
 
 ## 2. Run The Readiness Checklist
@@ -32,6 +33,7 @@ Expected outcome:
 - canary capital gate passes
 - runtime-manager health passes
 - broker / exchange sidecar health passes when published
+- US datasource boundary is recorded truthfully in the output bundle
 - output bundle contains `operator-checklist.json`
 
 ## 3. Emit The Canary DeploymentPlan Artifact

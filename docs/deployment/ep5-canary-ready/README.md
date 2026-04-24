@@ -8,6 +8,7 @@ It prepares the entry path that sits between the archived `EP4` governed paper
 packet and a later human-gated `EP5-002` proof run:
 
 - real broker / venue config boundary
+- truthful US datasource boundary for `IBKR` and `Massive / Polygon`
 - scaled canary capital gate
 - runnable operator approval checklist
 - runnable rollback drill harness

@@ -33,6 +33,32 @@ Pantheon classifies all data sources into **six source classes**. Every ingested
 
 ---
 
+## 1.2 Current Governed Vendor Fill (2026-04-24)
+
+The source-class model remains canonical. The following vendor fill is the current governed working default for Pantheon v1 execution, market-data, disclosure, and research-reference integration:
+
+| Market | Source Class | Canonical provider / vendor | Current role |
+|---|---|---|---|
+| US equities / derivatives | `broker_execution` | `IBKR` | primary execution broker, broker-aligned execution-sync data, paper/canary bootstrap path |
+| US equities / derivatives | `research_grade` | `Massive / Polygon` | preferred research-grade and historical market-data vendor once governed activation completes |
+| US equities / derivatives | `broker_execution` fallback | `IBKR market data` | broker-aligned fallback while `Massive / Polygon` activation is still in progress |
+| Taiwan equities / derivatives | `broker_execution` | `Shioaji` | primary execution broker plus quote/simulation path |
+| Taiwan equities / derivatives | `official_reference` | `TWSE OpenAPI` | official listed-market reference / EOD source |
+| Taiwan equities / derivatives | `official_reference` | `TPEx E-Data` | official OTC / TPEx reference / EOD source |
+| Taiwan equities / derivatives | `official_reference` | `MOPS` | official disclosure and filing source |
+| Taiwan equities / derivatives | `research_grade` | `TEJ API` | governed research/reference vendor for Taiwan fundamentals, ownership, and packaged datasets |
+| Cryptocurrency | `broker_execution` / `research_grade` / `crypto_analytics` | `Kraken` | primary venue-scoped execution plus canonical venue market-data source |
+| Cryptocurrency | `research_grade` reference | `CoinGecko` | reference / metadata / research supplement, not execution truth |
+
+Working defaults that follow from this fill:
+
+- `EP5-002` canary-first execution uses `IBKR` as the first broker-backed proof path.
+- `TEJ API` is an approved Taiwan research/reference vendor, but it does not replace `TWSE OpenAPI`, `TPEx E-Data`, or `MOPS` as official exchange / disclosure truth.
+- `CoinGecko` may enrich crypto metadata and research flows, but execution truth remains venue-scoped to `Kraken`.
+- The frontend may display inventory and operator references for these providers, but raw production credentials remain on VM-2 / Secret Manager and must not be treated as UI-owned secrets.
+
+---
+
 ## 2. Per-Market Source Class Matrix
 
 ### 2.1 US Market
@@ -133,4 +159,5 @@ This matrix is considered accepted when:
 
 | Version | Date | Change | Author |
 |---|---|---|---|
+| v1.1 | 2026-04-24 | Added governed vendor fill for IBKR, Massive / Polygon, Shioaji, TWSE, TPEx, MOPS, TEJ API, Kraken, and CoinGecko | Codex |
 | v1 | 2026-04-13 | Initial canonical matrix | Qwen (BG-000) |

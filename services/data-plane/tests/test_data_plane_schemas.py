@@ -32,6 +32,8 @@ security_master_mod = _load_module("security_master", _models / "security_master
 contract_master_mod = _load_module("contract_master", _models / "contract_master.py")
 market_calendar_mod = _load_module("market_calendar_session", _models / "market_calendar_session.py")
 dataset_lineage_mod = _load_module("dataset_lineage", _models / "dataset_lineage.py")
+taiwan_reference_mod = _load_module("taiwan_reference", _DATA_PLANE / "taiwan_reference.py")
+us_reference_mod = _load_module("us_equity_reference", _DATA_PLANE / "us_equity_reference.py")
 
 SecurityMaster = security_master_mod.SecurityMaster
 ContractMaster = contract_master_mod.ContractMaster
@@ -40,6 +42,14 @@ RawDataset = dataset_lineage_mod.RawDataset
 NormalizedDataset = dataset_lineage_mod.NormalizedDataset
 FeatureDataset = dataset_lineage_mod.FeatureDataset
 DatasetVersion = dataset_lineage_mod.DatasetVersion
+build_tw_security_master = taiwan_reference_mod.build_tw_security_master
+build_tw_calendar_session = taiwan_reference_mod.build_tw_calendar_session
+build_tw_dataset_lineage_source = taiwan_reference_mod.build_tw_dataset_lineage_source
+build_us_security_master = us_reference_mod.build_us_security_master
+build_us_calendar_session = us_reference_mod.build_us_calendar_session
+build_polygon_raw_dataset = us_reference_mod.build_polygon_raw_dataset
+build_us_normalized_dataset = us_reference_mod.build_us_normalized_dataset
+build_us_dataset_lineage_source = us_reference_mod.build_us_dataset_lineage_source
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SCHEMAS_DIR = _DATA_PLANE / "schemas"
@@ -300,13 +310,119 @@ class TestMarketCalendarSession(unittest.TestCase):
         self.assertTrue(_validate_schema("market_calendar_session", cal.to_dict()))
 
 
+class TestTaiwanReferenceHelpers(unittest.TestCase):
+    """Taiwan-specific canonical normalization helpers."""
+
+    def test_build_tw_security_master_from_official_listing(self):
+        sec = build_tw_security_master(
+            {
+                "symbol": "2330",
+                "company_name": "台積電",
+                "venue": "TWSE",
+                "isin": "TW0002330008",
+                "industry": "半導體業",
+                "listing_date": "1994-09-05",
+                "governance_metadata": {"source_key": "twse"},
+            }
+        )
+        self.assertEqual(sec.security_id, "SEC-TW-2330-TWSE")
+        self.assertEqual(sec.symbol_canonical, "2330.TWSE")
+        self.assertEqual(_validate_schema("security_master", sec.to_dict()), [])
+
+    def test_build_tw_calendar_session_handles_holidays_and_early_close(self):
+        holiday = build_tw_calendar_session("2026-02-17", holiday_flag=True)
+        self.assertEqual(holiday.session_open, "")
+        self.assertTrue(holiday.holiday_flag)
+
+        early = build_tw_calendar_session("2026-02-11", early_close=True, venue="TPEx")
+        self.assertEqual(early.session_close, "12:30:00")
+        self.assertTrue(early.early_close_flag)
+        self.assertEqual(_validate_schema("market_calendar_session", early.to_dict()), [])
+
+    def test_build_tw_dataset_lineage_source(self):
+        lineage = build_tw_dataset_lineage_source(
+            dataset_name="twse_daily_listing_snapshot",
+            source_key="twse",
+            source_class="official_reference",
+            frequency="daily",
+            symbol_universe=["2330", "2317"],
+        )
+        self.assertEqual(lineage["market"], "TW")
+        self.assertEqual(lineage["symbol_universe"], ["2330", "2317"])
+
+
+class TestUSReferenceHelpers(unittest.TestCase):
+    """US-specific canonical normalization helpers."""
+
+    def test_build_us_security_master(self):
+        sec = build_us_security_master(
+            {
+                "venue": "NASDAQ",
+                "symbol": "AAPL",
+                "isin": "US0378331005",
+                "cusip": "037833100",
+                "figi": "BBG000B9XRY4",
+                "company_name": "Apple Inc.",
+                "governance_metadata": {"source_key": "polygon_tickers"},
+            }
+        )
+        self.assertEqual(sec.security_id, "SEC-US-AAPL-NASDAQ")
+        self.assertEqual(sec.symbol_canonical, "AAPL.US")
+        self.assertEqual(_validate_schema("security_master", sec.to_dict()), [])
+
+    def test_build_us_calendar_session_handles_early_close(self):
+        early = build_us_calendar_session("2026-11-27", early_close=True, venue="NYSE")
+        self.assertEqual(early.session_close, "13:00:00")
+        self.assertTrue(early.early_close_flag)
+        self.assertEqual(_validate_schema("market_calendar_session", early.to_dict()), [])
+
+    def test_build_polygon_raw_dataset_and_normalized_dataset(self):
+        raw = build_polygon_raw_dataset(
+            dataset_id="RAW-US-POLYGON-1MIN-2026Q1",
+            instrument_scope=["SEC-US-AAPL-NASDAQ"],
+            coverage_start="2026-01-01",
+            coverage_end="2026-03-31",
+            ingest_time="2026-04-01T00:00:00Z",
+            storage_ref="gs://pantheon-data/raw/us/polygon/1min-2026q1.parquet",
+            checksum="sha256:abc123",
+            dataset_type="aggregates_1m",
+        )
+        valid, errors = RawDataset.validate(raw)
+        self.assertTrue(valid, errors)
+        self.assertEqual(raw.source_class, "research_grade")
+
+        norm = build_us_normalized_dataset(
+            dataset_id="NORM-US-POLYGON-1MIN-2026Q1-v1",
+            parent_raw_dataset_id=raw.dataset_id,
+            storage_ref="gs://pantheon-data/norm/us/polygon/1min-2026q1-v1.parquet",
+            checksum="sha256:def456",
+            symbol_mapping_version="us-symbol-map-v1",
+            corp_action_version="polygon-ca-v1",
+            calendar_version="nyse-2026-v1",
+        )
+        valid, errors = NormalizedDataset.validate(norm)
+        self.assertTrue(valid, errors)
+        self.assertEqual(norm.metadata_json["provider"], "Massive / Polygon")
+
+    def test_build_us_dataset_lineage_source(self):
+        lineage = build_us_dataset_lineage_source(
+            dataset_name="polygon_daily_ohlcv",
+            source_key="polygon",
+            source_class="research_grade",
+            frequency="daily",
+            symbol_universe=["AAPL", "MSFT"],
+        )
+        self.assertEqual(lineage["market"], "US")
+        self.assertEqual(lineage["source_class"], "research_grade")
+
+
 class TestRawDataset(unittest.TestCase):
     """RawDataset model and schema validation."""
 
     def test_valid_raw_dataset(self):
         ds = RawDataset(
             dataset_id="RAW-US-DAILY-2026Q1",
-            source_class="market",
+            source_class="research_grade",
             market="US",
             instrument_scope=["SEC-US0378331005", "SEC-US88160R1014"],
             coverage_start="2026-01-01",
@@ -501,7 +617,7 @@ class TestDatasetLineageChain(unittest.TestCase):
         """Build a complete lineage chain and verify all references match."""
         raw = RawDataset(
             dataset_id="RAW-US-DAILY-2026Q1",
-            source_class="market",
+            source_class="research_grade",
             market="US",
             instrument_scope=["SEC-US0378331005"],
             coverage_start="2026-01-01",
