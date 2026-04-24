@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from openalex_client import OpenAlexClient, OpenAlexMetadata, OpenAlexWorkResponse
 from github_client import GitHubClient, GitHubRepositoryResponse, GitHubFileResponse
+from taiwan_market_client import TaiwanMarketClient
 
 
 class TestOpenAlexClient(unittest.TestCase):
@@ -297,6 +298,68 @@ class TestGovernanceCompliance(unittest.TestCase):
         )
         self.assertTrue(normalized.governance_metadata["repo_approved"])
         self.assertIn("retrieved_at", normalized.governance_metadata)
+
+
+class TestTaiwanMarketClient(unittest.TestCase):
+    """Tests for Taiwan market structured-source adapters."""
+
+    def setUp(self):
+        self.client = TaiwanMarketClient()
+
+    def test_twse_listing_normalization(self):
+        normalized = self.client.normalize_twse_listing(
+            {
+                "Code": "2330",
+                "Name": "台積電",
+                "ISIN": "TW0002330008",
+                "Industry": "半導體業",
+                "ListingDate": "1994-09-05",
+            }
+        )
+        self.assertEqual(normalized.symbol, "2330")
+        self.assertEqual(normalized.venue, "TWSE")
+        self.assertEqual(normalized.governance_metadata["source_class"], "official_reference")
+
+    def test_tpex_listing_normalization(self):
+        normalized = self.client.normalize_tpex_listing(
+            {
+                "SecuritiesCompanyCode": "6488",
+                "CompanyName": "環球晶",
+                "ISIN": "TW0006488003",
+                "Industry": "電子工業",
+                "ListingDate": "2011-10-13",
+            }
+        )
+        self.assertEqual(normalized.symbol, "6488")
+        self.assertEqual(normalized.venue, "TPEx")
+
+    def test_mops_disclosure_normalization(self):
+        normalized = self.client.normalize_mops_disclosure(
+            {
+                "company_id": "2330",
+                "company_name": "台積電",
+                "filing_code": "monthly_revenue",
+                "announce_date": "2026-04-10",
+                "fiscal_period": "2026-03",
+            }
+        )
+        self.assertEqual(normalized.symbol, "2330")
+        self.assertEqual(normalized.filing_code, "monthly_revenue")
+        self.assertEqual(normalized.governance_metadata["source_key"], "mops")
+
+    def test_tej_dataset_normalization_keeps_vendor_boundary(self):
+        normalized = self.client.normalize_tej_dataset(
+            {
+                "coid": "2330",
+                "mdate": "2026-04-24",
+                "pe_ratio": 18.2,
+                "foreign_holding_pct": 72.4,
+            },
+            dataset_code="TWN/APRCD1",
+        )
+        self.assertEqual(normalized.dataset_code, "TWN/APRCD1")
+        self.assertEqual(normalized.values["pe_ratio"], 18.2)
+        self.assertIn("does not replace official disclosure truth", normalized.governance_metadata["governance_context"])
 
 
 if __name__ == "__main__":

@@ -140,7 +140,7 @@ def main():
 
     raw = _dl.RawDataset(
         dataset_id="RAW-US-DAILY-2026Q1",
-        source_class="market",
+        source_class="research_grade",
         market="US",
         instrument_scope=[sec.security_id],
         coverage_start="2026-01-01",
@@ -206,7 +206,14 @@ def main():
 
     # 5. Source class enumeration
     print("\n[5] Source class coverage")
-    for sc in ["market", "fundamental", "event", "alternative", "execution_internal", "human_feedback"]:
+    for sc in [
+        "official_reference",
+        "broker_execution",
+        "research_grade",
+        "derivative_analytics",
+        "crypto_analytics",
+        "internal_can",
+    ]:
         check(f"SourceClass '{sc}' usable", sc in [e.value for e in _dl.SourceClass])
 
     # Summary

@@ -2,6 +2,12 @@
 
 from .github_client import GitHubClient, GitHubFileResponse, GitHubRepositoryResponse
 from .openalex_client import OpenAlexClient, OpenAlexWorkResponse
+from .taiwan_market_client import (
+    TaiwanDisclosureRecord,
+    TaiwanListingRecord,
+    TaiwanMarketClient,
+    TaiwanResearchDatasetRecord,
+)
 
 __all__ = [
     "OpenAlexClient",
@@ -9,4 +15,8 @@ __all__ = [
     "GitHubClient",
     "GitHubRepositoryResponse",
     "GitHubFileResponse",
+    "TaiwanMarketClient",
+    "TaiwanListingRecord",
+    "TaiwanDisclosureRecord",
+    "TaiwanResearchDatasetRecord",
 ]

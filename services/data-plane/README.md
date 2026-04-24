@@ -35,13 +35,13 @@ DatasetVersion  ← frozen lineage snapshot (unit of replay)
 ```
 
 ### Source Classes
-Six source classes are defined per the blueprint gap review:
-- `market` — price, volume, order book data
-- `fundamental` — earnings, financials, ratios
-- `event` — news, announcements, economic calendars
-- `alternative` — sentiment, web traffic, satellite
-- `execution_internal` — fills, slippage, PnL (internal telemetry)
-- `human_feedback` — trader approvals, edits, rejections
+Six canonical source classes are defined per `DATA_SOURCE_SCOPE_MATRIX.md`:
+- `official_reference` — listings, calendars, corporate actions, disclosures
+- `broker_execution` — broker-aligned execution-sync bars, fills, symbol mapping
+- `research_grade` — historical market data, fundamentals, event enrichment
+- `derivative_analytics` — options chains, IV, greeks, futures term structure
+- `crypto_analytics` — funding, open interest, liquidations, on-chain adjuncts
+- `internal_can` — normalized internal canonical datasets only
 
 ### Market Calendar
 - Supports per-market timezone management.
