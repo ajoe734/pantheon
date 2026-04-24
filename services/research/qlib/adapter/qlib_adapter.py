@@ -272,6 +272,55 @@ class StubLightGBMBackend:
         return num / denom if denom > 1e-12 else 0.0
 
 
+class _QlibPreparedColumn:
+    def __init__(self, values: Any, index: Sequence[int]) -> None:
+        self.values = values
+        self.index = tuple(index)
+
+
+class _QlibPreparedFrame:
+    def __init__(self, feature_values: Any, label_values: Any, index: Sequence[int]) -> None:
+        self._feature = _QlibPreparedColumn(feature_values, index)
+        self._label = _QlibPreparedColumn(label_values, index)
+        self.empty = len(self._feature.index) == 0
+
+    def __getitem__(self, key: str) -> _QlibPreparedColumn:
+        if key == "feature":
+            return self._feature
+        if key == "label":
+            return self._label
+        raise KeyError(key)
+
+
+class _QlibDatasetView:
+    """Minimal dataset wrapper matching the interface `qlib.contrib.model.gbdt.LGBModel` expects."""
+
+    def __init__(
+        self,
+        *,
+        train_features: Any,
+        train_labels: Any,
+        valid_features: Any,
+        valid_labels: Any,
+    ) -> None:
+        self.segments = {"train": None, "valid": None}
+        self._frames = {
+            "train": _QlibPreparedFrame(train_features, train_labels, range(len(train_labels))),
+            "valid": _QlibPreparedFrame(valid_features, valid_labels, range(len(valid_labels))),
+        }
+
+    def prepare(self, segment: str, col_set: Any = None, data_key: Any = None) -> Any:
+        del data_key
+        frame = self._frames.get(segment)
+        if frame is None:
+            raise QlibWorkflowError(f"Unknown dataset segment: {segment}")
+        if col_set in (["feature", "label"], ("feature", "label")):
+            return frame
+        if col_set == "feature":
+            return frame["feature"]
+        raise QlibWorkflowError(f"Unsupported qlib dataset request: segment={segment!r}, col_set={col_set!r}")
+
+
 class QlibLightGBMBackend:
     """Optional upstream backend using pyqlib LGBModel.
 
@@ -290,10 +339,16 @@ class QlibLightGBMBackend:
         X = np.asarray(dataset.feature_matrix, dtype=np.float32)
         y = np.asarray(dataset.labels, dtype=np.float32)
 
-        # Split 80/20 for train/val
-        split = max(1, int(len(y) * 0.8))
+        # Qlib's LGBModel expects a dataset object exposing train/valid segments.
+        split = min(max(1, int(len(y) * 0.8)), len(y) - 1)
         X_train, X_val = X[:split], X[split:]
         y_train, y_val = y[:split], y[split:]
+        qlib_dataset = _QlibDatasetView(
+            train_features=X_train,
+            train_labels=np.asarray([[float(label)] for label in y_train], dtype=np.float32),
+            valid_features=X_val,
+            valid_labels=np.asarray([[float(label)] for label in y_val], dtype=np.float32),
+        )
 
         model = LGBModel(
             loss="mse",
@@ -303,20 +358,15 @@ class QlibLightGBMBackend:
             n_estimators=config.n_estimators,
             seed=config.seed,
         )
-        model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
-        preds_val = model.predict(X_val)
+        model.fit(qlib_dataset)
+        preds_val = model.predict(qlib_dataset, segment="valid")
+        pred_values = [float(value) for value in preds_val]
+        label_values = [float(value) for value in y_val]
 
-        def pearson_r(a: Any, b: Any) -> float:
-            n = len(a)
-            if n < 2:
-                return 0.0
-            ma, mb = float(np.mean(a)), float(np.mean(b))
-            num = float(np.sum((a - ma) * (b - mb)))
-            denom = float(np.std(a) * np.std(b) * n)
-            return num / denom if abs(denom) > 1e-12 else 0.0
-
-        ic = pearson_r(preds_val, y_val) if len(y_val) >= 2 else 0.0
-        mse = float(np.mean((preds_val - y_val) ** 2))
+        ic = StubLightGBMBackend()._pearson_r(pred_values, label_values) if len(label_values) >= 2 else 0.0
+        mse = sum((pred - actual) ** 2 for pred, actual in zip(pred_values, label_values)) / max(
+            len(label_values), 1
+        )
         run_id = f"qlib-lgbm-{uuid.uuid4().hex[:12]}"
         metrics = {
             "num_samples": dataset.num_samples,

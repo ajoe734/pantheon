@@ -58,7 +58,7 @@ For production-path classification, three tiers apply:
 | **DSPy** | Persona policy optimization; prompt/weight optimization for persona decision modules | `governed` | **Production Research Path** | Codex | Persona policy optimization | Keep smoke and deny-regression evidence refreshed when the pin or backend changes |
 | **imitation** | Behavior cloning; supervised imitation learning from trader trajectory data | `governed` | **Production Research Path** | Codex | Trader behavior cloning | Keep BC-only scope and smoke evidence refreshed when the pin or backend changes |
 | **OpenClaw** | Experiment orchestration / runtime coordination; upstream runtime wrapping local workflows | `governed` | **Activation-Ready** | Codex | All research families (orchestration layer) | Adopt the governed gateway path in the repo-authoritative runtime surfaces and keep live smoke evidence refreshed when the pin changes |
-| **Qlib** | Supervised alpha research; cross-sectional feature engineering, LightGBM/LSTM alpha signal discovery | `smoke-tested` | **Activation-Ready** | Qwen | Cross-sectional equity alpha | RS-003 candidate + governed dataset gates (>=50 instruments, 2+ years data) must clear before the first promotion-ready LightGBM alpha run |
+| **Qlib** | Supervised alpha research; cross-sectional feature engineering, LightGBM/LSTM alpha signal discovery | `smoke-tested` | **Activation-Ready** | Qwen | Cross-sectional equity alpha | Activation packet is prepared; RS-003 candidate + governed dataset gates (>=50 instruments, 2+ years data) + target StrategySpec binding must clear before the first promotion-ready LightGBM alpha run |
 | **TRL** | Preference learning; DPO/RLHF training from governed feedback preference pairs | `smoke-tested` | **Activation-Ready** | Qwen | Persona preference alignment | >=200 FB-002 events, >=100 valid preference pairs, approved LP-002 artifacts, and one downstream consumer must exist before the first governed production DPO run |
 | **FinRL** | Simplified single-agent RL portfolio management; pre-configured trading environments | `criteria-defined` | **Activation-Ready** | Copilot | Single-agent RL trading | Current wave explicitly deferred on 2026-04-17; reopen only after Qlib alpha is approved and stable for **3 months**; then prove the first governed single-agent smoke path (see `services/learning/rl/PATH_DEFINITION.md`) |
 | **RLlib** | Multi-agent / scalable RL policy training; PPO/SAC via Ray | `version-pinned` | **Activation-Ready** | Copilot | Multi-agent portfolio optimization | Current wave explicitly deferred on 2026-04-17; stays behind the RL gate and the FinRL first-lane proof; then add governed training/eval loop + smoke test |
@@ -107,19 +107,19 @@ Additional governed production-path backends already available today:
 Runnable baselines that are **not yet** active production lanes:
 
 - `OpenClaw`: `governed` baseline and live gateway smoke are landed, but repo-authoritative runtime adoption is tracked separately in `PER-001-RUNTIME-INTEGRATION-001`
-- `Qlib`: `smoke-tested` LightGBM baseline is landed, but supervised-alpha activation still depends on RS-003 candidate readiness and governed market-data gates
+- `Qlib`: `smoke-tested` LightGBM baseline and activation packet are landed, but supervised-alpha activation still depends on RS-003 candidate readiness, governed market-data proof, and target StrategySpec binding
 - `TRL`: `smoke-tested` DPO baseline is landed, but production use still depends on runtime feedback volume, approved imitation artifacts, and one downstream consumer
 
 ### Next Activation Order
 
-The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Priorities, updated with OSS-003 criteria):
+The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Priorities, updated to the 2026-04-24 remaining-activation truth):
 
 ```
-1. OpenClaw    — governed gateway baseline is ready; adopt it in the repo-authoritative runtime surfaces
+1. OpenClaw    — governed gateway baseline is ready; finish repo-authoritative runtime adoption
 2. Qlib        — smoke-tested baseline is ready; clear data gates and run the first governed alpha activation
 3. TRL         — smoke-tested baseline is ready; clear runtime-data gates and run the first governed production DPO activation
-4. FinRL first, then RLlib/Ray Tune — deferred until Qlib plateaus for **3 months** and the RL gate is reopened
-5. W&B         — optional after MLflow generalization
+4. FinRL first, then RLlib/Ray Tune — remain deferred until Qlib plateaus for **3 months** and the RL gate is reopened
+5. W&B         — optional backend path after the MLflow-history and adapter-generalization gates
 ```
 
 ### Research Problem Type → Primary Backend Mapping
@@ -194,7 +194,7 @@ Research Plane has six governed backends on the production path (DSPy, imitation
 - `services/learning/rl/PATH_DEFINITION.md`: RL path definition (LP-005)
 - `services/registry/experiments/WANDB_ACTIVATION.md`: W&B activation criteria (OSS-003)
 - `integrations/openclaw/{integration,governance,smoke_test}.md`: OpenClaw governed runtime baseline and live gateway smoke evidence
-- `integrations/qlib/{integration,governance,smoke_test}.md`: Qlib smoke-tested LightGBM adapter baseline
+- `integrations/qlib/{integration,governance,smoke_test,activation_packet}.md`: Qlib smoke-tested LightGBM adapter baseline plus activation packet
 - `integrations/trl/{integration,governance,smoke_test}.md`: TRL smoke-tested DPO adapter baseline
 - `services/research/vectorbt/ACTIVATION_CRITERIA.md`: vectorbt governed baseline gate and closeout
 - `services/research/vectorbt/requirements.txt`: vectorbt version pin

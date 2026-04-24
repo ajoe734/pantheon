@@ -5,7 +5,7 @@
 **Reviewer**: Claude
 **Scope**: Define the executable activation path for deferred Qlib, TRL, FinRL, RLlib, and W&B rows
 **Status**: Done — review approved by Claude 2026-04-16
-**Last Updated**: 2026-04-22
+**Last Updated**: 2026-04-24
 
 ---
 
@@ -30,7 +30,7 @@ and workflow design. This map adds:
 
 | Row | Checklist Status | Package/Container Pinned? | Governed Adapter Present? | Smoke Path Present? | Phase-5 Activation Owner |
 |---|---|---|---|---|---|
-| `Qlib` | `smoke-tested` | Yes — `pyqlib==0.9.6` in `services/research/qlib/requirements.txt`; Qlib Dockerfile exists | Yes — `GovernedQlibDataAdapter` + `StubLightGBMBackend` + `QlibLightGBMBackend` + `run_qlib_workflow` | Yes — smoke passes (13 unit tests + smoke assertions OK, 2026-04-17); evidence in `integrations/qlib/` | Qwen (Qlib gate owner) — production blocked on RS-003 candidate readiness and governed market-data gates |
+| `Qlib` | `smoke-tested` | Yes — `pyqlib==0.9.6` in `services/research/qlib/requirements.txt`; Qlib Dockerfile exists | Yes — `GovernedQlibDataAdapter` + `StubLightGBMBackend` + `QlibLightGBMBackend` + `run_qlib_workflow` | Yes — smoke passes (14 unit tests + smoke assertions OK, revalidated 2026-04-24); activation packet now in `integrations/qlib/activation_packet.md` | Qwen (Qlib gate owner) — production blocked on RS-003 candidate readiness, governed market-data proof, and target StrategySpec binding |
 | `TRL` | `smoke-tested` | Yes — `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt` | Yes — `GovernedPreferencePairAdapter` + `StubDPOBackend` + `TRLDPOBackend` + `run_trl_dpo_workflow` | Yes — smoke passes (16 unit tests + assertions OK, 2026-04-17); evidence in `integrations/trl/` | Claude (OSS-NEXT-002 owner) — production blocked on runtime data gates |
 | `FinRL` | `criteria-defined` | Yes — `finrl==0.3.6` in `services/research/finrl/requirements.txt`; FinRL Dockerfile exists | No | No | Copilot (RL path owner) → governed adapter path requires explicit RL-path approval first |
 | `RLlib` | `version-pinned` | Yes — `ray[rllib]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile stub exists | No | No | Copilot (RL path owner) → RL path approval gate required before adapter work |
@@ -54,6 +54,9 @@ and workflow design. This map adds:
 - Smoke path and unit coverage are already present:
   `services/research/qlib/smoke_test.py`, `services/research/qlib/test_adapter.py`,
   and evidence in `integrations/qlib/{integration,governance,smoke_test}.md`.
+- The first governed LightGBM activation packet is now prepared at
+  `integrations/qlib/activation_packet.md`; it truthfully records the remaining
+  RS-003 / dataset / strategy-binding gates instead of overstating production readiness.
 - The gate doc's §7 "Next Steps" predates the runnable baseline. It should now be read as
   "version pin, adapter boundary, and smoke baseline are done; production activation gates remain."
 - `QlibTool` is already named in `services/control-plane/skills/skills.yaml` and the router/
@@ -68,7 +71,7 @@ and workflow design. This map adds:
 | One LightGBM smoke run emitting canonical `artifact_state` + `deployment_summary.current_stage` output | Done — smoke baseline landed on 2026-04-17 |
 | RS-003 candidate strategy exists in registry | Activation gate — required by `ACTIVATION_CRITERIA.md §1` |
 | Governed dataset of >=50 instruments with >=2 years OHLCV history | Activation gate — not proven by the smoke baseline |
-| First governed alpha activation packet against the target universe | Pending — execute when the activation gates clear |
+| First governed alpha activation packet against the target universe | Prepared — `integrations/qlib/activation_packet.md` now defines the evidence bundle and preserves the remaining blockers |
 
 **Activation prerequisite chain**:
 1. RS-003 baseline StrategySpec candidate must exist in registry (`artifact_state=candidate`)
@@ -76,9 +79,10 @@ and workflow design. This map adds:
 3. Supervised-learning problem fit must be documented in the candidate strategy spec
 4. `pyqlib==0.9.6` package compatibility with the governed research stack remains verified
 
-**Executable next step**: When the RS-003 candidate and governed market-data gates clear, run the
-first target-universe LightGBM activation through `QlibLightGBMBackend` and submit the resulting
-registry artifact envelope using canonical `artifact_state=draft` per `ACTIVATION_CRITERIA.md §3.1`.
+**Executable next step**: When the RS-003 candidate, governed market-data, and target StrategySpec
+binding gates clear, run the first target-universe LightGBM activation through
+`QlibLightGBMBackend` and submit the resulting registry artifact envelope using canonical
+`artifact_state=draft` per `ACTIVATION_CRITERIA.md §3.1`.
 
 **Activation owner for follow-on work**: Qwen (Qlib gate owner). The adapter + smoke baseline is
 already landed; the remaining follow-on is the first governed production activation once the data
@@ -273,7 +277,7 @@ separate execution task once all six re-entry conditions in `WANDB_ACTIVATION.md
 
 | Row | Overall Readiness | Single Blocking Gate | First Executable Proof |
 |---|---|---|---|
-| `Qlib` | Smoke-tested baseline landed — package pin, governed adapter, and LightGBM smoke path are present | RS-003 candidate readiness + governed dataset availability (>=50 instruments, >=2 years data) | Run the first governed alpha activation through `QlibLightGBMBackend` when the gates clear |
+| `Qlib` | Smoke-tested baseline landed — package pin, governed adapter, LightGBM smoke path, and activation packet are present | RS-003 candidate readiness + governed dataset availability (>=50 instruments, >=2 years data) + target StrategySpec binding | Run the first governed alpha activation through `QlibLightGBMBackend` when the gates clear |
 | `TRL` | Smoke-tested baseline landed — blocked on runtime data gates | ≥200 FB-002 events, ≥100 pairs, active LP-002, and a ready downstream consumer | Accumulate FB-002 volume and run the first governed production DPO activation with `TRLDPOBackend` |
 | `FinRL` | Package/container stub exists; control-plane consumer exists | RL path approval gate not met (Qlib must plateau first) | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed single-agent policy-output mapping |
 | `RLlib` | Version pin now landed — package/container stub closed | Same RL path approval gate as FinRL; environment contract not yet a repo-local artifact | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed adapter |

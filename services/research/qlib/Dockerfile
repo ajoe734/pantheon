@@ -3,4 +3,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY adapter/ ./adapter/
-CMD ["python", "-m", "adapter.worker"]
+COPY worker.py ./worker.py
+COPY examples/ ./examples/
+CMD ["python", "worker.py"]

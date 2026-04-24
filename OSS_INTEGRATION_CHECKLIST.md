@@ -1,6 +1,6 @@
 # OSS Integration Checklist
 
-Last updated: 2026-04-21
+Last updated: 2026-04-24
 Status: execution checklist for upstream OSS components referenced by the OpenClaw target architecture
 
 ## Purpose
@@ -35,8 +35,8 @@ Do not treat a component as integrated just because we wrote contracts around it
 |---|---|---|---|
 | `OpenClaw` | upstream repo/runtime | `governed` | Source pin remains locked to `openclaw/openclaw` tag `v2026.4.7` / commit `5050017543011b61df67744ebc6368d889c25a95`, the runtime artifact remains pinned to `ghcr.io/openclaw/openclaw:2026.4.7`, the runnable Pantheon-side adapter now lives under `integrations/openclaw/adapter/`, `docker-compose.yml` now exposes an `openclaw-gateway` runtime dependency path (profile `openclaw`), `bash scripts/openclaw-smoke-test.sh` revalidated the baseline pin on 2026-04-17, and `bash scripts/openclaw-gateway-adapter-smoke.sh` passed a real upstream gateway smoke on 2026-04-17 for `pantheon.ingest`, `pantheon.review`, `pantheon.retrain`, and `pantheon.deploy`. |
 | `DSPy` | Python package/framework | `governed` | v2.4.5 pinned; runnable adapter lives in `services/learning/dspy/`; canonical evidence is now in `integrations/dspy/{integration,governance,smoke_test}.md`; smoke test and unit coverage were refreshed on 2026-04-17. |
-| `TRL` | Python package/framework | `smoke-tested` | `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt`; governed preference-pair adapter (`GovernedPreferencePairAdapter`, `StubDPOBackend`, `TRLDPOBackend`, `run_trl_dpo_workflow`) in `services/learning/trl/adapter/`; smoke test passes (16 unit tests + smoke assertions OK, 2026-04-17); registry output uses canonical `artifact_state=draft` + `deployment_summary.current_stage=none`; evidence in `integrations/trl/{integration,governance,smoke_test}.md`; task: OSS-NEXT-002 (Claude); TRL artifacts are non-executable governed models (`draft` → `candidate` → `approved`), not `paper/live` execution states; production activation blocked on runtime data gates: ≥200 FB-002 events, ≥100 preference pairs, active LP-002 imitation baseline, and a ready downstream consumer; see `services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §2` |
-| `Qlib` | Python package/framework | `smoke-tested` | activation criteria documented in `services/learning/qlib/ACTIVATION_CRITERIA.md`; `pyqlib==0.9.6` pinned in `services/research/qlib/requirements.txt`; governed data-handler adapter built in `services/research/qlib/adapter/` (`GovernedQlibDataAdapter`, `StubLightGBMBackend`, `QlibLightGBMBackend`, `run_qlib_workflow`); smoke test passes (13 unit tests + smoke assertions OK, 2026-04-17); registry output uses canonical `artifact_state=draft` + `deployment_summary.current_stage=none`; evidence in `integrations/qlib/{integration,governance,smoke_test}.md`; task: OSS-NEXT-001 (Claude); next: production activation requires ≥50 instruments, 2+ years data, and RS-003 replication gate pass per ACTIVATION_CRITERIA §1 |
+| `TRL` | Python package/framework | `smoke-tested` | `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt`; governed preference-pair adapter (`GovernedPreferencePairAdapter`, `StubDPOBackend`, `TRLDPOBackend`, `run_trl_dpo_workflow`) in `services/learning/trl/adapter/`; smoke test passes (16 unit tests + smoke assertions OK, revalidated 2026-04-24); registry output uses canonical `artifact_state=draft` + `deployment_summary.current_stage=none`; evidence in `integrations/trl/{integration,governance,smoke_test,activation_packet}.md`; task: OSS-NEXT-002 (Claude); TRL artifacts are non-executable governed models (`draft` → `candidate` → `approved`), not `paper/live` execution states; the first governed DPO activation packet is now prepared in `integrations/trl/activation_packet.md`; production activation remains blocked on runtime data gates: ≥200 FB-002 events, ≥100 preference pairs, active LP-002 imitation baseline, baseline-model proof, and a ready downstream consumer; see `services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §2` |
+| `Qlib` | Python package/framework | `smoke-tested` | activation criteria documented in `services/learning/qlib/ACTIVATION_CRITERIA.md`; `pyqlib==0.9.6` pinned in `services/research/qlib/requirements.txt`; governed data-handler adapter built in `services/research/qlib/adapter/` (`GovernedQlibDataAdapter`, `StubLightGBMBackend`, `QlibLightGBMBackend`, `run_qlib_workflow`); smoke test passes (14 unit tests + smoke assertions OK, revalidated 2026-04-24); registry output uses canonical `artifact_state=draft` + `deployment_summary.current_stage=none`; the first governed LightGBM activation packet is now prepared in `integrations/qlib/activation_packet.md`; evidence in `integrations/qlib/{integration,governance,smoke_test,activation_packet}.md`; task: APP-003-QLIB-ACTIVATION-001 (Codex2); production activation remains blocked on the target RS-003 candidate, governed dataset proof (≥50 instruments, ≥2 years OHLCV), and target StrategySpec binding per `ACTIVATION_CRITERIA.md §1` |
 | `FinRL` | upstream repo/package | `criteria-defined` | the accepted 2026-04-17 Phase 6 decision explicitly **defers RL for the current wave**; entry criteria remain in `services/learning/rl/PATH_DEFINITION.md` §1 and the formal checkpoint is `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; `finrl==0.3.6` already pinned in `services/research/finrl/requirements.txt` and FinRL Dockerfile exists; activation owner: Copilot; next: wait for Qlib `artifact_state=approved` + **3 months** stable evaluation evidence, then reopen the RL gate and build the governed **single-agent** policy-output adapter as the first RL lane; see `services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §3` |
 | `RLlib` | Python package/framework | `version-pinned` | the accepted 2026-04-17 Phase 6 decision explicitly **defers RL for the current wave**; entry criteria and full workflow remain documented in `services/learning/rl/PATH_DEFINITION.md`, and the required approval checkpoint is `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; `ray[rllib]>=2.9.0,<3.0.0` is pinned in `services/research/rllib/requirements.txt` alongside Ray Tune; Dockerfile stub exists; no governed adapter yet; activation owner: Copilot; next: stay deferred behind the RL gate and follow the FinRL first-lane proof before opening the governed RLlib train/eval loop; see `services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §4` |
 | `Ray Tune` | Python package/framework | `version-pinned` | `ray[tune]>=2.9.0,<3.0.0` pinned in `services/research/rllib/requirements.txt` alongside RLlib; the accepted 2026-04-17 decision keeps RL closed for the current wave, so no governed search-output or smoke integration work may begin yet; activation owner: Copilot (bundles with RLlib path); next: remain deferred until the RL gate reopens, after the FinRL first-lane proof justifies the broader RLlib + Tune path |
@@ -69,20 +69,18 @@ Each upstream integration should eventually produce these repo-local artifacts:
 
 Priority order for real upstream integration work:
 
-1. `OpenClaw`
-2. `DSPy`
-3. `MLflow or W&B`
-4. `Qlib`
-5. `imitation`
-6. `TRL`
-7. `FinRL / RLlib / Tune`
+1. `OpenClaw` runtime-adoption closeout
+2. `Qlib` production activation gate
+3. `TRL` production activation gate
+4. `FinRL` first, then `RLlib / Ray Tune` after the RL gate reopens
+5. `W&B` optional backend re-entry after the MLflow-history gate
 
 Why this order:
 
-- `OpenClaw` affects orchestration semantics everywhere
-- `DSPy` is the first intended persona optimization path already on the active board
-- experiment/registry backend should exist before learning integrations fan out
-- RL stack should stay last until governance and registry paths are stable
+- `OpenClaw` already has a governed baseline, but repo-authoritative runtime adoption still blocks the final runtime story
+- `Qlib` and `TRL` are the two smoke-tested but not yet production-activated baselines, so they are the truthful OSS activation tail
+- `DSPy`, `imitation`, and `MLflow` are already governed and therefore no longer belong at the front of the remaining activation queue
+- RL stack should stay last until the supervised-alpha path is approved and stable, and until the explicit RL gate reopens
 
 ## Working Rule
 
