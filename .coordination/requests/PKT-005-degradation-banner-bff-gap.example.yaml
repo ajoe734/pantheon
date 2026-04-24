@@ -1,0 +1,20 @@
+feature_id: PKT-005-degradation-banner
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: global-degradation-banner
+blocking: true
+
+summary: Global Degradation Banner UI is blocked on missing or incomplete meta fields in the BFF composed view response.
+
+missing:
+  - field: meta.surfaces
+    reason: Banner cannot determine degradation state without meta.surfaces being present in every composed view response. One or more screens are returning composed views without this field.
+  - field: meta.staleness.last_known_at
+    reason: STALE banner variant cannot show humanised age without this field.
+
+acceptance:
+  - Pantheon confirms meta.surfaces and meta.staleness are present in all three Operator Console composed views
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

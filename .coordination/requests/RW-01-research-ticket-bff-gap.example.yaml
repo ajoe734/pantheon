@@ -1,0 +1,21 @@
+feature_id: RW-01-research-ticket
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: research-ticket
+blocking: true
+
+summary: Research Ticket UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: lifecycle_history[]
+    reason: The ticket lifecycle rail must render the backend-supplied transition history and cannot be reconstructed from status alone
+  - field: allowedActions.canArchive
+    reason: Archive CTA visibility is backend authority and cannot be inferred client-side
+  - field: meta.surfaces.ticket_detail
+    reason: Detail degradation handling cannot be rendered safely without the published surface state
+
+acceptance:
+  - Pantheon publishes a refreshed RW-01 contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

@@ -1,0 +1,106 @@
+feature_id: PKT-005-degradation-banner
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-24T12:08:13Z'
+reviewed_commit: 0ee754bf0228a6998ace115f3277fdc30bcb15e1
+reviewed_source_commit: 8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f
+request_pair_commit: 68fc766daf6f7d0eecafed38b965894de35a42e6
+ui_done_source_commit: 8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f
+frontend_feedback_source_commit: 8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f
+verified_remote_publish_commit: 68fc766daf6f7d0eecafed38b965894de35a42e6
+feedback_bundle_transport: >-
+  Git-visible `origin/main` head `68fc766daf6f7d0eecafed38b965894de35a42e6`
+  now publishes the canonical PKT-005 banner request pair and
+  `docs/pantheon-feedback/PKT-005-degradation-banner/*`, all pinned to the
+  reviewed source snapshot `8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f`.
+screen: global-degradation-banner
+workbench: operator-console
+screen_id: surface-operator-global-degradation-banner
+
+status: loop-complete
+disposition: close
+review_result: route-and-label-fidelity-resolved
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed the returned PKT-005 Global Degradation Banner bundle
+  against the current Git-visible front `main` publication. The previous
+  front-owned follow-up is resolved: incident-home row navigation and
+  incident-detail back navigation now stay inside the mounted
+  `/operator/incidents...` route family, and `humanizeSurfaceKey()` now
+  humanizes canonical camelCase keys such as `allowedActions`. The request pair
+  and feedback bundle now truthfully describe that reviewed main-branch
+  snapshot. No Pantheon API, banner decision-tree, or contract change remains
+  for this loop.
+
+acceptance_verified:
+  - criterion: keep the degradation decision tree aligned with the canonical PKT-005 contract
+    status: pass
+    note: >-
+      The reviewed helper still derives `critical`, `partial`, `stale`,
+      `degraded`, and `none` from `meta.staleness` and `meta.surfaces`
+      without inventing a shadow health endpoint.
+  - criterion: keep operator-console navigation inside the mounted `/operator/incidents...` route family
+    status: pass
+    note: >-
+      `IncidentHome.tsx` now routes row navigation to
+      `/operator/incidents/{incident_id}`, and `IncidentDetail.tsx` routes the
+      back action to `/operator/incidents`.
+  - criterion: humanize canonical camelCase surface keys for degraded and stale banner variants
+    status: pass
+    note: >-
+      `humanizeSurfaceKey()` now splits camelCase as well as snake_case, so
+      keys such as `allowedActions` render as operator-readable labels.
+  - criterion: request pair and feedback bundle are replay-clean on the Git-visible default branch
+    status: pass
+    note: >-
+      `origin/main@68fc766daf6f7d0eecafed38b965894de35a42e6` contains the
+      canonical request pair and the full
+      `docs/pantheon-feedback/PKT-005-degradation-banner/*` bundle.
+  - criterion: front TypeScript compile passes on the current publication tuple
+    status: pass
+    note: >-
+      `cd /tmp/front-prompt-publish-main && /home/edna/code/front-ai-trading-system/node_modules/.bin/tsc --noEmit`
+      completed successfully at `origin/main@68fc766daf6f7d0eecafed38b965894de35a42e6`.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify current operator incident route wiring
+    path: /tmp/front-prompt-publish-main/src/pages/operator/IncidentHome.tsx
+    note: >-
+      Confirmed row navigation and detail back navigation both stay on the
+      mounted `/operator/incidents...` route family.
+  - action: re-check banner surface-key humanization
+    path: /tmp/front-prompt-publish-main/src/lib/degradationBanner.ts
+    note: >-
+      Confirmed canonical camelCase keys now humanize into operator-readable
+      labels.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Live browser QA against a mounted Pantheon BFF remains non-blocking after
+      this closeout.
+
+required_front_repo_updates: []
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. The current Git-visible front `main` publication resolves the earlier
+  route and label fidelity gaps, and the canonical request pair plus feedback
+  bundle now point to the same reviewed source snapshot
+  `8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f`.
+
+risk_note: >-
+  Remaining risk is limited to non-blocking deployed browser QA and future
+  regressions outside this approved publication tuple, not an open Pantheon
+  API, decision-tree, or replay-truth blocker.
+
+blocking: false
+lovable_ui_task_status: closed
+next_action: none
+delivery_artifact_ref: .coordination/responses/PKT-005-degradation-banner-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/PKT-005-degradation-banner-review.md

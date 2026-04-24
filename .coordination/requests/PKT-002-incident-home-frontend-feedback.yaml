@@ -1,0 +1,22 @@
+feature_id: PKT-002-incident-home
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+workbench: operator-console
+screen_id: screen-operator-incident-home
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-002-incident-home
+feedback_path: docs/pantheon-feedback/PKT-002-incident-home/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-002-incident-home/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-002-incident-home/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-002-incident-home/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/lib/bffClient.ts
+  - src/pages/operator/IncidentHome.tsx
+  - src/pages/operator/types.ts
+pantheon_review_hint: review-ui
+summary: Incident Home is implemented against the published PKT-002 split-read contract, with operator-route navigation fixed and no open API gap remaining from this pass.

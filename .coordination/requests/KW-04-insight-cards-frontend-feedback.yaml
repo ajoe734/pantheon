@@ -1,0 +1,32 @@
+feature_id: KW-04-insight-cards
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 68afd384867499f28672d9702a02c7dca24abcae
+screen: knowledge-insight-cards
+status: complete
+
+implementation_notes:
+  - Created src/pages/knowledge/InsightCardTypes.ts mirroring published contract.
+  - Added insightCardsBffApi namespace in src/lib/bffClient.ts (list/getDetail).
+  - Replaced legacy KnowledgeInsightPages placeholder with InsightCardList and InsightCardDetail.
+  - Filter bar built exclusively from filter_metadata.tags, .linked_entity_types, .recency_options. No hardcoded tag or recency vocabularies.
+  - linked_entity_ref input only shown when linked_entity_type is set; never submitted in isolation.
+  - confidence.label rendered as-is via styled badge; score shown but not used to recolor or relabel.
+  - Cards preserve backend ordering exactly; no client-side sort by score or recency.
+  - summary rendered as plain text only; markdown rendering explicitly avoided.
+  - source_ref completely absent from UI; never parsed or shown.
+  - supporting_evidence_refs[].resolved_link is sole navigation source: available -> internal Link, external -> anchor with open_in_new_tab, unavailable -> grey badge no link.
+  - linked_sources rendered with display_label + route_href from BFF; entity_ref never reverse-resolved.
+  - Superseded card detail shows prominent banner with link from superseded_by.route_href when status === "superseded".
+  - aggregation_provenance rendered as read-only stat panel; counts displayed verbatim.
+  - Per-surface degradation: insight_cards (list) — full banner; insight_card_detail — full banner; supporting_evidence_refs / linked_sources — inline panel-level partial-data badge.
+  - Pagination uses next_page_token cursor only. include_inactive supported as boolean toggle.
+
+ux_decisions:
+  - Confidence color coding via design tokens: high=emerald, medium=blue, low=amber, insufficient_evidence=muted.
+  - Status color coding: active=primary, superseded=amber, archived=muted.
+  - Filter bar uses Selects for taxonomy fields (tags, linked entity, recency, status) and Inputs for free-form linked_entity_ref / numeric confidence_min.
+  - Supersession banner uses amber accent and hosts a CTA button to the replacement.
+
+open_questions: []

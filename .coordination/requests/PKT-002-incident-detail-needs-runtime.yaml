@@ -1,0 +1,21 @@
+feature_id: PKT-002-incident-detail
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: incident-detail
+status: resolved
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-17T16:50:36Z"
+summary: >-
+  Pantheon re-review of the dispatched PKT-002 Incident Detail ui-done packet
+  confirms the front route is live and banner variant logic is correct. The
+  local acceptance blocker is now resolved: the BFF bootstrap snapshot is read
+  when env-backed stores are absent, the local incident fixture set is seeded,
+  and the targeted incident smoke slice now passes. The canonical composed contract remains
+  `GET /api/v1/operator/incident-response/{incident_id}`; this runtime handoff
+  was about restoring local data access, not changing endpoints.
+next_step: >-
+  Hand control back to front-sync / frontend review. Pantheon's local
+  acceptance environment now serves the seeded incident again without changing
+  the published PKT-002 contract or inventing alternate endpoints.

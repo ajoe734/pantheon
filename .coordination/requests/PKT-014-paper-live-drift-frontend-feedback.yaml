@@ -1,0 +1,27 @@
+feature_id: PKT-014-paper-live-drift
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 37a622bca69a95e2aae46aa8c6b0432ad72082a8
+workbench: operator-console
+screen_id: screen-operator-paper-live-drift
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-014-paper-live-drift
+feedback_path: docs/pantheon-feedback/PKT-014-paper-live-drift/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-014-paper-live-drift/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-014-paper-live-drift/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-014-paper-live-drift/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - .coordination/requests/PKT-014-paper-live-drift-frontend-feedback.yaml
+  - .coordination/requests/PKT-014-paper-live-drift-ui-done.yaml
+  - docs/pantheon-feedback/PKT-014-paper-live-drift/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-014-paper-live-drift/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-014-paper-live-drift/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-014-paper-live-drift/QA_STATUS.md
+  - src/App.tsx
+  - src/lib/bffClient.ts
+  - src/pages/operator/OperatorPaperLiveDrift.tsx
+  - src/pages/operator/types.ts
+pantheon_review_hint: review-ui
+summary: Operator Paper / Live Drift remains aligned with the PKT-014 contract, with a complete local feedback bundle and no open API gap from this pass.

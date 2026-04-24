@@ -1,0 +1,161 @@
+feature_id: RW-04-experiment-launch
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-21T18:24:11Z'
+reviewed_commit: b0975f50fb1b657c2ae95ae1a132e02b7474439b
+ui_done_source_commit: f672af2c0019618ce05cf07c7ed50c65897e9fbb
+frontend_feedback_source_commit: f672af2c0019618ce05cf07c7ed50c65897e9fbb
+verified_front_workspace_head: f00791b217e5550d80c1add72a8560b42bc3a056
+verified_remote_publish_commit: f00791b217e5550d80c1add72a8560b42bc3a056
+feedback_bundle_transport: >-
+  Reviewed UI transport commit f672af2c0019618ce05cf07c7ed50c65897e9fbb
+  resolves to a tree that contains the canonical request pair, the
+  docs/pantheon-feedback/RW-04-experiment-launch bundle, the App/AppSidebar/
+  WorkbenchBreadcrumb/bffClient wiring, and the six experiment files. Front
+  publish commit f00791b217e5550d80c1add72a8560b42bc3a056 on
+  origin/pkt-004-detail-fix republishes the canonical request pair with
+  truthful source_commit metadata pinned back to that reviewed UI transport
+  commit.
+screen: experiment-launch
+workbench: research-workbench
+screen_id: screen-experiment-launch
+
+disposition: close
+review_result: replay-clean-and-contract-aligned
+can_close: true
+
+summary: >-
+  Pantheon synced the accepted RW-04 Experiment Launch review result against
+  the published contract, canonical example payload, sibling front
+  implementation, and the live operator-bff runtime. The replay chain is now
+  truthful: origin/pkt-004-detail-fix resolves to
+  f00791b217e5550d80c1add72a8560b42bc3a056, and that publish commit contains
+  the canonical request pair with source_commit
+  f672af2c0019618ce05cf07c7ed50c65897e9fbb. The reviewed UI keeps launch
+  requests on POST /api/v1/experiments/launch, launch/detail polling on
+  GET /api/v1/experiments/{experiment_id}, preserves OBJECT_NOT_FOUND versus
+  route-not-live handling, resets history pagination when ticket_id or status
+  changes, and gates cancel visibility only from allowedActions.canCancel plus
+  degradation semantics. Pantheon's targeted RW-04 contract slice still passes
+  and the live runtime advertises the full /api/v1/experiments* route family.
+  No new Pantheon API gap remains in this loop.
+
+acceptance_verified:
+  - criterion: launch requests use POST /api/v1/experiments/launch only
+    status: pass
+    note: >-
+      The accepted review packet confirms the launch screen routes submission
+      through rw04ExperimentApi.launchExperiment() only and does not introduce
+      raw fetch or alternate endpoints.
+  - criterion: launch and detail polling remain anchored to GET /api/v1/experiments/{experiment_id}
+    status: pass
+    note: >-
+      The accepted review packet confirms the launch status view and detail
+      screen both stay anchored to rw04ExperimentApi.getExperiment() and do not
+      synthesize lifecycle state locally.
+  - criterion: detail 404 handling distinguishes route-not-live from contract-defined missing experiment ids
+    status: pass
+    note: >-
+      ExperimentRunHelpers.ts still classifies route-not-live only for
+      404 NOT_FOUND and 404 ROUTE_NOT_FOUND, while preserving
+      404 OBJECT_NOT_FOUND from the canonical detail route.
+  - criterion: history pagination resets when ticket_id or status filter context changes
+    status: pass
+    note: >-
+      The accepted review packet confirms ExperimentHistory.tsx clears
+      pageHistory when either ticket_id or status changes, so filter context
+      shifts do not reuse stale pagination state.
+  - criterion: cancel CTA visibility is gated by allowedActions.canCancel plus surface degradation semantics only
+    status: pass
+    note: >-
+      ExperimentRunView.tsx continues to render cancel controls only from
+      allowedActions.canCancel together with the current surface state; no local
+      lifecycle inference or ticker-derived authority is introduced.
+  - criterion: publish ui-done and frontend-feedback from a truthful Git-visible request pair with a resolvable source_commit
+    status: pass
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` now resolves to
+      f00791b217e5550d80c1add72a8560b42bc3a056, and `git ls-tree` on reviewed UI
+      transport commit f672af2c0019618ce05cf07c7ed50c65897e9fbb returns the
+      request pair, feedback bundle, wiring files, and six experiment files.
+  - criterion: npm run build passes
+    status: pass
+    note: >-
+      The approved review packet records sibling front targeted eslint,
+      `npx tsc --noEmit`, and `npm run build` passing on 2026-04-21 for the
+      reviewed RW-04 slice.
+  - criterion: Pantheon live runtime still advertises the full RW-04 route family and contract slice
+    status: pass
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py`
+      passed with 21 tests in the current Pantheon workspace, and the live
+      OpenAPI document on 18001 still advertises the four
+      /api/v1/experiments* routes.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the current remote-visible request-pair publish commit
+    path: ../front-ai-trading-system/.coordination/requests/RW-04-experiment-launch-ui-done.yaml
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` now resolves to
+      f00791b217e5550d80c1add72a8560b42bc3a056, and
+      `git branch -r --contains f00791b217e5550d80c1add72a8560b42bc3a056`
+      returns origin/pkt-004-detail-fix.
+  - action: verify the reviewed UI transport commit contains the full RW-04 bundle
+    path: ../front-ai-trading-system
+    note: >-
+      `git ls-tree -r --name-only
+      f672af2c0019618ce05cf07c7ed50c65897e9fbb -- ...` returns the canonical
+      request pair, docs/pantheon-feedback/RW-04-experiment-launch/*,
+      src/App.tsx, src/components/AppSidebar.tsx,
+      src/components/WorkbenchBreadcrumb.tsx, src/lib/bffClient.ts, and the six
+      experiment files.
+  - action: verify the Pantheon-owned RW-04 contract slice
+    path: services/control-plane/bff/test_rw04_experiment_launch_contract.py
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py`
+      passed with 21 tests in the current Pantheon workspace.
+  - action: confirm live HTTP route publication remains visible
+    path: http://127.0.0.1:18001/openapi.json
+    note: >-
+      A live OpenAPI extract on 18001 still lists POST /api/v1/experiments/launch,
+      GET /api/v1/experiments, GET /api/v1/experiments/{experiment_id}, and
+      POST /api/v1/experiments/{experiment_id}/cancel.
+  - action: confirm accepted front static verification evidence remains attached to the closeout
+    path: .coordination/reviews/RW-04-experiment-launch-review.md
+    note: >-
+      The approved review packet records sibling front targeted eslint,
+      `npx tsc --noEmit`, and `npm run build` passing on 2026-04-21 for the
+      reviewed RW-04 slice.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed-environment browser QA remains outstanding after closeout for
+      /research/experiments, /research/experiments/launch, and
+      /research/experiments/:experiment_id.
+
+required_front_repo_updates: []
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. Reviewed UI transport commit
+  f672af2c0019618ce05cf07c7ed50c65897e9fbb contains the advertised RW-04
+  bundle, and origin/pkt-004-detail-fix now points at
+  f00791b217e5550d80c1add72a8560b42bc3a056, which republishes the canonical
+  request pair with truthful source_commit metadata back to that reviewed UI
+  transport commit.
+
+risk_note: >-
+  Remaining risk is post-close browser QA only. The replay chain is now
+  truthful, the Pantheon contract slice still passes, and the live HTTP route
+  family is advertised, but this closeout did not run deployed browser QA.
+
+lovable_ui_task_status: closed
+next_action: none
+delivery_artifact_ref: .coordination/responses/RW-04-experiment-launch-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/RW-04-experiment-launch-review.md

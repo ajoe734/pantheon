@@ -1,0 +1,224 @@
+feature_id: TW-03-before-after-compare
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-21T22:45:29Z'
+reviewed_commit: 5968f391f36bbf56ede5695d72059009ae38117f
+ui_done_source_commit: ed8db5db794202659c5a377d2939df580585ccbb
+frontend_feedback_source_commit: ed8db5db794202659c5a377d2939df580585ccbb
+verified_front_workspace_head: dbc4a16dc0e9f0b8d33e1576908341ea056c660d
+verified_remote_publish_commit: dbc4a16dc0e9f0b8d33e1576908341ea056c660d
+feedback_bundle_transport: >-
+  Reviewed UI implementation commit ed8db5db794202659c5a377d2939df580585ccbb
+  resolves to a tree that contains src/pages/trainer/TrainerBeforeAfterCompare.tsx,
+  src/pages/trainer/replayContract.ts, src/pages/trainer/types.ts,
+  src/lib/bffClient.ts, and src/App.tsx. Front publish commit
+  dbc4a16dc0e9f0b8d33e1576908341ea056c660d on origin/pkt-004-detail-fix
+  contains the canonical request pair, docs/pantheon-feedback/TW-03-before-after-compare
+  bundle, and the same reviewed UI files, with both request bodies pinned back
+  to implementation commit ed8db5db794202659c5a377d2939df580585ccbb.
+screen: before-after-compare
+workbench: trainer-workbench
+screen_id: screen-before-after-compare
+
+disposition: close
+review_result: replay-clean-and-contract-aligned
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed the returned TW-03 ui-done and frontend-feedback pair
+  against the published Before/After Compare contract, canonical frontend
+  change spec, sibling front implementation, and the live operator-bff runtime.
+  The replay chain is now truthful: implementation commit
+  ed8db5db794202659c5a377d2939df580585ccbb contains the reviewed TW-03 compare
+  code plus `src/pages/trainer/replayContract.ts`, and
+  origin/pkt-004-detail-fix now resolves to
+  dbc4a16dc0e9f0b8d33e1576908341ea056c660d, which republishes the canonical
+  request pair and feedback bundle pinned back to that implementation commit.
+  `TrainerBeforeAfterCompare.tsx` still stays on the published GET/POST preview
+  route family only, `tw03PreviewApi.refreshPreview()` still sends
+  `refresh_mode = "manual"` only, the compare owner route remains mounted at
+  `/trainer/sessions/:session_id/compare`, and
+  `validatePreviewResponse()` now fails closed on required per-item metric,
+  warning, and control-diff fields before render. Clean archive replays of
+  both ed8db5db794202659c5a377d2939df580585ccbb and
+  dbc4a16dc0e9f0b8d33e1576908341ea056c660d pass `npm run build`, and live
+  OpenAPI plus operator-auth GET probes on http://127.0.0.1:18001 still return
+  contract-shaped stale and `preview_unavailable` TW-03 responses. Pantheon's
+  seeded pending-preview proof remains date-sensitive because the stored
+  `deadline_at = 2026-04-20T19:50:45Z` is already past on 2026-04-21, but that
+  is a Pantheon-owned fixture caveat rather than a front-end transport or
+  contract gap. No new Pantheon API gap remains in this loop.
+
+acceptance_verified:
+  - criterion: publish ui-done and frontend-feedback through a truthful Git-visible transport chain
+    status: pass
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` now resolves to
+      dbc4a16dc0e9f0b8d33e1576908341ea056c660d, `git ls-tree` on
+      dbc4a16dc0e9f0b8d33e1576908341ea056c660d returns the canonical request
+      pair plus `docs/pantheon-feedback/TW-03-before-after-compare/*`, and
+      both request bodies in that publish commit point back to
+      ed8db5db794202659c5a377d2939df580585ccbb.
+  - criterion: reviewed source_commit contains the buildable TW-03 implementation and required trainer dependency
+    status: pass
+    note: >-
+      `git ls-tree -r --name-only
+      ed8db5db794202659c5a377d2939df580585ccbb` includes
+      `src/pages/trainer/TrainerBeforeAfterCompare.tsx`,
+      `src/pages/trainer/replayContract.ts`, `src/pages/trainer/types.ts`,
+      `src/lib/bffClient.ts`, and `src/App.tsx`, and a clean archive of that
+      implementation commit now passes `npm ci --legacy-peer-deps && npm run
+      build`.
+  - criterion: compare UI uses only the published GET and POST preview route family
+    status: pass
+    note: >-
+      `src/lib/bffClient.ts` still limits `tw03PreviewApi` to
+      `GET /api/v1/trainer/sessions/{session_id}/preview` and
+      `POST /api/v1/trainer/sessions/{session_id}/preview`, and
+      `TrainerBeforeAfterCompare.tsx` uses those helpers only.
+  - criterion: mount the compare owner route in the reviewed front router
+    status: pass
+    note: >-
+      `src/App.tsx` still mounts `/trainer/sessions/:session_id/compare` to
+      `TrainerBeforeAfterCompare`.
+  - criterion: POST preview refresh remains limited to refresh_mode manual
+    status: pass
+    note: >-
+      `tw03PreviewApi.refreshPreview()` still posts only
+      `{ refresh_mode: 'manual' }` to the published preview refresh route.
+  - criterion: polling logic still uses backend-authored eval_id and poll_interval_ms only
+    status: pass
+    note: >-
+      `TrainerBeforeAfterCompare.tsx` still polls only
+      `tw03PreviewApi.getPreview(session_id, eval_id)` while
+      `status = pending`, reads `preview.polling.poll_interval_ms` and
+      `deadline_at` from the backend contract, and does not introduce local
+      backoff or polling heuristics.
+  - criterion: compare validator enforces required per-item TW-03 contract fields before render
+    status: pass
+    note: >-
+      `validatePreviewResponse()` now checks required per-item
+      `metric_delta[]`, `warnings[]`, and `control_diff[]` fields before
+      accepting preview data into renderable state, so malformed rows fail
+      closed to the canonical TW-03 BFF-gap path instead of slipping through.
+  - criterion: unavailable and preview_unavailable surfaces still suppress compare content beyond canonical backend copy
+    status: pass
+    note: >-
+      Warning hierarchy rendering remains gated by !isPreviewUnavailable &&
+      !isUnavailable, and the control-diff card stays suppressed when
+      `meta.surfaces.trainer_preview` is unavailable.
+  - criterion: clean archive front validation passes for the reviewed TW-03 transport chain
+    status: pass
+    note: >-
+      Clean archives of both
+      ed8db5db794202659c5a377d2939df580585ccbb and
+      dbc4a16dc0e9f0b8d33e1576908341ea056c660d pass
+      `npm ci --legacy-peer-deps && npm run build`. Targeted `npx eslint` on
+      the reviewed files exits 0 with one non-blocking
+      `react-hooks/exhaustive-deps` warning at
+      `src/pages/trainer/TrainerBeforeAfterCompare.tsx:351`.
+  - criterion: Pantheon live runtime still advertises the TW-03 route family and returns contract-shaped stale and degraded-success envelopes
+    status: pass
+    note: >-
+      Live OpenAPI on 18001 still advertises
+      `/api/v1/trainer/sessions/{session_id}/preview`; operator-auth GET
+      `/api/v1/trainer/sessions/trn-20260419-001/preview` returns the published
+      stale complete envelope; and operator-auth GET
+      `/api/v1/trainer/sessions/trn-20260418-003/preview` returns the published
+      structured `preview_unavailable` degraded-success envelope.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the TW-03 implementation commit now contains the full reviewed file set
+    path: ../front-ai-trading-system
+    note: >-
+      `git ls-tree -r --name-only
+      ed8db5db794202659c5a377d2939df580585ccbb -- src/App.tsx
+      src/lib/bffClient.ts src/pages/trainer/TrainerBeforeAfterCompare.tsx
+      src/pages/trainer/replayContract.ts src/pages/trainer/types.ts` returns
+      the reviewed TW-03 implementation file set, including the formerly
+      missing replay helper.
+  - action: verify the Git-visible publish commit contains the canonical request pair and feedback bundle
+    path: ../front-ai-trading-system/.coordination/requests/TW-03-before-after-compare-ui-done.yaml
+    note: >-
+      `git ls-tree -r --name-only
+      dbc4a16dc0e9f0b8d33e1576908341ea056c660d -- .coordination/requests/TW-03-before-after-compare-ui-done.yaml
+      .coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml
+      docs/pantheon-feedback/TW-03-before-after-compare` returns the canonical
+      request pair and feedback bundle, and both request bodies in that commit
+      now pin back to implementation commit
+      ed8db5db794202659c5a377d2939df580585ccbb.
+  - action: verify clean-archive buildability of both the implementation and publish snapshots
+    path: ../front-ai-trading-system
+    note: >-
+      Clean archives of both
+      ed8db5db794202659c5a377d2939df580585ccbb and
+      dbc4a16dc0e9f0b8d33e1576908341ea056c660d now pass
+      `npm ci --legacy-peer-deps && npm run build`, with only the existing
+      non-blocking Browserslist age notice and Vite chunk-size warning.
+  - action: inspect compare validator coverage against the published TW-03 required fields
+    path: ../front-ai-trading-system/src/pages/trainer/TrainerBeforeAfterCompare.tsx
+    note: >-
+      `validatePreviewResponse()` now checks required per-item
+      `metric_delta[]`, `warnings[]`, and `control_diff[]` fields before the
+      compare surface accepts returned preview data for rendering.
+  - action: validate live HTTP route publication and degraded-success behavior on the active runtime
+    path: http://127.0.0.1:18001
+    note: >-
+      Live OpenAPI on 18001 still advertises the TW-03 preview route family,
+      operator-auth GET `/trainer/sessions/trn-20260419-001/preview` returns
+      the published stale complete envelope, and operator-auth GET
+      `/trainer/sessions/trn-20260418-003/preview` returns the structured
+      `preview_unavailable` degraded-success envelope.
+  - action: re-run Pantheon TW-03 contract proof and record the current date-sensitive caveat
+    path: services/control-plane/bff/test_tw03_before_after_compare_contract.py
+    note: >-
+      `python3 -m pytest -q
+      services/control-plane/bff/test_tw03_before_after_compare_contract.py`
+      returns `1 failed, 3 passed` because the seeded pending-preview
+      `deadline_at = 2026-04-20T19:50:45Z` is already in the past on
+      2026-04-21, so the store intentionally resolves that lookup to
+      `preview_unavailable`. This is a Pantheon proof-fixture issue, not a new
+      front-end gap.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed browser QA remains outstanding for
+      `/trainer/sessions/:session_id/compare`.
+  - type: pantheon_test_fixture
+    status: deferred_non_blocking
+    note: >-
+      Update the seeded pending-preview proof deadline from
+      `2026-04-20T19:50:45Z` before relying on
+      `test_tw03_pending_preview_supports_eval_lookup_and_polling_contract` as
+      a full local proof on or after 2026-04-21.
+
+required_front_repo_updates: []
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. Implementation commit ed8db5db794202659c5a377d2939df580585ccbb contains
+  the reviewed TW-03 compare code including `src/pages/trainer/replayContract.ts`
+  and fail-closed preview validation, and origin/pkt-004-detail-fix now points
+  at dbc4a16dc0e9f0b8d33e1576908341ea056c660d, which republishes the canonical
+  request pair and feedback bundle pinned back to that implementation commit.
+  Clean archive builds pass for both snapshots and the live preview route
+  family remains advertised on 18001.
+
+risk_note: >-
+  Remaining risk is non-blocking only. Targeted `npx eslint` on the reviewed
+  front files emits one `react-hooks/exhaustive-deps` warning at
+  `src/pages/trainer/TrainerBeforeAfterCompare.tsx:351`, deployed browser QA
+  has not yet been rerun for the compare route, and the Pantheon local
+  pending-preview proof still uses an expired `deadline_at =
+  2026-04-20T19:50:45Z` that now resolves to `preview_unavailable` on
+  2026-04-21. None of those issues indicate a front-end transport or contract
+  gap in the returned TW-03 bundle.
+
+lovable_ui_task_status: closed
+next_action: none
+review_findings_ref: .coordination/reviews/TW-03-before-after-compare-review.md

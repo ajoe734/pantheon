@@ -1,0 +1,34 @@
+feature_id: PKT-002-incident-home
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: incident-home
+status: published
+published_at: "2026-04-16T06:44:40Z"
+description: "PKT-002 Incident Home contract-ready handoff. The blocking BFF envelope gaps have been resolved, and the contract, example payload, screen spec, and Lovable task packet are published for the resumed UI cycle."
+artifacts:
+  bff_contract: docs/bff/PKT-002-incident-home.md
+  screen_spec: docs/screens/PKT-002-incident-home.md
+  example_payload: docs/examples/PKT-002-incident-home.json
+  lovable_ui_task: .coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml
+  backend_delivery: .coordination/responses/PKT-002-incident-home-backend-delivery.yaml
+endpoints:
+  - GET /api/v1/incidents
+  - GET /api/v1/kill-switch/status
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - backend_delivery
+  - lovable_ui_task
+  - example_payload
+front_actions_required:
+  - build the Incident Home list panel and kill switch control rail badge
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - do not invent fields beyond this handoff packet
+  - render kill switch badge from GET /api/v1/kill-switch/status only; do not derive state locally
+  - render the non-dismissable warning banner when meta.surfaces.kill_switch is degraded or unavailable
+  - display the degradation banner when any meta.surfaces entry is degraded or unavailable
+acceptance_met:
+  - contract_ready_published: true
+  - lovable_ui_task_published: true
+  - front_repo_receives_handoff_bundle: true

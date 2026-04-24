@@ -1,0 +1,22 @@
+feature_id: TW-03-before-after-compare
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: trainer-workbench
+screen_id: screen-before-after-compare
+status: followup-required
+backend_commit: 5968f391f36bbf56ede5695d72059009ae38117f
+bff_contract_version: pantheon-bff@5968f391f36bbf56ede5695d72059009ae38117f
+delivery_note_path: docs/pantheon-delivery/TW-03-before-after-compare/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/TW-03-before-after-compare/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon's current TW-03 review confirms the Before/After Compare screen
+  stays on GET and POST /api/v1/trainer/sessions/{session_id}/preview only,
+  source commit ed8db5db794202659c5a377d2939df580585ccbb is now buildable,
+  Git-visible, and validator-complete, and no new Pantheon endpoint or
+  contract change is required. The remaining blocker is front publication
+  truth: republish the TW-03 request pair from one truthful transport commit
+  whose tree already contains the canonical request pair, feedback bundle,
+  compare route wiring, TrainerBeforeAfterCompare.tsx, and
+  src/pages/trainer/replayContract.ts, then redispatch Pantheon review on the
+  unchanged TW-03 contract.
+source_payload: .coordination/requests/TW-03-before-after-compare-ui-done.yaml

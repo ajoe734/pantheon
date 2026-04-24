@@ -1,0 +1,23 @@
+feature_id: PKT-002-incident-detail
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: incident-detail
+blocking: true
+
+summary: Incident Detail UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: allowedActions.canOpenActionDrawer
+    reason: Open Action Drawer CTA visibility cannot be rendered safely without backend authority
+  - field: meta.surfaces.kill_switch
+    reason: Kill switch panel degradation state cannot render without explicit surface status
+  - field: meta.surfaces.allowedActions
+    reason: CTA panel cannot be safely rendered without explicit allowedActions surface status
+  - field: data.kill_switch.last_confirmed_at
+    reason: Staleness note on kill switch panel requires a timestamp
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

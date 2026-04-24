@@ -1,0 +1,27 @@
+feature_id: PKT-005-degradation-banner
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: global-degradation-banner
+blocking: false
+
+summary: Global Degradation Banner component is implemented and wired into all Operator Console screens.
+
+changed_files:
+  - src/components/GlobalDegradationBanner.tsx
+  - src/components/GlobalDegradationBanner.test.tsx
+  - src/pages/deployment-review/DeploymentReview.tsx
+  - src/pages/incident-response/IncidentResponse.tsx
+  - src/pages/post-incident/PostIncidentReview.tsx
+  - src/lib/bffClient.ts
+
+follow_up_requested:
+  - review the banner implementation against the PKT-005 contract and example payloads
+  - confirm all five variants render correctly under the test fixtures
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

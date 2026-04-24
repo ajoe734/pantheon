@@ -1,0 +1,26 @@
+feature_id: KW-02-research-notes
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: e00d13dc220e4226f93c82e2c7dbc4a053601816
+screen: knowledge-research-notes
+status: complete
+
+implementation_notes:
+  - Created src/pages/knowledge/ResearchNoteTypes.ts mirroring published contract.
+  - Added researchNotesBffApi namespace in src/lib/bffClient.ts (list/getDetail/create).
+  - Replaced legacy KnowledgeNotesPages placeholder with ResearchNotesList, ResearchNoteDetail, CreateResearchNote.
+  - List filters owner_ref, attachment_type, attachment_ref, tags via search params; pagination via next_page_token cursor only.
+  - Excerpt rendered as plain text (no markdown) per contract.
+  - Detail body rendered as preformatted text (markdown content shown raw — markdown renderer can be plugged in later if needed).
+  - linked_evidence_refs respect resolution_state: only "resolved" with route_href becomes an active link; "unresolved" shows label without link; "unavailable" shows degraded indicator.
+  - linked_memory_anchors lifecycle_status displayed as-is (no inference from superseded_by).
+  - Surface degradation handled per panel (research_note_detail, evidence_links, memory_anchors) with non-dismissable banners and inline indicators.
+  - Create form: free_standing hides attachment_ref input; owner_ref never sent. BFF errors shown verbatim with code+message.
+
+ux_decisions:
+  - Used Select + Input filters in toolbar; tags accepted as comma-separated string (passed through to backend as-is per contract).
+  - Surface "degraded" shows amber banner; "unavailable" shows destructive banner and replaces panel content.
+  - Untitled notes show "Untitled note" placeholder italic.
+
+open_questions: []

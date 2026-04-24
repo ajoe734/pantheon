@@ -1,0 +1,15 @@
+feature_id: TW-03-before-after-compare
+type: ui-done
+screen: before-after-compare
+screen_id: screen-before-after-compare
+source_branch:
+source_commit:
+implemented_paths: []
+used_endpoints:
+  - GET /api/v1/trainer/sessions/{session_id}/preview
+  - POST /api/v1/trainer/sessions/{session_id}/preview
+feedback_paths:
+  - docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md

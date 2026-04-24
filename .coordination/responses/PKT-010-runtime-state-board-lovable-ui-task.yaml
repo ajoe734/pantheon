@@ -1,0 +1,55 @@
+feature_id: PKT-010-runtime-state-board
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: followup-required
+cycle: 2
+pantheon_pr: null
+base_url: null
+workbench: operator-console
+screen: operator-runtime-state-board
+screen_id: screen-operator-runtime-state-board
+ui_spec_path: docs/screens/PKT-010-runtime-state-board.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-010-runtime-state-board/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/runtime-state
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+- publish ui-done and frontend-feedback from a transport-replayable front-repo
+  commit that contains the returned handoff payloads
+- do not leave OperatorRuntimeStateBoard.tsx or the PKT-010 feedback bundle
+  only in the working tree when republishing this cycle
+- do not synthesize browser routes for deployment review or rollback history;
+  keep rendering payload refs verbatim until Pantheon republishes
+  browser-ready targets or revises the PKT-010 packet wording
+acceptance:
+- build the Operator Runtime State Board screen with one server-backed runtime roster
+- use only the existing BFF client
+- keep sorting, filtering, and pagination server-backed
+- do not join RT-03, RT-04, or TL-02 per row in the browser
+- do not add rollback, pause, or promotion CTAs to this packet
+required_feedback:
+- docs/pantheon-feedback/PKT-010-runtime-state-board/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-010-runtime-state-board/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-010-runtime-state-board/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-010-runtime-state-board/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-010-runtime-state-board-contract-ready.yaml
+- .coordination/responses/PKT-010-runtime-state-board-backend-delivery.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-010-runtime-state-board.md
+  ui_spec_path: docs/screens/PKT-010-runtime-state-board.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-010-runtime-state-board/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-010-runtime-state-board.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-010-runtime-state-board
+  backend_delivery_path: .coordination/responses/PKT-010-runtime-state-board-backend-delivery.yaml
+gap_handoff_path: .coordination/requests/PKT-010-runtime-state-board-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-010-runtime-state-board-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-010-runtime-state-board-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-010-runtime-state-board-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-010-runtime-state-board-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/PKT-010-runtime-state-board-review.md

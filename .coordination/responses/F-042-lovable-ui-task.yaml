@@ -1,10 +1,15 @@
 feature_id: F-042
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: follow-up-required
+cycle: 2
 pantheon_pr: null
 base_url: null
+workbench: governance-review
 screen: promotion-review
+screen_id: screen-governance-promotion-review
+ui_spec_path: docs/screens/F-042-promotion-review.md
+frontend_change_spec_path: docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
 - GET /api/v1/operator/deployment-review/{plan_id}
 - POST /api/v1/operator/commands
@@ -13,17 +18,47 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
+- keep the current F-042 contract unchanged; do not ask Pantheon for new
+  endpoints, shadow state, or alternate error-envelope shapes
+- publish ui-done and frontend-feedback from a GitHub-visible front-repo commit
+  that contains the returned F-042 request pair and docs/pantheon-feedback/F-042/
+- ensure both request bodies set source_commit to that exact GitHub-visible
+  publication commit
+- the currently mirrored cycle-2 tuple advertises source_commit
+  79dc1b5ecef69125fb51f1519893c2e87020864d, but GitHub cannot resolve that SHA
+  yet and GitHub main still serves the older F-042 request pair anchored to
+  03833940782906b7f28cdb3867352793a1ad7d6c and
+  c34048e2e096d3fe9bde1c216c0613535d71f07d
 acceptance:
 - build the Promotion Review page shell and state rendering
 - use only the existing BFF client
 - do not add raw fetch calls in component files
 - do not invent endpoint fields beyond this handoff packet
 - render approval decision and governance outcome from backend-shaped fields
+- publish the cycle-2 frontend-feedback and ui-done payloads from one
+  GitHub-visible commit that contains the request pair, docs/pantheon-feedback/F-042/,
+  `src/pages/promotion/PromotionReview.tsx`, `src/pages/promotion/types.ts`,
+  `src/lib/bffClient.ts`, and `src/auth/AuthProvider.tsx`
+- the published request bodies must set source_commit to that actual
+  GitHub-visible publication commit
+required_feedback:
+- docs/pantheon-feedback/F-042/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/F-042/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/F-042/UI_DECISIONS.md
+- docs/pantheon-feedback/F-042/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/F-042-contract-ready.yaml
 links:
-  lovable_project_url: https://lovable.dev/projects/140c41d5-9cd8-4d6b-ba02-66d5941d0dbe
-  bff_spec_path: null
-  example_payload_paths: []
+  lovable_project_url: null
+  bff_spec_path: docs/bff/F-042-promotion-review.md
+  ui_spec_path: docs/screens/F-042-promotion-review.md
+  frontend_change_spec_path: docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/F-042-review-page.json
+  handoff_bundle_dir: docs/pantheon-handoffs/F-042
 gap_handoff_path: .coordination/requests/F-042-bff-gap.yaml
 gap_handoff_template: .coordination/requests/F-042-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/F-042-ui-done.yaml
 completion_handoff_template: .coordination/requests/F-042-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/F-042-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/BP6-LUV-015-review.md

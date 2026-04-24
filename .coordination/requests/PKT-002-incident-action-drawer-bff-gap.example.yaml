@@ -1,0 +1,23 @@
+feature_id: PKT-002-incident-action-drawer
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: incident-action-drawer
+blocking: true
+
+summary: Incident Action Drawer UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: allowedActions.canPause
+    reason: Pause CTA visibility cannot be rendered safely without backend authority
+  - field: allowedActions.canRiskOff
+    reason: RiskOff CTA visibility cannot be rendered safely without backend authority
+  - field: allowedActions.secondaryPathAvailable
+    reason: Secondary control path panel cannot render without explicit fallback path availability flag
+  - field: receipt.routing_path
+    reason: Command receipt cannot show routing_path (direct vs fallback) without this field
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

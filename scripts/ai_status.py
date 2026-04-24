@@ -150,6 +150,22 @@ DISPLAY_TIMEZONE = ZoneInfo("Asia/Taipei")
 DISPLAY_TIMEZONE_LABEL = "台灣時間 (UTC+8)"
 ISO_TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b")
 FEATURE_MODULE_RE = re.compile(r"^([A-Z]+-\d{2,3})(?:-|$)")
+COORDINATION_RESPONSE_TYPES = (
+    "frontend-feedback",
+    "backend-delivery",
+    "contract-ready",
+    "lovable-ui-task",
+    "lovable-prompt",
+)
+COORDINATION_REQUEST_TYPES = (
+    "frontend-feedback",
+    "needs-runtime",
+    "bff-gap",
+    "ui-done",
+)
+COORDINATION_FEATURE_ALIASES = {
+    "EW-04-inspiration-graph": "PKT-003-inspiration-graph",
+}
 
 
 def default_canonical_document_layers() -> dict[str, list[str]]:
@@ -1166,7 +1182,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     tier_labels = canonical_tier_labels(state)
     planning_state = load_planning_state()
     orchestrator_state = load_json_file(ORCHESTRATOR_STATE_FILE, {})
-    coordination_summary = build_coordination_summary(orchestrator_state)
+    coordination_summary = state.get("coordination_summary") if isinstance(state.get("coordination_summary"), dict) else build_coordination_summary(orchestrator_state)
     active_tasks = [task for task in state["tasks"] if task.get("status") != "done"]
     primary_tasks = [task for task in active_tasks if task_delivery_layer(task) == "primary"]
     external_tasks = [task for task in active_tasks if task_delivery_layer(task) == "external"]
@@ -1978,6 +1994,92 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def parse_coordination_feature_file(name: str, payload_types: tuple[str, ...]) -> tuple[str, str] | None:
+    if not name or name.startswith("."):
+        return None
+    if ".example." in name:
+        return None
+    stem = Path(name).stem
+    for payload_type in sorted(payload_types, key=len, reverse=True):
+        suffix = f"-{payload_type}"
+        if stem.endswith(suffix):
+            feature_id = stem[: -len(suffix)]
+            if feature_id:
+                return feature_id, payload_type
+    return None
+
+
+def scan_tracked_coordination_features() -> dict[str, Any]:
+    coordination_root = ROOT / ".coordination"
+    responses_dir = coordination_root / "responses"
+    requests_dir = coordination_root / "requests"
+
+    features: dict[str, dict[str, Any]] = {}
+    latest_timestamps: list[str] = []
+
+    def ensure_feature(feature_id: str) -> dict[str, Any]:
+        return features.setdefault(
+            feature_id,
+            {
+                "feature_id": feature_id,
+                "responses_by_type": {},
+                "requests_by_type": {},
+            },
+        )
+
+    def record_entry(bucket: str, path: Path, payload_types: tuple[str, ...]) -> None:
+        parsed = parse_coordination_feature_file(path.name, payload_types)
+        if parsed is None:
+            return
+        feature_id, payload_type = parsed
+        feature_id = COORDINATION_FEATURE_ALIASES.get(feature_id, feature_id)
+        feature = ensure_feature(feature_id)
+        rel_path = str(path.relative_to(ROOT))
+        payload = load_local_coordination_payload(rel_path)
+        entry: dict[str, Any] = {"path": rel_path}
+        if isinstance(payload, dict):
+            entry["payload"] = payload
+            feature["screen"] = feature.get("screen") or payload.get("screen")
+            feature["summary"] = feature.get("summary") or payload.get("summary") or payload.get("description")
+            feature["source_repo"] = feature.get("source_repo") or payload.get("source_repo")
+            feature["target_repo_id"] = feature.get("target_repo_id") or payload.get("target_repo") or payload.get("target_repo_id")
+            feature["workbench"] = feature.get("workbench") or payload.get("workbench")
+            feature["screen_id"] = feature.get("screen_id") or payload.get("screen_id")
+            feature["current_payload_type"] = feature.get("current_payload_type") or normalize_coordination_token(payload.get("type"))
+            feature["last_updated_at"] = feature.get("last_updated_at") or payload.get("reviewed_at") or payload.get("published_at") or payload.get("submitted_at") or payload.get("created_at")
+            for timestamp_key in (
+                "reviewed_at",
+                "published_at",
+                "submitted_at",
+                "created_at",
+                "resolved_at",
+                "runtime_verified_at",
+            ):
+                timestamp = payload.get(timestamp_key)
+                if isinstance(timestamp, str) and timestamp.strip():
+                    latest_timestamps.append(timestamp.strip())
+        if bucket == "responses":
+            feature["responses_by_type"][payload_type] = entry
+            if payload_type == "lovable-prompt":
+                feature["lovable_prompt_path"] = rel_path
+            if payload_type == "lovable-ui-task":
+                feature["lovable_task_path"] = rel_path
+        else:
+            feature["requests_by_type"][payload_type] = entry
+
+    if responses_dir.exists():
+        for path in sorted(candidate for candidate in responses_dir.iterdir() if candidate.is_file()):
+            record_entry("responses", path, COORDINATION_RESPONSE_TYPES)
+    if requests_dir.exists():
+        for path in sorted(candidate for candidate in requests_dir.iterdir() if candidate.is_file()):
+            record_entry("requests", path, COORDINATION_REQUEST_TYPES)
+
+    return {
+        "last_scan_at": max(latest_timestamps) if latest_timestamps else None,
+        "features": features,
+    }
+
+
 def coordination_repo_root(repo_id: str) -> Path | None:
     config = load_config()
     root = repository_local_path(config, repo_id)
@@ -2028,29 +2130,49 @@ def coordination_state_flags(feature: dict[str, Any]) -> dict[str, bool]:
     frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
     bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
     needs_runtime = coordination_payload_entry(feature, "requests", "needs-runtime")
+    frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
 
     front_root = coordination_repo_root("front_ai_trading_system")
     pantheon_root = coordination_repo_root("pantheon")
     mirrored_contract_path = f".coordination/responses/{feature_id}-contract-ready.yaml" if feature_id else None
     mirrored_delivery_path = f".coordination/responses/{feature_id}-backend-delivery.yaml" if feature_id else None
+    mirrored_feedback_signals = any(
+        bool(coordination_payload_field(entry, field))
+        for entry in (ui_done, frontend_feedback, frontend_feedback_response)
+        for field in (
+            "source_commit",
+            "request_pair_commit",
+            "verified_remote_publish_commit",
+            "ui_done_source_commit",
+            "frontend_feedback_source_commit",
+        )
+    )
 
     mirrored_to_front = bool(feature.get("mirrored_to_target_repo")) or coordination_repo_payload_exists(front_root, mirrored_contract_path)
     if not mirrored_to_front:
         mirrored_to_front = coordination_repo_payload_exists(front_root, mirrored_delivery_path)
+    if not mirrored_to_front:
+        mirrored_to_front = mirrored_feedback_signals
 
-    dispatch_recorded = bool(feature.get("last_dispatched_at")) or coordination_audit_matches(
-        pantheon_root, feature_id, "dispatch-emitted"
-    )
-    receiver_visible = mirrored_to_front and (
+    dispatch_recorded = (
         bool(feature.get("last_dispatched_at"))
-        or coordination_audit_matches(front_root, feature_id, "received")
+        or coordination_audit_matches(pantheon_root, feature_id, "dispatch-emitted")
+        or bool(coordination_payload_entry(feature, "responses", "contract-ready"))
+        or bool(coordination_payload_entry(feature, "responses", "lovable-ui-task"))
     )
+    receiver_visible = bool(ui_done or frontend_feedback or bff_gap or needs_runtime)
+    if not receiver_visible:
+        receiver_visible = mirrored_to_front and (
+            bool(feature.get("last_dispatched_at"))
+            or coordination_audit_matches(front_root, feature_id, "received")
+            or bool(frontend_feedback_response)
+        )
 
     lovable_consumed = any(bool(entry) for entry in (ui_done, frontend_feedback, bff_gap, needs_runtime))
     ui_activated = any(bool(entry) for entry in (ui_done, frontend_feedback))
     runtime_verified = any(
         coordination_payload_has_runtime_verification(entry)
-        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, backend_delivery)
+        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, backend_delivery, frontend_feedback_response)
     )
 
     return {
@@ -2256,6 +2378,11 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
     orchestrator = orchestrator_state or {}
     coordination = orchestrator.get("coordination") if isinstance(orchestrator.get("coordination"), dict) else {}
     raw_features = coordination.get("features") if isinstance(coordination.get("features"), dict) else {}
+    last_scan_at = coordination.get("last_scan_at")
+    if not raw_features:
+        scanned = scan_tracked_coordination_features()
+        raw_features = scanned.get("features") if isinstance(scanned.get("features"), dict) else {}
+        last_scan_at = scanned.get("last_scan_at")
 
     features: list[dict[str, Any]] = []
     counts = {
@@ -2341,7 +2468,7 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
             counts[flag_name] += int(bool(enabled))
 
     return {
-        "last_scan_at": coordination.get("last_scan_at"),
+        "last_scan_at": last_scan_at,
         "counts": counts,
         "features": features,
     }
@@ -2643,6 +2770,7 @@ def sync_all(state: dict[str, Any]) -> None:
     normalize_handoffs(state)
     recompute_agents(state)
     recompute_workload(state)
+    state["coordination_summary"] = build_coordination_summary(load_runtime_state(load_config()))
     state["updated_at"] = iso_now()
     save_state(state)
     logs = load_logs()

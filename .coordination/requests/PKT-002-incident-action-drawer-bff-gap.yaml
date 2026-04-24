@@ -1,0 +1,93 @@
+feature_id: PKT-002-incident-action-drawer
+type: bff-gap
+source_repo: pantheon
+source_branch: main
+screen: incident-action-drawer
+blocking: true
+assessed_at: "2026-04-17T15:03:12Z"
+assessed_by: Codex
+
+summary: >-
+  Pantheon re-opened the PKT-002 Incident Action Drawer BFF gap after
+  validating the current front handoff against the local BFF. The read surface
+  GET /api/v1/kill-switch/status still matches the published drawer envelope,
+  but the write surface POST /api/v1/operator/commands still rejects the
+  published PKT-002 request schema with HTTP 422. The current BFF request model
+  remains on the older generic operator-command envelope, so the drawer cannot
+  submit PauseExecution / IssueRiskOff / LiquidateAll / HardRollback /
+  IssueSafeMode successfully without shadow translation in the UI.
+
+missing:
+  - endpoint: POST /api/v1/operator/commands
+    field: request.command
+    reason: >-
+      Local OperatorCommand enum still only accepts ApproveDeployment,
+      PauseRuntime, ExecuteRollback, ApproveRollback, RejectRollback,
+      ActivateKillSwitch, ApproveEvolutionDecision, and
+      ExecuteEvolutionAction. Direct TestClient requests with the published
+      PKT-002 command names PauseExecution, IssueRiskOff, and HardRollback each
+      return 422 before the command can be queued.
+  - endpoint: POST /api/v1/operator/commands
+    field: request.target.type
+    reason: >-
+      Local TargetObject enum still rejects target.type = Runtime and only
+      accepts DeploymentPlan, RuntimeBinding, Rollback, KillSwitchOrder,
+      EvolutionDecision, CapitalPool, or PersonaCapitalBinding. Direct PKT-002
+      requests return 422 on the target type before execution.
+  - endpoint: POST /api/v1/operator/commands
+    field: request.action
+    reason: >-
+      The local OperatorCommand model still requires a separate action field,
+      but the published PKT-002 contract intentionally omits action and uses a
+      command-discriminated payload plus params. Direct PKT-002 requests return
+      422 "Field required" for action.
+  - endpoint: POST /api/v1/operator/commands
+    field: request.params
+    reason: >-
+      Local validators and executors are still shaped around PauseRuntime /
+      ExecuteRollback / ActivateKillSwitch params. Pantheon has not yet added
+      request validation or execution paths for reduce_exposure_pct,
+      target_artifact_id, safe_mode_level, or the empty LiquidateAll params
+      contract used by PKT-002.
+
+acceptance:
+  - BFF accepts the published PKT-002 request schema for PauseExecution,
+    IssueRiskOff, LiquidateAll, HardRollback, and IssueSafeMode at
+    POST /api/v1/operator/commands without requiring UI-only translation.
+  - BFF accepts target.type = Runtime for PKT-002 drawer commands, or provides
+    an equivalent Pantheon-owned contract update and refreshed packet family.
+  - BFF no longer requires a separate request.action field for PKT-002 drawer
+    commands when the contract does not publish one.
+  - Pantheon validates the repaired write surface locally with direct
+    TestClient submissions for at least PauseExecution, IssueRiskOff, and
+    HardRollback before republishing the next contract-ready packet.
+  - Pantheon publishes updated contract-ready and lovable-ui-task packets after alignment
+  - Lovable/front-end receives updated packets and resumes the implementation cycle
+
+delivery_note: docs/pantheon-delivery/PKT-002-incident-action-drawer/DELIVERY_NOTE.md
+contract_lock: docs/pantheon-delivery/PKT-002-incident-action-drawer/CONTRACT_LOCK.md
+
+reopened_at: "2026-04-17T15:03:12Z"
+reopened_by: Codex
+reopen_evidence:
+  - python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions or in05_kill_switch_admin_only'
+  - python3 direct TestClient submissions for PauseExecution / IssueRiskOff / HardRollback -> all returned 422 from /api/v1/operator/commands
+
+resolved: true
+resolved_at: "2026-04-17T15:24:03Z"
+resolved_by: Codex
+resolution: >-
+  Pantheon aligned POST /api/v1/operator/commands with the published PKT-002
+  Runtime-targeted envelope. The BFF now accepts PauseExecution,
+  IssueRiskOff, LiquidateAll, HardRollback, and IssueSafeMode without a legacy
+  request.action field or UI-side shadow translation. Runtime-target routing is
+  resolved after the command is queued so the published schema is accepted even
+  when local runtime snapshots are thin; Pantheon-owned execution still uses
+  explicit runtime/capital-pool context when it is available and records a
+  failed receipt later if the runtime cannot be routed. Contract-ready and
+  Lovable UI task packets were refreshed for the resumed front-end cycle.
+resolution_artifacts:
+  - .coordination/responses/PKT-002-incident-action-drawer-contract-ready.yaml
+  - .coordination/responses/PKT-002-incident-action-drawer-lovable-ui-task.yaml
+  - docs/pantheon-delivery/PKT-002-incident-action-drawer/DELIVERY_NOTE.md
+  - docs/pantheon-delivery/PKT-002-incident-action-drawer/CONTRACT_LOCK.md

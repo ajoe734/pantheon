@@ -1,0 +1,311 @@
+name: Pantheon Handoff Receiver
+
+# TEMPLATE — copy to .github/workflows/ in the front-ai-trading-system repo.
+#
+# Receives repository_dispatch events from Pantheon as part of the
+# Pantheon Console closed-loop coordination protocol.
+#
+# Accepted event_types:
+#   pantheon.contract_ready   — Pantheon has published handoff artifacts
+#   pantheon.backend_delivery — Pantheon has published a backend/contract delivery note
+#
+# This workflow:
+#  1. Validates the dispatch envelope and payload.
+#  2. Checks that the mirrored handoff bundle exists at the expected front-repo path.
+#  3. Writes an audit breadcrumb to .coordination/responses/ (mirror only; authoritative
+#     copies remain in the Pantheon repo).
+#  4. Routes the event for UI-side follow-up (Lovable task, integration review, etc.)
+#
+# Required secret: COORDINATION_REPO_TOKEN
+#   A PAT or app token with `contents: write` on this repo and `read` on ajoe734/pantheon.
+#
+# See coordination-loop-spec.md for the full protocol contract.
+
+on:
+  repository_dispatch:
+    types:
+      - pantheon.contract_ready
+      - pantheon.backend_delivery
+
+permissions:
+  contents: write
+
+jobs:
+  receive-pantheon-handoff:
+    name: Validate and audit Pantheon handoff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout front repo (default branch)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.COORDINATION_REPO_TOKEN }}
+
+      - name: Extract envelope fields
+        id: envelope
+        env:
+          EVENT_TYPE: ${{ github.event.action }}
+          FEATURE_ID: ${{ github.event.client_payload.feature_id }}
+          PAYLOAD_PATH: ${{ github.event.client_payload.payload_path }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+          SOURCE_COMMIT: ${{ github.event.client_payload.source_commit }}
+          SOURCE_REF: ${{ github.event.client_payload.source_ref }}
+          TRIGGER_MODE: ${{ github.event.client_payload.trigger_mode }}
+          ORIGIN_WORKFLOW: ${{ github.event.client_payload.origin_workflow }}
+          MIRROR_COMMIT: ${{ github.event.client_payload.mirror_commit }}
+          REPLAY_OF: ${{ github.event.client_payload.replay_of }}
+        run: |
+          echo "event_type=$EVENT_TYPE"         >> "$GITHUB_OUTPUT"
+          echo "feature_id=$FEATURE_ID"         >> "$GITHUB_OUTPUT"
+          echo "payload_path=$PAYLOAD_PATH"     >> "$GITHUB_OUTPUT"
+          echo "source_repo=$SOURCE_REPO"       >> "$GITHUB_OUTPUT"
+          echo "source_commit=$SOURCE_COMMIT"   >> "$GITHUB_OUTPUT"
+          echo "source_ref=$SOURCE_REF"         >> "$GITHUB_OUTPUT"
+          echo "trigger_mode=$TRIGGER_MODE"     >> "$GITHUB_OUTPUT"
+          echo "origin_workflow=$ORIGIN_WORKFLOW" >> "$GITHUB_OUTPUT"
+          echo "mirror_commit=$MIRROR_COMMIT"   >> "$GITHUB_OUTPUT"
+          echo "replay_of=$REPLAY_OF"           >> "$GITHUB_OUTPUT"
+
+      - name: Fail fast — required envelope fields
+        env:
+          FEATURE_ID: ${{ steps.envelope.outputs.feature_id }}
+          PAYLOAD_PATH: ${{ steps.envelope.outputs.payload_path }}
+          SOURCE_REPO: ${{ steps.envelope.outputs.source_repo }}
+          SOURCE_COMMIT: ${{ steps.envelope.outputs.source_commit }}
+          TRIGGER_MODE: ${{ steps.envelope.outputs.trigger_mode }}
+          ORIGIN_WORKFLOW: ${{ steps.envelope.outputs.origin_workflow }}
+          REPLAY_OF: ${{ steps.envelope.outputs.replay_of }}
+        run: |
+          missing=()
+          [[ -z "$FEATURE_ID"      ]] && missing+=("feature_id")
+          [[ -z "$PAYLOAD_PATH"    ]] && missing+=("payload_path")
+          [[ -z "$SOURCE_REPO"     ]] && missing+=("source_repo")
+          [[ -z "$SOURCE_COMMIT"   ]] && missing+=("source_commit")
+          [[ -z "$TRIGGER_MODE"    ]] && missing+=("trigger_mode")
+          [[ -z "$ORIGIN_WORKFLOW" ]] && missing+=("origin_workflow")
+
+          if [[ "$TRIGGER_MODE" == "replay" && -z "$REPLAY_OF" ]]; then
+            missing+=("replay_of (required when trigger_mode=replay)")
+          fi
+
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing required envelope fields: ${missing[*]}"
+            exit 1
+          fi
+
+          if [[ "$PAYLOAD_PATH" == /* || "$PAYLOAD_PATH" == *..* ]]; then
+            echo "::error::payload_path must be repo-relative: $PAYLOAD_PATH"
+            exit 1
+          fi
+
+          if [[ "$SOURCE_REPO" != "ajoe734/pantheon" ]]; then
+            echo "::error::source_repo must be ajoe734/pantheon for Pantheon-authored dispatches: $SOURCE_REPO"
+            exit 1
+          fi
+
+          if ! [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::source_commit must be a full 40-character SHA: $SOURCE_COMMIT"
+            exit 1
+          fi
+
+      - name: Checkout Pantheon repo at source_commit (payload only)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.envelope.outputs.source_repo }}
+          ref: ${{ steps.envelope.outputs.source_commit }}
+          token: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          path: pantheon-ref
+          sparse-checkout: |
+            ${{ steps.envelope.outputs.payload_path }}
+          sparse-checkout-cone-mode: false
+
+      - name: Confirm payload exists in Pantheon at source_commit
+        id: payload-check
+        env:
+          PAYLOAD_PATH: ${{ steps.envelope.outputs.payload_path }}
+        run: |
+          full_path="pantheon-ref/$PAYLOAD_PATH"
+          if [[ ! -f "$full_path" ]]; then
+            echo "::error::payload_path '$PAYLOAD_PATH' does not exist in ${{ steps.envelope.outputs.source_repo }} at ${{ steps.envelope.outputs.source_commit }}"
+            exit 1
+          fi
+          echo "full_path=$full_path" >> "$GITHUB_OUTPUT"
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Validate payload type and feature_id
+        env:
+          EVENT_TYPE: ${{ steps.envelope.outputs.event_type }}
+          ENVELOPE_FEATURE_ID: ${{ steps.envelope.outputs.feature_id }}
+          ENVELOPE_SOURCE_REPO: ${{ steps.envelope.outputs.source_repo }}
+          ENVELOPE_SOURCE_COMMIT: ${{ steps.envelope.outputs.source_commit }}
+          PAYLOAD_FULL_PATH: ${{ steps.payload-check.outputs.full_path }}
+          CURRENT_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+          from pathlib import Path
+          import yaml
+
+          event_type          = os.environ["EVENT_TYPE"]
+          envelope_feature_id = os.environ["ENVELOPE_FEATURE_ID"]
+          envelope_source_repo = os.environ["ENVELOPE_SOURCE_REPO"]
+          envelope_source_commit = os.environ["ENVELOPE_SOURCE_COMMIT"]
+          payload_path        = os.environ["PAYLOAD_FULL_PATH"]
+          current_repo        = os.environ["CURRENT_REPO"]
+
+          allowed_types = {
+              "pantheon.contract_ready":   "contract-ready",
+              "pantheon.backend_delivery": "backend-delivery",
+          }
+          expected_type = allowed_types.get(event_type)
+          if expected_type is None:
+              print(f"::error::Unexpected event_type for this receiver: {event_type}")
+              sys.exit(1)
+
+          with open(payload_path) as f:
+              payload = yaml.safe_load(f)
+
+          errors = []
+
+          payload_feature_id = payload.get("feature_id", "")
+          if payload_feature_id != envelope_feature_id:
+              errors.append(
+                  f"feature_id mismatch: envelope='{envelope_feature_id}' "
+                  f"payload='{payload_feature_id}'"
+              )
+
+          payload_type = payload.get("type", "")
+          if payload_type != expected_type:
+              errors.append(
+                  f"payload type mismatch: event_type='{event_type}' "
+                  f"requires type='{expected_type}' but got '{payload_type}'"
+              )
+
+          payload_source_repo = payload.get("source_repo", "")
+          if payload_source_repo and payload_source_repo != envelope_source_repo:
+              errors.append(
+                  f"source_repo mismatch: envelope='{envelope_source_repo}' "
+                  f"payload='{payload_source_repo}'"
+              )
+
+          payload_source_commit = payload.get("source_commit", "")
+          if payload_source_commit and payload_source_commit != envelope_source_commit:
+              errors.append(
+                  f"source_commit mismatch: envelope='{envelope_source_commit}' "
+                  f"payload='{payload_source_commit}'"
+              )
+
+          payload_target_repo = payload.get("target_repo", "")
+          if payload_target_repo and payload_target_repo != current_repo:
+              errors.append(
+                  f"target_repo mismatch: current_repo='{current_repo}' "
+                  f"payload='{payload_target_repo}'"
+              )
+
+          paths_to_check = []
+          files_to_exist = []
+          if payload_type == "contract-ready":
+              artifacts = payload.get("artifacts", {}) or {}
+              if not isinstance(artifacts, dict):
+                  errors.append("contract-ready.artifacts must be a mapping")
+              else:
+                  for key, value in artifacts.items():
+                      if isinstance(value, str) and value:
+                          paths_to_check.append((f"artifacts.{key}", value))
+                          files_to_exist.append((f"artifacts.{key}", value))
+          elif payload_type == "backend-delivery":
+              for key in ("delivery_note_path", "contract_lock_path", "source_payload"):
+                  value = payload.get(key, "")
+                  if value:
+                      paths_to_check.append((key, value))
+                      files_to_exist.append((key, value))
+
+          for field, rel_path in paths_to_check:
+              if rel_path.startswith("/") or ".." in rel_path:
+                  errors.append(
+                      f"payload field '{field}' contains an absolute or traversal path: '{rel_path}'"
+                  )
+
+          repo_root = Path(".")
+          for field, rel_path in files_to_exist:
+              if rel_path.startswith("/") or ".." in rel_path:
+                  continue
+              if not (repo_root / rel_path).is_file():
+                  errors.append(
+                      f"mirrored file for '{field}' is missing in the front repo: '{rel_path}'"
+                  )
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}")
+              sys.exit(1)
+
+          print(f"Validation passed: feature_id={envelope_feature_id}, "
+                f"type={payload_type}, event_type={event_type}")
+          PYEOF
+
+      - name: Verify mirrored handoff bundle exists (contract_ready only)
+        if: ${{ steps.envelope.outputs.event_type == 'pantheon.contract_ready' }}
+        env:
+          FEATURE_ID: ${{ steps.envelope.outputs.feature_id }}
+        run: |
+          handoff_dir="docs/pantheon-handoffs/$FEATURE_ID"
+          if [[ ! -d "$handoff_dir" ]]; then
+            echo "::error::Mirrored handoff bundle not found at $handoff_dir"
+            exit 1
+          else
+            echo "Mirrored handoff bundle exists at $handoff_dir"
+          fi
+
+      - name: Write audit breadcrumb
+        env:
+          EVENT_TYPE: ${{ steps.envelope.outputs.event_type }}
+          FEATURE_ID: ${{ steps.envelope.outputs.feature_id }}
+          SOURCE_COMMIT: ${{ steps.envelope.outputs.source_commit }}
+          TRIGGER_MODE: ${{ steps.envelope.outputs.trigger_mode }}
+          ORIGIN_WORKFLOW: ${{ steps.envelope.outputs.origin_workflow }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          audit_dir=".coordination/audit"
+          mkdir -p "$audit_dir"
+
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          audit_file="$audit_dir/${FEATURE_ID}-received-$(date -u +%Y%m%d%H%M%S).json"
+
+          cat > "$audit_file" <<JSON
+          {
+            "feature_id": "$FEATURE_ID",
+            "event_type": "$EVENT_TYPE",
+            "source_commit": "$SOURCE_COMMIT",
+            "trigger_mode": "$TRIGGER_MODE",
+            "origin_workflow": "$ORIGIN_WORKFLOW",
+            "received_at": "$timestamp",
+            "run_id": "$RUN_ID",
+            "run_url": "$RUN_URL"
+          }
+          JSON
+
+          git config user.name  "pantheon-bot"
+          git config user.email "pantheon-bot@users.noreply.github.com"
+          git add "$audit_file"
+          git commit -m "coordination: record received $EVENT_TYPE for $FEATURE_ID [skip ci]" || \
+            echo "Nothing to commit (audit file may already exist)"
+          git push || echo "::warning::Push failed — audit breadcrumb not persisted"
+
+      - name: Summarize
+        env:
+          EVENT_TYPE: ${{ steps.envelope.outputs.event_type }}
+          FEATURE_ID: ${{ steps.envelope.outputs.feature_id }}
+          TRIGGER_MODE: ${{ steps.envelope.outputs.trigger_mode }}
+        run: |
+          echo "Pantheon handoff received:"
+          echo "  event_type  = $EVENT_TYPE"
+          echo "  feature_id  = $FEATURE_ID"
+          echo "  trigger_mode= $TRIGGER_MODE"
+          if [[ "$EVENT_TYPE" == "pantheon.contract_ready" ]]; then
+            echo "Next step: Lovable or front-end engineer may pick up the lovable-ui-task packet."
+          elif [[ "$EVENT_TYPE" == "pantheon.backend_delivery" ]]; then
+            echo "Next step: Review backend-delivery note and resume UI work if applicable."
+          fi

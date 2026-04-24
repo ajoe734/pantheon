@@ -1,0 +1,55 @@
+feature_id: CW-01-consult-request
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: consult-request
+status: published
+published_at: "2026-04-19T17:25:00Z"
+task: CW-01-FOUNDATION-001
+description: >-
+  CW-01 Consult Request contract published as part of CW-01-FOUNDATION-001 and
+  is now revalidated against the live Pantheon BFF. The create/list/detail/cancel
+  routes, ConsultRequest lifecycle, linked_session_id and request_to_session_status
+  handoff semantics, session_handoff payload, and allowedActions.canCancel authority
+  signal remain aligned with the current implementation. Pantheon has verified all
+  four routes live in the current BFF workspace, so the frontend production UI lane
+  may proceed against this handoff bundle.
+artifacts:
+  bff_contract: docs/bff/CW-01-consult-request.md
+  screen_spec: docs/screens/CW-01-consult-request.md
+  example_payload: docs/examples/CW-01-consult-request.json
+  lovable_ui_task: .coordination/responses/CW-01-consult-request-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md
+endpoints:
+  - POST /api/v1/consult/requests
+  - GET /api/v1/consult/requests
+  - GET /api/v1/consult/requests/{request_id}
+  - POST /api/v1/consult/requests/{request_id}/cancel
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+readiness_gate: >-
+  Frontend may proceed with production UI against the live BFF surfaces:
+  (1) POST /api/v1/consult/requests accepts the published create body and
+  returns status=created with request_to_session_status=pending_session,
+  (2) GET /api/v1/consult/requests returns the published list envelope with
+  filters, pagination, and meta.surfaces.consult_request_list,
+  (3) GET /api/v1/consult/requests/{request_id} returns the published detail
+  shape with linked_session_id, request_to_session_status, session_handoff,
+  and allowedActions.canCancel, and
+  (4) POST /api/v1/consult/requests/{request_id}/cancel returns status=canceled
+  with allowedActions.canCancel=false. If a live runtime payload diverges from
+  this synced contract during implementation, stop and emit the canonical
+  CW-01 bff-gap handoff instead of mocking or inventing fields.
+front_actions_required:
+  - build the request composer from the published create contract only
+  - build the request list and detail pages from the CW-01 BFF routes only
+  - render request-to-session status from linked_session_id plus request_to_session_status exactly as supplied
+  - render the cancel CTA only when allowedActions.canCancel is true
+  - emit a bff-gap handoff if any required field is absent
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true

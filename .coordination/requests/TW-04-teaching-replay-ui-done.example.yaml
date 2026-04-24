@@ -1,0 +1,17 @@
+feature_id: TW-04-teaching-replay
+type: ui-done
+screen: teaching-replay
+screen_id: screen-teaching-replay
+source_branch:
+source_commit:
+implemented_paths: []
+used_endpoints:
+  - GET /api/v1/trainer/replay
+  - GET /api/v1/trainer/replay/{session_id}
+  - POST /api/v1/trainer/sessions/{session_id}/commit
+  - POST /api/v1/trainer/sessions/{session_id}/discard
+feedback_paths:
+  - docs/pantheon-feedback/TW-04-teaching-replay/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-04-teaching-replay/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-04-teaching-replay/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-04-teaching-replay/QA_STATUS.md

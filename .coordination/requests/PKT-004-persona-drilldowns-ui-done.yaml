@@ -1,0 +1,35 @@
+feature_id: PKT-004-persona-drilldowns
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 6c6b4e884c8eb6537b6bf46b59971aaee852ed7d
+screen: persona-drilldowns
+blocking: false
+
+summary: Persona Drilldowns UI surfaces PS-01 through PS-06 are implemented and ready for Pantheon follow-up.
+
+changed_files:
+  - src/App.tsx
+  - src/lib/bffClient.ts
+  - src/pages/Personas.tsx
+  - src/pages/persona/Detail.tsx
+  - src/pages/persona/PersonaCatalog.tsx
+  - src/pages/persona/PersonaDetail.tsx
+  - src/pages/persona/PersonaSessionList.tsx
+  - src/pages/persona/SessionDetail.tsx
+  - src/pages/persona/PersonaTeachingHistory.tsx
+  - src/pages/persona/PersonaCapabilities.tsx
+  - src/pages/persona/drilldownSupport.tsx
+  - src/pages/persona/drilldownUtils.ts
+  - src/pages/persona/types.ts
+  - src/components/operator/IncidentActionDrawer.tsx
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - verify live BFF behavior for query-param filtering and role-gated persona endpoints
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

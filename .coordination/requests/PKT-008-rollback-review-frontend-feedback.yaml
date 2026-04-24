@@ -1,0 +1,28 @@
+feature_id: PKT-008-rollback-review
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 73d2b83549564e22cdd1b462a3fe5601db675071
+workbench: governance-workbench
+screen_id: screen-governance-rollback-review
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-008-rollback-review
+feedback_path: docs/pantheon-feedback/PKT-008-rollback-review/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-008-rollback-review/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-008-rollback-review/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-008-rollback-review/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - .coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml
+  - .coordination/requests/PKT-008-rollback-review-ui-done.yaml
+  - docs/pantheon-feedback/PKT-008-rollback-review/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-008-rollback-review/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-008-rollback-review/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-008-rollback-review/QA_STATUS.md
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/lib/bffClient.ts
+  - src/pages/governance/GovernanceRollbackReview.tsx
+  - src/pages/governance/types.ts
+pantheon_review_hint: review-ui
+summary: Governance Rollback Review now reads the published PKT-008 BFF payload through the shared client, renders rollback scope and position impact directly from backend-shaped fields, and preserves backend-owned approval and rejection gating.

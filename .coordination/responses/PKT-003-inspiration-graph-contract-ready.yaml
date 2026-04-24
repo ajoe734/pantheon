@@ -1,0 +1,52 @@
+feature_id: PKT-003-inspiration-graph
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: inspiration-graph
+status: live
+published_at: "2026-04-19T16:30:00Z"
+task: EW-04-OPEN-001
+description: >-
+  EW-04 Inspiration Graph route is live. The route
+  (GET /api/v1/lineage/inspiration/{artifact_id}), composed object field shape,
+  meta.surfaces.inspiration staleness signal, and frontend handoff bundle are all
+  confirmed. BFF implementation is complete and the frontend production lane is
+  unblocked. This file closes the PKT-003 naming chain for the delivery_dependency
+  reference in PKT-003-inspiration-graph-lovable-ui-task.yaml. The canonical contract
+  artifact is EW-04-inspiration-graph-contract-ready.yaml.
+artifacts:
+  bff_contract: docs/bff/PKT-003-inspiration-graph.md
+  screen_spec: docs/screens/PKT-003-inspiration-graph.md
+  example_payload: docs/examples/PKT-003-inspiration-graph.json
+  lovable_ui_task: .coordination/responses/PKT-003-inspiration-graph-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md
+  canonical_contract_ready: .coordination/responses/EW-04-inspiration-graph-contract-ready.yaml
+endpoints:
+  - GET /api/v1/lineage/inspiration/{artifact_id}
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+readiness_gate: >-
+  GET /api/v1/lineage/inspiration/{artifact_id} is confirmed live and returning
+  the published field shape. Lovable UI production task is now active — production
+  build may proceed. Shell placeholder is no longer needed.
+front_actions_required:
+  - build the Inspiration Graph panel from the BFF inspiration route only — route is live, production build may proceed
+  - build the Strategy Tags rail from strategy_tags[] in the BFF response
+  - build the Inspiration Edge Detail drawer triggered from graph-edge selection
+  - render explicit empty state when inspiration_edges[] is empty
+  - render non-dismissable degradation banner when meta.surfaces.inspiration is not fresh
+  - display meta.snapshot_at as the graph data timestamp
+  - do not traverse GET /api/v1/lineage or GET /api/v1/lineage/graph to synthesize the graph
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true
+reactivation_note: >-
+  2026-04-20: LUV-REACTIVATE-EW04-001 audit confirmed all handoff artifacts
+  are present and substantively complete. The only gap was this PKT-003-named
+  contract-ready file (delivery_dependency in lovable-ui-task). Created now to
+  close the naming chain. No spec content changes needed. Handoff is ready for
+  front-end lane; production build gate remains BFF route live confirmation.

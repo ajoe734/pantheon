@@ -1,0 +1,26 @@
+feature_id: PKT-009-governance-audit-rail
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: governance-workbench
+screen_id: screen-governance-audit-rail
+status: delivered
+backend_commit: 7044eb63e4585f141f4bd03b1d79094a9c514e41
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@7044eb63e4585f141f4bd03b1d79094a9c514e41
+bff_contract_version: pantheon-bff@7044eb63e4585f141f4bd03b1d79094a9c514e41+working-tree
+delivery_note_path: docs/pantheon-delivery/PKT-009-governance-audit-rail/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-009-governance-audit-rail/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-009 governance-audit-rail cycle against
+  the published contract, example payload, mirrored frontend-feedback request,
+  sibling front implementation, and the current Pantheon BFF runtime in this
+  workspace. GET /api/v1/operator/governance/audit is now wired in
+  services/control-plane/bff/main.py, the audited read-store path is covered by
+  services/control-plane/bff/test_pkt009_governance_audit_contract.py, and
+  targeted verification plus smoke coverage pass. The front request pair is
+  replayable from transport commit 5d419de6683f48fd2174cd5eac6bc50c73f78e13,
+  and metadata commit b58e077159b6897f9ffa6418444c65e608646bec truthfully
+  points frontend-feedback.source_commit back to that transport commit. No
+  additional Pantheon API-gap or front replay follow-up is required for the
+  current PKT-009 packet scope.
+source_payload: .coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.yaml

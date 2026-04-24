@@ -1,0 +1,40 @@
+feature_id: PKT-002-incident-action-drawer
+type: contract-ready
+source_repo: pantheon
+screen: incident-action-drawer
+status: published
+published_at: "2026-04-17T15:24:03Z"
+description: "PKT-002 Incident Action Drawer contract-ready handoff refreshed after repairing POST /api/v1/operator/commands to accept the published Runtime-targeted PKT-002 schema without UI translation."
+artifacts:
+  bff_contract: docs/bff/PKT-002-incident-action-drawer.md
+  screen_spec: docs/screens/PKT-002-incident-action-drawer.md
+  example_payload: docs/examples/PKT-002-incident-action-drawer.json
+  lovable_ui_task: .coordination/responses/PKT-002-incident-action-drawer-lovable-ui-task.yaml
+  delivery_note: docs/pantheon-delivery/PKT-002-incident-action-drawer/DELIVERY_NOTE.md
+  contract_lock: docs/pantheon-delivery/PKT-002-incident-action-drawer/CONTRACT_LOCK.md
+endpoints:
+  - GET /api/v1/kill-switch/status
+  - POST /api/v1/operator/commands
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+validation:
+  - python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'pause_execution or issue_risk_off or liquidate_all or hard_rollback or issue_safe_mode'
+  - python3 -m pytest services/control-plane/bff/test_command_executor.py -q
+front_actions_required:
+  - build the Incident Action Drawer with kill switch status header and emergency action buttons
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - do not invent fields beyond this handoff packet
+  - send the published PKT-002 command names and params directly; do not translate to the legacy PauseRuntime/ExecuteRollback/ActivateKillSwitch envelope
+  - render all CTAs from backend-shaped allowedActions only; do not derive eligibility locally
+  - render command receipts inline after each POST /api/v1/operator/commands call
+  - render the secondary control path panel when meta.surfaces.kill_switch is degraded or unavailable
+  - require a non-empty audit_context.reason before enabling any action submit button
+acceptance_met:
+  - contract_ready_published: true
+  - lovable_ui_task_published: true
+  - direct_testclient_validation_passed: true
+  - front_repo_receives_handoff_bundle: true

@@ -1,0 +1,18 @@
+feature_id: KW-05-strategy-spec
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: knowledge-strategy-spec
+blocking: true
+
+summary: Strategy Spec UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - endpoint: GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare
+    field: compare.diff_summary
+    reason: Version compare output must come from Pantheon BFF; the frontend must not derive spec diffs client-side.
+
+acceptance:
+  - Pantheon publishes a refreshed KW-05-strategy-spec contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

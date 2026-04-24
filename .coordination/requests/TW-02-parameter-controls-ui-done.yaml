@@ -1,0 +1,26 @@
+feature_id: TW-02-parameter-controls
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 38516e5196bac417f8b95db4004882a0ce072330
+screen: parameter-controls
+status: complete
+
+summary: Trainer Parameter Controls surface implemented against live Pantheon BFF routes. Backend-shaped accepted/rejected patch responses rendered without client-side range invention, clipping, or diff synthesis.
+
+routes_implemented:
+  - /trainer/sessions/:session_id/controls (ParameterControls)
+
+endpoints_used:
+  - GET /api/v1/trainer/sessions/{session_id}/controls
+  - POST /api/v1/trainer/sessions/{session_id}/patch
+
+acceptance_met:
+  uses_existing_bff_client_only: true
+  no_raw_fetch_in_components: true
+  no_client_side_range_invention: true
+  no_client_side_clipping: true
+  no_client_side_diff_synthesis: true
+  allowed_actions_canPatchControls_respected: true
+  degraded_state_gating_respected: true
+  rejected_field_errors_rendered_verbatim: true

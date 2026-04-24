@@ -1,0 +1,190 @@
+feature_id: PKT-003-inspiration-graph
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-21T00:59:11Z'
+reviewed_commit: c071078463fa02a715a310f84e1d4de7f795d929
+reviewed_source_commit: 82172389d88a49513c5e4ba0951b206ab09bd29a
+request_pair_commit: 93a4b58891031442133a6966d0354ae216a80b72
+verified_front_workspace_head: 93a4b58891031442133a6966d0354ae216a80b72
+verified_remote_main_commit: 962b8027733f7c6b763d5197bbb61b55eb73f7d3
+verified_remote_publish_commit: 93a4b58891031442133a6966d0354ae216a80b72
+feedback_bundle_transport: >-
+  Reviewed UI transport commit 82172389d88a49513c5e4ba0951b206ab09bd29a
+  contains the EW-04 request pair, feedback bundle, AppSidebar route-live
+  shell fix, and the contract-aligned Inspiration Graph UI files. Front
+  publish commit 93a4b58891031442133a6966d0354ae216a80b72 on
+  origin/pkt-004-detail-fix republished both canonical request files and
+  corrected docs/pantheon-feedback/PKT-003-inspiration-graph/API_GAP_REQUESTS.json
+  so source_commit and reviewed_source_commit now both point back to
+  82172389d88a49513c5e4ba0951b206ab09bd29a.
+screen: inspiration-graph
+workbench: evolution-workbench
+screen_id: screen-evolution-inspiration-graph
+
+disposition: close
+review_result: replay-clean-and-contract-aligned
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed PKT-003 Inspiration Graph against the published EW-04
+  contract, example payload, sibling front implementation, and the current
+  Pantheon BFF workspace. The reviewed UI remains contract-aligned and
+  fail-closed for malformed payloads, the live Inspiration nav entry stays
+  truthful, and Pantheon's EW-04 contract slice remains green. The publish
+  chain is now replay-clean as well: origin/pkt-004-detail-fix points at
+  93a4b58891031442133a6966d0354ae216a80b72, and that commit republishes the
+  canonical PKT-003 request pair plus the final
+  API_GAP_REQUESTS.json reviewed_source_commit fix while keeping both
+  source_commit and reviewed_source_commit pinned to the reviewed UI transport
+  commit 82172389d88a49513c5e4ba0951b206ab09bd29a. No new Pantheon API gap
+  remains in this loop.
+
+acceptance_verified:
+  - criterion: inspiration graph route is served from the live Pantheon EW-04 route only
+    status: pass
+    note: >-
+      The reviewed screen reads only lineageApi.getInspirationGraph() in
+      src/lib/bffClient.ts and mounts only the /evolution/inspiration route
+      family in src/App.tsx.
+  - criterion: strategy tags rail renders directly from strategy_tags[]
+    status: pass
+    note: >-
+      InspirationGraph.tsx renders the tag rail directly from the returned
+      strategy_tags array and does not synthesize tags from lineage edges.
+  - criterion: edge detail drawer opens from graph-edge selection and stays read-only
+    status: pass
+    note: >-
+      ReactFlow edge clicks still pass the selected edge payload into the
+      read-only InspirationEdgeDetail drawer with no write actions.
+  - criterion: data-as-of timestamp uses meta.snapshot_at
+    status: pass
+    note: >-
+      The graph panel badge continues to render the data timestamp from
+      meta.snapshot_at.
+  - criterion: stale and unavailable surfaces render explicit non-dismissable degradation states
+    status: pass
+    note: >-
+      Stale preserves the composed graph with caveat text, and unavailable
+      suppresses graph rendering without falling back to raw lineage routes.
+  - criterion: empty responses render "No inspiration edges recorded for {artifact_id}" without a blank graph canvas
+    status: pass
+    note: >-
+      data.inspiration_edges.length === 0 routes to the explicit empty-state
+      card instead of a blank canvas.
+  - criterion: 404 and malformed payloads fail closed instead of synthesizing lineage state
+    status: pass
+    note: >-
+      404 responses stay on the explicit Artifact not found alert, and
+      validateResponse() rejects malformed payloads before loadGraph() commits
+      them into data, so the reviewed source never derives graph state from
+      invalid input.
+  - criterion: the live Inspiration navigation entry no longer shows a Soon badge
+    status: pass
+    note: >-
+      src/components/AppSidebar.tsx in reviewed source commit
+      82172389d88a49513c5e4ba0951b206ab09bd29a now publishes the Inspiration
+      nav item without comingSoon so the shell matches the route-live EW-04
+      packet state.
+  - criterion: the paired frontend-feedback bundle is published from this return cycle
+    status: pass
+    note: >-
+      Publish commit 93a4b58891031442133a6966d0354ae216a80b72 includes the
+      canonical PKT-003 request pair and
+      docs/pantheon-feedback/PKT-003-inspiration-graph/* on
+      origin/pkt-004-detail-fix.
+  - criterion: targeted eslint and production build pass in front-ai-trading-system
+    status: pass
+    note: >-
+      Pantheon reran the advertised targeted ESLint command and npm run build
+      from a fresh isolated worktree of 82172389d88a49513c5e4ba0951b206ab09bd29a;
+      both passed, with only the existing Browserslist staleness note and Vite
+      chunk-size warning during build.
+  - criterion: publish ui-done and frontend-feedback from a truthful Git-visible request pair with a resolvable source_commit
+    status: pass
+    note: >-
+      Publish commit 93a4b58891031442133a6966d0354ae216a80b72 now points both
+      request files at real source_commit
+      82172389d88a49513c5e4ba0951b206ab09bd29a, and both commits are reachable
+      on origin/pkt-004-detail-fix.
+  - criterion: publish the feedback bundle with a truthful reviewed_source_commit
+    status: pass
+    note: >-
+      Publish commit 93a4b58891031442133a6966d0354ae216a80b72 now corrects
+      docs/pantheon-feedback/PKT-003-inspiration-graph/API_GAP_REQUESTS.json
+      so reviewed_source_commit resolves truthfully to
+      82172389d88a49513c5e4ba0951b206ab09bd29a.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the current remote-visible request-pair publish commit
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that
+      93a4b58891031442133a6966d0354ae216a80b72 on origin/pkt-004-detail-fix now
+      publishes both PKT-003 request files with truthful source_commit
+      82172389d88a49513c5e4ba0951b206ab09bd29a.
+  - action: verify the reviewed UI transport commit contains the claimed EW-04 bundle
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that
+      82172389d88a49513c5e4ba0951b206ab09bd29a contains the reviewed
+      InspirationGraph files, the AppSidebar route-live shell fix, and the
+      required docs/pantheon-feedback/PKT-003-inspiration-graph/* bundle.
+  - action: replay the advertised front eslint verification from an isolated worktree
+    path: /tmp/front-pkt003-closeout-XXXXXX
+    note: >-
+      Pantheon reran targeted ESLint from a detached worktree of
+      82172389d88a49513c5e4ba0951b206ab09bd29a using the sibling node_modules
+      tree; the command passed cleanly.
+  - action: replay the advertised front production build from an isolated worktree
+    path: /tmp/front-pkt003-closeout-XXXXXX
+    note: >-
+      Pantheon reran npm run build from the same isolated worktree of
+      82172389d88a49513c5e4ba0951b206ab09bd29a; the build passed with only the
+      existing Browserslist staleness note and Vite chunk-size warning.
+  - action: verify the Pantheon-owned EW-04 contract slice
+    path: services/control-plane/bff/test_ew04_inspiration_graph_contract.py
+    note: >-
+      `python3 -m pytest
+      services/control-plane/bff/test_ew04_inspiration_graph_contract.py -q`
+      passed with 3 tests in the current Pantheon workspace.
+  - action: inspect the final replay-metadata diff
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that the targeted diff from reviewed source commit
+      82172389d88a49513c5e4ba0951b206ab09bd29a to publish commit
+      93a4b58891031442133a6966d0354ae216a80b72 only touches the two PKT-003
+      request files plus
+      docs/pantheon-feedback/PKT-003-inspiration-graph/API_GAP_REQUESTS.json,
+      so the accepted UI transport snapshot remains unchanged.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed-environment browser QA remains outstanding after closeout.
+
+required_front_repo_updates: []
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. The reviewed EW-04 transport commit
+  82172389d88a49513c5e4ba0951b206ab09bd29a contains the advertised UI bundle,
+  and origin/pkt-004-detail-fix now points at
+  93a4b58891031442133a6966d0354ae216a80b72, which republishes the canonical
+  request pair and feedback bundle metadata with truthful source_commit and
+  reviewed_source_commit references.
+
+risk_note: >-
+  Remaining risk is runtime-only. Pantheon's local review indicates the UI
+  behavior is contract-aligned, route-live, fail-closed for malformed payload
+  cases, and replay-clean from the published branch, but this review did not
+  include deployed browser QA.
+
+lovable_ui_task_status: closed
+next_action: none
+delivery_artifact_ref: .coordination/responses/PKT-003-inspiration-graph-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/PKT-003-inspiration-graph-review.md

@@ -1,0 +1,56 @@
+feature_id: PKT-004-persona-drilldowns
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: follow-up-required
+cycle: 2
+pantheon_pr: null
+base_url: null
+workbench: persona-workbench
+screen: persona-drilldowns
+screen_id: null
+ui_spec_path: docs/screens/PKT-004-persona-drilldowns.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-004-persona-drilldowns/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/personas
+- GET /api/v1/personas/{persona_id}
+- GET /api/v1/personas/{persona_id}/sessions
+- GET /api/v1/sessions/{session_id}
+- GET /api/v1/personas/{persona_id}/teaching
+- GET /api/v1/personas/{persona_id}/capabilities
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+- do not route `/personas/:id` through `src/pages/persona/Detail.tsx` or any demo-backed provider; the mounted PS-02 route must use the Pantheon-backed `PersonaDetail` surface
+- publish ui-done and frontend-feedback from a Git-visible front commit that also contains `docs/pantheon-feedback/PKT-004-persona-drilldowns/`
+- rerun the advertised changed-file eslint command on the same source_commit named by both request bodies before resubmitting
+acceptance:
+- build the six Persona Drilldown surfaces (PS-01 to PS-06)
+- use only the existing BFF client
+- pass filters as query parameters to the BFF; do not filter client-side
+- no write actions are defined in this module
+- "`/personas/:id` delegates to the Pantheon-backed PersonaDetail surface"
+- the Git-visible request pair and feedback bundle are replay-clean for the published source_commit
+- the advertised changed-file eslint command passes on that same source_commit
+required_feedback:
+- docs/pantheon-feedback/PKT-004-persona-drilldowns/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-004-persona-drilldowns/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-004-persona-drilldowns/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-004-persona-drilldowns/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-004-persona-drilldowns-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-004-persona-drilldowns.md
+  ui_spec_path: docs/screens/PKT-004-persona-drilldowns.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-004-persona-drilldowns/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-004-persona-drilldowns.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-004-persona-drilldowns
+gap_handoff_path: .coordination/requests/PKT-004-persona-drilldowns-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-004-persona-drilldowns-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-004-persona-drilldowns-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/PKT-004-persona-drilldowns-review.md

@@ -1,0 +1,12 @@
+feature_id: F-042
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: governance-review
+screen_id: screen-governance-promotion-review
+status: delivered
+backend_commit: 2222222222222222222222222222222222222222
+bff_contract_version: pantheon-bff@2222222222222222222222222222222222222222
+delivery_note_path: docs/pantheon-delivery/F-042/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/F-042/CONTRACT_LOCK.json
+followup_expectation: republish lovable-ui-task only if the UI needs another implementation cycle.
+source_payload: .coordination/requests/F-042-frontend-feedback.yaml

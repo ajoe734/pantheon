@@ -1,0 +1,62 @@
+feature_id: PKT-003-evolution-center
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-17T12:48:00Z'
+reviewed_commit: 8314ef67016a15ced808e4aded16cc0686de25a1
+feedback_bundle_commit: 8d23e02dceb690ed35c1b3800749d2ca90ae4369
+feedback_bundle_transport: front-repo main @ 8d23e02dceb690ed35c1b3800749d2ca90ae4369
+screen: evolution-center
+workbench: evolution-workbench
+screen_id: screen-evolution-center
+
+disposition: close
+
+summary: >
+  Pantheon review of the PKT-003 Evolution Center frontend-feedback bundle is
+  complete. The Git-visible evidence chain is replayable: source commit
+  8314ef67016a15ced808e4aded16cc0686de25a1 contains the UI implementation, and
+  front-repo commit 8d23e02dceb690ed35c1b3800749d2ca90ae4369 publishes the
+  canonical ui-done/frontend-feedback requests plus the feedback bundle pointing
+  back to that source commit. The delivered UI stays inside the published
+  contract boundary: all reads flow through the shared BFF client, the decision
+  detail drawer uses the canonical EV-02 route, rollback filters intentionally
+  omit the unpublished `time_range` control, and missing fields degrade to
+  explicit contract-gap states instead of inferred content. No additional
+  Pantheon API gap remains in this loop. The only outstanding work is
+  non-blocking live QA against a running BFF environment.
+
+acceptance_verified:
+  - criterion: build the Evolution Center list panels for decisions, freeze orders, and rollbacks
+    status: pass
+    note: EvolutionCenter.tsx loads and renders all three PKT-003 read surfaces independently, so one degraded panel does not suppress the others.
+  - criterion: use only the existing BFF client
+    status: pass
+    note: EvolutionCenter.tsx calls operatorApi.listEvolutionDecisions(), listFreezeOrders(), and listRollbacks(), while EvolutionDecisionDetail.tsx calls operatorApi.getEvolutionDecision(); the shared methods are defined in src/lib/bffClient.ts.
+  - criterion: do not add raw fetch calls in component files
+    status: pass
+    note: The only fetch usage remains in src/lib/bffClient.ts; the touched evolution component files import BffError/operatorApi only.
+  - criterion: do not invent fields beyond this handoff packet
+    status: pass
+    note: getDecisionListMissingFields(), getFreezeOrderMissingFields(), getRollbackMissingFields(), and the decision-detail missing-field guard all surface explicit contract-gap states when required fields are absent.
+  - criterion: do not expose time_range as a rollback filter control (v1 BFF limitation)
+    status: pass
+    note: Rollback filter state and operatorApi.listRollbacks() usage include runtime_id and action_type only; no time_range control or query param was added.
+  - criterion: display the degradation banner when BFF read surface state is not fresh
+    status: pass
+    note: stalePanels is derived from returned meta.staleness and renders a page-level alert plus decision-detail stale copy without local freshness heuristics.
+
+api_gaps: []
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: Static review passed, but live browser and RBAC verification against a running Pantheon BFF is still outstanding and remains the only residual integration risk.
+
+risk_note: >
+  Remaining risk is runtime-only. The reviewed source commit matches the
+  published frontend-feedback bundle and the contract guards are present, but
+  this review did not exercise a live Pantheon BFF for stale metadata,
+  permission responses, or production-shaped pagination.
+
+lovable_ui_task_status: closed

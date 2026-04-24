@@ -1,0 +1,39 @@
+feature_id: F-042
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: feat/f-042-promotion-review
+source_commit: c34048e2e096d3fe9bde1c216c0613535d71f07d
+screen: promotion-review
+blocking: true
+
+summary: >-
+  Promotion Review UI implementation has 3 integration gaps in the BFF client
+  and types that block formal integration.
+
+missing:
+  - field: Authorization header
+    reason: Required for all stateful requests to the Pantheon BFF
+  - field: errors array handling
+    reason: UI parses 'error' field but backend sends 'errors' list
+  - field: surface status 'error'
+    reason: UI uses 'unavailable' which drifts from the canonical 'error' status
+
+acceptance:
+  - src/lib/bffClient.ts sends Authorization header
+  - src/lib/bffClient.ts parses the standard 'errors' array envelope
+  - src/pages/promotion/types.ts uses 'error' for surface status
+
+resolved: true
+resolved_at: "2026-04-17T04:00:00Z"
+resolved_by: Claude
+resolution: >-
+  Pantheon has published specific fix instructions to Lovable via the updated
+  F-042 lovable prompt. Instructions cover: (1) send Authorization: Bearer header
+  on all stateful requests in bffClient.ts; (2) parse errors array envelope
+  (field name errors not error) in bffClient.ts; (3) use 'error' surface status
+  variant in src/pages/promotion/types.ts. Implementation delegated to Lovable
+  via the updated prompt and FRONTEND_CHANGE_SPEC.md.
+resolution_artifacts:
+  - .coordination/responses/F-042-lovable-prompt.md
+  - .coordination/responses/F-042-lovable-ui-task.yaml
+  - docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md

@@ -1,0 +1,72 @@
+feature_id: PKT-002-incident-detail
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: closed
+cycle: 3
+pantheon_pr: null
+base_url: null
+workbench: operator-console
+screen: incident-detail
+screen_id: screen-operator-incident-detail
+ui_spec_path: docs/screens/PKT-002-incident-detail.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/incident-response/{incident_id}
+- GET /api/v1/runtime/{runtime_id}/events/stream
+- GET /api/v1/incidents/stream
+- GET /api/v1/kill-switch/updates
+constraints:
+- use the existing BFF client for the composed incident snapshot read
+- if live updates are retained, only use the canonical PKT-005 SSE substrate
+  endpoints listed in allowed_endpoints
+- do not add any other raw fetch in component files
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+- render data.incident.opened_at in the Incident summary panel
+- render short rationale copy for each allowed action in the Action entry strip
+- publish ui-done and frontend-feedback from a transport-replayable front-repo
+  commit that contains the returned request payloads and incident detail UI files
+- align the current navigation with the committed operator routes instead of
+  leaving `/incidents` and `/incident-action-drawer` as stale local targets
+- keep HardRollback disabled from Incident Detail unless Pantheon publishes a
+  canonical target_artifact_id source
+acceptance:
+- build the Incident Detail composed view panel from GET /api/v1/operator/incident-response/{incident_id}
+- render all Incident summary fields from data.incident, including opened_at
+- use only the existing BFF client for snapshot reads
+- if live updates are retained, restrict them to the canonical PKT-005 SSE substrate endpoints
+- do not invent fields beyond this handoff packet
+- render all CTAs from backend-shaped allowedActions only
+- render a short rationale beside each allowed action in the Action entry strip
+- render each degraded surface with explicit named copy; never show a generic empty
+  state
+- display the degradation banner when any meta.surfaces entry is degraded or unavailable
+- render a non-dismissable staleness banner when meta.staleness is present
+- render data.kill_switch.active_commands[] in the kill-switch surface
+- republished ui-done and feedback artifacts truthfully document the current
+  route boundary, touched file list, and a real front-repo source commit
+- if HardRollback remains disabled from Incident Detail, keep the
+  target-artifact follow-up explicit in the mirrored API gap request instead of
+  guessing the command parameter locally
+required_feedback:
+- docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-002-incident-detail/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-002-incident-detail/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-002-incident-detail/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-002-incident-detail-contract-ready.yaml
+- .coordination/responses/PKT-002-incident-detail-backend-delivery.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-002-incident-detail.md
+  ui_spec_path: docs/screens/PKT-002-incident-detail.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-002-incident-detail.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-002-incident-detail
+gap_handoff_path: .coordination/requests/PKT-002-incident-detail-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-002-incident-detail-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-002-incident-detail-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-002-incident-detail-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/PKT-002-incident-detail-review.md

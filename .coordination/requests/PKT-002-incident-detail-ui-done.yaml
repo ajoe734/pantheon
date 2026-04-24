@@ -1,0 +1,78 @@
+feature_id: PKT-002-incident-detail
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+source_commit_note: >-
+  The currently published request pair on origin/pkt-004-detail-fix now pins
+  incident-detail to 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 after the
+  action-drawer route-host and SSE sequencing follow-up. Diffing
+  82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9..b146ba7e40286753aa7419740dd695cdbbf6e5f5
+  over the incident-detail paths changes only the two request files, while the
+  code delta relative to the previously approved source
+  43691dae0847423b5080db00781dac7fec452c59 is limited to
+  IncidentActionDrawer.tsx and IncidentActionDrawerPage.tsx.
+screen: incident-detail
+blocking: false
+status: completed
+pantheon_disposition: approved
+acknowledged_at: "2026-04-24T10:52:23Z"
+acknowledged_by: Codex
+resolved_at: "2026-04-24T10:52:23Z"
+review_file: .coordination/reviews/PKT-002-incident-detail-review.md
+resolution_summary: >-
+  Pantheon replayed the current PKT-002 incident-detail request pair from
+  reviewed source commit 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 and publish
+  commit b146ba7e40286753aa7419740dd695cdbbf6e5f5 on
+  origin/pkt-004-detail-fix. The screen remains on the canonical composed
+  read route, now renders opened_at plus per-action rationale copy, routes
+  truthfully to the operator incident home and action drawer surfaces, and
+  keeps the PKT-005 SSE overlay incremental on top of the composed response.
+  Relative to the previously approved source, the only code delta is the
+  shared action drawer host path: the drawer now waits for a fresh kill-switch
+  snapshot before the live PKT-005 stream activates, while HardRollback still
+  requires canonical rollbackArtifactId host context and stays explicitly
+  non-blocking. Targeted TypeScript, eslint, build, and Pantheon incident
+  smoke verification all passed.
+
+summary: |
+  Incident Detail remains wired against the canonical PKT-002 composed read
+  contract via operatorApi.getIncidentResponse
+  (GET /api/v1/operator/incident-response/{incident_id}). The page now
+  renders opened_at, truthful operator navigation, backend-shaped action
+  rationale copy, and the finalized PKT-005 live-update overlay while
+  remaining reachable from /operator/incidents/:incidentId.
+
+changed_files:
+  - src/pages/operator/IncidentDetail.tsx
+  - src/pages/operator/IncidentActionDrawerPage.tsx
+  - src/lib/sseClient.ts
+  - src/lib/sseReconciler.ts
+  - docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-002-incident-detail/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-002-incident-detail/QA_STATUS.md
+
+routes:
+  - /operator/incidents/:incidentId
+  - /operator/incidents/:incidentId/action
+
+acceptance_evidence:
+  - git ls-remote --heads origin pkt-004-detail-fix -> b146ba7e40286753aa7419740dd695cdbbf6e5f5
+  - git diff --name-only 43691dae0847423b5080db00781dac7fec452c59..82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 over the incident-detail paths changes IncidentActionDrawer.tsx, IncidentActionDrawerPage.tsx, and the two request files
+  - git diff --name-only 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9..b146ba7e40286753aa7419740dd695cdbbf6e5f5 over the incident-detail paths changes only the two request files
+  - ./node_modules/.bin/tsc --noEmit --pretty false passed in ../front-ai-trading-system
+  - targeted npx eslint passed for IncidentDetail.tsx, IncidentActionDrawerPage.tsx, IncidentActionDrawer.tsx, types.ts, sseClient.ts, sseReconciler.ts, and App.tsx
+  - npm run build passed in ../front-ai-trading-system with the existing Browserslist staleness note and Vite chunk-size warning only
+  - python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'in02_incident_detail or composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions' -> 5 passed, 15 deselected
+
+follow_up_requested:
+  - review the updated PKT-002 closeout against the canonical incident-detail contract
+  - confirm the remaining HardRollback target artifact note stays non-blocking
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the Pantheon review packet can be marked approved after transport replay
+  - follow-up state is written back through GitHub-visible coordination artifacts
+
+coordination_updates:
+  frontend_feedback_response: .coordination/responses/PKT-002-incident-detail-frontend-feedback.yaml

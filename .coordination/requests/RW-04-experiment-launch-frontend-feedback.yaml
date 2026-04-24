@@ -1,0 +1,45 @@
+feature_id: RW-04-experiment-launch
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: f672af2c0019618ce05cf07c7ed50c65897e9fbb
+workbench: research-workbench
+screen_id: screen-experiment-launch
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/RW-04-experiment-launch
+feedback_path: docs/pantheon-feedback/RW-04-experiment-launch/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/RW-04-experiment-launch/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/RW-04-experiment-launch/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/RW-04-experiment-launch/QA_STATUS.md
+blocking_summary: >-
+  No remaining blockers. Runtime blocker resolved: /openapi.json lists all four
+  /api/v1/experiments* routes and unauthenticated probes return 401.
+  Wiring commit f672af2c (App.tsx, AppSidebar.tsx, WorkbenchBreadcrumb.tsx,
+  bffClient.ts) is committed and pushed. Full chain is GitHub-visible at
+  origin/pkt-004-detail-fix HEAD f00791b.
+changed_files:
+  - .coordination/requests/RW-04-experiment-launch-ui-done.yaml
+  - .coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml
+  - docs/pantheon-feedback/RW-04-experiment-launch/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/RW-04-experiment-launch/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/RW-04-experiment-launch/UI_DECISIONS.md
+  - docs/pantheon-feedback/RW-04-experiment-launch/QA_STATUS.md
+  - src/pages/research/ExperimentLaunch.tsx
+  - src/pages/research/ExperimentDetail.tsx
+  - src/pages/research/ExperimentHistory.tsx
+  - src/pages/research/ExperimentRunHelpers.ts
+  - src/pages/research/ExperimentRunView.tsx
+  - src/pages/research/ExperimentTypes.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+pantheon_review_hint: review-ui
+summary: >-
+  RW-04 Experiment Launch is wired through the shared rw04ExperimentApi and now
+  exposes production launch, history, and detail routes for the Research
+  Workbench. The implementation keeps lifecycle, progress, degradation, and
+  cancel authority backend-owned, retries durable status polling after an
+  initial detail-read failure instead of stalling, separates route-not-live
+  from object-missing 404s, and resets history pagination state whenever the
+  filter context changes.

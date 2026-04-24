@@ -1,0 +1,64 @@
+feature_id: RW-05-artifact-compare
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: artifact-compare
+screen_id: screen-artifact-compare
+workbench: research-workbench
+status: live
+published_at: "2026-04-24T10:59:17Z"
+task: RW-05-ARTIFACT-COMPARE-001
+description: >-
+  RW-05 Artifact Compare handoff republished after resolving the returned
+  list-authority BFF gap from `origin/pkt-004-detail-fix`. The live
+  `GET /api/v1/artifacts` route now publishes
+  `artifacts[].allowedActions.canCompare` alongside the existing registry
+  summary fields, and the detail plus backend-composed compare routes remain
+  aligned with the published contract. The next front-owned cycle should sync
+  this refreshed packet and republish a truthful `ui-done` /
+  `frontend-feedback` pair from the reviewed UI commit instead of inventing
+  selector authority client-side.
+artifacts:
+  bff_contract: docs/bff/RW-05-artifact-compare.md
+  example_payload: docs/examples/RW-05-artifact-compare.json
+  backend_delivery: .coordination/responses/RW-05-artifact-compare-backend-delivery.yaml
+  lovable_ui_task: .coordination/responses/RW-05-artifact-compare-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/RW-05-artifact-compare/FRONTEND_CHANGE_SPEC.md
+endpoints:
+  - GET /api/v1/artifacts
+  - GET /api/v1/artifacts/{artifact_id}
+  - GET /api/v1/artifacts/compare
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - backend_delivery
+  - lovable_ui_task
+  - example_payload
+  - frontend_change_spec
+readiness_gate: >-
+  All three RW-05 routes are live and returning the published field shape,
+  including list-level `artifacts[].allowedActions.canCompare` on
+  `GET /api/v1/artifacts`. Frontend implementation may proceed against the
+  live artifact registry, detail, and compare route family. If any required
+  field diverges from the synced contract, emit the canonical RW-05 bff-gap
+  handoff instead of deriving diffs or ancestry client-side.
+front_actions_required:
+  - build or refresh the Artifact Registry, Artifact Detail, and Artifact Compare surfaces in front-ai-trading-system against the resolved list compare-authority contract
+  - use only the existing BFF client
+  - do not add raw fetch calls in component files
+  - render artifact list, detail, and compare data from Pantheon BFF only
+  - do not derive compare output, version ancestry, or provenance pairs client-side
+  - gate compare affordances from backend-shaped allowedActions only
+  - emit a bff-gap handoff if any required field is absent
+  - publish ui-done and frontend-feedback from one Git-visible commit after syncing the refreshed packet
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: true
+  compare_route_live: true
+  list_compare_authority_live: true
+  backend_delivery_published: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true
+bff_spec_path: docs/bff/RW-05-artifact-compare.md
+frontend_change_spec_path: docs/pantheon-handoffs/RW-05-artifact-compare/FRONTEND_CHANGE_SPEC.md
+examples:
+  - docs/examples/RW-05-artifact-compare.json

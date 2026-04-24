@@ -1,0 +1,33 @@
+feature_id: PKT-002-incident-action-drawer
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: HEAD
+screen: incident-action-drawer
+blocking: false
+
+summary: |
+  Incident Action Drawer is wired up against the PKT-002 BFF contract via
+  operatorApi.getKillSwitchStatus (GET /api/v1/kill-switch/status) and
+  operatorApi.sendIncidentActionCommand (POST /api/v1/operator/commands).
+  PKT-005 SSE substrate is connected for kill-switch updates. The drawer
+  page is reachable from /operator/incidents/:incidentId/action.
+
+changed_files:
+  - src/lib/bffClient.ts
+  - src/components/operator/IncidentActionDrawer.tsx
+  - src/pages/operator/IncidentActionDrawerPage.tsx
+  - src/App.tsx
+
+routes:
+  - /operator/incidents/:incidentId/action
+
+follow_up_requested:
+  - confirm command payload schema matches PKT-002 contract
+  - validate SSE kill-switch event handling end-to-end
+  - publish next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

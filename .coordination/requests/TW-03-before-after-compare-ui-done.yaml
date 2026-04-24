@@ -1,0 +1,135 @@
+feature_id: TW-03-before-after-compare
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: ed8db5db794202659c5a377d2939df580585ccbb
+screen: before-after-compare
+screen_id: screen-before-after-compare
+blocking: false
+status: completed
+pantheon_disposition: approved
+acknowledged_at: "2026-04-21T22:45:29Z"
+acknowledged_by: Codex
+resolved_at: "2026-04-21T22:45:29Z"
+review_file: .coordination/reviews/TW-03-before-after-compare-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the redispatched TW-03 ui-done/frontend-feedback pair
+  against the published Before/After Compare contract, canonical frontend
+  change spec, sibling front implementation, and the live operator-bff preview
+  route family. Implementation commit
+  ed8db5db794202659c5a377d2939df580585ccbb now carries the committed
+  `src/pages/trainer/replayContract.ts` helper and the required per-item
+  `validatePreviewResponse()` checks, while publish commit
+  dbc4a16dc0e9f0b8d33e1576908341ea056c660d on `origin/pkt-004-detail-fix`
+  republishes the canonical TW-03 request pair and feedback bundle pinned back
+  to that implementation SHA. Clean archive replays of both
+  ed8db5db794202659c5a377d2939df580585ccbb and
+  dbc4a16dc0e9f0b8d33e1576908341ea056c660d now pass
+  `npm ci --legacy-peer-deps && npm run build`, and live OpenAPI plus
+  operator-auth GET probes on http://127.0.0.1:18001 still return the
+  published TW-03 preview route family with structured stale and
+  `preview_unavailable` responses. The prior front publication-truth,
+  build-integrity, and compare-validator blockers are resolved. A local
+  Pantheon proof fixture still seeds `deadline_at = 2026-04-20T19:50:45Z`, so
+  the pending-branch unit proof now resolves to `preview_unavailable` on
+  2026-04-21; that is a non-blocking Pantheon test-maintenance caveat rather
+  than a front-end gap.
+
+summary: |
+  Before/After Compare is implemented against the live TW-03 Pantheon preview route family:
+  GET /api/v1/trainer/sessions/{session_id}/preview and
+  POST /api/v1/trainer/sessions/{session_id}/preview. Metric deltas, warning hierarchy,
+  control diff, refresh authority, polling semantics, preview_unavailable branch, and
+  all four surface degradation states are driven exclusively by the backend preview response.
+  No client-side preview math, warning inference, control-diff reconstruction, or polling
+  heuristics were introduced.
+
+implemented_paths:
+  - /trainer/sessions/:session_id/compare
+
+used_endpoints:
+  - GET /api/v1/trainer/sessions/{session_id}/preview
+  - POST /api/v1/trainer/sessions/{session_id}/preview
+
+changed_files:
+  - .coordination/requests/TW-03-before-after-compare-ui-done.yaml
+  - .coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml
+  - docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md
+  - src/pages/trainer/TrainerBeforeAfterCompare.tsx
+  - src/pages/trainer/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+
+feedback_paths:
+  - docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md
+
+acceptance:
+  - compare UI uses only GET and POST preview route family
+  - metric deltas rendered from backend metric_delta[] without local recomputation
+  - warning hierarchy rendered from backend warnings[] in backend order
+  - warning_count_by_level used only for summary chips
+  - control diff rendered from backend control_diff[] without re-fetching TW-02
+  - refresh CTA visible only when allowedActions.canRefreshPreview is true
+  - POST called with refresh_mode=manual only
+  - polling uses GET preview with eval_id and poll_interval_ms exactly
+  - polling stops on status resolve, degraded/unavailable surface, or deadline_at
+  - preview_unavailable renders backend degraded_copy as canonical degraded state, not loading
+  - all four surface degradation states handled per BFF contract
+  - BFF contract gap triggers alert with gap handoff path, no local fallback
+  - npm run build passes
+
+acceptance_evidence:
+  - >-
+    `git ls-tree -r --name-only
+    ed8db5db794202659c5a377d2939df580585ccbb -- src/App.tsx
+    src/lib/bffClient.ts src/pages/trainer/TrainerBeforeAfterCompare.tsx
+    src/pages/trainer/replayContract.ts src/pages/trainer/types.ts` returns
+    the reviewed TW-03 implementation file set, including the formerly missing
+    `src/pages/trainer/replayContract.ts` helper.
+  - >-
+    `git ls-tree -r --name-only
+    dbc4a16dc0e9f0b8d33e1576908341ea056c660d --
+    .coordination/requests/TW-03-before-after-compare-ui-done.yaml
+    .coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml
+    docs/pantheon-feedback/TW-03-before-after-compare src/App.tsx
+    src/lib/bffClient.ts src/pages/trainer/TrainerBeforeAfterCompare.tsx
+    src/pages/trainer/replayContract.ts src/pages/trainer/types.ts` returns
+    the canonical request pair, feedback bundle, and reviewed UI files from
+    the Git-visible publish commit.
+  - >-
+    `git ls-remote --heads origin pkt-004-detail-fix` resolves to
+    dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and
+    `git branch -r --contains ed8db5db794202659c5a377d2939df580585ccbb`
+    returns `origin/pkt-004-detail-fix`.
+  - >-
+    Clean archive replays of both
+    ed8db5db794202659c5a377d2939df580585ccbb and
+    dbc4a16dc0e9f0b8d33e1576908341ea056c660d pass
+    `npm ci --legacy-peer-deps && npm run build` with only the existing
+    Browserslist age notice and Vite chunk-size warning.
+  - >-
+    `curl -s http://127.0.0.1:18001/openapi.json` still advertises
+    `/api/v1/trainer/sessions/{session_id}/preview`, and operator-auth GET
+    probes return the published stale complete envelope for
+    `trn-20260419-001` plus the structured `preview_unavailable` degraded
+    envelope for `trn-20260418-003`.
+
+follow_up_requested:
+  - >-
+    Refresh the seeded TW-03 pending-preview proof deadline from
+    `2026-04-20T19:50:45Z` before relying on
+    `test_tw03_pending_preview_supports_eval_lookup_and_polling_contract` as a
+    full local proof on or after 2026-04-21.
+  - >-
+    Run deployed browser QA for `/trainer/sessions/:session_id/compare`.
+
+coordination_updates:
+  contract_ready: .coordination/responses/TW-03-before-after-compare-contract-ready.yaml
+  lovable_ui_task: .coordination/responses/TW-03-before-after-compare-lovable-ui-task.yaml
+  frontend_feedback_response: .coordination/responses/TW-03-before-after-compare-frontend-feedback.yaml

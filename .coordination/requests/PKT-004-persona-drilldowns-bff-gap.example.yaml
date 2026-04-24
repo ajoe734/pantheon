@@ -1,0 +1,19 @@
+feature_id: PKT-004-persona-drilldowns
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: persona-drilldowns
+blocking: true
+
+summary: Persona Drilldowns UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: data[].lifecycle_state
+    reason: Persona catalog cannot render lifecycle filter or badge without this field
+  - field: data.capability_snapshot
+    reason: Session detail cannot render inline capabilities without embedded snapshot
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

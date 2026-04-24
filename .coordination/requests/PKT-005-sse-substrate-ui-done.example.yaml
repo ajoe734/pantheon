@@ -1,0 +1,27 @@
+feature_id: PKT-005-sse-substrate
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: sse-reconciliation-substrate
+blocking: false
+
+summary: SSE Reconciliation Substrate is implemented as a shared client layer and wired into all relevant Operator Console screens.
+
+changed_files:
+  - src/lib/sseClient.ts
+  - src/lib/sseReconciler.ts
+  - src/lib/sseReconnectManager.ts
+  - src/pages/deployment-review/DeploymentReview.tsx
+  - src/pages/incident-response/IncidentResponse.tsx
+  - src/pages/post-incident/PostIncidentReview.tsx
+
+follow_up_requested:
+  - review the SSE client implementation against the PKT-005 BFF contract
+  - confirm reconnect, replay, and idempotency behaviour using the example event fixtures
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

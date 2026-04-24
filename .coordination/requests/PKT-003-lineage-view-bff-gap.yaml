@@ -1,0 +1,93 @@
+feature_id: PKT-003-lineage-view
+type: bff-gap
+source_repo: ajoe734/pantheon
+source_branch: feat/claude-execution-control
+screen: lineage-view
+status: resolved
+blocking: true
+
+summary: >
+  Lineage View UI is blocked on BFF contract gaps across all three endpoints.
+  All three lineage routes return incorrect response envelopes and missing fields.
+
+missing:
+  # LN-01: GET /api/v1/lineage
+  - endpoint: GET /api/v1/lineage
+    field: items
+    reason: >
+      BFF returns raw edge objects under a `data` key. Contract requires an `items`
+      array of aggregated per-artifact records with artifact_id, edge_count, and
+      last_edge_at. No aggregation logic exists in the BFF.
+  - endpoint: GET /api/v1/lineage
+    field: items[].artifact_id
+    reason: BFF returns raw edge objects; no per-artifact aggregation shape exists.
+  - endpoint: GET /api/v1/lineage
+    field: items[].edge_count
+    reason: BFF has no per-artifact edge count aggregation.
+  - endpoint: GET /api/v1/lineage
+    field: items[].last_edge_at
+    reason: BFF has no per-artifact last-edge timestamp.
+  - endpoint: GET /api/v1/lineage
+    field: page_info.next_page_token
+    reason: Pagination envelope entirely absent from BFF response.
+  - endpoint: GET /api/v1/lineage
+    field: meta.snapshot_at
+    reason: BFF returns meta.staleness and meta.total; meta.snapshot_at absent.
+
+  # LN-02: GET /api/v1/lineage/edges/{edge_id}
+  - endpoint: GET /api/v1/lineage/edges/{edge_id}
+    field: (flat root)
+    reason: >
+      BFF wraps the edge object under a `data` key. Contract requires a flat root
+      object. The drawer will fail to bind id, from_artifact_id, to_artifact_id,
+      relationship, and created_at directly.
+  - endpoint: GET /api/v1/lineage/edges/{edge_id}
+    field: meta.snapshot_at
+    reason: BFF returns meta.staleness only; meta.snapshot_at absent.
+
+  # LN-03: GET /api/v1/lineage/graph
+  - endpoint: GET /api/v1/lineage/graph
+    field: nodes[]
+    reason: >
+      BFF returns no node objects at all. The graph panel requires a nodes[] array
+      with artifact_id, artifact_version, and artifact_type for each node in the
+      graph. The BFF read_store has no registry enrichment for node metadata.
+  - endpoint: GET /api/v1/lineage/graph
+    field: edges
+    reason: BFF returns edges under a `data` key; contract requires top-level `edges`.
+  - endpoint: GET /api/v1/lineage/graph
+    field: meta.snapshot_at
+    reason: BFF returns meta.total, meta.depth, and meta.staleness; meta.snapshot_at absent.
+
+acceptance:
+  - >-
+    GET /api/v1/lineage returns { items: [{ artifact_id, edge_count,
+    last_edge_at }], page_info: { next_page_token }, meta: { snapshot_at } }
+  - >-
+    GET /api/v1/lineage/edges/{edge_id} returns a flat root object with
+    meta.snapshot_at
+  - >-
+    GET /api/v1/lineage/graph returns { nodes: [{ artifact_id,
+    artifact_version, artifact_type }], edges: [{ id, from_artifact_id,
+    to_artifact_id, relationship }], meta: { snapshot_at } }
+  - Pantheon publishes a refreshed contract-ready packet after BFF fixes are applied
+  - Lovable receives the updated response packet through GitHub sync
+
+resolved: true
+resolved_at: "2026-04-18T09:36:22Z"
+resolved_by: Codex
+resolution: >-
+  The LN-01, LN-02, and LN-03 Pantheon routes now match the published packet:
+  GET /api/v1/lineage returns aggregated items[] plus page_info.next_page_token
+  and meta.snapshot_at; GET /api/v1/lineage/edges/{edge_id} returns a flat root
+  object with meta.snapshot_at; and GET /api/v1/lineage/graph returns top-level
+  nodes[] and edges[] with registry-enriched node metadata and meta.snapshot_at.
+  The accepted front-end cycle already consumed the corrected contract and
+  published ui-done plus frontend-feedback without any remaining API gap.
+resolution_artifacts:
+  - .coordination/responses/PKT-003-lineage-view-contract-ready.yaml
+  - .coordination/responses/PKT-003-lineage-view-lovable-ui-task.yaml
+  - .coordination/responses/PKT-003-lineage-view-backend-delivery.yaml
+  - .coordination/requests/PKT-003-lineage-view-ui-done.yaml
+  - .coordination/requests/PKT-003-lineage-view-frontend-feedback.yaml
+  - services/control-plane/bff/test_pkt003_lineage_view_contract.py

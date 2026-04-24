@@ -1,0 +1,22 @@
+feature_id: PKT-005-degradation-banner
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: surface-operator-global-degradation-banner
+status: followup-required
+backend_commit: 77443032a240a3df49c329100ef2477a72a70e53
+bff_contract_version: pantheon-bff@77443032a240a3df49c329100ef2477a72a70e53
+delivery_note_path: docs/pantheon-delivery/PKT-005-degradation-banner/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-005-degradation-banner/CONTRACT_LOCK.md
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-005 degradation-banner ui-done and
+  frontend-feedback bundle against the canonical screen spec, BFF contract,
+  example payloads, and the verified front checkout. No new Pantheon endpoint
+  or payload change is required. The loop stays open because the current front
+  incident flow still navigates to `/incidents...` instead of the mounted
+  `/operator/incidents...` owner routes, and because the partial-banner label
+  helper does not fully humanize canonical camelCase surface keys such as
+  `allowedActions`. The next front-owned cycle must fix those issues, republish
+  ui-done and frontend-feedback on the unchanged PKT-005 contract, and then
+  redispatch Pantheon review.
+source_payload: .coordination/requests/PKT-005-degradation-banner-frontend-feedback.yaml

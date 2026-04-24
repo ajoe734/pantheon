@@ -1,0 +1,23 @@
+feature_id: PKT-003-lineage-view
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: lineage-view
+status: resolved
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-15T04:11:23Z"
+resolved_at: "2026-04-16T04:08:05Z"
+summary: >-
+  Front sync for PKT-003 Lineage View is blocked because the sibling checkout for
+  front-ai-trading-system is a mirror-only directory without a .git repository,
+  frontend application files, routing surface, or the existing BFF client
+  required by the published contract-ready packet.
+resolution_summary: >-
+  Replaced the sibling front-ai-trading-system directory with a real git
+  checkout from origin/main and re-mirrored the Lineage View handoff bundle
+  into the restored front repo.
+next_step: >-
+  Resume the normal Lovable/front-end implementation loop against the restored
+  checkout and wait for a fresh ui-done or frontend-feedback payload if the UI
+  lane needs another cycle.

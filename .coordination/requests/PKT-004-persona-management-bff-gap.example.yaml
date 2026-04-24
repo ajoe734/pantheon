@@ -1,0 +1,21 @@
+feature_id: PKT-004-persona-management
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: persona-management
+blocking: true
+
+summary: Persona Management UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - field: allowedActions.canEdit
+    reason: Edit CTA visibility cannot be rendered safely without backend authority
+  - field: allowedActions.canRetire
+    reason: Retire CTA visibility cannot be rendered safely without backend authority
+  - field: meta.surfaces
+    reason: Degradation banner cannot be rendered without per-surface status from BFF
+
+acceptance:
+  - Pantheon publishes a refreshed contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

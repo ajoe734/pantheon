@@ -1,0 +1,56 @@
+feature_id: TW-04-teaching-replay
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: trainer-workbench
+screen: teaching-replay
+screen_id: screen-teaching-replay
+ui_spec_path: docs/screens/TW-04-teaching-replay.md
+frontend_change_spec_path: docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/trainer/replay
+- GET /api/v1/trainer/replay/{session_id}
+- POST /api/v1/trainer/sessions/{session_id}/commit
+- POST /api/v1/trainer/sessions/{session_id}/discard
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- list replayable sessions from GET /api/v1/trainer/replay with persona_id (required),
+  status, pagination params
+- render replay detail from GET /api/v1/trainer/replay/{session_id}
+- render ordered TeachingEvent[] timeline from the detail response events[] array
+- submit commit through POST /api/v1/trainer/sessions/{session_id}/commit via the
+  existing BFF client action layer only
+- submit discard through POST /api/v1/trainer/sessions/{session_id}/discard via the
+  existing BFF client action layer only
+- surface commit/discard CTAs only when allowedActions.canCommit / allowedActions.canDiscard
+  is true
+- resolve evidence links from BFF-provided `event.evidence_ref` objects — do not construct
+  them client-side
+- render replay_resolution.state correctly (pending_decision / committed / discarded
+  / not_applicable)
+- emit a bff-gap handoff if any required field is absent
+required_feedback:
+- docs/pantheon-feedback/TW-04-teaching-replay/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/TW-04-teaching-replay/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/TW-04-teaching-replay/UI_DECISIONS.md
+- docs/pantheon-feedback/TW-04-teaching-replay/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/TW-04-teaching-replay-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/TW-04-teaching-replay.md
+  ui_spec_path: docs/screens/TW-04-teaching-replay.md
+  frontend_change_spec_path: docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/TW-04-teaching-replay.json
+  handoff_bundle_dir: docs/pantheon-handoffs/TW-04-teaching-replay
+gap_handoff_path: .coordination/requests/TW-04-teaching-replay-bff-gap.yaml
+gap_handoff_template: .coordination/requests/TW-04-teaching-replay-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/TW-04-teaching-replay-ui-done.yaml
+completion_handoff_template: .coordination/requests/TW-04-teaching-replay-ui-done.example.yaml

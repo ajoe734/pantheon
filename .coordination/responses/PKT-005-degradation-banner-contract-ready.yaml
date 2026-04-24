@@ -1,0 +1,34 @@
+feature_id: PKT-005-degradation-banner
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: global-degradation-banner
+status: published
+published_at: "2026-04-14T13:30:00Z"
+description: "PKT-005 Global Degradation Banner contract-ready handoff. BFF contract, example payloads, and surface spec are published. No dedicated BFF endpoint is required — banner state is derived from meta.surfaces and meta.staleness fields in every composed view response."
+artifacts:
+  bff_contract: docs/bff/PKT-005-degradation-banner.md
+  screen_spec: docs/screens/PKT-005-degradation-banner.md
+  example_payload: docs/examples/PKT-005-degradation-banner.json
+  lovable_ui_task: .coordination/responses/PKT-005-degradation-banner-lovable-ui-task.yaml
+endpoints: []
+meta_fields_required:
+  - meta.snapshot_at
+  - meta.staleness
+  - "meta.surfaces.<surface_key>.status"
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+front_actions_required:
+  - implement the shared GlobalDegradationBanner component driven by meta.staleness and meta.surfaces
+  - do not add a separate BFF health-check fetch to render the banner
+  - banner state must be derived from the current screen's composed view response only
+  - render all five banner variants (none, degraded, stale, partial, critical)
+  - banner disappears automatically when all meta.surfaces entries return to ok
+  - wire the banner into all three existing Operator Console screens (PKT-001, PKT-002, PKT-003)
+  - if any meta.surfaces key is absent from the BFF response, emit a bff-gap handoff
+acceptance_met:
+  contract_ready_published: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true

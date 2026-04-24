@@ -1,0 +1,79 @@
+feature_id: PKT-003-post-incident-review
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: c9b03d7ba1439db4f956c56106925675a98f8512
+source_commit_note: >-
+  This request pair is republished after commit
+  c9b03d7ba1439db4f956c56106925675a98f8512 published the reviewed PKT-003
+  follow-up snapshot and feedback bundle.
+screen: post-incident-review-console
+blocking: false
+status: acknowledged
+pantheon_disposition: blocked
+acknowledged_at: "2026-04-24T09:21:40Z"
+acknowledged_by: Codex
+review_file: .coordination/reviews/PKT-003-post-incident-review-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the returned PKT-003 cycle and verified that reviewed
+  source commit c9b03d7ba1439db4f956c56106925675a98f8512 is now GitHub-visible
+  through publish commit 1df4a64047055ca3ea802d61c1df78211884aee2 on
+  origin/pkt-004-detail-fix. The reviewed UI remains aligned with the locked
+  PKT-003 and PKT-005 staleness plus SSE follow-up rules, targeted front
+  validation passed again, and
+  `python3 -m pytest -q services/control-plane/bff/smoke_test_incident.py`
+  returned `20 passed`. The remaining blocker is Pantheon-owned runtime data
+  availability: the active operator-bff runtime advertises the PKT-003 routes
+  but currently returns an empty resolved-incident list and 404
+  OBJECT_NOT_FOUND for seeded post-incident detail ids, so live detail and
+  incident-stream validation is tracked in
+  .coordination/requests/PKT-003-post-incident-review-needs-runtime.yaml.
+
+summary: |
+  Post-Incident Review Console remains implemented against the refreshed
+  PKT-003 BFF contract on branch `pkt-004-detail-fix`, and the reviewed
+  snapshot at `c9b03d7ba1439db4f956c56106925675a98f8512` now accepts canonical
+  PKT-005 staleness fields (`served_from`, optional `last_known_at`, optional
+  `max_age_minutes`), reconciles accepted `incident_updated` SSE events into
+  the selected detail state, keeps the delayed-update host-screen footer
+  explicit, and surfaces live PKT-005 SSE contract gaps instead of dropping
+  malformed stream payloads.
+
+changed_files:
+  - .coordination/requests/PKT-003-post-incident-review-frontend-feedback.yaml
+  - .coordination/requests/PKT-003-post-incident-review-ui-done.yaml
+  - docs/pantheon-feedback/PKT-003-post-incident-review/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-003-post-incident-review/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-003-post-incident-review/QA_STATUS.md
+  - docs/pantheon-feedback/PKT-003-post-incident-review/UI_DECISIONS.md
+  - src/pages/operator/PostIncidentReviewConsole.tsx
+  - src/pages/operator/types.ts
+
+routes:
+  - /operator/post-incident-review
+
+acceptance_evidence:
+  - git ls-remote --heads origin pkt-004-detail-fix -> 1df4a64047055ca3ea802d61c1df78211884aee2
+  - git ls-tree -r --name-only c9b03d7ba1439db4f956c56106925675a98f8512 returns the PKT-003 request pair, feedback bundle, and reviewed UI files
+  - git ls-tree -r --name-only 1df4a64047055ca3ea802d61c1df78211884aee2 returns the canonical PKT-003 request pair, feedback bundle, and reviewed UI files
+  - ./node_modules/.bin/tsc --noEmit --pretty false passed in ../front-ai-trading-system
+  - targeted npx eslint passed for PostIncidentReviewConsole.tsx, types.ts, degradationBanner.ts, sseReconciler.ts, and sseClient.ts
+  - npx --yes tsx src/components/GlobalDegradationBanner.test.tsx passed in ../front-ai-trading-system
+  - python3 -m pytest -q services/control-plane/bff/smoke_test_incident.py -> 20 passed
+  - live OpenAPI on 18001 advertises /api/v1/incidents, /api/v1/incidents/stream, and /api/v1/operator/post-incident-review/{incident_id}
+  - live operator-auth GET /api/v1/incidents?status=resolved&page_size=5 on 18001 returned 200 with items[] = []
+  - live operator-auth detail probes for inc-20260409-002 and inc-20260410-001 on 18001 returned 404 OBJECT_NOT_FOUND
+
+follow_up_requested:
+  - review the refreshed PKT-003 snapshot against the latest Pantheon contract and example payload
+  - validate runtime behavior for the PKT-005 SSE follow-up path against a live Pantheon BFF if available
+  - keep future PKT-003 feedback refreshes pinned to the same reviewed snapshot unless a later UI change lands
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
+
+coordination_updates:
+  frontend_feedback_response: .coordination/responses/PKT-003-post-incident-review-frontend-feedback.yaml
+  needs_runtime: .coordination/requests/PKT-003-post-incident-review-needs-runtime.yaml

@@ -1,0 +1,24 @@
+feature_id: PKT-010-runtime-state-board
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: be42f22c2388076af4bb7b1f1d4209aaf90af6a8
+workbench: operator-console
+screen_id: screen-operator-runtime-state-board
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-010-runtime-state-board
+feedback_path: docs/pantheon-feedback/PKT-010-runtime-state-board/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-010-runtime-state-board/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-010-runtime-state-board/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-010-runtime-state-board/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - src/lib/bffClient.ts
+  - src/pages/operator/OperatorRuntimeStateBoard.tsx
+  - src/pages/operator/types.ts
+  - .coordination/requests/PKT-010-runtime-state-board-ui-done.yaml
+pantheon_review_hint: review-ui
+summary: Operator Runtime State Board is implemented against the published PKT-010 single-roster contract, with no open API gap from this pass.

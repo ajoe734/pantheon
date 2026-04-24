@@ -1,0 +1,28 @@
+feature_id: PKT-008-rollback-review
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: governance-rollback-review
+status: resolved
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-17T06:35:52Z"
+resolved_at: "2026-04-17T07:06:00Z"
+summary: >-
+  Pantheon re-review of the PKT-008 Governance Rollback Review ui-done handoff
+  originally found that the sibling front-end working tree was statically
+  aligned on rollback identity, stale position-data gating, and backend-shaped
+  rollback authority rules, but Pantheon did not yet serve the published read
+  route GET /api/v1/operator/rollback-review/{rollback_id} or the published
+  ApproveRollback and RejectRollback command handling.
+resolution_summary: >-
+  Pantheon now serves GET /api/v1/operator/rollback-review/{rollback_id} in
+  services/control-plane/bff/main.py, accepts ApproveRollback and
+  RejectRollback on POST /api/v1/operator/commands through the existing
+  command executor, and passes targeted regression plus smoke verification for
+  the PKT-008 read and write surfaces.
+next_step: >-
+  No additional runtime follow-up is required for the current PKT-008 packet.
+  The mirrored frontend-feedback request is replay-clean, the Pantheon review
+  can close BP6-LUV-019, and the lovable-ui-task packet can return to
+  loop-complete.

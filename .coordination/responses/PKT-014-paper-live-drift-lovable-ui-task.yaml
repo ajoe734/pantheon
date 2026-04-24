@@ -1,0 +1,43 @@
+feature_id: PKT-014-paper-live-drift
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: operator-console
+screen: operator-paper-live-drift
+screen_id: screen-operator-paper-live-drift
+ui_spec_path: docs/screens/PKT-014-paper-live-drift.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-014-paper-live-drift/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/paper-live-drift/{runtime_id}
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- build the Operator Paper / Live Drift view from the single drift route
+- use only the existing BFF client
+- keep drift groups, threshold evaluation, and recommended actions backend-owned
+- render evidence refs and target refs exactly as supplied
+- do not derive follow-up actions from raw metric values
+required_feedback:
+- docs/pantheon-feedback/PKT-014-paper-live-drift/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-014-paper-live-drift/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-014-paper-live-drift/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-014-paper-live-drift/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-014-paper-live-drift-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-014-paper-live-drift.md
+  ui_spec_path: docs/screens/PKT-014-paper-live-drift.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-014-paper-live-drift/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-014-paper-live-drift.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-014-paper-live-drift
+gap_handoff_path: .coordination/requests/PKT-014-paper-live-drift-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-014-paper-live-drift-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-014-paper-live-drift-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-014-paper-live-drift-ui-done.example.yaml

@@ -1,0 +1,56 @@
+feature_id: PKT-003-lineage-view
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 51a5cb9
+screen: lineage-view
+blocking: false
+
+summary: >-
+  Lineage View UI is implemented against the corrected PKT-003 BFF contract
+  (BFF gaps resolved by BP5-SVC-010). All three endpoints consumed through
+  the existing BFF client. Acceptance criteria met in full.
+
+changed_files:
+  - src/pages/lineage/LineageView.tsx
+  - src/pages/lineage/LineageGraph.tsx
+  - src/pages/lineage/LineageEdgeDetail.tsx
+  - src/pages/lineage/LineageList.tsx
+  - src/pages/lineage/types.ts
+  - src/lib/bffClient.ts
+
+bff_gap_resolved:
+  prior_gap_file: .coordination/requests/PKT-003-lineage-view-bff-gap.yaml
+  resolved_by: BP5-SVC-010
+  resolution: >-
+    LN-01 now returns items[] aggregation shape with page_info and meta.snapshot_at.
+    LN-02 now returns a flat root object with meta.snapshot_at.
+    LN-03 now returns top-level nodes[] and edges[] with meta.snapshot_at.
+
+acceptance_checklist:
+  - Lineage list panel renders from LN-01 items[] with artifact_id, edge_count, last_edge_at: true
+  - Row click loads Lineage Graph panel via LN-03 with root_id; no edge_id on list rows: true
+  - Graph-edge click opens LineageEdgeDetail drawer with edge_id from edges[].id: true
+  - root_type is not exposed as a filter control: true
+  - Empty graph (edges[]) displays "No lineage recorded for {artifact_id}": true
+  - meta.staleness renders non-dismissable staleness banner: true
+  - 404 on edge_id renders "Lineage edge not found" in drawer: true
+  - Missing required fields emit bff-gap alert, not silent mock fallback: true
+  - No raw fetch or axios in component files: true
+  - No demo providers imported: true
+
+integration_boundary_notes:
+  - screen is currently mounted at /lineage; /evolution/lineage mount and useSearchParams root_id wiring are deferred until Evolution Workbench shell is finalized
+  - root_id is in local React state (selectedArtifactId) in this delivery; URL-addressable state is a follow-up item at workbench integration time
+  - feedback bundle corrected (2026-04-16) to match actual implementation after reviewer finding
+
+follow_up_requested:
+  - move screen mount from /lineage to /evolution/lineage when Evolution Workbench shell is finalized
+  - add useSearchParams root_id wiring alongside the route migration
+  - runtime verification against live BFF after pre-existing production-build blocker is cleared elsewhere in the working tree
+
+pantheon_feedback_artifacts:
+  - docs/pantheon-feedback/PKT-003-lineage-view/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-003-lineage-view/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-003-lineage-view/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-003-lineage-view/QA_STATUS.md

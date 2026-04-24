@@ -1,0 +1,57 @@
+feature_id: EW-05-mutation-review
+type: contract-ready
+source_repo: ajoe734/pantheon
+screen: mutation-review
+status: published
+published_at: "2026-04-19T00:00:00Z"
+task: EW-05-OPEN-001
+description: >-
+  EW-05 Mutation Review contract was published as part of EW-05-OPEN-001 and is
+  now revalidated against the live Pantheon BFF. The read route
+  (GET /api/v1/operator/mutation-review/{decision_id}), composed
+  MutationReviewProjection field shape, ApproveMutation and RejectMutation
+  command vocabulary, allowedActions authority signals
+  (canApproveMutation / canRejectMutation), and
+  meta.surfaces.mutation_review staleness signal remain aligned with the
+  current implementation. Pantheon has verified both the read route and the
+  operator command extension live in the current BFF workspace, so the frontend
+  production UI lane may resume against this handoff bundle.
+artifacts:
+  bff_contract: docs/bff/EW-05-mutation-review.md
+  screen_spec: docs/screens/EW-05-mutation-review.md
+  example_payload: docs/examples/EW-05-mutation-review.json
+  lovable_ui_task: .coordination/responses/EW-05-mutation-review-lovable-ui-task.yaml
+  frontend_change_spec: docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md
+endpoints:
+  - GET /api/v1/operator/mutation-review/{decision_id}
+  - POST /api/v1/operator/commands (ApproveMutation)
+  - POST /api/v1/operator/commands (RejectMutation)
+target_repo: ajoe734/front-ai-trading-system
+handoff_bundle:
+  - contract_ready
+  - lovable_ui_task
+  - example_payload
+readiness_gate: >-
+  Frontend may proceed with production UI against the live BFF surfaces:
+  (1) GET /api/v1/operator/mutation-review/{decision_id} returns the published
+  field shape, (2) POST /api/v1/operator/commands accepts ApproveMutation and
+  RejectMutation, and (3) the read projection returns
+  allowedActions.canApproveMutation and allowedActions.canRejectMutation. If a
+  live runtime payload diverges from this synced contract during
+  implementation, stop and emit the canonical EW-05 bff-gap handoff instead of
+  mocking or inventing fields.
+front_actions_required:
+  - fetch decision projection from GET /api/v1/operator/mutation-review/{decision_id} only
+  - render Approve CTA only when allowedActions.canApproveMutation is true and meta.surfaces.mutation_review is not unavailable
+  - render Reject CTA only when allowedActions.canRejectMutation is true and meta.surfaces.mutation_review is not unavailable
+  - submit ApproveMutation or RejectMutation via POST /api/v1/operator/commands
+  - suppress both CTAs when meta.surfaces.mutation_review is unavailable
+  - render non-dismissable staleness banner when meta.surfaces.mutation_review is stale
+  - do not compute authority signals, risk level, or change semantics client-side
+  - re-fetch read route after command submission to confirm state; do not optimistically update decision_state
+acceptance_met:
+  contract_ready_published: true
+  bff_route_live: true
+  command_vocabulary_live: true
+  lovable_ui_task_published: true
+  front_repo_receives_handoff_bundle: true

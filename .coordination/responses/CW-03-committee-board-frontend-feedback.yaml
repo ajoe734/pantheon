@@ -1,0 +1,164 @@
+feature_id: CW-03-committee-board
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-21T00:23:37Z'
+reviewed_commit: edad9d435aa9c51bc5f7395560548dcc1d78dcf5
+reviewed_source_commit: 29c985f5b1341513f9bf543d328fb1744327a246
+request_pair_commit: 78b714d5b252710b43467ba75a4b1f24651fbea8
+verified_front_workspace_head: 78b714d5b252710b43467ba75a4b1f24651fbea8
+verified_remote_main_commit: 962b8027733f7c6b763d5197bbb61b55eb73f7d3
+verified_remote_publish_commit: 78b714d5b252710b43467ba75a4b1f24651fbea8
+feedback_bundle_transport: >-
+  UI transport commit 29c985f5b1341513f9bf543d328fb1744327a246 contains the
+  committee list/detail route wiring, consultCommitteeApi helpers, and the
+  reviewed CommitteeBoard list/detail screens. Front publish commit
+  78b714d5b252710b43467ba75a4b1f24651fbea8 on origin/pkt-004-detail-fix now
+  republishes the canonical request pair and CW-03 feedback bundle with
+  truthful source_commit metadata back to that transport commit.
+screen: consultation-committee-board
+workbench: consultation-workbench
+screen_id: screen-consultation-committee-board
+
+disposition: close
+review_result: replay-clean-and-contract-aligned
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed the returned CW-03 ui-done and frontend-feedback bundle
+  against the published committee-board contract, synced example payload, the
+  sibling front implementation, and the current Pantheon BFF workspace. The
+  publish chain is now replay-clean: origin/pkt-004-detail-fix resolves to
+  78b714d5b252710b43467ba75a4b1f24651fbea8, and that publish commit contains
+  the canonical request pair plus docs/pantheon-feedback/CW-03-committee-board/*
+  with truthful source_commit metadata pointing at the reviewed UI transport
+  commit 29c985f5b1341513f9bf543d328fb1744327a246. The reviewed UI stays
+  inside the ratified partial-activation boundary: it mounts
+  /consultation/committees and /consultation/committees/:committee_id, reads
+  only GET /api/v1/committees and GET /api/v1/committees/{committee_id}
+  through consultCommitteeApi, renders backend-owned sponsor status and
+  synthesis_summary without deriving committee verdicts from participant
+  signals, keeps RecordSponsorDecision hidden in the browser, and correctly
+  renders sponsor_assignment = {} as No sponsor assigned. Pantheon's CW-03
+  contract slice still passes, and npm run build passes from an isolated
+  worktree of the reviewed UI transport commit. The residual gate remains
+  explicit: transcript drill-down, actor labeling, and inline evidence-link
+  semantics still wait on CW-02 transcript truth.
+
+acceptance_verified:
+  - criterion: committee board UI only covers read-only partial activation scope
+    status: pass
+    note: >-
+      The reviewed front code mounts /consultation/committees and
+      /consultation/committees/:committee_id, reads the Pantheon list/detail
+      routes through consultCommitteeApi only, and keeps the detail surface
+      read-only during partial activation.
+  - criterion: sponsor status and outcome summary are backend-owned and not synthesized in the browser
+    status: pass
+    note: >-
+      CommitteeBoardDetail renders synthesis_summary verbatim, shows
+      participant outcome_signal only as participant emissions, and does not
+      derive a committee verdict or expose a RecordSponsorDecision submission
+      flow in the browser.
+  - criterion: live no-sponsor payload branch renders the explicit unassigned state
+    status: pass
+    note: >-
+      The reviewed UI transport commit models sponsor_assignment as
+      CommitteeParticipant | {} | null and uses an explicit participant_id
+      guard, so sponsor_assignment = {} renders No sponsor assigned.
+  - criterion: validate a live-equivalent committee payload against the mirrored CW-03 contract and example payload
+    status: pass
+    note: >-
+      Pantheon's local CW-03 contract slice asserts the published list/detail
+      projection fields and allowedActions semantics, matching the mirrored
+      docs/examples/CW-03-committee-board.json payload shape for the seeded
+      committee response.
+  - criterion: reviewer agrees the sponsor command must remain hidden until CW-02 transcript truth is live
+    status: pass
+    note: >-
+      The reviewed UI keeps the sponsor command informational only and
+      explicitly preserves the residual gate that transcript drill-down, actor
+      labeling, and inline evidence-link semantics still wait on CW-02
+      transcript truth.
+  - criterion: targeted verification passes from the actual reviewed UI source commit
+    status: pass
+    note: >-
+      Pantheon replayed npm run build from an isolated worktree of
+      29c985f5b1341513f9bf543d328fb1744327a246, and
+      python3 -m pytest
+      services/control-plane/bff/test_cw03_committee_board_contract.py -q
+      returned 6 passed.
+  - criterion: publish ui-done and frontend-feedback from a truthful Git-visible request pair with a resolvable source_commit
+    status: pass
+    note: >-
+      origin/pkt-004-detail-fix now resolves to
+      78b714d5b252710b43467ba75a4b1f24651fbea8, and that publish commit
+      contains the canonical ui-done request, frontend-feedback request, and
+      docs/pantheon-feedback/CW-03-committee-board/* with source_commit and
+      reviewed_source_commit pinned to
+      29c985f5b1341513f9bf543d328fb1744327a246.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the reviewed UI transport commit contains the claimed CW-03 bundle
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that 29c985f5b1341513f9bf543d328fb1744327a246 contains
+      the routed committee board UI files, consultCommitteeApi wiring, and the
+      sponsor-assignment empty-object guard.
+  - action: verify the current remote-visible request-pair publish commit
+    path: ../front-ai-trading-system/.coordination/requests/CW-03-committee-board-ui-done.yaml
+    note: >-
+      Pantheon verified that 78b714d5b252710b43467ba75a4b1f24651fbea8 on
+      origin/pkt-004-detail-fix publishes both request files and the CW-03
+      feedback bundle with truthful branch and source-commit metadata.
+  - action: verify the Pantheon-owned CW-03 contract slice
+    path: services/control-plane/bff/test_cw03_committee_board_contract.py
+    note: >-
+      `python3 -m pytest services/control-plane/bff/test_cw03_committee_board_contract.py -q`
+      passed with 6 tests in the current Pantheon workspace.
+  - action: replay the advertised front production build from the reviewed UI transport commit
+    path: /tmp/front-cw03-review-XXXXXX
+    note: >-
+      Pantheon checked out 29c985f5b1341513f9bf543d328fb1744327a246 into an
+      isolated worktree, linked the sibling node_modules tree, and reran
+      npm run build successfully. The build emitted only the existing
+      non-blocking Vite chunk-size warning.
+  - action: inspect the current remote head state for the CW-03 publish branch
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that origin/pkt-004-detail-fix now resolves to
+      78b714d5b252710b43467ba75a4b1f24651fbea8 while origin/main remains at
+      962b8027733f7c6b763d5197bbb61b55eb73f7d3.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed-environment browser QA remains outstanding after closeout.
+      This review validated the Pantheon BFF locally and replayed the reviewed
+      front transport/build chain, but it did not exercise an external running
+      environment in-browser.
+
+required_front_repo_updates: []
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. The reviewed CW-03 transport commit
+  29c985f5b1341513f9bf543d328fb1744327a246 contains the advertised committee
+  board UI, and origin/pkt-004-detail-fix now points at
+  78b714d5b252710b43467ba75a4b1f24651fbea8, which publishes the canonical
+  request pair and feedback bundle with truthful source-commit metadata.
+
+risk_note: >-
+  Remaining risk is runtime-only. The reviewed CW-03 UI behavior is
+  contract-aligned for partial activation, the publish chain is replay-clean,
+  and no Pantheon API gap remains in this loop, but full transcript-linked
+  production handoff still remains gated on CW-02 transcript truth and this
+  review did not include deployed browser QA.
+
+lovable_ui_task_status: closed
+next_action: none
+review_findings_ref: .coordination/reviews/CW-03-committee-board-review.md

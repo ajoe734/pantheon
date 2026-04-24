@@ -1,0 +1,25 @@
+feature_id: PKT-011-health-status-board
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: screen-operator-health-status-board
+status: followup-required
+backend_commit: d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff
+bff_contract_version: pantheon-bff@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff+working-tree
+delivery_note_path: docs/pantheon-delivery/PKT-011-health-status-board/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-011-health-status-board/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-011 ui-done and frontend-feedback
+  handoffs against the canonical contract, canonical example payload, sibling
+  front implementation, and the current Pantheon BFF workspace. GET
+  /api/v1/operator/health-status is live, the targeted PKT-011 contract tests
+  pass, and a direct local TestClient read returns 200 OK with browser-ready
+  target_refs and canonical secondary-control-path commands. Pantheon does not
+  need a new PKT-011 endpoint or payload change here. The loop stays open
+  because the exact source_commit published in the returned request pair does
+  not resolve in the sibling front repo, and because the sibling front router
+  still does not expose /governance-review-queue or
+  /governance-approval-queue.
+source_payload: .coordination/requests/PKT-011-health-status-board-ui-done.yaml

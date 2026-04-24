@@ -1,0 +1,22 @@
+feature_id: PKT-003-lineage-view
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: evolution-workbench
+screen_id: screen-evolution-lineage
+status: delivered
+backend_commit: 38aa953d93dc7dc490b30dde3d6df371877c5cab
+bff_contract_version: pantheon-bff@38aa953d93dc7dc490b30dde3d6df371877c5cab
+delivery_note_path: docs/pantheon-delivery/PKT-003-lineage-view/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-003-lineage-view/CONTRACT_LOCK.md
+followup_expectation: >-
+  Pantheon re-reviewed the accepted Lineage View UI cycle against the published
+  PKT-003 packet, the replay-clean front request-pair commit
+  7309a518f3e64bf40bb4a33a371b8cc152655a7c, and the accepted implementation
+  bundle at source_commit 51a5cb91451dceb4b4e44961804ad5decf6ce359. No
+  additional Pantheon API gap or front-end reimplementation pass is required
+  for the current packet scope. Non-blocking follow-up remains limited to the
+  later route migration to /evolution/lineage, URL root_id wiring at
+  workbench-integration time, and live BFF runtime verification after the
+  existing build blocker is cleared. Publish a fresh bff-gap instead of local
+  inference if a later divergence appears.
+source_payload: .coordination/requests/PKT-003-lineage-view-frontend-feedback.yaml
