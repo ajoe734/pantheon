@@ -59,9 +59,11 @@ As of the current repo state (updated 2026-04-24):
   at `docs/deployment/evidence/ep4-governed-paper/20260419T003720Z/`, packet at
   `docs/deployment/ep4-evidence-packet.md`
 - the repo does not yet have an `EP5` canary or live execution proof
-- the coordination board now has repo-local proof for `43` out of `46` tracked frontend-delivery
-  features after consultation + knowledge batch 1 was consolidated in
-  `docs/deployment/runtime-verification-batch-1-consultation-knowledge.md`;
+- the coordination board now has repo-local proof for all `46` tracked frontend-delivery
+  features after consultation + knowledge batch 1 and operator + trainer +
+  residual batch 2 were consolidated in
+  `docs/deployment/runtime-verification-batch-1-consultation-knowledge.md` and
+  `docs/deployment/runtime-verification-batch-2-operator-trainer-residuals.md`;
   that coverage number is useful operationally, but it is not a higher
   execution-proof level by itself
 - the new BFF-backed `Settings` surface improves repo truthfulness and removes a demo-backed page,
@@ -79,9 +81,9 @@ EP4 is stable as of 2026-04-19. The next proof-raising steps are:
 2. `EP5-002` — execute and archive the first canary/live proof packet, including rollback drill and
    operator signoff; this requires a separate human-approved gate and is not part of the current
    EP4 materialization batch
-3. raise runtime-verification coverage beyond the current `43/46` so the
-   remaining operator, trainer, and residual delivery surfaces have broader
-   replayable evidence before any EP5 proof claim
+3. keep the tracked runtime-verification coverage truthful at `46/46`; if a
+   future frontend cycle reopens a delivery surface or adds a new tracked
+   feature, do not count it closed again without a stored proof artifact
 4. keep the telemetry event-trace read-model gap explicitly dispositioned for EP5:
    the current APP-003 closeout packet at `docs/deployment/app-003-openclaw-closeout-packet.md`
    marks it as `packetized`, not closed, until a replay-clean trace-query capture is archived
