@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260414-0825";
+} from "./dashboard-config.js?v=20260416-0852";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -28,7 +28,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260414-0825";
+} from "./dashboard-core.js?v=20260416-0852";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -715,7 +715,7 @@ function coordinationStageLabel(stage) {
   return titleCase(normalized.replaceAll("_", " "));
 }
 
-export function renderLovableCoordination(dashboardBundle = null) {
+export function renderLovableCoordinationSummary(dashboardBundle = null) {
   const container = qs("#lovable-coordination");
   if (!container) return;
   container.innerHTML = "";
@@ -842,6 +842,9 @@ function executionStatusCounts(status, dashboardBundle = null) {
     blocked: Number.isFinite(summary.blocked) ? summary.blocked : tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length,
     todo: tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     readyNow: Number.isFinite(summary.ready_now) ? summary.ready_now : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
+    dependencyReady: Number.isFinite(summary.dependency_ready)
+      ? summary.dependency_ready
+      : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     liveAttached: Number.isFinite(summary.live_attached) ? summary.live_attached : 0,
     mismatchCount: Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : 0,
   };
@@ -1275,6 +1278,10 @@ export function renderPlanningOverview(planningState, status, dashboardBundle = 
   const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const decision = planningDecisionSummary(planning, status);
   const highlights = planningHighlights(planning);
+  const activeSession = dashboardBundle?.planning_summary?.active_session || {};
+  const sessionUpdatedAt = planning.updated_at || activeSession.updated_at || null;
+  const sessionScope = planning.objective || planning.summary || "這輪 planning 尚未寫入 scope 摘要。";
+  const sessionRef = planning.planning_dir || activeSession.planning_dir || planning.session_file || activeSession.session_file || "-";
 
   container.innerHTML = `
     <div class="planning-hero">
@@ -1286,6 +1293,12 @@ export function renderPlanningOverview(planningState, status, dashboardBundle = 
           </div>
           <span class="status-pill ${decision.tone}">${statusLabel(planning.status)}</span>
         </div>
+        <div class="inline-summary">
+          <span class="chip">Phase ${planning.phase || "-"}</span>
+          <span class="chip">Updated ${formatTime(sessionUpdatedAt)}</span>
+          <span class="chip">Session ref ${escapeHtml(sessionRef)}</span>
+        </div>
+        <p class="card-copy">${sessionScope}</p>
         <p class="body-copy">${decision.body}</p>
         <div class="planning-kpis">
           <span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>
@@ -1698,15 +1711,15 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
   const executionCounts = executionStatusCounts(status, dashboardBundle);
   const bridgePercent = proposalStats.total ? Math.round((proposalStats.materialized / proposalStats.total) * 100) : (planning.switch_gate?.ready_to_materialize ? 100 : 0);
 
-  // Use local task list for a consistent ratio — dashboardBundle.done may span
-  // multiple planning waves and cannot be divided by the current tasks.length.
   const localTasks = status.tasks || [];
   const localDone = localTasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
-  const executionPercent = localTasks.length ? Math.round((localDone / localTasks.length) * 100) : 0;
+  const currentWaveTotal = proposalStats.total > 0 ? proposalStats.total : localTasks.length;
+  const currentWaveDone = proposalStats.total > 0 ? proposalStats.done : localDone;
+  const executionPercent = currentWaveTotal ? Math.round((currentWaveDone / currentWaveTotal) * 100) : 0;
   const historicalDone = executionCounts.done;
-  const executionNote = historicalDone > localDone
-    ? `${localDone}/${localTasks.length} 本波次 · 歷史共 ${historicalDone} done`
-    : `${localDone}/${localTasks.length} 正式完成`;
+  const executionNote = historicalDone > currentWaveDone
+    ? `${currentWaveDone}/${currentWaveTotal} 本波次 · 歷史共 ${historicalDone} done`
+    : `${currentWaveDone}/${currentWaveTotal} 正式完成`;
 
   const items = [
     {
@@ -1985,12 +1998,14 @@ export function renderExecutionSummary(status, orchState, dashboardBundle = null
     if (String(task.status || "").toLowerCase() !== "todo") return false;
     return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
   }).length;
+  const dependencyReady = Number.isFinite(summary.dependency_ready) ? summary.dependency_ready : readyNow;
   const activeNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length;
   const reviewNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
   const blockedNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length;
   const attachedNow = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
   const cards = [
-    { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "前置都完成，隨時可以開工的 todo task" },
+    { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "lane 健康且目前空閒，supervisor 這一輪真的能 dispatch 的 todo task" },
+    { label: "Deps Ready", value: dependencyReady, note: "依賴都完成，但可能仍在等 lane 恢復、空出，或避開 sidecar-only/guardrail 限制" },
     { label: "In Progress", value: Number.isFinite(summary.in_progress) ? summary.in_progress : activeNow, note: "task board 上已進入 in_progress 的任務" },
     { label: "In Review", value: Number.isFinite(summary.in_review) ? summary.in_review : reviewNow, note: "正在 review lane 的任務" },
     { label: "Live Attached", value: Number.isFinite(summary.live_attached) ? summary.live_attached : attachedNow, note: "目前有 live running worker 真的掛在 task 上" },
@@ -2073,10 +2088,12 @@ export function renderBoardSummary(status, orchState, dashboardBundle = null) {
     if (String(task.status || "").toLowerCase() !== "todo") return false;
     return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
   }).length;
+  const dependencyReady = Number.isFinite(summary.dependency_ready) ? summary.dependency_ready : readyCount;
   const reviewCount = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
   const attachedCount = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
   const chips = [
     `<span class="chip">Ready ${Number.isFinite(summary.ready_now) ? summary.ready_now : readyCount}</span>`,
+    `<span class="chip">Deps ${dependencyReady}</span>`,
     `<span class="chip">Review ${Number.isFinite(summary.in_review) ? summary.in_review : reviewCount}</span>`,
     `<span class="chip">Live attached ${Number.isFinite(summary.live_attached) ? summary.live_attached : attachedCount}</span>`,
     `<span class="chip ${truth.counts.total ? "status-blocked" : ""}">Mismatch ${truth.counts.total}</span>`,
@@ -2552,6 +2569,8 @@ export function applyModeVisibility(status, planningState) {
 
   const summaryChips = [
     `<span class="chip">${focusMode === "planning" ? "目前焦點" : "非目前焦點"}</span>`,
+    `<span class="chip">${planning.session_id || "no-session"}</span>`,
+    `<span class="chip">Phase ${planning.phase || "-"}</span>`,
     `<span class="chip">Session ${statusLabel(planning.status)}</span>`,
     `<span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>`,
     `<span class="chip">Can materialize ${planning.switch_gate?.ready_to_materialize ? "Yes" : "No"}</span>`,
