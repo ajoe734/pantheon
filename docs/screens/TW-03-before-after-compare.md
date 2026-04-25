@@ -5,14 +5,14 @@
 - Workbench: Trainer Workbench
 - Screen ID: `screen-before-after-compare`
 - Feature ID: `TW-03-before-after-compare`
-- Packet status: **contract-published** — preview routes, warning hierarchy, degraded-preview semantics, and polling behavior are defined; live BFF implementation is still the gate before UI work starts
+- Packet status: **route-live** — preview read/refresh routes are live, and the frontend handoff bundle is published for production UI activation
 - Task: `TW-03-COMPARE-001`
 
 ## Contract Note
 
-The Trainer Workbench now has a published compare slice for previewing candidate changes against the current baseline. UI implementation must not start until Pantheon confirms the preview read route and manual refresh route are live and returning the published field shape.
+The Trainer Workbench now has a route-live compare slice for previewing candidate changes against the current baseline. Pantheon has confirmed that the preview read route and manual refresh route are live and returning the published field shape, so production UI may proceed against this route family.
 
-The UI must not derive metric deltas, warning levels, control diff rows, or degraded preview copy locally. All compare truth comes from the Pantheon BFF preview response.
+The UI must not derive metric deltas, warning levels, control diff rows, degraded preview copy, or polling behavior locally. All compare truth comes from the Pantheon BFF preview response. If the live payload diverges from the synced contract, emit the canonical TW-03 `bff-gap` handoff instead of inventing a fallback.
 
 ## User Goal
 
@@ -26,7 +26,7 @@ Primary route:
 
 ## Readiness Gate
 
-Do not open the production page until Pantheon confirms:
+Pantheon has already confirmed the following production gate for TW-03:
 
 1. `GET /api/v1/trainer/sessions/{session_id}/preview` is live with `control_diff[]`, `metric_delta[]`, `warnings[]`, `warning_count_by_level`, `preview_quality`, `polling`, and `meta.surfaces.trainer_preview`.
 2. `POST /api/v1/trainer/sessions/{session_id}/preview` is live with the published `refresh_mode = "manual"` body and the same response contract as the read route.
@@ -34,7 +34,7 @@ Do not open the production page until Pantheon confirms:
 4. Pending preview responses expose the published polling contract and never remain `pending` after `polling.deadline_at`.
 5. `preview_unavailable` returns the published degraded branch with backend-authored copy instead of a generic empty state or loading spinner.
 
-Until those gates are met, render a pending-BFF placeholder on `/trainer/sessions/:session_id/compare`. No mock performance charts, no local preview math, and no fake warning ladders.
+The production page may open against this route family now. If the live payload diverges from the synced contract, emit a `bff-gap` handoff instead of reintroducing a pending-BFF placeholder, fake warning ladder, or local preview math.
 
 ## Page Sections
 
@@ -143,7 +143,7 @@ The preview route owns degradation truth. Do not infer it from HTTP success or a
 - Do not treat `preview_unavailable` as equivalent to `pending`.
 - Do not keep polling after `polling.deadline_at`.
 - Do not render refresh controls when `allowedActions.canRefreshPreview` is absent or false.
-- Do not start production UI until Pantheon confirms the routes are live.
+- If the live payload diverges from the synced contract, emit a `bff-gap` handoff instead of inventing fallback state.
 - If any required field is missing, emit a `bff-gap` handoff instead of inventing a fallback.
 
 ## Acceptance
@@ -159,5 +159,8 @@ The preview route owns degradation truth. Do not infer it from HTTP success or a
 
 - BFF contract: `docs/bff/TW-03-before-after-compare.md`
 - Example payload: `docs/examples/TW-03-before-after-compare.json`
+- Frontend handoff: `docs/pantheon-handoffs/TW-03-before-after-compare/FRONTEND_CHANGE_SPEC.md`
+- Contract-ready coordination: `.coordination/responses/TW-03-before-after-compare-contract-ready.yaml`
+- Lovable UI task: `.coordination/responses/TW-03-before-after-compare-lovable-ui-task.yaml`
 - Packet family: `docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md`
 - Frontend SA: `docs/lovable/PANTHEON_FRONTEND_SA.md`

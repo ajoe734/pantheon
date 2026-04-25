@@ -2,135 +2,92 @@
 
 ## Status
 
-`blocked`
+`approved`
 
 ## Summary
 
-Pantheon re-reviewed the returned `ui-done` handoff
-`.coordination/requests/PKT-002-incident-detail-ui-done.yaml` against the
-published PKT-002 read contract, the example payload, the mirrored feedback
-bundle, the tracked front repo state at `60f366e0a745ce3bb10e913e53b332d6557e23f1`,
-and the sibling `front-ai-trading-system` working tree.
+Pantheon re-reviewed the returned
+`.coordination/requests/PKT-002-incident-detail-ui-done.yaml` and mirrored
+`.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml`
+artifacts against the canonical PKT-002 incident-detail contract, the
+published feedback bundle, the sibling front implementation, and the local
+Pantheon acceptance slice.
 
-Two blockers remain:
+The current PKT-002 Incident Detail loop is now closeout-ready from the
+Pantheon side:
 
-1. Pantheon runtime acceptance is still red. Running
-
-   `python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions'`
-
-   still fails because `GET /api/v1/operator/incident-response/inc-20260410-001`
-   returns `404 Not Found` from `TestClient(main.app)`.
-
-2. The front handoff is still not replay-clean. The tracked `ui-done` packet at
-   front HEAD advertises `source_commit:
-   c08acb3ea59f4c56ced578820aa6a5129a309de1`, but that commit does not contain
-   `.coordination/requests/PKT-002-incident-detail-ui-done.yaml` or the mirrored
-   PKT-002 feedback bundle. Front HEAD still does **not** publish the canonical
-   `.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml`
-   request. The current sibling working tree also keeps the latest
-   `IncidentDetail.tsx` fixes only as an uncommitted diff: CTA navigation into
-   `/incident-action-drawer`, kill-switch `active_commands[]` rendering, and
-   the `meta.staleness` alert are not in the tracked commit. Even that
-   working-tree copy still omits `opened_at` from the Incident summary panel,
-   renders the action-authority strip as badges only, and does not provide the
-   short rationale text required for each action.
-
-One non-blocking Pantheon follow-up remains unchanged: the embedded Incident
-Action Drawer cannot safely issue `HardRollback` from Incident Detail until the
-packet publishes a canonical `target_artifact_id` source for that command.
+1. the canonical composed read remains
+   `GET /api/v1/operator/incident-response/{incident_id}`
+2. the returned request pair is replay-clean on `origin/pkt-004-detail-fix`
+   through transport commit
+   `eb1a6cbb727a681db21ecd4b121348605fb8a4d3` and request-pair head
+   `42dc4856b36a7c92f5c40cafd94bf8ef09665bbe`
+3. the detail page now renders `opened_at`, truthful operator navigation, and
+   backend-shaped action rationale copy
+4. the live-update overlay stays on the approved PKT-005 SSE substrate; no new
+   endpoint family or shadow state was introduced
+5. the Pantheon-owned incident-detail smoke slice now passes locally
+6. one non-blocking contract note remains: `HardRollback` still lacks a
+   canonical `target_artifact_id` source when launched from Incident Detail,
+   so that command must remain disabled from this host context until Pantheon
+   publishes it
 
 ## Verified UI State
 
-- `GET /api/v1/operator/incident-response/{incident_id}` is still the only read
-  endpoint consumed by the page, through `operatorApi.getIncidentResponse()`
-- `src/pages/operator/IncidentDetail.tsx` adds no raw `fetch()` calls
-- the tracked front repo still routes the screen at `/incidents/:incidentId`
-  and exposes `/incident-action-drawer` as the current host boundary
-- the detail page still keeps explicit loading, 404, contract-gap, degraded,
-  unavailable, and empty-success states
-- `allowedActions` remains the only backend authority source; the SSE substrate
-  only disables CTAs when the live kill-switch stream reports activation
-- the drawer continues to keep `HardRollback` disabled without a published
-  rollback target artifact ID
-- the current sibling working tree adds the missing CTA wiring,
-  `active_commands[]` rendering, and `meta.staleness` alert, but those fixes
-  are not committed
-- the current sibling working tree still omits `opened_at` from the Incident
-  summary panel required by the PKT-002 screen spec
-- the action-authority strip still omits per-action rationale copy required by
-  the PKT-002 screen spec
-
-## Coordination Outcome
-
-- Pantheon contract: unchanged
-- Published read endpoint set: unchanged
-- Loop status: `blocked`
-- Pantheon runtime follow-up: required
-- Front publication follow-up: required
-- Pantheon API gap: current acceptance path for the composed read route fails
-  locally; `HardRollback` target context also remains unpublished
+- Mirrored Pantheon request artifacts:
+  - `.coordination/requests/PKT-002-incident-detail-ui-done.yaml`
+  - `.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml`
+- GitHub-visible front transport:
+  - `origin/pkt-004-detail-fix@eb1a6cbb727a681db21ecd4b121348605fb8a4d3`
+- GitHub-visible request-pair head:
+  - `origin/pkt-004-detail-fix@42dc4856b36a7c92f5c40cafd94bf8ef09665bbe`
+- Screen route:
+  - `/operator/incidents/:incidentId`
+- Drawer route:
+  - `/operator/incidents/:incidentId/action`
+- Snapshot read:
+  - `operatorApi.getIncidentResponse(...)`
+  - `GET /api/v1/operator/incident-response/{incident_id}`
+- Realtime boundary:
+  - `/api/v1/runtime/{runtime_id}/events/stream`
+  - `/api/v1/incidents/stream`
+  - `/api/v1/kill-switch/updates`
 
 ## Verification Performed
 
-- Reviewed the mirrored Pantheon-side request artifact:
+- Reviewed the mirrored Pantheon request artifacts:
   - `.coordination/requests/PKT-002-incident-detail-ui-done.yaml`
-- Reviewed the mirrored feedback bundle:
-  - `docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md`
-  - `docs/pantheon-feedback/PKT-002-incident-detail/API_GAP_REQUESTS.json`
-  - `docs/pantheon-feedback/PKT-002-incident-detail/UI_DECISIONS.md`
-  - `docs/pantheon-feedback/PKT-002-incident-detail/QA_STATUS.md`
-- Reviewed the sibling front working tree files:
-  - `src/App.tsx`
-  - `src/pages/operator/IncidentDetail.tsx`
-  - `src/components/operator/IncidentActionDrawer.tsx`
-  - `src/pages/operator/types.ts`
-  - `src/lib/bffClient.ts`
-- Verified replay failure directly:
-  - `git -C ../front-ai-trading-system show c08acb3ea59f4c56ced578820aa6a5129a309de1:.coordination/requests/PKT-002-incident-detail-ui-done.yaml`
-  - Result: payload path is absent from the advertised `source_commit`
-- Verified the tracked front handoff still omits the canonical feedback request:
-  - `git -C ../front-ai-trading-system show HEAD:.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml`
-  - Result: path does not exist at front HEAD
-- Verified current front HEAD `60f366e0a745ce3bb10e913e53b332d6557e23f1`
-  contains the `ui-done` request and feedback bundle, but still does not
-  publish `.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml`
-- Ran the Pantheon-owned acceptance slice:
-  - `python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions'`
-  - Result: 2 passed, 1 failed
-  - Failure: `test_composed_incident_response` received `404 Not Found` from
-    `GET /api/v1/operator/incident-response/inc-20260410-001`
-- Re-ran targeted front-end validation in the sibling repo:
-  - `npx eslint src/pages/operator/IncidentDetail.tsx src/components/operator/IncidentActionDrawer.tsx src/pages/operator/types.ts src/lib/bffClient.ts src/App.tsx`
+  - `.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml`
+- Reviewed the canonical contract sources:
+  - `docs/bff/PKT-002-incident-detail.md`
+  - `docs/examples/PKT-002-incident-detail.json`
+  - `docs/screens/PKT-002-incident-detail.md`
+  - `docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md`
+  - `docs/screens/PKT-005-degradation-banner.md`
+  - `docs/bff/PKT-005-sse-substrate.md`
+- Reviewed the sibling front implementation:
+  - `../front-ai-trading-system/src/lib/bffClient.ts`
+  - `../front-ai-trading-system/src/lib/sseClient.ts`
+  - `../front-ai-trading-system/src/lib/sseReconciler.ts`
+  - `../front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`
+  - `../front-ai-trading-system/src/pages/operator/IncidentActionDrawerPage.tsx`
+  - `../front-ai-trading-system/src/components/operator/IncidentActionDrawer.tsx`
+- Ran front verification in the sibling repo:
   - `npm run build`
-  - Result: both passed; Vite emitted a non-blocking chunk-size warning only
+  - `npx eslint src/pages/operator/IncidentDetail.tsx src/pages/operator/IncidentActionDrawerPage.tsx src/pages/operator/PostIncidentReviewConsole.tsx src/pages/operator/DeploymentReviewConsole.tsx src/pages/operator/types.ts src/lib/sseClient.ts src/lib/sseReconciler.ts src/App.tsx`
+- Ran the Pantheon-owned acceptance slice:
+  - `python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'in02_incident_detail or composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions'`
+  - Result: `5 passed, 15 deselected`
 
 ## Not Completed
 
-- A runtime-clean Pantheon acceptance run for the composed incident-response
-  route
 - Live browser QA against a running Pantheon BFF
 - Live command execution QA against `POST /api/v1/operator/commands`
-- A replay-clean front publication commit that contains the canonical request
-  pair
 
-## Next Required Follow-up
+## Next Step
 
-- Restore the Pantheon runtime acceptance path for
-  `GET /api/v1/operator/incident-response/{incident_id}` without changing the
-  published contract or inventing alternate endpoints
-- Re-run the targeted smoke slice after that runtime follow-up
-- Front repo must publish the canonical `frontend-feedback` + `ui-done` request
-  pair from a Git-visible commit that actually contains both payload paths
-- Front repo must republish the final `IncidentDetail.tsx` implementation from
-  that same Git-visible commit, including CTA navigation into
-  `/incident-action-drawer`, `data.kill_switch.active_commands[]` rendering,
-  and the `meta.staleness` alert
-- That republished detail screen must also render `data.incident.opened_at` in
-  the Incident summary panel
-- That republished detail screen must also add the required short rationale
-  copy for each action in the action-authority strip
-- The republished artifacts must keep the current `/incidents/:incidentId` ->
-  `/incident-action-drawer` integration boundary truthful
-- Pantheon should publish or document the canonical `target_artifact_id` source
-  for `HardRollback` from Incident Detail, or keep that command explicitly
-  disabled in this host context
+Pantheon follow-up for the current PKT-002 Incident Detail UI cycle is
+complete. No new endpoint, no shadow state, and no additional front-end
+implementation pass is required for this packet. Future work should be limited
+to non-blocking live QA and the separate HardRollback target-artifact contract
+publication if Pantheon wants to enable that command from Incident Detail.

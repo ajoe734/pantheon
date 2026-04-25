@@ -2,7 +2,7 @@ feature_id: PKT-003-evolution-center
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: main
-source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7
+source_commit: 8314ef67016a15ced808e4aded16cc0686de25a1
 screen: evolution-center
 blocking: false
 
@@ -13,7 +13,6 @@ changed_files:
   - src/pages/evolution/EvolutionCenter.tsx
   - src/pages/evolution/EvolutionDecisionDetail.tsx
   - src/pages/evolution/types.ts
-  - src/lib/bffClient.ts
 
 follow_up_requested:
   - review the UI against the latest Pantheon contract and example payload

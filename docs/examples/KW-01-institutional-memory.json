@@ -14,7 +14,7 @@
   "source_event": {
     "type": "postmortem_published",
     "id": "pm-2026-04-05-btc-drift",
-    "href": "/operator/incidents/inc-2026-04-05-001/review"
+    "href": "/operator/post-incident-review?incident=inc-2026-04-05-001"
   },
   "contributing_persona_ids": ["Alpha-Momentum"],
   "written_at": "2026-04-07T14:30:00Z",

@@ -1,7 +1,7 @@
 feature_id: PKT-003-evolution-center
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ui-done
+status: closed
 pantheon_pr: null
 base_url: null
 workbench: evolution-workbench

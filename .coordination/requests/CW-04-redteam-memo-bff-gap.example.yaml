@@ -1,0 +1,24 @@
+feature_id: CW-04-redteam-memo
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: redteam-memo
+blocking: true
+
+summary: Red-team Memo UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - endpoint: GET /api/v1/consult/memos
+    field: items[].route_href
+    reason: List-to-detail navigation must use the BFF-provided route_href and cannot be synthesized from memo_id alone.
+  - endpoint: GET /api/v1/consult/memos/{memo_id}
+    field: allowedActions.canInitiateGovernanceReview
+    reason: Governance handoff CTA visibility is backend-owned; the frontend must not derive it from status or staleness.
+  - endpoint: GET /api/v1/consult/memos/{memo_id}
+    field: session_to_memo_mapping
+    reason: The mapping panel must render the backend-owned source_session_id and transcript_id tuple and cannot infer it from raw consultation data.
+
+acceptance:
+  - Pantheon publishes a refreshed CW-04 contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

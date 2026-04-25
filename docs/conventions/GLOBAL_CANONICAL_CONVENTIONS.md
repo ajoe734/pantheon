@@ -6,6 +6,7 @@ Source of truth inputs:
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
 - `docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md`
 - `docs/reviews/Pantheon_Response_to_System_Design_Followup_Questions.md`
+- `docs/reviews/Pantheon_Response_to_Architecture_Blockers_Decision_Package.md`
 Tier: L1 Platform Architecture & Policy
 Scope: cross-module contract conventions, freshness/degradation semantics, and readiness framing
 Conflict rule: a narrower canonical decision or module contract may add domain-specific detail, but it must not contradict these global conventions without an explicit override decision

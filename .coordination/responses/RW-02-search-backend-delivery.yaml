@@ -1,0 +1,23 @@
+feature_id: RW-02-search
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: research-workbench
+screen_id: screen-research-search
+status: delivered
+backend_commit: c2ded5aaefa7ba03b2ee43306859ce97013953ca
+working_tree_only: false
+verified_runtime_ref: pantheon-head@c2ded5aaefa7ba03b2ee43306859ce97013953ca
+live_http_runtime_ref: http://127.0.0.1:18001
+bff_contract_version: pantheon-bff@c2ded5aaefa7ba03b2ee43306859ce97013953ca
+delivery_note_path: docs/reviews/2026-04-22-exec-closeout-frontend-002-summary.md
+contract_lock_path: docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md
+followup_expectation: >-
+  Pantheon revalidated RW-02 on a fresh operator-bff runtime from the current
+  workspace. Live OpenAPI now advertises `GET /api/v1/research/search`, and an
+  authenticated query to
+  `GET /api/v1/research/search?q=momentum` returns 200 with backend-owned
+  search results, `links.result_detail`, `links.linked_ticket_detail`, and
+  truthful degraded `meta.index_adapter.*` metadata. The prior runtime-refresh
+  follow-up is complete for this screen; remaining unresolved drilldown owner
+  routes belong to their own feature slices and do not block RW-02 closeout.
+source_payload: .coordination/requests/RW-02-search-ui-done.yaml

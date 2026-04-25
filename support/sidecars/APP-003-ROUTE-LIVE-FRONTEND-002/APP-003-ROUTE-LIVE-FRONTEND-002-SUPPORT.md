@@ -2,7 +2,7 @@
 
 **Task**: `APP-003-ROUTE-LIVE-FRONTEND-002`  
 **Owner**: `Codex`  
-**Reviewer**: `Claude2`  
+**Reviewer**: `Codex2`  
 **Scope**: publish the remaining route-live frontend activation packets for
 Research, Knowledge, and Trainer modules without reopening closed BFF
 implementation work.
@@ -31,6 +31,9 @@ Repo truth after this pass:
   `diff.updated_controls[]`
 - this task does not reopen route implementation work for any of the eight
   modules; the remaining residue stays frontend activation / closeout only
+
+Revalidated on `2026-04-23`: the module matrix below still matches the current
+repo paths and the published `TW-02` handoff remains present.
 
 ## Module Matrix
 

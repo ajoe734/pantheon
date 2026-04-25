@@ -90,12 +90,16 @@ interface PostIncidentReviewResponse {
   meta: {
     snapshot_at: string;
     surfaces: {
-      postmortem: "ok" | "degraded" | "unavailable";
-      evolution_decisions: "ok" | "degraded" | "unavailable";
-      lineage: "ok" | "degraded" | "unavailable";
-      telemetry_performance: "ok" | "degraded" | "unavailable";
+      postmortem: { status: "ok" | "degraded" | "unavailable" };
+      evolution_decisions: { status: "ok" | "degraded" | "unavailable" };
+      lineage: { status: "ok" | "degraded" | "unavailable" };
+      telemetry_performance: { status: "ok" | "degraded" | "unavailable" };
     };
-    staleness?: { reason: string; served_from: string };
+    staleness?: {
+      served_from: string;
+      last_known_at?: string;
+      max_age_minutes?: number;
+    } | null;
   };
 }
 
@@ -134,13 +138,14 @@ Used for navigation only — not the primary data source for the detail panel.
 - **Post-Incident Review detail panel**: fetches `GET /api/v1/operator/post-incident-review/{incident_id}?snapshot=preferred` on row selection.
   - **Incident summary**: renders `incident_id`, `title`, `status`, `artifact_id`, `artifact_version`, `runtime_id`, `trace_id`.
   - **Postmortem panel**:
-    - When `meta.surfaces.postmortem = ok`: render `postmortem_id`, `status`, `root_cause`, `action_items[]`.
-    - When `meta.surfaces.postmortem = degraded`: render "Postmortem pending" panel with the `incident_id`. Do not show an empty state.
-    - When `meta.surfaces.postmortem = unavailable`: render an explicit unavailable banner. Do not hide the panel.
+    - Read `meta.surfaces.postmortem.status` as the gating field.
+    - When `meta.surfaces.postmortem.status = ok`: render `postmortem_id`, `status`, `root_cause`, `action_items[]`.
+    - When `meta.surfaces.postmortem.status = degraded`: render "Postmortem pending" panel with the `incident_id`. Do not show an empty state.
+    - When `meta.surfaces.postmortem.status = unavailable`: render an explicit unavailable banner. Do not hide the panel.
   - **Evolution decisions panel**: renders `evolution_decisions[]` with `action_type`, `risk_level`, `status`, and `artifact_id` per row. Renders "No evolution decisions" when the list is empty.
-  - **Lineage edges panel**: renders `lineage_edges[]` with `from_artifact_id`, `to_artifact_id`, and `relationship` per row. Renders "No lineage evidence" when empty or when `meta.surfaces.lineage = degraded`.
-  - **Telemetry performance panel**: renders `telemetry_performance.summary` fields (`total_pnl`, `max_drawdown`, `sharpe_ratio`) and the `window`. Renders "No telemetry evidence" when `telemetry_performance` is null or `meta.surfaces.telemetry_performance = degraded`.
-- **Degradation banner**: when any `meta.surfaces` entry is not `ok`, render a non-dismissable banner naming the affected panel. Do not hide content silently.
+  - **Lineage edges panel**: renders `lineage_edges[]` with `from_artifact_id`, `to_artifact_id`, and `relationship` per row. Renders "No lineage evidence" when empty or when `meta.surfaces.lineage.status = degraded`.
+  - **Telemetry performance panel**: renders `telemetry_performance.summary` fields (`total_pnl`, `max_drawdown`, `sharpe_ratio`) and the `window`. Renders "No telemetry evidence" when `telemetry_performance` is null or `meta.surfaces.telemetry_performance.status = degraded`.
+- **Degradation banner**: when any `meta.surfaces[*].status` entry is not `ok`, render a non-dismissable banner naming the affected panel. Do not hide content silently.
 - **Staleness banner**: when `meta.staleness` is present on the detail response, render a non-dismissable banner.
 - **Loading, empty, degraded, and error states**: explicit and visually distinct with no mock fallback.
 
@@ -149,9 +154,10 @@ Used for navigation only — not the primary data source for the detail panel.
 - Use the existing BFF client only. Do not add raw `fetch` or `axios` in component files.
 - Do not import or use any demo provider or mock data layer.
 - The detail panel must use `GET /api/v1/operator/post-incident-review/{incident_id}` as the primary source — do not re-fetch individual surfaces separately.
-- `meta.surfaces` gating must come from the BFF response. Do not derive panel visibility locally.
+- `meta.surfaces` gating must come from the BFF response. Read `meta.surfaces[key].status`; do not assume the surface value is a bare string and do not derive panel visibility locally.
 - No write actions on this screen — all incident response write actions belong to `PKT-002`.
 - If any `meta.surfaces` key is absent from the BFF response, write `.coordination/requests/PKT-003-post-incident-review-bff-gap.yaml` using `.coordination/requests/PKT-003-post-incident-review-bff-gap.example.yaml` as the template and stop implementation.
+- If `meta.staleness` is present, treat `served_from` as required. `last_known_at` and `max_age_minutes` are optional. Do not require or invent a `reason` field.
 
 ## Degradation Handling
 

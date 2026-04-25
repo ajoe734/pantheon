@@ -109,11 +109,43 @@
     "memo_type": "red_team",
     "status": "published",
     "lifecycle_state": "published",
-    "summary": "Last-known memo snapshot while memo surface is degraded.",
+    "author_ref": "p-risk-analyst",
+    "linked_request_id": "cr-20260419-011",
+    "linked_session_id": "cs-20260419-rt-007",
+    "session_to_memo_mapping": {
+      "mapping_id": "map-20260419-007",
+      "source_session_id": "cs-20260419-rt-007",
+      "transcript_id": "tr-20260419-rt-007",
+      "transcript_version": "v1",
+      "memo_id": "memo-rt-20260419-007",
+      "memo_type": "red_team",
+      "created_by": {
+        "actor_type": "persona",
+        "actor_id": "skeptic-red-team"
+      },
+      "evidence_refs": [
+        "ev-telemetry-atr-spike-20260419"
+      ],
+      "mapping_status": "active",
+      "created_at": "2026-04-19T15:38:00Z"
+    },
+    "summary": "Red-team review identified execution-path risks around volatility protection, rollback sequencing, and degraded-mode control handoff.",
     "recommendations": [
       "Raise circuit-breaker threshold from 2.5x to 3.5x ATR before enabling live deployment under macro-regime conditions."
     ],
-    "evidence_refs": [],
+    "evidence_refs": [
+      {
+        "id": "ev-telemetry-atr-spike-20260419",
+        "evidence_type": "telemetry",
+        "artifact_ref": "artifact-atr-042",
+        "description": "ATR spike event — 2026-04-19 macro window",
+        "link": "/telemetry/events/ev-telemetry-atr-spike-20260419"
+      }
+    ],
+    "published_at": "2026-04-19T15:42:00Z",
+    "created_at": "2026-04-19T13:10:00Z",
+    "supersedes_memo_id": null,
+    "superseded_by_memo_id": null,
     "allowedActions": {
       "canInitiateGovernanceReview": false
     },

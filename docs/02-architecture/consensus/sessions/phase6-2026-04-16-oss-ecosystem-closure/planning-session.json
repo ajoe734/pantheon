@@ -1,0 +1,2015 @@
+{
+  "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+  "phase": "phase6",
+  "profile": "generic",
+  "status": "accepted",
+  "planning_mode": "discussion_planning",
+  "runtime_mode": "supervisor_managed_execution",
+  "summary": "Turn the residual Phase 6 / OSS maturity gap into the next executable planning wave.",
+  "objective": "Convert the residual OSS ecosystem maturity gap into a dependency-aware next-wave execution plan that distinguishes governed integrations, activation-ready frameworks, and not-started research backends.",
+  "facilitator": "Claude",
+  "baton_owner": "Codex",
+  "starter_owner": "Codex",
+  "next_reviewer": "Gemini",
+  "baton_sequence": [
+    "Codex",
+    "Gemini",
+    "Claude"
+  ],
+  "review_sequence": [
+    "Gemini",
+    "Claude",
+    "Codex"
+  ],
+  "brief_files": [
+    "ROADMAP.md",
+    "DEVELOPMENT_WORKBREAKDOWN.md",
+    "OSS_INTEGRATION_CHECKLIST.md",
+    "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+    "docs/reviews/2026-04-16-full-blueprint-gap-analysis.md",
+    "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md",
+    "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md",
+    "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/full-blueprint-gap-inventory.md"
+  ],
+  "expected_outputs": [
+    {
+      "id": "oss_gap_analysis",
+      "path": "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md",
+      "owner": "Codex",
+      "status": "active"
+    },
+    {
+      "id": "execution_materialization",
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md",
+      "owner": "Codex",
+      "status": "active"
+    },
+    {
+      "id": "consensus_packet",
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "owner": "Claude",
+      "status": "not_started"
+    }
+  ],
+  "lane_focus": {
+    "Claude": "Facilitate consensus, cover schema and contract-boundary review that would normally fall to Qwen, and prepare the human gate packet.",
+    "Codex": "Ground the OSS maturity plan in repo evidence, absorb acceptance and external-dependency review that would normally fall to Copilot, and cut the next executable task slices.",
+    "Gemini": "Stress-test runtime, packaging, smoke-test, and infrastructure feasibility for each proposed OSS lane.",
+    "Qwen": "Fallback-covered by Claude in this session; preserve the original focus on schema, contract, and activation-criteria consistency.",
+    "Copilot": "Fallback-covered by Codex in this session; preserve the original focus on research readiness, external dependency assumptions, and acceptance wording."
+  },
+  "fallback_policy": {
+    "Qwen": {
+      "waive_after_seconds": 1800,
+      "waive_on_terminal_failure": true,
+      "issue_id": "DISC-QWEN-OSS-PHASE6",
+      "summary": "Qwen planning lane repeatedly stalls in this repo. Claude absorbs schema and activation-criteria review for the OSS ecosystem session.",
+      "covering_agents": [
+        "Claude"
+      ]
+    },
+    "Copilot": {
+      "waive_after_seconds": 1800,
+      "waive_on_terminal_failure": true,
+      "issue_id": "DISC-COPILOT-OSS-PHASE6",
+      "summary": "Copilot planning lane repeatedly quota-stalls in this repo. Codex absorbs research-readiness and acceptance review for the OSS ecosystem session.",
+      "covering_agents": [
+        "Codex"
+      ]
+    }
+  },
+  "current_round": 1,
+  "document_reconciliation_status": "not_needed",
+  "consensus_status": "accepted",
+  "human_gate_status": "approved",
+  "artifacts": {
+    "planning_readme": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/README.md",
+      "status": "active"
+    },
+    "planning_session": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "status": "accepted"
+    },
+    "readout_template": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/LLM_READOUT_TEMPLATE.md",
+      "status": "ready"
+    },
+    "starter_draft": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/starter-draft.md",
+      "status": "active"
+    },
+    "baton_log": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/baton-log.md",
+      "status": "active"
+    },
+    "supervisor_queue": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/supervisor-queue.md",
+      "status": "active"
+    },
+    "document_reconciliation": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/document-reconciliation.md",
+      "status": "not_needed"
+    },
+    "consensus_packet": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "status": "accepted"
+    },
+    "review_rounds": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/review-round-*.md",
+      "status": "completed"
+    }
+  },
+  "readouts": {
+    "Claude": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/claude-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-16T23:36:59Z"
+    },
+    "Codex": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/codex-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-16T23:41:22Z"
+    },
+    "Gemini": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/gemini-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-17T00:40:22Z"
+    },
+    "Qwen": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/qwen-readout.md",
+      "status": "waived",
+      "updated_at": "2026-04-16T23:33:48Z"
+    },
+    "Copilot": {
+      "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/copilot-readout.md",
+      "status": "waived",
+      "updated_at": "2026-04-16T23:33:48Z"
+    }
+  },
+  "cross_review_rounds": [
+    {
+      "round": 1,
+      "status": "completed",
+      "reviewers": [
+        "Qwen",
+        "Gemini",
+        "Copilot",
+        "Claude"
+      ],
+      "updated_at": "2026-04-17T00:54:24Z",
+      "summary": "Healthy-lane review complete for phase6 OSS session; wave order and gate semantics aligned."
+    }
+  ],
+  "unresolved_items": [
+    {
+      "id": "DISC-QWEN-OSS-PHASE6",
+      "severity": "medium",
+      "status": "tracking",
+      "summary": "Qwen planning lane is waived for this session; Claude covers schema and activation-criteria review."
+    },
+    {
+      "id": "DISC-COPILOT-OSS-PHASE6",
+      "severity": "medium",
+      "status": "tracking",
+      "summary": "Copilot planning lane is waived for this session; Codex covers research-readiness and acceptance review."
+    }
+  ],
+  "proposed_execution_tasks": [
+    {
+      "id": "OSS-NEXT-001",
+      "title": "Realize the governed Qlib adapter and first supervised-alpha smoke path",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "把 Qlib 從 criteria-defined 推進到真正可跑的 governed integration：完成資料處理 adapter、registry 相容輸出與單模型 smoke test。",
+      "depends_on": [],
+      "artifacts": [
+        "services/learning/qlib/ACTIVATION_CRITERIA.md",
+        "services/research/qlib/",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+      ],
+      "acceptance": [
+        "a governed Qlib adapter exists with repo-local input and output boundaries",
+        "a LightGBM-first supervised alpha smoke test passes through the canonical artifact path"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-NEXT-002",
+      "title": "Realize the TRL activation baseline and governed preference-learning smoke path",
+      "owner": "Claude",
+      "reviewer": "Gemini",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "把 TRL 從 criteria-defined 推進到最小可用 baseline：完成 package pin、preference-pair pipeline 與 DPO smoke path。",
+      "depends_on": [],
+      "artifacts": [
+        "services/learning/trl/ACTIVATION_CRITERIA.md",
+        "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+      ],
+      "acceptance": [
+        "TRL is version-pinned and wired to a governed preference-pair construction path",
+        "a minimal DPO or preference-learning smoke flow proves outputs can enter the governed artifact lifecycle"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-NEXT-003",
+      "title": "Close the RL path activation gate and choose the first executable RL lane",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "把 RL path 從抽象 gate 變成明確決策：確認下一輪是否納入 RL，並選定 FinRL 或 RLlib 為第一條具體實作 lane。",
+      "depends_on": [
+        "OSS-NEXT-001",
+        "OSS-NEXT-002"
+      ],
+      "artifacts": [
+        "services/learning/rl/PATH_DEFINITION.md",
+        "services/learning/rl/RL_PATH_APPROVAL_GATE.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+      ],
+      "acceptance": [
+        "the session records an explicit approve/defer decision for RL work in the next wave",
+        "if approved, the first concrete RL lane is chosen with a named backend, governed output shape, and smoke-test target"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-NEXT-004",
+      "title": "Decide W&B backend parity versus explicit defer with re-entry criteria",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "明確決定 W&B 在下一輪是要進入 backend parity 實作，還是正式 defer 並寫清 re-entry gate，避免一直停在模糊 criteria-defined。",
+      "depends_on": [
+        "OSS-NEXT-008"
+      ],
+      "artifacts": [
+        "services/registry/experiments/WANDB_ACTIVATION.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+        "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+      ],
+      "acceptance": [
+        "the next-wave decision for W&B is explicit rather than implicit",
+        "either a backend parity implementation slice exists or a documented defer with re-entry gate is recorded"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-NEXT-005",
+      "title": "Materialize the vectorbt backend into a named execution-ready task family",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "把 vectorbt 從 not-started 轉成具體任務：完成 source selection、version pin、governed adapter 設計與 smoke-test 計畫。",
+      "depends_on": [],
+      "artifacts": [
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+      ],
+      "acceptance": [
+        "vectorbt has a selected source, proposed pin, governed adapter boundary, and smoke-test plan",
+        "the backend no longer lives only as a maturity-matrix mention without a real task cut"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-NEXT-006",
+      "title": "Materialize the statsmodels backend into a named execution-ready task family",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "把 statsmodels 從 not-started 轉成具體任務：完成 econometrics / regime 分析的 use-case 綁定、source selection、adapter 設計與 smoke-test 計畫。",
+      "depends_on": [],
+      "artifacts": [
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+      ],
+      "acceptance": [
+        "statsmodels has an explicit Pantheon use-case binding and proposed governed adapter shape",
+        "the backend no longer remains unassigned planning debt"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-NEXT-007",
+      "title": "Materialize the QuantLib backend into a named execution-ready task family",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "把 QuantLib 從 not-started 轉成具體任務：完成 derivatives research scope、source selection、adapter 設計與 smoke-test 計畫。",
+      "depends_on": [],
+      "artifacts": [
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+      ],
+      "acceptance": [
+        "QuantLib has a scoped Pantheon use-case and proposed governed adapter boundary",
+        "the backend is represented as a real next-wave execution family instead of an implicit future placeholder"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-NEXT-008",
+      "title": "Refresh governed-path smoke and no-regression evidence for OpenClaw, DSPy, imitation, and MLflow",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "Phase 6: OSS Ecosystem Closure",
+      "summary_zh": "對已治理的 OSS 路徑做一次 regression refresh，確認 OpenClaw、DSPy、imitation、MLflow 在最近 repo 變更後仍維持可驗證狀態。",
+      "depends_on": [],
+      "artifacts": [
+        "integrations/openclaw/",
+        "integrations/dspy/",
+        "integrations/imitation/",
+        "integrations/mlflow/",
+        "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+      ],
+      "acceptance": [
+        "governed OSS paths have refreshed smoke evidence after recent repo changes",
+        "the next OSS wave starts from a verified baseline rather than stale integration claims"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-UI-REVIEW-001",
+      "title": "Integrate PKT-002-incident-detail ui-done return and close the Pantheon review loop",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "整合 PKT-002-incident-detail ui-done 返回內容，完成 Pantheon-side review 與 coordination loop 關閉",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-002-incident-detail-lovable-ui-task.yaml",
+        ".coordination/requests/PKT-002-incident-detail-ui-done.yaml"
+      ],
+      "acceptance": [
+        "PKT-002-incident-detail lovable-ui-task status 更新為 loop-complete",
+        "整合記錄已 commit"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-UI-REVIEW-002",
+      "title": "Integrate PKT-003-post-incident-review ui-done return and close the Pantheon review loop",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "整合 PKT-003-post-incident-review ui-done 返回內容，完成 Pantheon-side review 與 loop 關閉",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-003-post-incident-review-lovable-ui-task.yaml",
+        ".coordination/requests/PKT-003-post-incident-review-ui-done.yaml"
+      ],
+      "acceptance": [
+        "PKT-003-post-incident-review lovable-ui-task status 更新為 loop-complete",
+        "整合記錄已 commit"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-UI-REVIEW-003",
+      "title": "Integrate PKT-004-persona-drilldowns ui-done return and close the Pantheon review loop",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "整合 PKT-004-persona-drilldowns ui-done 返回，完成 Pantheon review 與 loop 關閉",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-004-persona-drilldowns-lovable-ui-task.yaml",
+        ".coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml"
+      ],
+      "acceptance": [
+        "PKT-004-persona-drilldowns lovable-ui-task status 更新為 loop-complete",
+        "整合記錄已 commit"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-UI-REVIEW-004",
+      "title": "Integrate PKT-005-sse-substrate ui-done return, resolve SSE backend followup, and close loop",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "整合 PKT-005-sse-substrate ui-done 返回，解決後端 SSE 遺留問題，完成 loop 關閉",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-005-sse-substrate-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-005-sse-substrate-backend-delivery.yaml"
+      ],
+      "acceptance": [
+        "PKT-005-sse-substrate backend followup 解決",
+        "lovable-ui-task 更新為 loop-complete",
+        "整合記錄已 commit"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-BFF-001",
+      "title": "Investigate and resolve all 5 open BFF gap coordination requests",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "調查並解決 5 個仍開放的 BFF gap 請求（F-042、PKT-002×3、PKT-003）",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/requests/F-042-bff-gap.yaml",
+        ".coordination/requests/PKT-002-incident-action-drawer-bff-gap.yaml",
+        ".coordination/requests/PKT-002-incident-detail-bff-gap.yaml",
+        ".coordination/requests/PKT-002-incident-home-bff-gap.yaml",
+        ".coordination/requests/PKT-003-post-incident-review-bff-gap.yaml"
+      ],
+      "acceptance": [
+        "全部 5 個 bff-gap 請求的 status 更新為 resolved 或 closed-as-stale"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-013",
+      "title": "Execute PKT-004-capital-binding-drilldowns and PKT-004-deployment-approval-drilldowns through Lovable",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-004-capital-binding-drilldowns + PKT-004-deployment-approval-drilldowns 至 Lovable，完成整合",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-004-capital-binding-drilldowns-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-004-deployment-approval-drilldowns-lovable-ui-task.yaml"
+      ],
+      "acceptance": [
+        "兩個封包均達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-014",
+      "title": "Execute PKT-005-degradation-banner through Lovable and integrate",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-005-degradation-banner 至 Lovable 執行，完成整合 loop",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-005-degradation-banner-lovable-ui-task.yaml"
+      ],
+      "acceptance": [
+        "PKT-005-degradation-banner 達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-011",
+      "title": "Execute PKT-001-deployment-review and PKT-001-governance-review-queue through Lovable and integrate",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-001-deployment-review + PKT-001-governance-review-queue 至 Lovable 執行，完成整合 loop",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-001-deployment-review-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-001-governance-review-queue-lovable-ui-task.yaml"
+      ],
+      "acceptance": [
+        "PKT-001-deployment-review 和 PKT-001-governance-review-queue 均達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-012",
+      "title": "Execute PKT-002-incident-action-drawer and PKT-002-incident-home through Lovable and integrate",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-002-incident-action-drawer + PKT-002-incident-home 至 Lovable 執行，完成整合 loop",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-002-incident-action-drawer-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml"
+      ],
+      "acceptance": [
+        "PKT-002-incident-action-drawer 和 PKT-002-incident-home 均達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-015",
+      "title": "Execute F-042 Promotion Review UI through Lovable after BFF gap resolution and integrate",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "BFF gap 解決後觸發 F-042 至 Lovable 執行，完成 Promotion Review UI 整合 loop",
+      "depends_on": [
+        "BP6-BFF-001"
+      ],
+      "artifacts": [
+        ".coordination/responses/F-042-lovable-ui-task.yaml"
+      ],
+      "acceptance": [
+        "F-042 lovable-ui-task 達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-016",
+      "title": "Execute PKT-004-persona-management through Lovable after backend resolution and integrate",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "後端問題解決後觸發 PKT-004-persona-management 至 Lovable，完成整合",
+      "depends_on": [
+        "BP6-BFF-001"
+      ],
+      "artifacts": [
+        ".coordination/responses/PKT-004-persona-management-lovable-ui-task.yaml"
+      ],
+      "acceptance": [
+        "PKT-004-persona-management 達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-017",
+      "title": "Execute PKT-006-approval-queue through Lovable and integrate into the frontend",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-006-approval-queue 至 Lovable 執行，完成 Approval Queue 畫面整合 loop",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-006-approval-queue-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-006-approval-queue-contract-ready.yaml"
+      ],
+      "acceptance": [
+        "PKT-006-approval-queue 達到 loop-complete",
+        "前端 Approval Queue 畫面整合完成"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-018",
+      "title": "Execute PKT-007-deployment-diff through Lovable and integrate into the frontend",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-007-deployment-diff 至 Lovable 執行，完成 Deployment Diff 畫面整合 loop",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-007-deployment-diff-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-007-deployment-diff-contract-ready.yaml"
+      ],
+      "acceptance": [
+        "PKT-007-deployment-diff 達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-019",
+      "title": "Execute PKT-008-rollback-review through Lovable and integrate into the frontend",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-008-rollback-review 至 Lovable 執行，完成整合 loop",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-008-rollback-review-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-008-rollback-review-contract-ready.yaml"
+      ],
+      "acceptance": [
+        "PKT-008-rollback-review 達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-LUV-020",
+      "title": "Execute PKT-009-governance-audit-rail through Lovable and integrate into the frontend",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "觸發 PKT-009-governance-audit-rail 至 Lovable 執行，完成整合 loop",
+      "depends_on": [],
+      "artifacts": [
+        ".coordination/responses/PKT-009-governance-audit-rail-lovable-ui-task.yaml",
+        ".coordination/responses/PKT-009-governance-audit-rail-contract-ready.yaml"
+      ],
+      "acceptance": [
+        "PKT-009-governance-audit-rail 達到 loop-complete"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-SVC-FB-001",
+      "title": "Implement services/feedback/ preference events store and trajectory schema as TRL activation prerequisite",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "實作 services/feedback/ 基礎路徑：preference events 儲存、trajectory schema → .py 實作 + tests。是 TRL 激活的前置條件。",
+      "depends_on": [],
+      "artifacts": [
+        "services/feedback/"
+      ],
+      "acceptance": [
+        "services/feedback/ 有實作 .py 檔案",
+        "preference events 可寫入並讀回",
+        "smoke test 通過",
+        "至少 3 個單元測試"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-SVC-EVAL-001",
+      "title": "Implement services/evaluation/ core evaluator path with smoke test and unit coverage",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "實作 services/evaluation/ 核心路徑：evaluator contract 落成 .py 實作 + tests",
+      "depends_on": [],
+      "artifacts": [
+        "services/evaluation/"
+      ],
+      "acceptance": [
+        "services/evaluation/ 有核心 .py 實作",
+        "evaluator 可接收 artifact 並輸出評估結果",
+        "smoke test 通過"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-SVC-MEM-001",
+      "title": "Implement services/memory/ institutional memory store with smoke test and unit coverage",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "實作 services/memory/ 核心路徑：institutional_memory_entry schema 落成 .py 實作 + tests",
+      "depends_on": [],
+      "artifacts": [
+        "services/memory/"
+      ],
+      "acceptance": [
+        "services/memory/ 有核心 .py 實作",
+        "memory entry 可寫入並查詢",
+        "smoke test 通過"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-TEST-001",
+      "title": "Add unit test coverage for services/runtime-manager/ covering RuntimeBinding and command dispatch paths",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "為 services/runtime-manager/ 補充測試覆蓋（目前 0 個測試），覆蓋核心 RuntimeBinding 寫入和命令路徑",
+      "depends_on": [],
+      "artifacts": [
+        "services/runtime-manager/"
+      ],
+      "acceptance": [
+        "runtime-manager 有至少 5 個單元測試",
+        "覆蓋 RuntimeBinding 建立和命令分發",
+        "smoke test 通過"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-STATE-001",
+      "title": "Update ai-status.json sprint objective to full blueprint completion and rotate sprint name to BP6",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "更新 ai-status.json sprint 名稱和 objective 為 '把系統藍圖完整實現'，反映 BP5 已完成、BP6 開始",
+      "depends_on": [],
+      "artifacts": [
+        "ai-status.json",
+        "current-work.md"
+      ],
+      "acceptance": [
+        "ai-status.json sprint 和 objective 已更新並 commit"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-STATE-002",
+      "title": "Write the actual phase5 consensus packet content to replace the template placeholder",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "補寫 phase5 consensus-packet.md 實際接受內容，取代目前仍是模板佔位符的狀態",
+      "depends_on": [],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md"
+      ],
+      "acceptance": [
+        "consensus-packet.md 包含真實的接受架構摘要，不再是模板文字"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-STATE-003",
+      "title": "Reconcile phase5 planning artifacts to match the already-completed execution reality",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "更新 execution-materialization.md 和 planning-session.json 以反映 phase5 已執行完成的真實狀態",
+      "depends_on": [],
+      "artifacts": [
+        "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md",
+        "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json"
+      ],
+      "acceptance": [
+        "execution-materialization.md 更新為 done 狀態，planning-session.json 子欄位與已完成事實一致"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "BP6-STATE-004",
+      "title": "Complete GCP environment bootstrap operator follow-up: DB users and Secret Manager secret versions",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "phase": "Phase 6: Full Blueprint Completion",
+      "summary_zh": "執行 BP5-GCP-002 歸檔備注中的 operator follow-up：建立 DB users、secret versions，留下執行確認記錄",
+      "depends_on": [],
+      "artifacts": [
+        "docs/gcp-bootstrap-confirmation.md"
+      ],
+      "acceptance": [
+        "DB users 已建立",
+        "Secret Manager secret versions 已建立",
+        "執行記錄已 commit 到 repo"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-001",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "補齊 docker-compose 基礎設施：加入 PostgreSQL、MinIO artifact store、NATS message queue，並補充對應 volume、env、healthcheck，讓所有 control-plane 服務有可用的持久化底座。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"docker-compose.yml\"",
+        "\".env.example\"",
+        "\"scripts/bootstrap.sh\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose up 後 postgres/minio/nats healthcheck 全部 healthy\"",
+        "\"services/*/requirements.txt 中的 DB 依賴可以連線\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-002",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "將 capital、evolution、control-plane/bff、control-plane/persona、control-plane/router 加入 docker-compose.yml，補上 Dockerfile（若缺）、port mapping、depends_on、env 變數，讓這五個服務可被 compose 啟動。",
+      "depends_on": [
+        "DEPLOY-001"
+      ],
+      "artifacts": [
+        "[\"docker-compose.yml\"",
+        "\"services/capital/Dockerfile\"",
+        "\"services/evolution/Dockerfile\"",
+        "\"services/control-plane/bff/Dockerfile\"",
+        "\"services/control-plane/persona/Dockerfile\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose up 後 capital/evolution/control-plane bff/persona/router 全部 healthy\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-003",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "為目前只有 library 的五個服務建立最小可部署 HTTP server：evaluation、feedback、memory、registry（查詢 API）、optimizer-svc，每個服務補 main.py + Dockerfile + /__health__ endpoint，並加入 docker-compose.yml。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/evaluation/main.py\"",
+        "\"services/evaluation/Dockerfile\"",
+        "\"services/feedback/main.py\"",
+        "\"services/feedback/Dockerfile\"",
+        "\"services/memory/main.py\"",
+        "\"services/memory/Dockerfile\"",
+        "\"services/registry/main.py\"",
+        "\"services/registry/Dockerfile\"",
+        "\"services/optimizer-svc/main.py\"",
+        "\"services/optimizer-svc/Dockerfile\"",
+        "\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"五個服務各有 /__health__ 回傳 200\"",
+        "\"docker compose up 後全部 healthy\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-004",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "建立 lineage-read-svc 和 promotion-svc 兩個全新的最小 HTTP 服務：lineage read 提供 GET /api/v1/lineage 查詢路徑，promotion-svc 提供 ApprovalDecision / DeploymentPlan CRUD，各自補 main.py、Dockerfile、requirements.txt，並加入 docker-compose.yml。",
+      "depends_on": [
+        "DEPLOY-001"
+      ],
+      "artifacts": [
+        "[\"services/lineage-read/main.py\"",
+        "\"services/lineage-read/Dockerfile\"",
+        "\"services/promotion/main.py\"",
+        "\"services/promotion/Dockerfile\"",
+        "\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"lineage-read GET /api/v1/lineage 回傳有效 JSON\"",
+        "\"promotion POST /api/v1/approvals 可建立 ApprovalDecision\"",
+        "\"兩個服務 docker compose up 後 healthy\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-005",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "補齊整套單 VM 部署所需的操作腳本：.env.example（所有服務變數）、DB schema migration（Alembic 或 SQL），以及 bootstrap.sh（一鍵起服務 → 跑 migration → 驗健康）。",
+      "depends_on": [
+        "DEPLOY-001",
+        "DEPLOY-002",
+        "DEPLOY-003",
+        "DEPLOY-004"
+      ],
+      "artifacts": [
+        "[\".env.example\"",
+        "\"scripts/bootstrap.sh\"",
+        "\"scripts/db_migrate.sh\"",
+        "\"docs/deployment/single-vm-runbook.md\"]"
+      ],
+      "acceptance": [
+        "[\"bash scripts/bootstrap.sh 在全新環境可以一鍵完成\"",
+        "\"所有服務 migration 跑通無報錯\"",
+        "\".env.example 覆蓋所有服務所需變數\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-006",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "在單 VM 上執行端到端 smoke test，驗證完整鏈路：BFF → registry → governance → telemetry → incidents，以及至少一條 mock DeploymentPlan → RuntimeBinding 流程跑通。輸出 smoke test script 和通過紀錄。",
+      "depends_on": [
+        "DEPLOY-005"
+      ],
+      "artifacts": [
+        "[\"scripts/smoke_test_single_vm.sh\"",
+        "\"docs/deployment/single-vm-smoke-results.md\"]"
+      ],
+      "acceptance": [
+        "[\"所有核心服務 healthcheck 通過\"",
+        "\"BFF 能查詢 registry/governance/telemetry 主要路徑\"",
+        "\"mock DeploymentPlan 建立成功\"",
+        "\"smoke test script 可重複執行\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-007",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "建立 docker-compose.control.yml，包含 VM-1 Control Plane 所有服務：BFF、persona、registry、lineage、promotion、capital、evolution、optimizer、feedback、evaluation、memory、telemetry、incidents、postmortems、postgres、nats、minio，加上對應 env.example 和健康檢查。",
+      "depends_on": [
+        "DEPLOY-003",
+        "DEPLOY-004"
+      ],
+      "artifacts": [
+        "[\"docker-compose.control.yml\"",
+        "\"env/prod-control.env.example\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose -f docker-compose.control.yml up 後 VM-1 所有服務 healthy\"",
+        "\"runtime-manager 不在此 compose 檔中\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-008",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "建立 docker-compose.exec.yml，包含 VM-2 Execution Plane 所有服務：runtime-manager、pantheon-lean paper runtime、broker/exchange adapter sidecars，加上 VM-2 專用的 env.example 和 secrets 注入指南。",
+      "depends_on": [
+        "DEPLOY-007"
+      ],
+      "artifacts": [
+        "[\"docker-compose.exec.yml\"",
+        "\"env/prod-exec.env.example\"",
+        "\"docs/deployment/exec-vm-secrets-guide.md\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose -f docker-compose.exec.yml up 後 runtime-manager healthy\"",
+        "\"BFF/registry 等 control plane 服務不出現在此 compose\"",
+        "\"paper runtime 可以啟動\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "DEPLOY-009",
+      "title": "phase6-2026-04-16-oss-ecosystem-closure",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "在雙 VM 環境中驗收完整跨機鏈路：VM-1 發出 DeploymentPlan → VM-2 runtime-manager 接收並建立 RuntimeBinding → paper runtime 啟動 → telemetry 事件回流 VM-1。同時驗收 kill-switch 和 rollback 從 VM-1 發起、VM-2 執行的完整流程。",
+      "depends_on": [
+        "DEPLOY-007",
+        "DEPLOY-008"
+      ],
+      "artifacts": [
+        "[\"scripts/smoke_test_dual_vm.sh\"",
+        "\"docs/deployment/dual-vm-acceptance-results.md\"",
+        "\"docs/deployment/operator-failover-guide.md\"]"
+      ],
+      "acceptance": [
+        "[\"DeploymentPlan → RuntimeBinding 跨 VM 流程成功\"",
+        "\"paper runtime 啟動並能接收 mock 交易指令\"",
+        "\"kill-switch 從 VM-1 發起後 VM-2 runtime 正確停止\"",
+        "\"telemetry 事件從 VM-2 回流至 VM-1\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "SVC-CAP-001",
+      "title": "Add Dockerfile and compose entry for capital service",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "為 services/capital/ 建立 Dockerfile 和 docker-compose.yml entry：補齊 build context、PORT env、healthcheck，讓 capital 服務可被 compose 啟動。capital/main.py 已存在，只缺容器化包裝。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/capital/Dockerfile\"",
+        "\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose up capital 後 /__health__ 回傳 200\"",
+        "\"capital service 出現在 docker-compose.yml\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "SVC-EVO-001",
+      "title": "Add Dockerfile and compose entry for evolution service",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "為 services/evolution/ 建立 Dockerfile 和 docker-compose.yml entry：補齊 build context、PORT env、depends_on（runtime-manager/governance）、healthcheck，讓 evolution 服務可被 compose 啟動。evolution/main.py 已存在，只缺容器化包裝。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/evolution/Dockerfile\"",
+        "\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose up evolution 後 /__health__ 回傳 200\"",
+        "\"evolution service 出現在 docker-compose.yml\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "SVC-CP-PER-001",
+      "title": "Wire control-plane/persona into docker-compose",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "將 control-plane/persona 加入 docker-compose.yml：補 compose entry（build context=services/control-plane/persona/Dockerfile 已存在）、PORT env、depends_on（operator-bff/registry）、healthcheck。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose up persona 後 healthcheck 通過\"",
+        "\"persona service 出現在 docker-compose.yml\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "SVC-CP-RTR-001",
+      "title": "Wire control-plane/router into docker-compose",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "將 control-plane/router 加入 docker-compose.yml：補 compose entry（Dockerfile 已存在）、PORT env、depends_on（operator-bff/governance）、healthcheck。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose up router 後 healthcheck 通過\"",
+        "\"router service 出現在 docker-compose.yml\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "SVC-LIN-001",
+      "title": "Create lineage-read-svc HTTP service from scratch",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "從頭建立 services/lineage-read/ 最小可部署服務：實作 GET /api/v1/lineage（依 artifact_id/run_id/strategy_id 查詢 lineage 鏈路）、GET /api/v1/lineage/{id}、POST /api/v1/lineage（寫入）、/__health__，補 main.py、Dockerfile、requirements.txt，加入 docker-compose.yml。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/lineage-read/main.py\"",
+        "\"services/lineage-read/Dockerfile\"",
+        "\"services/lineage-read/requirements.txt\"",
+        "\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"GET /api/v1/lineage 回傳有效 JSON list\"",
+        "\"POST /api/v1/lineage 可寫入一筆 lineage record\"",
+        "\"/__health__ 回傳 200\"",
+        "\"docker compose up 後 healthy\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "SVC-PRO-001",
+      "title": "Create promotion-svc HTTP service from scratch",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "從頭建立 services/promotion/ 最小可部署服務：實作 POST /api/v1/approvals（建立 ApprovalDecision）、GET /api/v1/approvals、POST /api/v1/deployments（建立 DeploymentPlan）、GET /api/v1/deployments、/__health__，補 main.py、Dockerfile，加入 docker-compose.yml。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/promotion/main.py\"",
+        "\"services/promotion/Dockerfile\"",
+        "\"services/promotion/requirements.txt\"",
+        "\"docker-compose.yml\"]"
+      ],
+      "acceptance": [
+        "[\"POST /api/v1/approvals 建立 ApprovalDecision 成功\"",
+        "\"POST /api/v1/deployments 建立 DeploymentPlan 成功\"",
+        "\"/__health__ 回傳 200\"",
+        "\"docker compose up 後 healthy\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "INFRA-PG-001",
+      "title": "Add PostgreSQL to docker-compose as system-wide persistent store",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "將 PostgreSQL 加入 docker-compose.yml：加 postgres:16-alpine service、volume、初始化 SQL（建立 pantheon_app user / pantheon DB），補 DATABASE_URL env 到所有依賴服務，更新 .env.example。這是整套系統最關鍵的缺失基礎設施。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"docker-compose.yml\"",
+        "\".env.example\"",
+        "\"scripts/init-db.sql\"]"
+      ],
+      "acceptance": [
+        "[\"docker compose up postgres 後 healthcheck 通過\"",
+        "\"所有有 DATABASE_URL 的服務可連上 postgres\"",
+        "\"init-db.sql 建立 pantheon DB 和 user 成功\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-IMPL-001",
+      "title": "Implement statsmodels governed adapter with smoke test",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "實作 statsmodels governed adapter：在 services/research/statsmodels/ 建立 GovernedStatsmodelsAdapter（cointegration / VAR-VECM / Markov-switching 三條路徑）、StubBackend、governed output shape（registry-ready artifact）、smoke test、unit tests。OSS_INTEGRATION_CHECKLIST 中 statsmodels 從 version-pinned 推進到 smoke-tested。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/research/statsmodels/adapter/statsmodels_adapter.py\"",
+        "\"services/research/statsmodels/smoke_test.py\"",
+        "\"services/research/statsmodels/test_adapter.py\"",
+        "\"OSS_INTEGRATION_CHECKLIST.md\"]"
+      ],
+      "acceptance": [
+        "[\"unit tests 全部通過\"",
+        "\"smoke test 產生 registry-ready artifact（artifact_state=draft）\"",
+        "\"OSS checklist statsmodels 狀態更新為 smoke-tested\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-IMPL-002",
+      "title": "Implement QuantLib governed adapter with smoke test",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "實作 QuantLib governed adapter：在 services/research/quantlib/ 建立 GovernedQuantLibAdapter（derivatives pricing / options analytics 路徑）、StubBackend、governed output shape、smoke test、unit tests。OSS_INTEGRATION_CHECKLIST 中 QuantLib 從 version-pinned 推進到 smoke-tested。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/research/quantlib/adapter/quantlib_adapter.py\"",
+        "\"services/research/quantlib/smoke_test.py\"",
+        "\"services/research/quantlib/test_adapter.py\"",
+        "\"OSS_INTEGRATION_CHECKLIST.md\"]"
+      ],
+      "acceptance": [
+        "[\"unit tests 全部通過\"",
+        "\"smoke test 產生 registry-ready artifact（artifact_state=draft）\"",
+        "\"OSS checklist QuantLib 狀態更新為 smoke-tested\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-IMPL-003",
+      "title": "Implement vectorbt governed adapter with smoke test",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: Deployment",
+      "summary_zh": "實作 vectorbt governed adapter：在 services/research/vectorbt/ 建立 GovernedVectorbtAdapter（backtesting / portfolio analytics 路徑）、StubBackend、governed output shape、smoke test、unit tests。OSS_INTEGRATION_CHECKLIST 中 vectorbt 從 not-started 推進到 smoke-tested。",
+      "depends_on": [],
+      "artifacts": [
+        "[\"services/research/vectorbt/adapter/vectorbt_adapter.py\"",
+        "\"services/research/vectorbt/smoke_test.py\"",
+        "\"services/research/vectorbt/test_adapter.py\"",
+        "\"OSS_INTEGRATION_CHECKLIST.md\"]"
+      ],
+      "acceptance": [
+        "[\"unit tests 全部通過\"",
+        "\"smoke test 產生 registry-ready artifact（artifact_state=draft）\"",
+        "\"OSS checklist vectorbt 狀態更新為 smoke-tested\"]"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+      }
+    }
+  ],
+  "recent_events": [
+    {
+      "ts": "2026-04-17T02:20:30Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-LUV-018: Execute PKT-007-deployment-diff through Lovable and integrate into the frontend",
+      "task_id": "BP6-LUV-018",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:31Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-LUV-019: Execute PKT-008-rollback-review through Lovable and integrate into the frontend",
+      "task_id": "BP6-LUV-019",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:31Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-LUV-020: Execute PKT-009-governance-audit-rail through Lovable and integrate into the frontend",
+      "task_id": "BP6-LUV-020",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:31Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-SVC-FB-001: Implement services/feedback/ preference events store and trajectory schema as TRL activation prerequisite",
+      "task_id": "BP6-SVC-FB-001",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T02:20:31Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-SVC-EVAL-001: Implement services/evaluation/ core evaluator path with smoke test and unit coverage",
+      "task_id": "BP6-SVC-EVAL-001",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T02:20:31Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-SVC-MEM-001: Implement services/memory/ institutional memory store with smoke test and unit coverage",
+      "task_id": "BP6-SVC-MEM-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:32Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-TEST-001: Add unit test coverage for services/runtime-manager/ covering RuntimeBinding and command dispatch paths",
+      "task_id": "BP6-TEST-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:46Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-STATE-001: Update ai-status.json sprint objective to full blueprint completion and rotate sprint name to BP6",
+      "task_id": "BP6-STATE-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:47Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-STATE-002: Write the actual phase5 consensus packet content to replace the template placeholder",
+      "task_id": "BP6-STATE-002",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:47Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-STATE-003: Reconcile phase5 planning artifacts to match the already-completed execution reality",
+      "task_id": "BP6-STATE-003",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:47Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice BP6-STATE-004: Complete GCP environment bootstrap operator follow-up: DB users and Secret Manager secret versions",
+      "task_id": "BP6-STATE-004",
+      "owner": "Gemini",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T02:20:54Z",
+      "agent": "Codex",
+      "type": "consensus_status_updated",
+      "message": "Product owner confirmed BP6 sprint scope on 2026-04-17. All 31 tasks approved: Wave 1-6 covering UI closure, BFF gaps, Lovable 2nd wave, new packets PKT-006~009, empty service implementations, OSS activation, and state cleanup.",
+      "status": "accepted"
+    },
+    {
+      "ts": "2026-04-17T02:20:54Z",
+      "agent": "Codex",
+      "type": "consensus_accepted",
+      "message": "Human gate approved by product owner 2026-04-17: PKT-006~009 included, evaluation/memory/feedback services included, RL deferred pending Qlib 3-month history, sprint objective set to full blueprint completion.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-17T02:21:02Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 31 new tasks and refreshed 0 existing tasks in ai-status.json.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-17T13:26:27Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-001: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-001",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T13:26:38Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 1 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 31 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-17T13:26:39Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-002: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-002",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T13:26:39Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-003: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-003",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T13:26:52Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-004: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-004",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T13:26:52Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-005: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-005",
+      "owner": "Gemini",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T13:27:06Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-006: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-006",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T13:27:06Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-007: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-007",
+      "owner": "Codex",
+      "reviewer": "Gemini"
+    },
+    {
+      "ts": "2026-04-17T13:27:22Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 6 new tasks and refreshed 1 existing tasks in ai-status.json. Skipped 31 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-17T13:27:22Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-008: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-008",
+      "owner": "Gemini",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T13:27:23Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice DEPLOY-009: phase6-2026-04-16-oss-ecosystem-closure",
+      "task_id": "DEPLOY-009",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T13:28:31Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 2 new tasks and refreshed 7 existing tasks in ai-status.json. Skipped 31 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-17T15:04:18Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice SVC-CAP-001: Add Dockerfile and compose entry for capital service",
+      "task_id": "SVC-CAP-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T15:04:19Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice SVC-EVO-001: Add Dockerfile and compose entry for evolution service",
+      "task_id": "SVC-EVO-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T15:04:19Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice SVC-CP-PER-001: Wire control-plane/persona into docker-compose",
+      "task_id": "SVC-CP-PER-001",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T15:04:19Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice SVC-CP-RTR-001: Wire control-plane/router into docker-compose",
+      "task_id": "SVC-CP-RTR-001",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T15:04:31Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 4 new tasks and refreshed 9 existing tasks in ai-status.json. Skipped 31 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-17T15:04:31Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice SVC-LIN-001: Create lineage-read-svc HTTP service from scratch",
+      "task_id": "SVC-LIN-001",
+      "owner": "Gemini",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T15:04:31Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice SVC-PRO-001: Create promotion-svc HTTP service from scratch",
+      "task_id": "SVC-PRO-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T15:04:53Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice INFRA-PG-001: Add PostgreSQL to docker-compose as system-wide persistent store",
+      "task_id": "INFRA-PG-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T15:04:54Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice OSS-IMPL-001: Implement statsmodels governed adapter with smoke test",
+      "task_id": "OSS-IMPL-001",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    {
+      "ts": "2026-04-17T15:04:54Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice OSS-IMPL-002: Implement QuantLib governed adapter with smoke test",
+      "task_id": "OSS-IMPL-002",
+      "owner": "Gemini",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T15:04:55Z",
+      "agent": "Codex",
+      "type": "execution_slice_proposed",
+      "message": "Proposed execution slice OSS-IMPL-003: Implement vectorbt governed adapter with smoke test",
+      "task_id": "OSS-IMPL-003",
+      "owner": "Claude",
+      "reviewer": "Codex"
+    },
+    {
+      "ts": "2026-04-17T15:05:08Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 6 new tasks and refreshed 13 existing tasks in ai-status.json. Skipped 31 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-17T15:05:26Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 19 existing tasks in ai-status.json. Skipped 31 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-18T14:20:45Z",
+      "agent": "Codex",
+      "type": "document_reconciliation_updated",
+      "message": "Canonical EP4/EP5 semantics are already published; planning can proceed without a blueprint patch.",
+      "status": "not_needed"
+    }
+  ],
+  "updated_at": "2026-04-18T14:20:45Z",
+  "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+  "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+  "materialization_contract": {
+    "type": "discussion_planning",
+    "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+    "phase": "phase6",
+    "profile": "generic",
+    "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+    "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+    "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+    "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md",
+    "source_plane": "planning",
+    "planning_mode": "discussion_planning",
+    "document_reconciliation_status": "not_needed",
+    "runtime_mode": "supervisor_managed_execution",
+    "consensus_status": "accepted",
+    "human_gate_status": "approved",
+    "proposed_execution_tasks": 50
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8006/api/deployment/plans",
+  "headers": {},
+  "body": {
+    "plan_id": "plan-ep4-1195b41a",
+    "approval_decision_id": "apv-ep4-ceea5ce1",
+    "registry_entry": {
+      "registry_id": "reg-ep4-0afb20b6",
+      "artifact_type": "model_artifact",
+      "strategy_id": "strategy-paper",
+      "version": "1.2.0",
+      "artifact_state": "approved",
+      "checksum": "sha256:ep4-eccfc706",
+      "approved_at": "2026-04-19T00:37:20Z",
+      "lineage": {
+        "source_run_ids": [
+          "ep4-run-eccfc706"
+        ]
+      },
+      "deployment_summary": {
+        "current_stage": "none"
+      }
+    },
+    "approval_decision": {
+      "decision_id": "apv-ep4-ceea5ce1",
+      "target_type": "registry_entry",
+      "target_id": "reg-ep4-0afb20b6",
+      "target_version": "1.2.0",
+      "decision": "approved",
+      "decision_state": "decided",
+      "actor_role": "governance_reviewer",
+      "actor_id": "ep4-governance-reviewer",
+      "rationale": "EP4 governed paper acceptance run",
+      "created_at": "2026-04-19T00:37:20Z",
+      "decided_at": "2026-04-19T00:37:20Z",
+      "conditions": [],
+      "risk_level": "low",
+      "evidence_refs": [],
+      "superseded_by": null,
+      "expires_at": null,
+      "capital_pool_id": "pool-ep4-92a5eb2c",
+      "persona_id": "persona-paper-ops",
+      "metadata": null
+    },
+    "capital_pool_id": "pool-ep4-92a5eb2c",
+    "sponsor_persona_id": "persona-paper-ops",
+    "target_stage": "paper",
+    "created_by": "oss-004c-ep4-harness",
+    "rollback": {
+      "target_artifact_id": "reg-ep4-fallback-bf855197",
+      "target_version": "1.1.9",
+      "action_type": "pause_then_replace",
+      "reason": "EP4 governed rollback drill fallback"
+    },
+    "metadata": {
+      "source_task_id": "OSS-004C",
+      "acceptance_mode": "ep4_governed_paper"
+    },
+    "authority_refs": {
+      "write_owner": "runtime-manager",
+      "authority_source": "runtime_binding",
+      "runtime_role": "pantheon-paper-execution-runtime",
+      "runtime_mode": "paper",
+      "workspace_ref": "workspace-paper",
+      "auth_profile_ref": "auth-profile-paper",
+      "persona_id": "persona-paper-ops",
+      "session_id": "session-ep4-bd485b0c",
+      "trace_id": "85e7663f-10fc-4254-a118-20112abe5322",
+      "request_id": "req-ep4-b7702a29"
+    }
+  }
+}

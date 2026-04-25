@@ -5,6 +5,7 @@ Last updated: 2026-04-22
 Source of truth inputs:
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
 - `docs/reviews/Pantheon_Response_to_System_Design_Followup_Questions.md`
+- `docs/reviews/Pantheon_Response_to_Architecture_Blockers_Decision_Package.md`
 Tier: L1 Platform Architecture & Policy
 Scope: UI-facing lineage read ownership and migration boundary
 Conflict rule: this decision governs operator-facing lineage read ownership until superseded by a newer explicit lineage decision

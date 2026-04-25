@@ -2,65 +2,91 @@ feature_id: TW-01-teaching-dialog
 type: ui-done
 source_repo: ajoe734/front-ai-trading-system
 source_branch: pkt-004-detail-fix
-source_commit: 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f
+source_commit: 4d19e0f31104e87294e267e1e6e1bc36065bf961
+source_commit_note: >-
+  UI implementation is present in the current workspace on top of this branch
+  head; no new git commit was created in this task.
 screen: teaching-dialog
 blocking: false
-status: live
-pantheon_disposition: accepted
-acknowledged_at: "2026-04-20T14:16:31Z"
+status: acknowledged
+pantheon_disposition: blocked
+acknowledged_at: "2026-04-20T14:43:42Z"
 acknowledged_by: Codex
-rebaselined_at: "2026-04-20T14:32:47Z"
-rebaselined_by: Claude
 review_file: .coordination/reviews/TW-01-teaching-dialog-review.md
 resolution_summary: >-
-  Pantheon confirmed all four TW-01 routes live and returning the published
-  field shape in the current BFF workspace (bff_route_live_at:
-  2026-04-20T14:14:33Z). The front implementation in
-  9d0478269bb43780bc4d6f2ca16e4b9230b0de8f contains the trainer-session
-  composer, session list, session detail, and coaching message composer aligned
-  to the published contract: create via POST /api/v1/trainer/sessions,
-  list via GET /api/v1/trainer/sessions, detail via
-  GET /api/v1/trainer/sessions/{session_id}, message via
-  POST /api/v1/trainer/sessions/{session_id}/message. context_refs[] optional
-  field is supported in the composer. Transcript renders from backend events[]
-  ordered by sequence_number. Message composer gated by
-  allowedActions.canSendMessage exclusively. PKT-005 degradation banners wired
-  for stale/degraded/unavailable. No optimistic transcript mutation. No persona
-  teaching-history fallback. The BFF_PENDING gate should be removed in the next
-  front deployment cycle now that routes are confirmed live.
+  Pantheon re-reviewed the returned TW-01 working-tree implementation against
+  the published contract, example payload, current sibling front changes, and
+  the current Pantheon BFF app plus the active operator-bff runtime. The UI is
+  now contract-aligned in the current workspace: the pending-BFF placeholder is
+  removed, the list and detail screens use the live TW-01 route family only,
+  the create flow preserves optional context_refs[], transcript rows render
+  from backend TeachingEvent objects only, degraded and unavailable behavior
+  matches the local BFF response shape, and `links.workbench_detail` currently
+  resolves to the mounted `/trainer/sessions/:session_id` owner route in the
+  reviewed front router. The loop still cannot close because the active runtime
+  at http://127.0.0.1:18001 does not expose the TW-01 route family over live
+  HTTP, and the advertised source commit `4d19e0f31104e87294e267e1e6e1bc36065bf961`
+  is local-only: after `git fetch origin --prune`, no remote branch contains
+  that SHA, so the returned request pair is not yet replayable from
+  GitHub-visible history.
 
-summary: >-
-  TW-01 Teaching Dialog UI implemented and aligned to the live Pantheon BFF
-  contract. Routes /trainer/sessions and /trainer/sessions/:session_id
-  registered. All four BFF endpoints wired via tw01Api in bffClient.ts.
-  Session composer includes optional context_refs[]. Feedback bundle committed
-  at docs/pantheon-feedback/TW-01-teaching-dialog/. BFF_PENDING gate ready
-  for removal now that all TW-01 routes are confirmed live.
+summary: |
+  Teaching Dialog is implemented against the live TW-01 Pantheon route family:
+  POST /api/v1/trainer/sessions, GET /api/v1/trainer/sessions,
+  GET /api/v1/trainer/sessions/{session_id}, and
+  POST /api/v1/trainer/sessions/{session_id}/message. The pending-BFF
+  placeholder is removed, the list and detail screens render backend-owned
+  trainer-session fields only, pagination uses backend page_token/page_size,
+  session creation preserves optional context_refs[], transcript rows come
+  only from TeachingEvent objects, and message authority is gated only by
+  allowedActions.canSendMessage.
 
 changed_files:
-  - src/pages/trainer/TeachingDialogList.tsx
-  - src/pages/trainer/TeachingDialogDetail.tsx
-  - src/pages/trainer/types.ts
-  - src/lib/bffClient.ts
-  - src/App.tsx
-
-follow_up_requested:
-  - Remove BFF_PENDING = true from TeachingDialogList.tsx and TeachingDialogDetail.tsx now that Pantheon has confirmed all four TW-01 routes live
-  - Run full integration QA against live BFF routes after BFF_PENDING gate is removed
-  - Emit a bff-gap handoff if any required fields are absent from live responses
-
-coordination_updates:
-  backend_delivery: .coordination/responses/TW-01-teaching-dialog-backend-delivery.yaml
-  contract_ready: .coordination/responses/TW-01-teaching-dialog-contract-ready.yaml
-  frontend_feedback: .coordination/requests/TW-01-teaching-dialog-frontend-feedback.yaml
-
-feedback_bundle:
+  - .coordination/requests/TW-01-teaching-dialog-ui-done.yaml
+  - .coordination/requests/TW-01-teaching-dialog-frontend-feedback.yaml
   - docs/pantheon-feedback/TW-01-teaching-dialog/LOVABLE_CHANGE_FEEDBACK.md
   - docs/pantheon-feedback/TW-01-teaching-dialog/API_GAP_REQUESTS.json
   - docs/pantheon-feedback/TW-01-teaching-dialog/UI_DECISIONS.md
   - docs/pantheon-feedback/TW-01-teaching-dialog/QA_STATUS.md
+  - src/pages/trainer/TeachingDialogList.tsx
+  - src/pages/trainer/TeachingDialogDetail.tsx
+  - src/pages/trainer/types.ts
+  - src/lib/bffClient.ts
+
+routes:
+  - /trainer/sessions
+  - /trainer/sessions/:session_id
+
+bff_routes_used:
+  - POST /api/v1/trainer/sessions
+  - GET /api/v1/trainer/sessions
+  - GET /api/v1/trainer/sessions/{session_id}
+  - POST /api/v1/trainer/sessions/{session_id}/message
+
+acceptance_evidence:
+  - python3 -m pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py -q -> 5 passed
+  - local FastAPI TestClient returned 200 degraded payloads for live list and detail
+  - honest unavailable list probe returned 200 with trainer_dialog=unavailable
+  - active operator-bff runtime at http://127.0.0.1:18001 returns 404 for GET /api/v1/trainer/sessions?persona_id=persona-alpha and exposes no /api/v1/trainer/* paths in /openapi.json
+  - npm run build passed in ../front-ai-trading-system
+  - targeted eslint passed for the TW-01 front files
+
+follow_up_requested:
+  - review the teaching-dialog screen against the latest Pantheon contract and example payload
+  - validate degraded and unavailable behavior against a live TW-01 response
+  - confirm links.workbench_detail resolves to the intended trainer detail route in the deployed environment
 
 acceptance:
-  - supervisor detects the completed UI handoff automatically
-  - the next Pantheon-owned step is dispatched without a manual nudge
-  - follow-up state is written back through GitHub-visible coordination artifacts
+  - pending-BFF gating is removed and the live TW-01 route family is active
+  - session creation sends the published create shape with session_type = trainer and optional context_refs[]
+  - list pagination uses backend-owned page_token/page_size parameters
+  - detail rendering uses backend-owned session_summary and TeachingEvent rows only
+  - message composer visibility is gated only by allowedActions.canSendMessage
+  - runtime contract gaps surface as a TW-01 bff-gap instruction instead of local fallback state
+  - npm run build passes
+
+coordination_updates:
+  contract_ready: .coordination/responses/TW-01-teaching-dialog-contract-ready.yaml
+  backend_delivery: .coordination/responses/TW-01-teaching-dialog-backend-delivery.yaml
+  frontend_feedback_response: .coordination/responses/TW-01-teaching-dialog-frontend-feedback.yaml
+  needs_runtime: .coordination/requests/TW-01-teaching-dialog-needs-runtime.yaml

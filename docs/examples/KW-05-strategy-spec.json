@@ -31,9 +31,7 @@
         "as_of": "2026-04-19T21:00:00Z"
       },
       "surfaces": {
-        "strategy_spec_list": {
-          "state": "ok"
-        }
+        "strategy_spec_list": "ok"
       }
     }
   },
@@ -125,15 +123,9 @@
         "as_of": "2026-04-19T21:00:00Z"
       },
       "surfaces": {
-        "strategy_spec_detail": {
-          "state": "ok"
-        },
-        "citation_bundle": {
-          "state": "ok"
-        },
-        "version_ancestry": {
-          "state": "ok"
-        }
+        "strategy_spec_detail": "ok",
+        "citation_bundle": "ok",
+        "version_ancestry": "ok"
       }
     }
   },
@@ -163,9 +155,7 @@
         "as_of": "2026-04-19T21:05:00Z"
       },
       "surfaces": {
-        "strategy_spec_compare": {
-          "state": "ok"
-        }
+        "strategy_spec_compare": "ok"
       }
     }
   }

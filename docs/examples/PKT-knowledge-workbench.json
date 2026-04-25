@@ -3,18 +3,18 @@
   "label": "Knowledge Workbench",
   "route_href": "/knowledge",
   "overall_status": "overview_ready",
-  "headline": "Overview route is live; knowledge delivery remains module-gated",
-  "summary": "This overview is a truthful landing surface for the Knowledge Workbench. KW-01 is route-live, KW-02 to KW-04 have published downstream contracts, and KW-05 is now contract-ready instead of architecture-blocked.",
+  "headline": "KW-01 to KW-05 are route-live",
+  "summary": "This overview is a truthful landing surface for the Knowledge Workbench. All five Knowledge Workbench modules are route-live in the current BFF.",
   "packet_family": {
     "family_id": "KW-006",
     "path": "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
-    "lovable_readiness": "partial",
-    "note": "KW-01 is ready, downstream Knowledge modules all have published contracts, and KW-05 now joins the implementation lane as contract-ready."
+    "lovable_readiness": "overview_ready",
+    "note": "KW-01 to KW-05 are route-live in the current BFF. KW-02 to KW-05 now carry published frontend handoff packets; remaining work is front-owned UI activation plus KW-01 hardening follow-up."
   },
   "module_counts": {
     "total": 5,
-    "ready": 1,
-    "not_ready": 4
+    "ready": 5,
+    "not_ready": 0
   },
   "modules": [
     {
@@ -22,25 +22,19 @@
       "label": "Institutional Memory",
       "status": "ready",
       "wave_order": 1,
-      "summary": "Browse/list/detail projection published. Identity, lifecycle state machine, filter rail, and degradation semantics are all locked via docs/bff/KW-01-institutional-memory.md.",
+      "summary": "List and detail routes are live. Browse projection, lifecycle state machine, and identity contract published via KW-01-FOUNDATION-001.",
       "missing_contracts": [],
-      "module_href": "/knowledge/memory",
-      "bff_contract": "docs/bff/KW-01-institutional-memory.md",
-      "example_payloads": [
-        "docs/examples/KW-01-institutional-memory-list.json",
-        "docs/examples/KW-01-institutional-memory.json"
-      ],
-      "next_gate": "KW-02 note ownership and attachment contract must be published before Research Notes UI can open.",
+      "next_gate": "BFF routes are implemented; Lovable may proceed with production UI using example payloads.",
       "upstream_dependencies": []
     },
     {
       "module_id": "KW-02",
       "label": "Research Notes",
-      "status": "contract_ready",
+      "status": "ready",
       "wave_order": 2,
-      "summary": "Research Notes contract is published and ratified. Remaining work is BFF implementation of the note create/list/detail route family.",
+      "summary": "Research Notes create/list/detail routes are live. Ownership, attachment taxonomy, and referential integrity rules are implemented in the current BFF.",
       "missing_contracts": [],
-      "next_gate": "Implement the published KW-02 routes and attachment taxonomy in the BFF before opening the production UI.",
+      "next_gate": "Activate the Lovable UI task against the live KW-02 routes.",
       "upstream_dependencies": [
         "KW-01"
       ]
@@ -48,11 +42,11 @@
     {
       "module_id": "KW-03",
       "label": "Evidence Refs",
-      "status": "contract_ready",
+      "status": "ready",
       "wave_order": 3,
-      "summary": "Evidence Refs contract is published and ratified. Remaining work is BFF implementation of the evidence browse/detail routes and resolved-link projection.",
+      "summary": "Evidence Refs list/detail routes are live. Link taxonomy, credibility metadata, and resolved-link projection are implemented in the current BFF.",
       "missing_contracts": [],
-      "next_gate": "Implement the published KW-03 evidence routes so downstream insight and citation surfaces can rely on live resolved links.",
+      "next_gate": "Activate the Lovable UI task against the live KW-03 routes and preserve backend-owned resolved-link semantics.",
       "upstream_dependencies": [
         "KW-01",
         "KW-02"
@@ -61,11 +55,11 @@
     {
       "module_id": "KW-04",
       "label": "Insight Cards",
-      "status": "contract_ready",
+      "status": "ready",
       "wave_order": 4,
-      "summary": "Insight Cards contract is published and ratified. Remaining work is BFF implementation of aggregation/detail routes using the published filter taxonomy.",
+      "summary": "Insight Cards list/detail routes are live. Aggregation/detail projection and backend-owned filter taxonomy are implemented in the current BFF.",
       "missing_contracts": [],
-      "next_gate": "Implement the published KW-04 aggregation and detail routes after KW-02 and KW-03 are live upstream inputs.",
+      "next_gate": "Activate the Lovable UI task against the live KW-04 routes without client-side filter synthesis; the frontend handoff bundle is published.",
       "upstream_dependencies": [
         "KW-01",
         "KW-03"
@@ -74,11 +68,17 @@
     {
       "module_id": "KW-05",
       "label": "Strategy Spec",
-      "status": "contract_ready",
+      "status": "ready",
       "wave_order": 5,
-      "summary": "Strategy Spec contract is now published and ratified. Remaining work is BFF implementation of the browse/detail/history/compare route family against the versioned spec model.",
+      "summary": "Strategy Spec browse/detail/version-history/compare routes are live. Version identity, ancestry, lifecycle, and compare semantics are implemented per the ratified contract.",
       "missing_contracts": [],
-      "next_gate": "Implement the published KW-05 routes against the ratified version identity, lifecycle, ancestry, and compare semantics.",
+      "live_routes": [
+        "GET /api/v1/knowledge/strategy-specs",
+        "GET /api/v1/knowledge/strategy-specs/{strategy_id}",
+        "GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+        "GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare"
+      ],
+      "next_gate": "Activate the Lovable UI task against the live KW-05 routes using backend-owned version identity, ancestry, and compare semantics.",
       "upstream_dependencies": [
         "KW-01",
         "KW-03"
@@ -86,13 +86,6 @@
     }
   ],
   "support_refs": [
-    {
-      "ref_id": "kw-01-bff-contract",
-      "label": "KW-01 Institutional Memory BFF Contract",
-      "ref_type": "document",
-      "value": "docs/bff/KW-01-institutional-memory.md",
-      "note": "Canonical list/detail routes, lifecycle state machine, filter rail, degradation semantics, and identity contract for the Institutional Memory browse module."
-    },
     {
       "ref_id": "memory-design-note",
       "label": "Memory Layer Design Note",
@@ -123,12 +116,12 @@
     }
   ],
   "next_steps": [
-    "KW-01 Institutional Memory is ready — Lovable may open the browse/detail UI task against docs/bff/KW-01-institutional-memory.md.",
-    "Implement KW-02 Research Notes routes and attachment taxonomy in the BFF.",
-    "Implement KW-03 Evidence Refs and KW-04 Insight Cards on top of the published contracts.",
-    "Implement the published KW-05 Strategy Spec routes against the ratified version model before opening the production UI.",
+    "Activate the Lovable UI task against the live KW-02 Research Notes routes.",
+    "Activate the Lovable UI task against the live KW-03 Evidence Refs routes.",
+    "Activate the Lovable UI task against the live KW-04 Insight Cards routes; the frontend handoff bundle is already published.",
+    "Activate the Lovable UI task against the live KW-05 Strategy Spec routes using backend-owned version identity, ancestry, and compare semantics.",
     "Keep the Knowledge Workbench payload-owned; do not synthesize registry joins from raw schemas in the browser.",
-    "Use this overview to track which module is next, not to imply that Insight Cards or Strategy Spec browse already exist."
+    "Use this overview to track the remaining workbench order without downgrading live routes back to pending-BFF text."
   ],
   "meta": {
     "snapshot_at": "2026-04-22T00:00:00Z",

@@ -8,6 +8,45 @@
 
 Codex
 
+## Delivery Addendum
+
+Re-checked on 2026-04-18 after the Pantheon BFF follow-up landed.
+
+- `GET /api/v1/operator/governance/approval-queue` is now registered in
+  `services/control-plane/bff/main.py`.
+- `ApproveDecision`, `RejectDecision`, `RequestApprovalRevision`, and
+  `ApprovalDecision` are now admitted on the operator command surface in
+  `services/control-plane/bff/models.py`.
+- `python3 -m pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_command_executor.py`
+  passes in the current workspace.
+- Pantheon delivery state is recorded in
+  `.coordination/responses/PKT-006-approval-queue-backend-delivery.yaml` and
+  `docs/pantheon-delivery/PKT-006-approval-queue/DELIVERY_NOTE.md`.
+
+Pantheon-side disposition is now delivered; no additional Pantheon BFF follow-up
+is required for the current PKT-006 packet scope.
+
+## Blocked Snapshot (Historical)
+
+Re-checked on 2026-04-17 after task reassignment, before the Pantheon BFF
+follow-up landed, to confirm the then-current blocked state.
+
+- Pantheon BFF still does not expose `GET /api/v1/operator/governance/approval-queue`;
+  `services/control-plane/bff/main.py` still has no route registration for that
+  path.
+- Pantheon BFF models still do not admit `ApproveDecision`,
+  `RejectDecision`, `RequestApprovalRevision`, or `ApprovalDecision` on the
+  operator command surface.
+- Front canonical request payloads still advertise
+  `source_commit: 0942961a7e31bdfa5adddddf2d31d72b41b141a9`, while the payloads
+  at that exact front commit still contain `source_commit: pending`; current
+  front `HEAD` remains `7309a518f3e64bf40bb4a33a371b8cc152655a7c`.
+- The sibling front implementation still renders the zero-CTA state as normal
+  read-only UI, so the `pending` + no-approve/no-reject guardrail remains open.
+
+This 2026-04-17 snapshot is preserved for audit history only; it has been
+superseded by the 2026-04-18 delivery addendum above.
+
 ## Findings
 
 ### 1. Pantheon does not currently serve the published `GET /api/v1/operator/governance/approval-queue` route
@@ -183,3 +222,23 @@ republish on the unchanged contract.
   PKT-006 route.
 - The current review did not exercise a live degraded approval-queue payload
   against a running Pantheon deployment.
+
+## 2026-04-19 Closeout Addendum
+
+The PKT-006 packet has now been republished from a replay-clean front bundle
+and re-checked against Pantheon's current approval-queue contract.
+
+- The front repo now publishes the canonical request pair at
+  `c9c1e20726bfc1d35f3ddcbb4f7552859f1d8f5d`.
+- Both request payloads now point `source_commit` at
+  `77ab876e05dbb206f4fd4abc39051df86f6127c2`, which contains the approval
+  queue UI, feedback bundle, and current navigation wiring.
+- Pantheon's approval-queue route and command support were re-verified via
+  `python3 -m pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py -q`
+  with `2 passed`.
+
+## Final Decision
+
+**APPROVED.**
+
+Residual live-browser QA remains non-blocking.

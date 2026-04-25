@@ -1,0 +1,25 @@
+feature_id: RW-01-research-ticket
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: research-ticket
+blocking: false
+
+summary: Research Ticket UI is implemented and ready for Pantheon follow-up.
+
+changed_files:
+  - src/pages/research/ResearchTicketList.tsx
+  - src/pages/research/ResearchTicketDetail.tsx
+  - src/pages/research/types.ts
+  - src/lib/bffClient.ts
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - run the next integration or acceptance step
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:38083/__health__",
+  "headers": {
+    "Accept": "application/json"
+  }
+}

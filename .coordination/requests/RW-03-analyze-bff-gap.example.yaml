@@ -1,0 +1,21 @@
+feature_id: RW-03-analyze
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: research-analyze
+blocking: true
+
+summary: Research Analyze UI is blocked on missing or incorrect Pantheon BFF fields.
+
+missing:
+  - endpoint: GET /api/v1/research/analysis/{analysis_id}
+    field: metric_groups[].metrics[].delta_display
+    reason: Delta display must come from the backend; the frontend must not backfill missing delta values client-side.
+  - endpoint: GET /api/v1/research/analysis/{analysis_id}
+    field: comparative_summary.comparisons[].delta_highlights[].interpretation
+    reason: Comparison interpretation must be backend-authored; the frontend must not synthesize copy.
+
+acceptance:
+  - Pantheon publishes a refreshed RW-03 contract-ready packet
+  - Lovable receives the next response packet through GitHub sync

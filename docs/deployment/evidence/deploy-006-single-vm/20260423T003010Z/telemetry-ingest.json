@@ -1,0 +1,24 @@
+{
+  "event_id": "7aee8e80-dc18-4123-ad3c-6d6476575470",
+  "event_type": "deploy_completed",
+  "created_at": "2026-04-23T00:30:12Z",
+  "execution_mode": "paper",
+  "environment": "paper",
+  "deployment_stage": "paper",
+  "binding_id": "rb-7f36e32776cb47458394abb17c6446f5",
+  "runtime_id": "runtime-single-vm-40ae6d31",
+  "capital_pool_id": "pool-single-vm-40ae6d31",
+  "artifact_id": "reg-strat-single-vm-1.0.0-fd546e08",
+  "artifact_version": "1.0.0",
+  "plan_id": "plan-single-vm-40ae6d31",
+  "persona_capital_binding_id": "pcb-single-vm-40ae6d31",
+  "target": {
+    "registry_id": "reg-strat-single-vm-1.0.0-fd546e08",
+    "strategy_id": "strat-single-vm",
+    "artifact_version": "1.0.0",
+    "artifact_type": "model_artifact",
+    "promotion_state": "paper"
+  },
+  "metrics": { "action": "deploy_completed" },
+  "metadata": { "source_task_id": "DEPLOY-006" }
+}

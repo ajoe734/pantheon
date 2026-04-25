@@ -1,104 +1,186 @@
 feature_id: PKT-001-deployment-review
 type: frontend-feedback
 source_repo: ajoe734/pantheon
-reviewed_source_commit: faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7
-reviewed_at: "2026-04-17T11:10:00Z"
-reviewed_by: Claude
+reviewed_by: Codex3
+reviewed_at: '2026-04-24T05:27:39Z'
+reviewed_commit: c67628422b05e2a78b6d281bed9156325d2b25a0
+reviewed_source_commit: c94f63082eae1667ed919353d62c85180d7bafba
+request_pair_commit: 139081f0e4d516494819003bd95968ecb9b86c99
+verified_front_workspace_head: 139081f0e4d516494819003bd95968ecb9b86c99
+verified_remote_main_commit: c572ae8a4570af7430ecd2d2ad0b7a764524c8af
+verified_remote_publish_commit: 139081f0e4d516494819003bd95968ecb9b86c99
+feedback_bundle_transport: >-
+  Reviewed UI transport commit c94f63082eae1667ed919353d62c85180d7bafba
+  contains the PKT-001 fail-closed surface-validation refresh in
+  `DeploymentReviewConsole.tsx` and `DeploymentPlanDetail.tsx` plus the route
+  wording fix in `docs/pantheon-feedback/PKT-001-deployment-review/UI_DECISIONS.md`.
+  Front publish commit 139081f0e4d516494819003bd95968ecb9b86c99 on
+  origin/pkt-004-detail-fix now republishes the canonical request pair and
+  PKT-001 feedback bundle with truthful source_commit metadata back to that
+  reviewed UI transport commit.
+screen: deployment-review-console
+workbench: operator-console
+screen_id: screen-operator-deployment-review
 
-disposition: follow_up
-disposition_summary: >-
-  PKT-001 core acceptance criteria are met, but the feedback bundle in the
-  front repo inaccurately documents the implementation. DeploymentReviewConsole.tsx
-  opens a direct SSE stream via SseClient at
-  /api/v1/runtime/{runtimeBindingId}/events/stream — this endpoint is NOT in the
-  PKT-001 allowed endpoints list and is outside the shared BFF client. The
-  LOVABLE_CHANGE_FEEDBACK.md statement "No raw fetch() calls were added" omits this
-  direct SSE connection. API_GAP_REQUESTS.json must be updated before the loop can
-  close truthfully.
+disposition: close
+review_result: replay-clean-and-contract-aligned
+can_close: true
 
-acceptance_criteria_results:
-  - criterion: "Build the Deployment Review Console list and detail panels"
-    result: pass
-    notes: >-
-      DeploymentReviewConsole.tsx renders list panel with status filter, row
-      selection, and load-more. DeploymentPlanDetail.tsx renders full detail
-      with governance review, bindings, latest run, and surface status.
-  - criterion: "Use only the existing BFF client"
-    result: fail
-    notes: >-
-      DeploymentReviewConsole.tsx imports SseClient and opens
-      /api/v1/runtime/{runtimeBindingId}/events/stream directly (lines 279-313,
-      tagged PKT-005 SSE substrate). This endpoint is outside the PKT-001
-      allowed endpoints and outside the operatorApi BFF client boundary.
-  - criterion: "Do not add raw fetch calls in component files"
-    result: partial
-    notes: >-
-      No raw fetch() or XMLHttpRequest calls were added. However SseClient is a
-      direct network connection that bypasses the BFF client — it is effectively
-      a raw network call for an endpoint not in the PKT-001 contract.
-  - criterion: "Do not invent fields beyond this handoff packet"
-    result: pass
-    notes: >-
-      No synthesized fields found. Both list and detail panels surface explicit
-      contract-gap states when required fields are absent.
-  - criterion: "Render all CTAs from backend-shaped allowedActions only"
-    result: pass
-    notes: >-
-      Approve, Reject, and Promote-to-paper CTAs are gated exclusively on
-      allowedActions.canApprove, canReject, canPromoteToPaper. No client-side
-      CTA inference.
-  - criterion: "Display the degradation banner when any meta.surfaces entry is degraded or unavailable"
-    result: pass
-    notes: >-
-      GlobalDegradationBanner is rendered for both list and detail states.
-      All CTAs are disabled when any surface is degraded.
+summary: >-
+  Pantheon re-reviewed the returned PKT-001 ui-done and frontend-feedback
+  bundle against the canonical deployment-review contract, example payload,
+  sibling front implementation, and the current Pantheon BFF workspace. The
+  publish chain is now replay-clean: reviewed UI transport commit
+  c94f63082eae1667ed919353d62c85180d7bafba contains the required fail-closed
+  `meta.surfaces` validation and route wording refresh, while publish commit
+  139081f0e4d516494819003bd95968ecb9b86c99 on origin/pkt-004-detail-fix
+  republishes the canonical request pair plus the PKT-001 feedback bundle
+  with truthful source_commit metadata pinned back to that reviewed snapshot.
+  Pantheon's PKT-001 contract slice still passes (`3 passed` on 2026-04-24),
+  the list and detail readers now validate the required surface keys through
+  the shared `findMissingSurfaceFields()` helper, the documented route text
+  matches `/operator/deployment-review`, and runtime SSE remains the approved
+  PKT-005 incremental decoration instead of a new PKT-001 snapshot API gap.
+  No front-owned PKT-001 closeout blocker remains in this cycle.
 
-sse_boundary_deviation:
-  file: src/pages/operator/DeploymentReviewConsole.tsx
-  lines: "279-313"
-  endpoint: "/api/v1/runtime/{runtimeBindingId}/events/stream"
-  not_in_pkt001_allowed_endpoints: true
-  usage: >-
-    Opened conditionally when runtime_binding.id is present in the detail
-    response. Informational only in list view — no state mutations applied.
-    Uses the PKT-005 SseClient + SseReconciler substrate.
-  blocking: false
-  required_action: >-
-    Update docs/pantheon-feedback/PKT-001-deployment-review/LOVABLE_CHANGE_FEEDBACK.md
-    to document this deviation. Update API_GAP_REQUESTS.json to either request
-    formal PKT-001 inclusion of the SSE endpoint or acknowledge it as a
-    PKT-005 substrate cross-cut. Front-repo feedback bundle must be truthful
-    before loop close.
+acceptance_verified:
+  - criterion: Git-visible request pair and feedback bundle exist for the reviewed PKT-001 cycle
+    status: pass
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` resolves to
+      139081f0e4d516494819003bd95968ecb9b86c99, and `git ls-tree` on that
+      commit confirms `.coordination/requests/PKT-001-deployment-review-ui-done.yaml`,
+      `.coordination/requests/PKT-001-deployment-review-frontend-feedback.yaml`,
+      and `docs/pantheon-feedback/PKT-001-deployment-review/*` are published.
+  - criterion: the published request pair pins source_commit to an immutable reviewed UI snapshot
+    status: pass
+    note: >-
+      The published `ui-done` and `frontend-feedback` request files both set
+      `source_commit` to reviewed UI transport commit
+      c94f63082eae1667ed919353d62c85180d7bafba, and
+      `git diff c94f63082eae1667ed919353d62c85180d7bafba..139081f0e4d516494819003bd95968ecb9b86c99`
+      over the PKT-001 paths shows only request/feedback metadata changes.
+  - criterion: required PKT-001 list surfaces are validated fail-closed through the shared helper
+    status: pass
+    note: >-
+      `DeploymentReviewConsole.tsx:95-142` now calls
+      `findMissingSurfaceFields()` with required list keys
+      `deployment_plans` and `allowedActions`, so partial list payloads fall
+      back to the explicit contract-gap state.
+  - criterion: required PKT-001 detail surfaces are validated fail-closed through the shared helper
+    status: pass
+    note: >-
+      `DeploymentPlanDetail.tsx:58-66` defines the required detail surface key
+      set and `DeploymentPlanDetail.tsx:140-223` now routes `response.meta`
+      through `findMissingSurfaceFields()` so partial detail payloads fail
+      closed on `deployment_plan`, `approval_decision`, `allowedActions`,
+      `latestRun`, `review`, and `runtime_binding`.
+  - criterion: PKT-001 list detail and command traffic stay on the published Pantheon routes only
+    status: pass
+    note: >-
+      Snapshot reads remain on `operatorApi.listDeploymentPlans()` and
+      `operatorApi.getDeploymentReview()`, while writes remain on
+      `operatorApi.sendCommand()` using the documented `ApproveDeployment`
+      operator command shape.
+  - criterion: PKT-005 runtime SSE remains incremental decoration instead of a new PKT-001 API gap
+    status: pass
+    note: >-
+      `DeploymentReviewConsole.tsx:311-367` still opens
+      `/api/v1/runtime/{runtime_id}/events/stream` only after
+      `runtime_binding.id` is known and uses accepted runtime events only to
+      refresh snapshots, not to replace list/detail truth, degradation state,
+      or CTA authority.
+  - criterion: targeted verification passes for the current Pantheon and sibling front workspaces
+    status: pass
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_pkt001_deployment_review_console_contract.py`
+      returned `3 passed in 2.38s`, `./node_modules/.bin/tsc --noEmit --pretty false`
+      passed in the sibling front workspace, and targeted eslint passed for
+      `src/pages/operator/DeploymentReviewConsole.tsx` and
+      `src/pages/operator/DeploymentPlanDetail.tsx`.
+  - criterion: route wording matches the mounted operator route
+    status: pass
+    note: >-
+      `docs/pantheon-feedback/PKT-001-deployment-review/UI_DECISIONS.md`
+      now documents `/operator/deployment-review`, matching the mounted route
+      and the existing router/sidebar wiring.
 
-non_blocking_follow_ups:
-  - id: DR-FOLLOWUP-001
-    description: >-
-      Full npm run build completion. Currently blocked by unrelated missing
-      imports for ./pages/persona/BindingDetail and ./pages/persona/BindingList
-      in src/App.tsx. Not introduced by PKT-001 work.
-  - id: DR-FOLLOWUP-002
-    description: >-
-      Live browser QA against a running Pantheon BFF. TypeScript and targeted
-      ESLint passed; runtime verification still needed.
-  - id: DR-FOLLOWUP-003
-    description: >-
-      Pantheon decision on SSE endpoint: formally add
-      /api/v1/runtime/{runtimeId}/events/stream to PKT-001 contract, or accept
-      as approved PKT-005 substrate cross-cut and document accordingly.
+api_gaps: []
 
-required_front_repo_updates:
-  - file: docs/pantheon-feedback/PKT-001-deployment-review/LOVABLE_CHANGE_FEEDBACK.md
-    action: >-
-      Add SSE Boundary Deviation section documenting the SseClient usage in
-      DeploymentReviewConsole.tsx. Correct the "No raw fetch() calls" claim to
-      acknowledge the direct SSE connection.
-  - file: docs/pantheon-feedback/PKT-001-deployment-review/API_GAP_REQUESTS.json
-    action: >-
-      Update status from no_open_gaps to reflect the SSE endpoint acknowledgement
-      request, or document the PKT-005 cross-cut acceptance. Status must not
-      remain no_open_gaps while an uncontracted endpoint is in use.
+pantheon_actions_completed:
+  - action: rerun the PKT-001 BFF contract proof
+    path: services/control-plane/bff/test_pkt001_deployment_review_console_contract.py
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_pkt001_deployment_review_console_contract.py`
+      returned `3 passed in 2.38s` on 2026-04-24.
+  - action: verify the current remote-visible request-pair publish commit
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that 139081f0e4d516494819003bd95968ecb9b86c99 on
+      origin/pkt-004-detail-fix publishes both PKT-001 request files and the
+      full feedback bundle with truthful source_commit
+      c94f63082eae1667ed919353d62c85180d7bafba.
+  - action: verify the reviewed UI transport commit contains the fail-closed refresh
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that c94f63082eae1667ed919353d62c85180d7bafba contains
+      the PKT-001 list/detail fail-closed surface validation changes and the
+      route wording update in the returned feedback bundle.
+  - action: inspect the replay-metadata diff from reviewed transport to publish commit
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon verified that the targeted diff from
+      c94f63082eae1667ed919353d62c85180d7bafba to
+      139081f0e4d516494819003bd95968ecb9b86c99 over the PKT-001 paths only
+      touches the two request files plus
+      `docs/pantheon-feedback/PKT-001-deployment-review/API_GAP_REQUESTS.json`
+      and `LOVABLE_CHANGE_FEEDBACK.md`, so the reviewed UI transport snapshot
+      remains unchanged.
+  - action: rerun targeted static verification in the sibling front workspace
+    path: ../front-ai-trading-system
+    note: >-
+      `./node_modules/.bin/tsc --noEmit --pretty false` and targeted eslint for
+      the two PKT-001 operator screens both passed in the sibling front
+      workspace after the replay-clean republish.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed-environment browser QA remains outstanding after closeout. This
+      review revalidated the Pantheon contract slice and the replay-clean
+      front publish chain, but it did not exercise a running external
+      environment in-browser.
+  - type: build
+    status: deferred_non_blocking
+    note: >-
+      The returned front `QA_STATUS.md` still records an unrelated production
+      build blocker in other routes. Pantheon revalidated targeted TypeScript
+      and eslint for the reviewed PKT-001 files instead of claiming a full
+      repo-wide build closeout for this packet.
+
+required_front_repo_updates: []
+
+required_pantheon_updates: []
 
 loop_close_condition: >-
-  Loop can close once the front-repo feedback bundle is updated to accurately
-  document the SSE deviation and Pantheon makes a disposition decision on
-  the SSE endpoint (contract inclusion or PKT-005 cross-cut acceptance).
+  Met. Reviewed UI transport commit
+  c94f63082eae1667ed919353d62c85180d7bafba contains the required PKT-001
+  fail-closed validation and route wording refresh, and
+  origin/pkt-004-detail-fix now points at
+  139081f0e4d516494819003bd95968ecb9b86c99, which republishes the canonical
+  request pair and feedback bundle with truthful source_commit metadata back
+  to that reviewed snapshot.
+
+risk_note: >-
+  Remaining risk is non-blocking QA/build hygiene, not PKT-001 contract drift,
+  publication truth, or SSE boundary scope. The reviewed UI transport is now
+  contract-aligned and replay-clean, the Pantheon contract slice still passes,
+  and no new PKT-001 API gap remains in this loop, but this review did not
+  include deployed browser QA and the returned bundle still records an
+  unrelated full-build blocker elsewhere in the front workspace.
+
+lovable_ui_task_status: closed
+next_action: none
+delivery_artifact_ref: .coordination/responses/PKT-001-deployment-review-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/PKT-001-deployment-review-review.md

@@ -1,0 +1,10 @@
+{
+  "status": 422,
+  "payload": {
+    "detail": {
+      "reference_errors": [
+        "telemetry_event_id '71662fe2-bff1-4cf6-ae05-e0e82ace1894' does not resolve through the canonical telemetry lineage path"
+      ]
+    }
+  }
+}

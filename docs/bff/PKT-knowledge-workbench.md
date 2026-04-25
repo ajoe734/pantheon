@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide one truthful overview route for the Knowledge Workbench so the UI can show module order, existing canonical support artifacts, and the remaining browse or lifecycle gaps without pretending that memory browse, evidence refs, or strategy-spec versioning are already implemented.
+Provide one truthful overview route for the Knowledge Workbench so the UI can show module order, existing canonical support artifacts, and the remaining front-owned activation or hardening gates without downgrading live Knowledge routes back to pending-BFF text.
 
 ## Primary Read Route
 
@@ -45,9 +45,10 @@ Required response fields:
 
 ## Design Rules
 
-- This packet is an overview surface. `KW-01 Institutional Memory` is now a ready first-class browse module; the UI may navigate to `/knowledge/memory` for list and detail views. `KW-02` to `KW-05` are not yet implemented.
-- The UI must not synthesize registry, evidence, or note browse screens from raw schemas or storage hints.
-- Support refs and missing-contract lists remain backend-owned and must render verbatim.
+- This packet is an overview surface. All five Knowledge Workbench modules (`KW-01` to `KW-05`) now expose live BFF routes.
+- The overview must keep `KW-01` hardening follow-up and the remaining front-owned UI activation truthful. `KW-02` to `KW-05` now all have published frontend handoff packets.
+- The UI must not synthesize registry, evidence, note, or insight browse screens from raw schemas or storage hints.
+- Support refs, per-module status, and missing-contract lists remain backend-owned and must render verbatim.
 - This packet is read-only and introduces no write authority.
 
 ## Example Payload

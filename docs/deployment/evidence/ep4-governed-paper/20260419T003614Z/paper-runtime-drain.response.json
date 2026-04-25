@@ -1,0 +1,104 @@
+{
+  "status": 200,
+  "payload": {
+    "runtime_role": "pantheon-paper-execution-runtime",
+    "runtime_mode": "paper",
+    "runtime_id": "paper-runtime-001",
+    "runtime_manager_url": "http://runtime-manager:8081",
+    "telemetry_url": "http://host.docker.internal:38083",
+    "workspace_ref": "workspace-paper",
+    "auth_profile_ref": "auth-profile-paper",
+    "persona_id": "persona-paper-ops",
+    "session_id": "session-paper-runtime",
+    "trace_id": "trace-paper-runtime",
+    "request_id": "request-paper-runtime",
+    "isolation_ready": true,
+    "binding_context_complete": false,
+    "runtime_manager_auth": {
+      "configured": true,
+      "source": "env",
+      "token_length": 24,
+      "used_default": false,
+      "token_env": "PANTHEON_RUNTIME_MANAGER_TOKEN",
+      "token_file_env": "PANTHEON_RUNTIME_MANAGER_TOKEN_FILE"
+    },
+    "authority_refs": {
+      "write_owner": "runtime-manager",
+      "authority_source": "runtime_binding",
+      "runtime_role": "pantheon-paper-execution-runtime",
+      "runtime_mode": "paper",
+      "workspace_ref": "workspace-paper",
+      "auth_profile_ref": "auth-profile-paper",
+      "persona_id": "persona-paper-ops",
+      "session_id": "session-paper-runtime",
+      "trace_id": "trace-paper-runtime",
+      "request_id": "request-paper-runtime"
+    },
+    "status": "ok",
+    "runtime_package": "paper_execution_runtime",
+    "runtime_package_version": "ep4",
+    "paper_execution_ready": true,
+    "signal_consumer_ready": true,
+    "signal_store": {
+      "kind": "redis_pending_signal_store",
+      "queue_depth": 0,
+      "batch_size": 100
+    },
+    "binding_lookup": {
+      "resolved": true,
+      "binding_id": "rb-9eda862f44824da89b68c1278c2baf6d",
+      "status": "active",
+      "deployment_mode": "paper",
+      "capital_pool_id": "pool-ep4-c2809819",
+      "plan_id": "plan-ep4-b6db1fc9",
+      "artifact_id": "reg-ep4-0fc59024",
+      "artifact_version": "1.2.0",
+      "persona_capital_binding_id": "pcb-ep4-f78b4b81",
+      "last_sync_at": "2026-04-19T00:36:15Z",
+      "last_error": null
+    },
+    "telemetry": {
+      "enabled": true,
+      "url": "http://host.docker.internal:38083",
+      "sent": 190,
+      "failed": 0,
+      "last_error": null
+    },
+    "paper_state": {
+      "started_at": "2026-04-19T00:33:02Z",
+      "last_poll_at": "2026-04-19T00:36:15Z",
+      "last_drain_at": "2026-04-19T00:36:15Z",
+      "last_heartbeat_at": "2026-04-19T00:36:15Z",
+      "poll_count": 190,
+      "processed_signal_count": 2,
+      "execution_event_count": 2,
+      "positions": [
+        {
+          "symbol": "AAPL",
+          "quantity": 20.0,
+          "price": 100.0
+        }
+      ],
+      "recent_order_events": [
+        {
+          "event_type": "fill_observation",
+          "symbol": "AAPL",
+          "quantity": 10.0,
+          "fill_price": 100.0,
+          "action": "market_order",
+          "created_at": "2026-04-19T00:35:16Z"
+        },
+        {
+          "event_type": "fill_observation",
+          "symbol": "AAPL",
+          "quantity": 10.0,
+          "fill_price": 100.0,
+          "action": "market_order",
+          "created_at": "2026-04-19T00:36:15Z"
+        }
+      ],
+      "last_error": null
+    },
+    "stub_mode": false
+  }
+}

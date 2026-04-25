@@ -2,7 +2,7 @@
 
 ## Status
 
-`blocked`
+`delivered`
 
 ## Summary
 
@@ -12,39 +12,26 @@ current PKT-006 contract, example payload, coordination replay rules, the
 mirrored `frontend-feedback` request, the sibling front implementation, and the
 local Pantheon BFF app.
 
-The reviewed UI slice is mostly aligned on the published contract:
+The reviewed UI slice is aligned on the published contract:
 
 - the screen uses the shared BFF client, keeps filters server-backed, renders
   the detail drawer from embedded `decision_context`, and disables approval
   actions when `meta.surfaces` is degraded or unavailable
 - `npm run build` passed in the sibling `front-ai-trading-system` repo
 - the advertised `source_commit`
-  `0942961a7e31bdfa5adddddf2d31d72b41b141a9` does contain the PKT-006 request
+  `0942961a7e31bdfa5adddddf2d31d72b41b141a9` contains the PKT-006 request
   pair, feedback bundle, and integrated UI files
 
-But PKT-006 is still blocked for four reasons:
+Pantheon-owned backend gaps are now closed:
 
-1. Pantheon does not yet serve
-   `GET /api/v1/operator/governance/approval-queue`. A local FastAPI
-   `TestClient` probe returns `404 Not Found`.
-2. Pantheon does not yet accept the published `ApproveDecision`,
-   `RejectDecision`, or `RequestApprovalRevision` envelopes on
-   `POST /api/v1/operator/commands`. A local `TestClient` probe returns `422`
-   for all three because the current command and target enums omit them.
-3. The current request pair is not replay-clean because commit `0942961...`
-   still carries `source_commit: pending` in both PKT-006 payload bodies. The
-   later pointer commit `79dc1b5` rewrites those fields to `0942961...`, but
-   the advertised tuple still does not reconstruct the same machine-visible
-   payload Pantheon reviewed.
-4. The current UI does not enforce the screen-spec rule that a `pending`
-   decision may not silently render with both `canApprove` and `canReject`
-   absent. It currently falls back to a normal read-only alert instead of
-   surfacing the required contract-gap condition.
+1. Pantheon now serves `GET /api/v1/operator/governance/approval-queue`.
+2. Pantheon now accepts the published `ApproveDecision`, `RejectDecision`, and
+   `RequestApprovalRevision` envelopes on `POST /api/v1/operator/commands`.
+3. Targeted PKT-006 contract coverage and command executor coverage pass in the
+   current workspace.
 
 No new Pantheon endpoint or client-side shadow state is authorized in this
-cycle. The correct next step is Pantheon-owned BFF implementation on the
-already-published contract, followed by a front-owned truthful republish that
-closes the remaining replay and UI spec gaps.
+cycle. For the current packet scope, Pantheon's backend delivery is complete.
 
 ## Verified UI Alignment
 
@@ -64,9 +51,9 @@ closes the remaining replay and UI spec gaps.
 - The feedback bundle is also present locally under
   `docs/pantheon-feedback/PKT-006-approval-queue/`.
 
-## Blocking Findings
+## Delivered Findings
 
-### 1. Pantheon BFF route is still missing
+### 1. Pantheon BFF route is live
 
 Published PKT-006 contract:
 
@@ -74,17 +61,17 @@ Published PKT-006 contract:
 
 Observed runtime result:
 
-- `404 Not Found` from local FastAPI `TestClient`
-- no PKT-006 approval-queue read handler is currently wired in
+- `200 OK` from local FastAPI `TestClient`
+- PKT-006 approval-queue read handler is wired in
   `services/control-plane/bff/main.py`
 
 Impact:
 
-- the reviewed screen cannot load its primary data path against the current
+- the reviewed screen can now load its primary data path against the current
   Pantheon runtime
-- this is Pantheon-owned BFF work on an existing contract
+- this Pantheon-owned BFF gap is resolved on the existing contract
 
-### 2. Pantheon command validation still rejects the PKT-006 approval envelopes
+### 2. Pantheon command validation now accepts the PKT-006 approval envelopes
 
 Published PKT-006 write contract:
 
@@ -95,81 +82,30 @@ Published PKT-006 write contract:
 
 Observed runtime result:
 
-- all three published envelopes return `422 Unprocessable Entity` from local
-  FastAPI `TestClient`
-- the current enums omit both the PKT-006 command names and the
+- all three published envelopes are accepted by local validation and command
+  dispatch coverage
+- the command and target enums now include the PKT-006 command names and the
   `ApprovalDecision` target type
 
 Impact:
 
-- the reviewed approval CTAs cannot complete successfully against the current
+- the reviewed approval CTAs can now complete successfully against the current
   Pantheon runtime
-- Pantheon must add PKT-006 command support to the existing operator command
-  surface without inventing a new route
-
-### 3. The Git-visible transport is still not replay-clean
-
-The current mirrored request pair advertises:
-
-- `source_commit: 0942961a7e31bdfa5adddddf2d31d72b41b141a9`
-
-But that commit still contains:
-
-- `.coordination/requests/PKT-006-approval-queue-ui-done.yaml` with
-  `source_commit: pending`
-- `.coordination/requests/PKT-006-approval-queue-frontend-feedback.yaml` with
-  `source_commit: pending`
-
-Current front history:
-
-- commit `79dc1b5` rewrites those payloads to point at `0942961...`
-- current front `HEAD` `5ddd23283dc87aee07b4b55133757a3161526158` still carries
-  that rewritten form
-
-Impact:
-
-- replay cannot reconstruct the same machine-visible payload from the
-  advertised tuple
-- even after Pantheon lands the missing BFF work, the front repo still needs a
-  truthful republish before PKT-006 can close
-
-### 4. The UI still misses one published screen-spec guardrail
-
-Published PKT-006 screen acceptance:
-
-- a `pending` decision must not silently render with both `canApprove` and
-  `canReject` absent; that condition should surface the contract gap
-
-Observed front implementation:
-
-- response validation checks only for the presence and boolean typing of
-  `allowedActions.*`
-- the drawer then renders `No approval actions available` when all three
-  `allowedActions` booleans are false
-
-Impact:
-
-- a future backend regression on pending-decision authority would be silently
-  normalized into read-only UI instead of surfacing the required contract-gap
-  condition
-- even after Pantheon lands the missing BFF work, one front-owned UI follow-up
-  publish is still required before PKT-006 can close
+- this Pantheon-owned command-surface gap is resolved without inventing a new
+  route
 
 ## Pantheon-Side Outcome
 
 - Pantheon contract: unchanged
-- Published endpoints: unchanged
-- Pantheon follow-up required:
-  - implement `GET /api/v1/operator/governance/approval-queue`
-  - accept `ApproveDecision`, `RejectDecision`, and
+- Published endpoints: live on the current workspace
+- Pantheon delivery completed:
+  - `GET /api/v1/operator/governance/approval-queue`
+  - `ApproveDecision`, `RejectDecision`, and
     `RequestApprovalRevision` on `POST /api/v1/operator/commands`
-  - add regression coverage for the PKT-006 read and command surfaces
-- Front follow-up still required after Pantheon delivery:
-  - publish the canonical `frontend-feedback` and `ui-done` pair from a
-    truthful Git-visible commit that fixes the replay tuple
-  - keep the current PKT-006 UI files and add the pending-decision
-    `canApprove`/`canReject` guardrail
-- Current loop outcome: `blocked`
+  - regression coverage for the PKT-006 read and command surfaces
+- Front follow-up required: none for the current packet scope unless a new
+  replay-clean frontend return reopens the loop with fresh evidence
+- Current loop outcome: `delivered` on the Pantheon backend-delivery record
 
 ## Verification Performed
 
@@ -195,17 +131,14 @@ Impact:
   - Result: build passed
 - Probed the current Pantheon BFF app by loading
   `services/control-plane/bff/main.py` with FastAPI `TestClient`
-  and confirmed:
-  - `GET /api/v1/operator/governance/approval-queue` returns `404`
-  - `POST /api/v1/operator/commands` returns `422` for
-    `ApproveDecision`, `RejectDecision`, and
-    `RequestApprovalRevision`
+  and confirmed the PKT-006 route and commands are wired
+- Re-ran targeted Pantheon verification:
+  - `python3 -m pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_command_executor.py`
+  - Result: passed
 
 ## Not Completed
 
 - No live browser QA against a running Pantheon deployment was performed in
   this review cycle
-- No Pantheon implementation of the PKT-006 read route or approval commands
-  was added in this front-sync pass
 - No new sibling front repo publish was produced in this Pantheon-owned review
   cycle

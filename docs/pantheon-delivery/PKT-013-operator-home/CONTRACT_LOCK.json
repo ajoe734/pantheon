@@ -1,0 +1,37 @@
+{
+  "feature_id": "PKT-013-operator-home",
+  "status": "front-followup-required",
+  "backend_commit": "3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "bff_contract_version": "pantheon-bff@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035+working-tree",
+  "source_payload": ".coordination/requests/PKT-013-operator-home-ui-done.yaml",
+  "source_commit": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "verified_front_workspace_head": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "review_file": ".coordination/reviews/PKT-013-operator-home-review.md",
+  "feedback_request": ".coordination/requests/PKT-013-operator-home-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/home"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-013-operator-home.md",
+    "docs/examples/PKT-013-operator-home.json",
+    "docs/screens/PKT-013-operator-home.md",
+    "docs/pantheon-handoffs/PKT-013-operator-home/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Sibling front production build passed: npm run build",
+    "Targeted Pantheon PKT-011 plus PKT-013 contract tests passed: python3 -m pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py services/control-plane/bff/test_pkt013_operator_home_contract.py -q",
+    "Direct local TestClient read of GET /api/v1/operator/home returned 200 OK with overall_status=degraded, operator_home degraded, card order alerts/incidents/governance/runtime/health, shortcut order open-alerts-rail/open-incident-home/open-health-status/open-approval-queue/open-runtime-state, and browser-ready hrefs /alerts, /operator/incidents, /governance-review-queue, /governance-approval-queue, /operator/runtime-state, /operator/health-status in the current workspace",
+    "The required PKT-013 frontend-feedback request is absent from the sibling front repo",
+    "Commit 37a622bca69a95e2aae46aa8c6b0432ad72082a8 does not contain OperatorHomeDashboard.tsx, the PKT-013 ui-done request, or the PKT-013 feedback bundle even though ui-done.source_commit points to it",
+    "Targeted ESLint for the reviewed PKT-013 files fails on src/components/AppSidebar.tsx due to @typescript-eslint/no-explicit-any"
+  ],
+  "followup_scope": [
+    "Publish the canonical PKT-013 frontend-feedback request and feedback bundle from the front repo",
+    "Republish the PKT-013 ui-done request from the same truthful immutable front commit instead of source_commit=37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+    "Keep the frontend on payload-owned href rendering only; Pantheon now publishes browser-ready owner-link destinations in the current workspace",
+    "Replace the changed-file any typing in src/components/AppSidebar.tsx if changed-file ESLint cleanliness is required for the next return"
+  ]
+}

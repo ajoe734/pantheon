@@ -5,8 +5,8 @@
 - Packet family ID: `GW-003`
 - Workbench: Governance Workbench
 - Phase origin: `BP5-WB-003`
-- Lovable readiness: **partial** — `GV-01 Review Queue` and `GV-03 Promotion Review` are already handoff-ready via `PKT-001` and `F-042`; `GV-02 Approval Queue`, `GV-04 Deployment Diff`, `GV-05 Rollback Review`, and `GV-06 Governance Audit Rail` have published screen specs, BFF contracts, and example payloads, but the four corresponding BFF operator-composed routes are not yet implemented in the service layer
-- Recommended wave: Wave 2 — ordered GV-02 → GV-04 → GV-05 → GV-06 (parallel after audit schema lock)
+- Lovable readiness: **partial** — `GV-01 Review Queue`, `GV-03 Promotion Review`, `GV-05 Rollback Review`, and `GV-06 Governance Audit Rail` are handoff-ready and loop-complete for the current packet scope; `GV-02 Approval Queue` is backend-live with the current packet loop closed on Pantheon side, and `GV-04 Deployment Diff` is backend-live but still waiting on a replay-clean front republish before the packet can close
+- Recommended wave: Wave 2 backend work is landed; the remaining governance follow-up is front-loop closure for `GV-04` plus any future scope reopened by new packet evidence
 - Owner: Claude
 - Reviewer: Codex2
 
@@ -52,10 +52,10 @@ Before packetizing any follow-on module, treat the following artifacts as canoni
 |---|---|---|---|---|---|
 | `GV-01` | Review Queue | unified pending-items queue across deployment plans, approval decisions, and rollback requests | ready via `PKT-001` plus frontend handoff bundle | ready | Wave 2 baseline |
 | `GV-03` | Promotion Review | promotion stage display, paper-live boundary copy, accept/reject CTA with `allowedActions.canPromoteToPaper` | ready via `F-042` plus frontend handoff bundle; formally placed in Governance Workbench by `PKT-001` | ready | Wave 1 baseline |
-| `GV-02` | Approval Queue | pending approval decisions with `allowedActions` CTA extensions, decision confirmation drawer, and write path | BFF contract, screen spec, example payload, and `FRONTEND_CHANGE_SPEC.md` published; BFF operator route not yet implemented | not ready — BFF route pending | Wave 2 — 1st |
-| `GV-04` | Deployment Diff | side-by-side field diff, semantic change labels, risk tier annotation, per-field reason, and approval gating | BFF contract, screen spec, example payload, and `FRONTEND_CHANGE_SPEC.md` published; BFF operator route not yet implemented | not ready — BFF route pending | Wave 2 — 2nd |
-| `GV-05` | Rollback Review | rollback scope summary, position impact table, affected bindings, trigger reason, and approval CTA | BFF contract, screen spec, example payload, and `FRONTEND_CHANGE_SPEC.md` published; BFF operator route not yet implemented | not ready — BFF route pending | Wave 2 — 3rd |
-| `GV-06` | Governance Audit Rail | chronological filterable audit trail; actor, action type, target, outcome, and evidence drawer | BFF contract, screen spec, example payload, and `FRONTEND_CHANGE_SPEC.md` published; BFF operator route not yet implemented | not ready — BFF route pending | Wave 2 — parallel after audit schema lock |
+| `GV-02` | Approval Queue | pending approval decisions with `allowedActions` CTA extensions, decision confirmation drawer, and write path | BFF contract, screen spec, example payload, and `FRONTEND_CHANGE_SPEC.md` published; operator route and commands are now implemented in the BFF | backend-ready; current packet scope closed on Pantheon side | Wave 2 — landed |
+| `GV-04` | Deployment Diff | side-by-side field diff, semantic change labels, risk tier annotation, per-field reason, and approval gating | BFF contract, screen spec, example payload, and `FRONTEND_CHANGE_SPEC.md` published; operator route and `EscalateDiff` command are now implemented in the BFF | partial — backend-ready, frontend replay follow-up still open | Wave 2 — backend landed |
+| `GV-05` | Rollback Review | rollback scope summary, position impact table, affected bindings, trigger reason, and approval CTA | loop-complete via published packet bundle and live operator-composed route | ready / complete for current scope | Wave 2 — landed |
+| `GV-06` | Governance Audit Rail | chronological filterable audit trail; actor, action type, target, outcome, and evidence drawer | loop-complete via published packet bundle and live operator-composed route | ready / complete for current scope | Wave 2 — landed |
 
 ---
 
@@ -108,12 +108,12 @@ Complete via `F-042` and formally placed inside the Governance Workbench by `PKT
 | Contract-ready | `.coordination/responses/PKT-006-approval-queue-contract-ready.yaml` |
 | Lovable UI task | `.coordination/responses/PKT-006-approval-queue-lovable-ui-task.yaml` |
 
-### Backend gaps
+### Backend delivery status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/governance/approval-queue` | **missing** | operator-composed queue projection over `ApprovalDecision` objects; must return `items[]` with embedded `decision_context`, backend-shaped `allowedActions.canApprove`, `canReject`, `canRequestRevision`, `meta.surfaces`, and pagination; raw `GET /api/v1/approval-decisions` (DP-03) is live but cannot be used directly from the frontend |
-| `allowedActions` extension for bulk or staged approval | **missing** | `canApprove`, `canReject`, `canRequestRevision` must be backend-computed authority signals on each queue item; do not derive from decision state client-side |
+| `GET /api/v1/operator/governance/approval-queue` | **live** | operator-composed queue projection is wired in the BFF with `items[]`, embedded `decision_context`, backend-shaped `allowedActions`, `meta.surfaces`, and pagination |
+| `allowedActions` extension for bulk or staged approval | **live** | `canApprove`, `canReject`, and `canRequestRevision` are backend-computed authority signals on each queue item |
 
 ### Governance semantics anchor
 
@@ -147,12 +147,12 @@ This module extends `ApprovalDecision` from `services/control-plane/governance/c
 | Contract-ready | `.coordination/responses/PKT-007-deployment-diff-contract-ready.yaml` |
 | Lovable UI task | `.coordination/responses/PKT-007-deployment-diff-lovable-ui-task.yaml` |
 
-### Backend gaps
+### Backend delivery status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/deployment-diff/{plan_id}` | **missing** | operator-composed diff route; must return `changes[]` with pre-computed semantic change labels, risk tier annotation, and per-field change reason; the UI must not construct diffs from raw deployment plan fields; raw deployment plan detail route (DP-02) is live but only supplies the plan payload, not a structured diff |
-| Diff data shape against previous plan | **missing** | BFF must identify the `previous_plan_id` and compose the `old/new` field pairs server-side; `first_deployment` flag required for plans with no prior baseline |
+| `GET /api/v1/operator/deployment-diff/{plan_id}` | **live** | operator-composed diff route is wired in the BFF and returns backend-shaped `changes[]`, summary rails, and degraded or unavailable surface metadata |
+| Diff data shape against previous plan | **live** | BFF identifies `previous_plan_id`, composes the `old/new` field pairs server-side, and supplies `first_deployment` state for plans with no prior baseline |
 
 ### Governance semantics anchor
 
@@ -187,13 +187,13 @@ Risk tier labels are defined by the BFF and must be rendered as-is. The frontend
 | Contract-ready | `.coordination/responses/PKT-008-rollback-review-contract-ready.yaml` |
 | Lovable UI task | `.coordination/responses/PKT-008-rollback-review-lovable-ui-task.yaml` |
 
-### Backend gaps
+### Backend delivery status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/rollback-review/{rollback_id}` | **missing** | operator-composed rollback review surface; must return `position_impact[]`, `affected_bindings[]`, `trigger_evidence`, backend-shaped `allowedActions`, and `meta.surfaces.position_data`; raw rollback records (EV-04, RT-04) are live but do not supply position impact summaries or per-binding impact rows |
-| `allowedActions.canApproveRollback` + `canRejectRollback` | **missing** | backend-computed authority signals; the Approve CTA must be disabled whenever `meta.surfaces.position_data` is `"degraded"` or `"unavailable"` regardless of the authority signal |
-| Write path for rollback approval | **missing** | `POST /api/v1/operator/commands` with `ApproveRollback` and `RejectRollback` command types must be registered in the command executor |
+| `GET /api/v1/operator/rollback-review/{rollback_id}` | **live** | operator-composed rollback review surface is already live for the current packet scope |
+| `allowedActions.canApproveRollback` + `canRejectRollback` | **live** | backend-computed authority signals are already served through the BFF |
+| Write path for rollback approval | **live** | `ApproveRollback` and `RejectRollback` are already registered on the operator command surface |
 
 ### Governance semantics anchor
 
@@ -226,12 +226,12 @@ Rollback authority semantics are governed by `ROLLBACK_AND_POSITION_SEMANTICS.md
 | Contract-ready | `.coordination/responses/PKT-009-governance-audit-rail-contract-ready.yaml` |
 | Lovable UI task | `.coordination/responses/PKT-009-governance-audit-rail-lovable-ui-task.yaml` |
 
-### Backend gaps
+### Backend delivery status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/governance/audit` | **missing** | canonical governance audit trail BFF endpoint; must return `entries[]` with `entry_id`, `actor`, `action_type`, `target_type`, `target_id`, `timestamp`, `outcome`, `audit_context`, `evidence_refs`, `meta.surfaces.audit_trail`, and pagination; implied by the operator acceptance matrix and governance contract but not yet surfaced as a filterable paginated BFF endpoint |
-| Audit entry schema | **missing** | actor labeling, action type labels, and evidence refs must be sourced from the BFF; do not invent display labels or reconstruct audit history client-side |
+| `GET /api/v1/operator/governance/audit` | **live** | canonical governance audit trail BFF endpoint is already live and returns paginated `entries[]`, `audit_context`, `evidence_refs`, and degraded-surface metadata |
+| Audit entry schema | **live** | actor labeling, action type labels, and evidence refs are served from the BFF and are part of the current packet scope |
 
 ### Governance semantics anchor
 
@@ -253,10 +253,10 @@ Audit coverage must include all governance actions defined across this packet fa
 
 | Module | Missing BFF route | Missing contract or schema | Lovable gate |
 |---|---|---|---|
-| `GV-02 Approval Queue` | `GET /api/v1/operator/governance/approval-queue` | `allowedActions.canApprove`, `canReject`, `canRequestRevision` per-item authority | no Lovable handoff until operator-composed queue route is live and `allowedActions` signals are backend-shaped |
-| `GV-04 Deployment Diff` | `GET /api/v1/operator/deployment-diff/{plan_id}` | diff data shape with semantic change labels, risk tier annotation, and `first_deployment` flag | no Lovable handoff until diff route is live and `changes[]` response shape is locked |
-| `GV-05 Rollback Review` | `GET /api/v1/operator/rollback-review/{rollback_id}` | `position_impact[]` per-binding rows, `allowedActions.canApproveRollback` and `canRejectRollback`, `ApproveRollback` and `RejectRollback` command types | no Lovable handoff until rollback review route is live, position impact shape is locked, and command types are registered |
-| `GV-06 Governance Audit Rail` | `GET /api/v1/operator/governance/audit` | audit entry schema with actor, action type, target, timestamp, outcome, and evidence refs | no Lovable handoff until audit trail route is live and entry schema is locked; can proceed in parallel with GV-04 and GV-05 once schema is locked |
+| `GV-02 Approval Queue` | none for current packet scope | none for current packet scope | backend handoff is landed; only reopen if a new frontend return or contract change reveals a fresh gap |
+| `GV-04 Deployment Diff` | none on Pantheon side | none on Pantheon side | backend handoff is landed; packet remains open only for front-owned replay-clean republish |
+| `GV-05 Rollback Review` | none for current packet scope | none for current packet scope | loop-complete |
+| `GV-06 Governance Audit Rail` | none for current packet scope | none for current packet scope | loop-complete |
 
 Total missing routes: **4**
 Total missing contracts or schemas: **6**
@@ -286,7 +286,7 @@ A module may not be handed to Lovable until all of the following are true:
 
 `GV-01 Review Queue` and `GV-03 Promotion Review` already meet all promotion criteria and are ready for Lovable.
 
-`GV-02`, `GV-04`, `GV-05`, and `GV-06` have complete packet definitions but do not yet meet the BFF route criterion. Do not hand these modules to Lovable before their operator-composed BFF routes are implemented and contract-verified.
+`GV-02`, `GV-05`, and `GV-06` also meet the BFF-route criterion for the current packet scope. `GV-04` now meets the Pantheon backend criterion as well; its only remaining open issue is a front-owned replay-clean republish before the packet can be called fully loop-complete.
 
 ---
 

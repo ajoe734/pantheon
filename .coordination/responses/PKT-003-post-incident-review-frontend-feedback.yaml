@@ -1,0 +1,225 @@
+feature_id: PKT-003-post-incident-review
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-24T09:21:40Z'
+reviewed_commit: 33a7b92caf28d85fcc05028ba648d27606b2a326
+reviewed_source_commit: c9b03d7ba1439db4f956c56106925675a98f8512
+request_pair_commit: 1df4a64047055ca3ea802d61c1df78211884aee2
+ui_done_source_commit: c9b03d7ba1439db4f956c56106925675a98f8512
+frontend_feedback_source_commit: c9b03d7ba1439db4f956c56106925675a98f8512
+verified_front_workspace_head: 1df4a64047055ca3ea802d61c1df78211884aee2
+verified_remote_publish_commit: 1df4a64047055ca3ea802d61c1df78211884aee2
+feedback_bundle_transport: >-
+  Reviewed UI transport commit c9b03d7ba1439db4f956c56106925675a98f8512
+  contains the refreshed PKT-003 request pair, feedback bundle, and reviewed
+  UI files. Front publish commit 1df4a64047055ca3ea802d61c1df78211884aee2 on
+  origin/pkt-004-detail-fix republished the canonical request pair and
+  refreshed feedback-bundle metadata without changing the reviewed UI slice,
+  and both request bodies now point back to reviewed source commit
+  c9b03d7ba1439db4f956c56106925675a98f8512.
+screen: post-incident-review-console
+workbench: operator-console
+screen_id: screen-operator-post-incident-review
+
+disposition: approved
+review_result: pkt003-replay-clean-runtime-data-followup-required
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed the returned PKT-003 Post-Incident Review request pair
+  against the published PKT-003 contract lock, canonical example payload, and
+  inherited PKT-005 degradation-banner plus SSE rules. The reviewed UI source
+  commit c9b03d7ba1439db4f956c56106925675a98f8512 keeps the screen on the
+  canonical GET /api/v1/incidents and
+  GET /api/v1/operator/post-incident-review/{incident_id} reads, accepts the
+  locked PKT-005 staleness shape (`served_from`, optional `last_known_at`,
+  optional `max_age_minutes`), reconciles accepted `incident_updated` events
+  into both the resolved-incident list and selected detail state, surfaces
+  malformed incident-stream payloads as a PKT-005 SSE contract-gap alert, and
+  keeps the delayed-update host-screen footer explicit. The transport chain is
+  now replay-clean as well: origin/pkt-004-detail-fix resolves to
+  1df4a64047055ca3ea802d61c1df78211884aee2, and that publish commit
+  republishes the canonical request pair and refreshed feedback bundle pinned
+  back to reviewed source commit c9b03d7ba1439db4f956c56106925675a98f8512.
+  Targeted front static validation passed again and
+  `python3 -m pytest -q services/control-plane/bff/smoke_test_incident.py`
+  returned `20 passed`. The remaining Pantheon-owned blocker is live runtime
+  data availability rather than a contract gap: the active 18001 runtime
+  advertises `/api/v1/incidents`, `/api/v1/incidents/stream`, and
+  `/api/v1/operator/post-incident-review/{incident_id}`, but the live
+  resolved-incident list currently returns no rows and direct detail probes
+  for the seeded incident ids return `404 OBJECT_NOT_FOUND`, so the selected
+  detail and PKT-005 incident-stream follow-up path cannot yet be exercised
+  end-to-end over live HTTP. No new Pantheon API gap or contract rebaseline
+  is required in this loop.
+
+acceptance_verified:
+  - criterion: review the refreshed PKT-003 snapshot against the latest Pantheon contract and example payload
+    status: pass
+    note: >-
+      `PostIncidentReviewConsole.tsx` still reads the canonical PKT-003 routes
+      through the shared BFF client, validates object-wrapped
+      `meta.surfaces.<surface>.status` keys, and remains aligned with
+      `docs/examples/PKT-003-post-incident-review-console.json` and
+      `docs/pantheon-delivery/PKT-003-post-incident-review/CONTRACT_LOCK.md`.
+  - criterion: keep PKT-005 staleness handling aligned to the locked contract
+    status: pass
+    note: >-
+      `src/pages/operator/types.ts` and
+      `src/pages/operator/PostIncidentReviewConsole.tsx` now model staleness
+      using required `served_from` with optional `last_known_at` and
+      `max_age_minutes`, and no reviewed file still requires or renders
+      `meta.staleness.reason`.
+  - criterion: keep the PKT-005 host-screen SSE follow-up explicit on the selected detail surface
+    status: pass
+    note: >-
+      Accepted `incident_updated` events reconcile into both the
+      resolved-incident list and the selected detail summary state, malformed
+      live stream payloads surface the explicit
+      `PKT-005-sse-substrate-bff-gap` alert, and the footer keeps the delayed
+      update note explicit.
+  - criterion: rerun static verification for the PKT-003 staleness and SSE follow-up path
+    status: pass
+    note: >-
+      `./node_modules/.bin/tsc --noEmit --pretty false`, targeted `npx eslint`
+      over `src/pages/operator/PostIncidentReviewConsole.tsx`,
+      `src/pages/operator/types.ts`, `src/lib/degradationBanner.ts`,
+      `src/lib/sseReconciler.ts`, and `src/lib/sseClient.ts`, and
+      `npx --yes tsx src/components/GlobalDegradationBanner.test.tsx` all
+      passed in `../front-ai-trading-system`.
+  - criterion: publish ui-done and frontend-feedback through a truthful Git-visible transport chain
+    status: pass
+    note: >-
+      `origin/pkt-004-detail-fix` now resolves to
+      1df4a64047055ca3ea802d61c1df78211884aee2, `git ls-tree` on that publish
+      commit returns the canonical PKT-003 request pair plus
+      `docs/pantheon-feedback/PKT-003-post-incident-review/*`, and both
+      request bodies in that commit now point back to reviewed source commit
+      c9b03d7ba1439db4f956c56106925675a98f8512.
+  - criterion: republish the request pair without changing the reviewed UI snapshot
+    status: pass
+    note: >-
+      `git diff --name-only c9b03d7ba1439db4f956c56106925675a98f8512
+      1df4a64047055ca3ea802d61c1df78211884aee2` only lists the two PKT-003
+      request files and refreshed feedback metadata files, so the reviewed UI
+      files remain pinned to source commit c9b03d7ba1439db4f956c56106925675a98f8512.
+  - criterion: confirm the current Pantheon incident contract slice still serves the composed post-incident review surface locally
+    status: pass
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/smoke_test_incident.py`
+      returned `20 passed`, including the resolved-incident list,
+      composed post-incident review, RBAC, and postmortem coverage.
+  - criterion: validate the live Pantheon BFF route family needed for PKT-003 and PKT-005 follow-up
+    status: pass
+    note: >-
+      `/openapi.json` on `http://127.0.0.1:18001` advertises
+      `/api/v1/incidents`, `/api/v1/incidents/stream`, and
+      `/api/v1/operator/post-incident-review/{incident_id}`.
+  - criterion: validate the selected-detail and incident-stream follow-up path against live runtime data
+    status: fail
+    note: >-
+      Operator-auth `GET /api/v1/incidents?status=resolved&page_size=5` on
+      `http://127.0.0.1:18001` returned `200` with `items[] = []`, and direct
+      detail probes for `inc-20260409-002` and `inc-20260410-001` returned
+      `404 OBJECT_NOT_FOUND`, so Pantheon could not exercise the returned
+      selected-detail or incident-stream follow-up path on live data without
+      introducing local shadow seed state.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: publish the local PKT-003 republish commits to the front remote branch
+    path: ../front-ai-trading-system
+    note: >-
+      `git push origin pkt-004-detail-fix` advanced
+      origin/pkt-004-detail-fix from
+      139081f0e4d516494819003bd95968ecb9b86c99 to
+      1df4a64047055ca3ea802d61c1df78211884aee2.
+  - action: verify the reviewed UI transport commit contains the claimed PKT-003 bundle
+    path: ../front-ai-trading-system
+    note: >-
+      `git ls-tree -r --name-only
+      c9b03d7ba1439db4f956c56106925675a98f8512 -- .coordination/requests/PKT-003-post-incident-review-ui-done.yaml
+      .coordination/requests/PKT-003-post-incident-review-frontend-feedback.yaml
+      docs/pantheon-feedback/PKT-003-post-incident-review
+      src/pages/operator/PostIncidentReviewConsole.tsx
+      src/pages/operator/types.ts` returns the reviewed request pair, feedback
+      bundle, and UI files.
+  - action: verify the current remote-visible request-pair publish commit
+    path: ../front-ai-trading-system/.coordination/requests/PKT-003-post-incident-review-ui-done.yaml
+    note: >-
+      Pantheon verified that
+      1df4a64047055ca3ea802d61c1df78211884aee2 on
+      origin/pkt-004-detail-fix publishes both PKT-003 request files with
+      truthful `source_commit:
+      c9b03d7ba1439db4f956c56106925675a98f8512`.
+  - action: rerun targeted front static verification
+    path: ../front-ai-trading-system
+    note: >-
+      `./node_modules/.bin/tsc --noEmit --pretty false`, targeted `npx eslint`
+      over the PKT-003 and SSE helper files, and
+      `npx --yes tsx src/components/GlobalDegradationBanner.test.tsx` all
+      passed in the sibling front workspace.
+  - action: inspect the metadata-only delta between the reviewed source and publish commit
+    path: ../front-ai-trading-system
+    note: >-
+      `git diff --name-only
+      c9b03d7ba1439db4f956c56106925675a98f8512
+      1df4a64047055ca3ea802d61c1df78211884aee2` shows only the two request
+      files plus
+      `docs/pantheon-feedback/PKT-003-post-incident-review/{API_GAP_REQUESTS.json,LOVABLE_CHANGE_FEEDBACK.md,QA_STATUS.md}`.
+  - action: verify the Pantheon incident contract slice still covers PKT-003 locally
+    path: services/control-plane/bff/smoke_test_incident.py
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/smoke_test_incident.py`
+      returned `20 passed`, including the resolved-incident list,
+      post-incident review, RBAC, and postmortem coverage.
+  - action: inspect the active live runtime over HTTP for PKT-003 route and data availability
+    path: http://127.0.0.1:18001
+    note: >-
+      `/openapi.json` on 18001 advertises `/api/v1/incidents`,
+      `/api/v1/incidents/stream`, and
+      `/api/v1/operator/post-incident-review/{incident_id}`, but
+      operator-auth `GET /api/v1/incidents?status=resolved&page_size=5`
+      returned `200` with `items[] = []`, and direct detail probes for
+      `inc-20260409-002` and `inc-20260410-001` returned
+      `404 OBJECT_NOT_FOUND`.
+
+follow_up_items:
+  - type: runtime
+    status: blocking
+    note: >-
+      Pantheon must refresh the active operator-bff runtime or its backing
+      incident and postmortem dataset so live PKT-003 probes can select a
+      resolved incident, fetch a composed detail payload, and exercise
+      `/api/v1/incidents/stream` against real runtime data. Follow-up is
+      tracked at `.coordination/requests/PKT-003-post-incident-review-needs-runtime.yaml`.
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed browser QA remains outstanding after the live runtime has a
+      resolvable post-incident record again.
+
+required_front_repo_updates: []
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  The active operator-bff runtime must expose at least one resolved incident
+  whose detail route returns the published PKT-003 payload on
+  `GET /api/v1/operator/post-incident-review/{incident_id}?snapshot=preferred`,
+  while `/api/v1/incidents/stream` remains live, so the selected-detail and
+  PKT-005 host-screen follow-up path can be exercised over real HTTP without
+  local shadow data.
+
+risk_note: >-
+  Remaining blocker is live runtime data availability, not front publication
+  truth or PKT-003 and PKT-005 contract alignment. The replay chain is now
+  clean and the local Pantheon incident contract slice passes, but the active
+  18001 runtime currently exposes no resolved incident data to validate the
+  selected-detail and incident-stream behavior end-to-end.
+
+lovable_ui_task_status: closed
+next_action: none
+delivery_artifact_ref: .coordination/requests/PKT-003-post-incident-review-needs-runtime.yaml
+review_findings_ref: .coordination/reviews/PKT-003-post-incident-review-review.md

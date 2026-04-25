@@ -1,0 +1,38 @@
+{
+  "feature_id": "PKT-014-paper-live-drift",
+  "status": "blocked",
+  "backend_commit": "d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff",
+  "bff_contract_version": "pantheon-bff@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff+working-tree",
+  "source_payload": ".coordination/requests/PKT-014-paper-live-drift-ui-done.yaml",
+  "source_commit": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "verified_front_workspace_head": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "review_file": ".coordination/reviews/PKT-014-paper-live-drift-review.md",
+  "feedback_request": ".coordination/requests/PKT-014-paper-live-drift-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/paper-live-drift/{runtime_id}"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-014-paper-live-drift.md",
+    "docs/examples/PKT-014-paper-live-drift.json",
+    "docs/screens/PKT-014-paper-live-drift.md",
+    "docs/pantheon-handoffs/PKT-014-paper-live-drift/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Sibling front TypeScript check passed: ./node_modules/.bin/tsc --noEmit --pretty false",
+    "Sibling front ESLint passed for the reviewed PKT-014 files: npx eslint src/App.tsx src/lib/bffClient.ts src/pages/operator/OperatorPaperLiveDrift.tsx src/pages/operator/types.ts",
+    "Sibling front production build passed: npm run build",
+    "Targeted Pantheon PKT-014 contract tests passed: python3 -m pytest services/control-plane/bff/test_pkt014_paper_live_drift_contract.py -q",
+    "Authenticated local TestClient read of GET /api/v1/operator/paper-live-drift/runtime-042 returned 200 OK with browser-ready owner-link refs in plan_ref, evidence_refs, and recommended_actions",
+    "The targeted PKT-014 contract test slice covers the degraded and unavailable branches through the current app",
+    "The sibling front working tree now contains the canonical frontend-feedback request and PKT-014 feedback bundle",
+    "Front commit 37a622bca69a95e2aae46aa8c6b0432ad72082a8 does not contain OperatorPaperLiveDrift.tsx, the PKT-014 request pair, or the PKT-014 feedback bundle even though both requests point source_commit at that SHA"
+  ],
+  "followup_scope": [
+    "Republish the PKT-014 request pair, feedback bundle, and reviewed screen from one immutable front commit that actually contains the full reviewed file set",
+    "Keep both request bodies pointed at that exact front publication commit SHA",
+    "Confirm in a deployed environment that the owner-link href semantics now observed in the current workspace are the intended live destinations"
+  ]
+}

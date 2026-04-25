@@ -1,0 +1,6 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:28110/api/runtime/drain",
+  "headers": {},
+  "body": {}
+}

@@ -1,7 +1,7 @@
 feature_id: PKT-003-lineage-view
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: evolution-workbench
@@ -35,6 +35,7 @@ required_feedback:
 - docs/pantheon-feedback/PKT-003-lineage-view/QA_STATUS.md
 delivery_dependencies:
 - .coordination/responses/PKT-003-lineage-view-contract-ready.yaml
+- .coordination/responses/PKT-003-lineage-view-backend-delivery.yaml
 links:
   lovable_project_url: null
   bff_spec_path: docs/bff/PKT-003-lineage-view.md

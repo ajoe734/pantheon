@@ -5,6 +5,7 @@ Last updated: 2026-04-22
 Source of truth inputs:
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
 - `docs/reviews/Pantheon_Response_to_System_Design_Followup_Questions.md`
+- `docs/reviews/Pantheon_Response_to_Architecture_Blockers_Decision_Package.md`
 Tier: L1 Platform Architecture & Policy
 Scope: canonical module readiness states, promotion rules, and legacy-status mapping
 Conflict rule: ratification records and explicit module gate decisions may specialize readiness for one module, but they must still map back to this shared ladder

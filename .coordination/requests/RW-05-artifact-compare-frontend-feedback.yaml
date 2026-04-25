@@ -1,0 +1,54 @@
+feature_id: RW-05-artifact-compare
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 6321613cff3c49b11a7619e0f9170217a27a7b17
+source_commit_note: >-
+  Feedback bundle reviews the Git-visible RW-05 implementation commit
+  6321613cff3c49b11a7619e0f9170217a27a7b17 on branch pkt-004-detail-fix. No
+  RW-05 UI source file changed after that reviewed snapshot; this cycle only
+  syncs Pantheon's refreshed 2026-04-24 contract-ready/backend-delivery packet
+  and republishes the completion handoff after the list compare-authority gap
+  was resolved.
+workbench: research-workbench
+screen_id: screen-artifact-compare
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/RW-05-artifact-compare
+feedback_path: docs/pantheon-feedback/RW-05-artifact-compare/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/RW-05-artifact-compare/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/RW-05-artifact-compare/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/RW-05-artifact-compare/QA_STATUS.md
+blocking_summary: >-
+  No contract blocker remains in the synced RW-05 handoff bundle. Pantheon's
+  2026-04-24 contract-ready and backend-delivery refresh confirms that
+  GET /api/v1/artifacts now publishes list-level
+  artifacts[].allowedActions.canCompare, which matches the reviewed UI commit
+  6321613cff3c49b11a7619e0f9170217a27a7b17 and clears the prior selector
+  authority bff-gap. Remaining follow-up is non-blocking deployed/runtime QA.
+changed_files:
+  - .coordination/requests/RW-05-artifact-compare-ui-done.yaml
+  - .coordination/requests/RW-05-artifact-compare-frontend-feedback.yaml
+  - src/pages/research/ArtifactRegistry.tsx
+  - src/pages/research/ArtifactDetail.tsx
+  - src/pages/research/ArtifactCompare.tsx
+  - src/pages/research/ArtifactTypes.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - docs/pantheon-feedback/RW-05-artifact-compare/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/RW-05-artifact-compare/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/RW-05-artifact-compare/UI_DECISIONS.md
+  - docs/pantheon-feedback/RW-05-artifact-compare/QA_STATUS.md
+pantheon_review_hint: review-ui
+summary: >-
+  RW-05 Artifact Compare is implemented in the reviewed front commit against
+  the Pantheon contract: the registry forwards only the published filter
+  params, renders backend-owned artifact rows, and gates multiselect from
+  list-level allowedActions.canCompare; the detail route renders version_chain,
+  provenance, metrics, parameters, and resolved lineage links directly from the
+  BFF; and the compare route submits only selected artifact_ids while rendering
+  backend-composed field_pairs, change_summary, and provenance_pairs without
+  client-side diff logic. Pantheon's refreshed 2026-04-24 packet resolved the
+  only blocking list-authority gap, so no new RW-05 API gap remains in this UI
+  cycle.

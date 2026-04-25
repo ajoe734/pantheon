@@ -1,0 +1,110 @@
+{
+  "_comment": "EW-05 Mutation Review — example BFF response for GET /api/v1/operator/mutation-review/{decision_id}",
+  "_task": "EW-05-OPEN-001",
+  "_status": "contract-published — for frontend reference only; do not treat as live data",
+
+  "decision_id": "evo-dec-88f3a2c1",
+  "target_type": "candidate_artifact",
+  "target_id": "artifact-44d7e9b0",
+  "target_version": "v3.1.2",
+  "action_type": "freeze",
+  "decision_state": "reviewed",
+  "risk_level": "medium",
+  "created_at": "2026-04-18T09:32:00Z",
+  "approval_decision_id": "appr-dec-c5a9f11e",
+
+  "proposed_changes": {
+    "summary": "Freeze candidate artifact 'artifact-44d7e9b0' at canary stage due to sustained slippage drift exceeding the 25% execution drift threshold over three consecutive trading days.",
+    "target_stage": "canary",
+    "downstream_plane": "governance",
+    "change_details": [
+      {
+        "field": "artifact_stage",
+        "current_value": "canary",
+        "proposed_value": "frozen",
+        "note": "Governance quarantine only; existing canary runtime not automatically stopped unless a companion operational follow-through is initiated."
+      },
+      {
+        "field": "admissibility",
+        "current_value": "eligible",
+        "proposed_value": "quarantined",
+        "note": null
+      }
+    ]
+  },
+
+  "risk_assessment": {
+    "risk_summary": "Sustained execution drift on canary stage triggered medium-risk freeze proposal. Slippage drift observed at 31% above the 20-day baseline, exceeding the 25% threshold defined in DriftPolicy.",
+    "severity": null,
+    "threshold_triggers": [
+      {
+        "trigger_type": "execution_drift",
+        "metric": "realized_slippage_drift_pct",
+        "observed_value": "0.31",
+        "threshold_value": "0.25",
+        "threshold_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §7.2"
+      },
+      {
+        "trigger_type": "execution_drift",
+        "metric": "consecutive_anomaly_days",
+        "observed_value": "3",
+        "threshold_value": "3",
+        "threshold_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §7.2"
+      }
+    ]
+  },
+
+  "required_approvals": [
+    {
+      "role": "reviewer",
+      "approved_by": "reviewer-001",
+      "approved_at": "2026-04-18T11:05:00Z",
+      "status": "approved"
+    },
+    {
+      "role": "risk_owner",
+      "approved_by": null,
+      "approved_at": null,
+      "status": "pending"
+    }
+  ],
+
+  "review_chain": [
+    {
+      "action": "reviewed",
+      "actor_role": "reviewer",
+      "actor_id": "reviewer-001",
+      "acted_at": "2026-04-18T11:05:00Z",
+      "note": "Slippage drift confirmed. Forwarded to Risk Owner for final approval."
+    }
+  ],
+
+  "linked_incident_id": null,
+  "linked_postmortem_id": null,
+  "evidence_refs": [
+    {
+      "ref_type": "drift_report",
+      "ref_id": "drift-rpt-b7c2d3e4",
+      "summary": "Execution drift report: 3-day slippage anomaly on artifact-44d7e9b0 canary stage (2026-04-15 – 2026-04-17)."
+    },
+    {
+      "ref_type": "telemetry_summary",
+      "ref_id": "telem-sum-9a1f0e22",
+      "summary": "Telemetry summary: realized slippage drift at 31% above 20-day baseline."
+    }
+  ],
+
+  "rollback_followthrough": null,
+
+  "allowedActions": {
+    "canApproveMutation": true,
+    "canRejectMutation": true
+  },
+
+  "meta": {
+    "snapshot_at": "2026-04-19T16:00:00Z",
+    "surfaces": {
+      "mutation_review": "fresh"
+    }
+  }
+}

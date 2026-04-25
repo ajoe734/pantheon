@@ -22,7 +22,7 @@ Operator Console scope:
 - it does not add a health-check endpoint or client-side shadow state
 
 Pantheon has now published the normalized PKT-005 packet family at commit
-`77443031c31f772dc9ce6682a676e8fa09732cd5`, so this Lovable loop no longer has
+`77443032a240a3df49c329100ef2477a72a70e53`, so this Lovable loop no longer has
 an open Pantheon follow-up leg.
 
 ## Front-End Review Outcome
@@ -31,7 +31,7 @@ an open Pantheon follow-up leg.
 - No Pantheon API gap is requested from the returned UI cycle
 - No front-end rework is requested from this review
 - Pantheon contract publication is complete under
-  `pantheon-bff@77443031c31f772dc9ce6682a676e8fa09732cd5`
+  `pantheon-bff@77443032a240a3df49c329100ef2477a72a70e53`
 
 ## Verified UI Alignment
 
@@ -82,7 +82,7 @@ an open Pantheon follow-up leg.
   and `.coordination/requests/PKT-005-degradation-banner-ui-done.yaml`
   payloads at that source commit
 - Pantheon now publishes the aligned PKT-005 contract family at
-  `pantheon-bff@77443031c31f772dc9ce6682a676e8fa09732cd5`
+  `pantheon-bff@77443032a240a3df49c329100ef2477a72a70e53`
 - the published packet uses `affected_bindings` and `allowedActions` for the
   incident-response surface keys, matching `PKT-002 Incident Detail`
 - the published STALE rule now requires both cache or reconstructed delivery

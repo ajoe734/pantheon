@@ -1,51 +1,63 @@
 {
   "feature_id": "PKT-002-incident-detail",
-  "status": "blocked",
-  "backend_commit": "8845859c8c58b686eb057ab8c238f4e2fcaba90a",
+  "status": "approved",
+  "backend_commit": "67849d460e3c14e7399efc830b322b048c9557cc",
   "working_tree_only": true,
-  "verified_runtime_ref": "pantheon-working-tree@8845859c8c58b686eb057ab8c238f4e2fcaba90a",
-  "bff_contract_version": "pantheon-bff@8845859c8c58b686eb057ab8c238f4e2fcaba90a+working-tree",
-  "source_payload": ".coordination/requests/PKT-002-incident-detail-ui-done.yaml",
-  "reported_source_commit": "c08acb3ea59f4c56ced578820aa6a5129a309de1",
-  "verified_front_workspace_head": "60f366e0a745ce3bb10e913e53b332d6557e23f1",
+  "verified_runtime_ref": "pantheon-working-tree@67849d460e3c14e7399efc830b322b048c9557cc",
+  "bff_contract_version": "pantheon-bff@67849d460e3c14e7399efc830b322b048c9557cc+working-tree",
+  "source_payload": ".coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml",
+  "reported_source_commit": "eb1a6cbb727a681db21ecd4b121348605fb8a4d3",
+  "request_pair_commit": "42dc4856b36a7c92f5c40cafd94bf8ef09665bbe",
+  "verified_front_workspace_head": "42dc4856b36a7c92f5c40cafd94bf8ef09665bbe",
   "review_file": ".coordination/reviews/PKT-002-incident-detail-review.md",
   "needs_runtime_request": ".coordination/requests/PKT-002-incident-detail-needs-runtime.yaml",
   "endpoints": [
-    "GET /api/v1/operator/incident-response/{incident_id}"
+    "GET /api/v1/incidents/{incident_id}",
+    "GET /api/v1/operator/incident-response/{incident_id}",
+    "GET /api/v1/runtime/{runtime_id}/events/stream",
+    "GET /api/v1/incidents/stream",
+    "GET /api/v1/kill-switch/updates"
   ],
   "contract_paths": [
     "docs/bff/PKT-002-incident-detail.md",
     "docs/examples/PKT-002-incident-detail.json",
     "docs/screens/PKT-002-incident-detail.md",
-    "docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md"
+    "docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md",
+    "docs/screens/PKT-005-degradation-banner.md",
+    "docs/bff/PKT-005-sse-substrate.md"
   ],
   "feedback_bundle": [
-    "docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md",
-    "docs/pantheon-feedback/PKT-002-incident-detail/API_GAP_REQUESTS.json",
-    "docs/pantheon-feedback/PKT-002-incident-detail/UI_DECISIONS.md",
-    "docs/pantheon-feedback/PKT-002-incident-detail/QA_STATUS.md"
+    "../front-ai-trading-system/.coordination/requests/PKT-002-incident-detail-ui-done.yaml",
+    "../front-ai-trading-system/.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml",
+    "../front-ai-trading-system/docs/pantheon-feedback/PKT-002-incident-detail/LOVABLE_CHANGE_FEEDBACK.md",
+    "../front-ai-trading-system/docs/pantheon-feedback/PKT-002-incident-detail/API_GAP_REQUESTS.json",
+    "../front-ai-trading-system/docs/pantheon-feedback/PKT-002-incident-detail/UI_DECISIONS.md",
+    "../front-ai-trading-system/docs/pantheon-feedback/PKT-002-incident-detail/QA_STATUS.md",
+    "../front-ai-trading-system/src/lib/bffClient.ts",
+    "../front-ai-trading-system/src/lib/sseClient.ts",
+    "../front-ai-trading-system/src/lib/sseReconciler.ts",
+    "../front-ai-trading-system/src/pages/operator/IncidentDetail.tsx",
+    "../front-ai-trading-system/src/pages/operator/IncidentActionDrawerPage.tsx",
+    "../front-ai-trading-system/src/components/operator/IncidentActionDrawer.tsx"
   ],
   "resolved_upstream_dependencies": [
     "BP5-SVC-011",
-    "BP5-SVC-015"
+    "BP5-SVC-015",
+    "PKT-005-sse-substrate"
   ],
-  "pantheon_api_gap": true,
+  "pantheon_api_gap": false,
   "closure_evidence": [
-    "Tracked front HEAD still routes Incident Detail at /incidents/:incidentId and preserves the published composed read contract plus explicit degraded/unavailable states",
-    "Pantheon acceptance slice `python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions'` failed because test_composed_incident_response received 404 for GET /api/v1/operator/incident-response/inc-20260410-001 in the current working tree runtime",
-    "Advertised front source_commit c08acb3ea59f4c56ced578820aa6a5129a309de1 does not contain .coordination/requests/PKT-002-incident-detail-ui-done.yaml",
-    "Current front HEAD 60f366e0a745ce3bb10e913e53b332d6557e23f1 contains ui-done plus the feedback bundle, but still does not publish the canonical frontend-feedback request",
-    "Current sibling working tree keeps IncidentDetail CTA wiring, active_commands rendering, and meta.staleness only in an uncommitted diff",
-    "Even the current working-tree IncidentDetail summary still omits opened_at and the action-authority strip still omits the per-action rationale copy required by the PKT-002 screen spec"
+    "The mirrored Pantheon request pair now matches the published front request pair instead of the stale source_commit=HEAD copy.",
+    "Transport commit eb1a6cbb727a681db21ecd4b121348605fb8a4d3 and request-pair head 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe are both GitHub-visible on origin/pkt-004-detail-fix.",
+    "The sibling front implementation still reads the PKT-002 snapshot through operatorApi.getIncidentResponse on GET /api/v1/operator/incident-response/{incident_id}.",
+    "IncidentDetail now renders data.incident.opened_at and per-action rationale copy, and its internal navigation is aligned to the committed /operator routes.",
+    "The live-update overlay stays on the approved PKT-005 SSE substrate through shared sseClient and sseReconciler helpers.",
+    "Targeted front verification passed: npm run build plus the advertised targeted eslint command.",
+    "The Pantheon incident-detail smoke slice now passes with 5 tests green.",
+    "HardRollback target_artifact_id is still not published canonically from Incident Detail context, so that command remains intentionally disabled and non-blocking for this read-side closeout."
   ],
   "followup_scope": [
-    "Restore the Pantheon runtime acceptance path so GET /api/v1/operator/incident-response/{incident_id} passes local smoke verification without changing the published contract or inventing alternate endpoints",
-    "Keep the current incident-detail read contract unchanged while fixing the current runtime/test regression on the composed route",
-    "Publish the canonical PKT-002 frontend-feedback + ui-done request pair from a Git-visible front commit that contains both payload paths and the final Incident Detail implementation file",
-    "Republish the Incident Detail CTA navigation, active_commands rendering, and meta.staleness fixes from that same Git-visible front commit",
-    "Render data.incident.opened_at in the Incident summary panel",
-    "Add the required short rationale copy for each action in the Incident Detail action-authority strip",
-    "Keep the current /incidents/:incidentId -> /incident-action-drawer integration boundary truthful in the republished artifacts",
-    "Publish or document the canonical HardRollback target_artifact_id source for Incident Detail launched drawers, or keep that command explicitly disabled in this host context"
+    "Live browser QA against a running Pantheon BFF remains deferred and non-blocking.",
+    "Keep HardRollback disabled from Incident Detail until Pantheon publishes a canonical target_artifact_id source for that command context."
   ]
 }

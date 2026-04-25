@@ -1,5 +1,7 @@
 # Discussion Planning Mode
 
+Record note: this session directory is planning history and execution-shaping record material, not canonical blueprint truth.
+
 This directory is the canonical workspace for `discussion_planning`.
 
 ## Session

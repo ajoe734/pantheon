@@ -5,7 +5,7 @@
 - Feature ID: `TW-01-teaching-dialog`
 - Screen ID: `screen-teaching-dialog`
 - Workbench: Trainer Workbench
-- Packet status: contract-published — UI implementation must not start until the BFF routes are live
+- Packet status: route-live — the BFF routes are live; the current front-owned follow-up cycle should remove the pending gate and republish a replayable request pair
 - Task: `TW-01-FOUNDATION-001`
 
 ## Summary
@@ -23,14 +23,14 @@ src/lib/bffClient.ts                          — add TW-01 trainer session call
 
 ## Readiness Gate
 
-Do not open the production page until Pantheon confirms these routes are live and returning the published field shape:
+Pantheon has confirmed these routes live and returning the published field shape:
 
 - `POST /api/v1/trainer/sessions`
 - `GET /api/v1/trainer/sessions`
 - `GET /api/v1/trainer/sessions/{session_id}`
 - `POST /api/v1/trainer/sessions/{session_id}/message`
 
-Until then, render a pending-BFF placeholder. No invented trainer-session rows, no local transcript cache, and no Persona teaching-history fallback.
+Remove any pending-BFF placeholder for these routes. No invented trainer-session rows, no local transcript cache, and no Persona teaching-history fallback. The next UI cycle must also preserve the full published create shape, including optional `context_refs[]`, and republish `ui-done` plus `frontend-feedback` from one truthful Git-visible commit.
 
 ## API Integration
 
@@ -90,7 +90,7 @@ Accepted field:
 ### `TeachingDialogList.tsx`
 
 - Hosts both the trainer-session composer and the session list.
-- Composer fields must exactly match the published create contract.
+- Composer fields must exactly match the published create contract, including optional `context_refs[]` when provided by the operator.
 - Always send `session_type = "trainer"` as a request field.
 - List rows must come from the BFF list response only.
 - Filter state may be local UI state, but filter vocabulary must match backend query params exactly.
@@ -114,7 +114,8 @@ Accepted field:
 - Do not use `/api/v1/personas/{persona_id}/teaching` as a replacement for the trainer-session list or detail route.
 - Do not derive transcript ordering, actor context, or lifecycle state from local state.
 - Do not infer message authority from `status`; use `allowedActions.canSendMessage`.
-- Do not start production UI until Pantheon confirms the routes are live.
+- Do not reintroduce a pending-BFF gate now that Pantheon has confirmed the routes live.
+- Publish `ui-done`, `frontend-feedback`, and the TW-01 feedback bundle from one transport-replayable front commit.
 - If any required field is missing, emit a `bff-gap` handoff instead of mocking.
 
 ## Degradation Handling
@@ -127,7 +128,7 @@ Accepted field:
 
 ## Completion Handoff
 
-When the UI implementation is ready, write `.coordination/requests/TW-01-teaching-dialog-ui-done.yaml` using `.coordination/requests/TW-01-teaching-dialog-ui-done.example.yaml` as the template.
+When the refreshed UI cycle is ready, publish both `.coordination/requests/TW-01-teaching-dialog-ui-done.yaml` and `.coordination/requests/TW-01-teaching-dialog-frontend-feedback.yaml`, keep their `source_commit` values aligned to the same final front publication commit, and commit the full `docs/pantheon-feedback/TW-01-teaching-dialog/` bundle in that same cycle.
 
 ## References
 

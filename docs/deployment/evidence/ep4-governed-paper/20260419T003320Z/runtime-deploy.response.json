@@ -1,0 +1,15 @@
+{
+  "status": 201,
+  "payload": {
+    "artifact_id": "reg-ep4-08be4264",
+    "artifact_version": "1.2.0",
+    "binding_id": "rb-c69674e7d4154dceb039edd0753a8166",
+    "capital_pool_id": "pool-ep4-6d3a19af",
+    "deployment_mode": "paper",
+    "effective_at": "2026-04-19T00:33:20Z",
+    "persona_capital_binding_id": "pcb-ep4-eb06d91d",
+    "plan_id": "plan-ep4-04e96cf5",
+    "runtime_id": "paper-runtime-001",
+    "status": "active"
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "runtimes": [
+    {
+      "runtime_id": "runtime-live-200",
+      "runtime_binding_id": "runtime-live-200",
+      "deployment_stage": "live",
+      "status": "running",
+      "capital_pool_id": "pool-main",
+      "plan_ref": {
+        "plan_id": "plan-live-200",
+        "href": "/operator/deployment-review?plan=plan-live-200"
+      },
+      "artifact_ref": {
+        "artifact_id": "artifact-live-200",
+        "artifact_version": "v2.3.1"
+      },
+      "telemetry_summary": {
+        "window": "1h",
+        "collected_at": "2026-04-18T05:15:00Z",
+        "metrics": {
+          "pnl": 0.12,
+          "drawdown": 0.02,
+          "sharpe_ratio": 2.1,
+          "fill_rate": 0.99,
+          "avg_slippage_bps": 0.9,
+          "total_trades": 21
+        }
+      },
+      "rollback_summary": {
+        "count": 1,
+        "latest": {
+          "rollback_id": "rb-200",
+          "action_type": "rollback",
+          "status": "completed",
+          "from_version": "v2.3.1",
+          "to_version": "v2.3.0",
+          "initiated_at": "2026-04-18T05:00:00Z",
+          "completed_at": "2026-04-18T05:02:00Z"
+        },
+        "href": "/api/v1/runtimes/runtime-live-200/rollbacks"
+      },
+      "last_updated_at": "2026-04-18T05:15:00Z"
+    },
+    {
+      "runtime_id": "runtime-paper-100",
+      "runtime_binding_id": "runtime-paper-100",
+      "deployment_stage": "paper",
+      "status": "running",
+      "capital_pool_id": "pool-paper",
+      "plan_ref": {
+        "plan_id": "plan-paper-100",
+        "href": "/operator/deployment-review?plan=plan-paper-100"
+      },
+      "artifact_ref": {
+        "artifact_id": "artifact-paper-100",
+        "artifact_version": "v1.0.0"
+      },
+      "telemetry_summary": {
+        "window": "1h",
+        "collected_at": "2026-04-18T04:10:00Z",
+        "metrics": {
+          "pnl": 0.04,
+          "drawdown": 0.01,
+          "sharpe_ratio": 1.5,
+          "fill_rate": 0.98,
+          "avg_slippage_bps": 1.1,
+          "total_trades": 12
+        }
+      },
+      "rollback_summary": {
+        "count": 0,
+        "latest": null,
+        "href": "/api/v1/runtimes/runtime-paper-100/rollbacks"
+      },
+      "last_updated_at": "2026-04-18T04:10:00Z"
+    }
+  ],
+  "page_info": {
+    "next_page_token": null
+  },
+  "meta": {
+    "snapshot_at": "2026-04-18T05:20:00Z",
+    "total": 2,
+    "sort": {
+      "sort_by": "last_updated_at",
+      "sort_order": "desc"
+    },
+    "surfaces": {
+      "runtime_state": {
+        "status": "ok",
+        "source": "bff_composed"
+      },
+      "runtime_roster": {
+        "status": "ok",
+        "source": "canonical"
+      },
+      "telemetry_summary": {
+        "status": "ok",
+        "source": "service_store"
+      },
+      "rollback_history": {
+        "status": "ok",
+        "source": "service_store"
+      }
+    }
+  }
+}

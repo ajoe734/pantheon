@@ -1,0 +1,96 @@
+feature_id: RW-03-analyze
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: ef9b4d7b4f69ac829ea097fff0bef889d42e46dc
+source_commit_note: >-
+  UI implementation commit ef9b4d7b4f69ac829ea097fff0bef889d42e46dc adds
+  ResearchAnalyze.tsx, ResearchAnalyzeDetail.tsx, the RW-03 type additions,
+  and the health endpoint listing update. Coordination request pair and
+  feedback bundle are published in
+  e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f. The full chain is now
+  GitHub-visible on origin/pkt-004-detail-fix.
+screen: research-analyze
+blocking: false
+status: completed
+pantheon_disposition: approved
+acknowledged_at: "2026-04-21T18:44:44Z"
+acknowledged_by: Codex
+resubmitted_at: "2026-04-21T20:51:11Z"
+resolved_at: "2026-04-21T20:55:05Z"
+review_file: .coordination/reviews/RW-03-analyze-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the returned RW-03 bundle and verified that
+  implementation commit ef9b4d7b4f69ac829ea097fff0bef889d42e46dc remains
+  replayable through publish commit
+  e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f on origin/pkt-004-detail-fix.
+  `git ls-remote --heads origin pkt-004-detail-fix` now returns e9f93f5,
+  `git ls-tree -r --name-only ef9b4d7...` contains the reviewed RW-03 UI file
+  set, and `git ls-tree -r --name-only e9f93f5...` contains the canonical
+  request pair plus docs/pantheon-feedback/RW-03-analyze. Pantheon reran
+  `python3 -m pytest -q services/control-plane/bff/test_rw03_analyze_contract.py`
+  (`4 passed`), confirmed live 18001 route publication plus degraded
+  list/detail and 404 OBJECT_NOT_FOUND behavior, and reran sibling-front
+  targeted eslint plus `npm run build`. The loop can close on the Pantheon
+  side.
+
+summary: |
+  Research Analyze is implemented against the live RW-03 Pantheon routes
+  through rw03AnalyzeApi. The list route sends only the published query params,
+  renders backend-owned summary rows and metric_group_refs, preserves backend
+  pagination through page_token, and uses links.workbench_detail plus
+  links.linked_ticket_detail for drilldown. The detail route renders summary,
+  metric_groups, and comparative_summary exactly as returned, preserves the
+  backend metric-group order, separates OBJECT_NOT_FOUND from route-not-live
+  behavior, and never computes local metric grouping or diff logic in the
+  browser.
+
+changed_files:
+  - .coordination/requests/RW-03-analyze-frontend-feedback.yaml
+  - src/pages/research/ResearchAnalyze.tsx
+  - src/pages/research/ResearchAnalyzeDetail.tsx
+  - src/pages/research/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - src/pages/health/Health.tsx
+  - .coordination/requests/RW-03-analyze-ui-done.yaml
+  - docs/pantheon-feedback/RW-03-analyze/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/RW-03-analyze/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/RW-03-analyze/UI_DECISIONS.md
+  - docs/pantheon-feedback/RW-03-analyze/QA_STATUS.md
+
+routes:
+  - /research/analyze
+  - /research/analyze/:analysis_id
+
+acceptance_evidence:
+  - python3 -m pytest -q services/control-plane/bff/test_rw03_analyze_contract.py -> 4 passed
+  - curl http://127.0.0.1:18001/openapi.json confirms GET /api/v1/research/analysis and GET /api/v1/research/analysis/{analysis_id} are published as of 2026-04-21T18:32:06Z
+  - authenticated live HTTP list probe on 18001 returned 200 with page_info.next_page_token, metric_group_refs, and meta.surfaces.analysis_results = degraded
+  - authenticated live HTTP detail probe on 18001 returned 200 with ordered metric_groups = performance, drawdown, signal_quality, backend-authored comparative_summary, and links.linked_experiment_detail
+  - authenticated live HTTP missing-detail probe on 18001 returned 404 OBJECT_NOT_FOUND for does-not-exist
+  - live RBAC probes on 18001 returned 401 for missing bearer auth and 403 INSUFFICIENT_ROLE for viewer auth
+  - workspace-backed unavailable probes returned 200 list/detail envelopes with meta.surfaces.analysis_results = unavailable
+  - git ls-remote --heads origin pkt-004-detail-fix now returns e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f
+  - git ls-tree -r --name-only e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f includes the RW-03 request pair, feedback bundle, and reviewed UI files
+  - sibling front targeted ESLint passed for the reviewed RW-03 files
+  - sibling front production build passed: npm run build
+
+follow_up_requested:
+  - capture a truthful stale-state RW-03 runtime response once the operator-bff exposes one directly
+  - run deployed browser QA for /research/analyze and /research/analyze/:analysis_id
+  - confirm linked_experiment_detail resolves to the intended owner route in the deployed front-end environment
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
+
+coordination_updates:
+  contract_ready: .coordination/responses/RW-03-analyze-contract-ready.yaml
+  lovable_ui_task: .coordination/responses/RW-03-analyze-lovable-ui-task.yaml
+  frontend_feedback_response: .coordination/responses/RW-03-analyze-frontend-feedback.yaml
+  backend_delivery: .coordination/responses/RW-03-analyze-backend-delivery.yaml
+  needs_runtime: .coordination/requests/RW-03-analyze-needs-runtime.yaml

@@ -1,0 +1,37 @@
+{
+  "feature_id": "PKT-011-health-status-board",
+  "status": "followup-required",
+  "backend_commit": "d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff",
+  "bff_contract_version": "pantheon-bff@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff+working-tree",
+  "source_payload": ".coordination/requests/PKT-011-health-status-board-ui-done.yaml",
+  "source_commit": "87088d7a1efec434483fb97d16a3c34cbe9f37cd",
+  "verified_front_workspace_head": "e7b52178030e363696db4daf1cb20ab8febab133",
+  "review_file": ".coordination/reviews/PKT-011-health-status-board-review.md",
+  "feedback_request": ".coordination/requests/PKT-011-health-status-board-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/health-status"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-011-health-status-board.md",
+    "docs/examples/PKT-011-health-status-board.json",
+    "docs/screens/PKT-011-health-status-board.md",
+    "docs/pantheon-handoffs/PKT-011-health-status-board/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Targeted Pantheon PKT-011 contract tests passed: python3 -m pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py -q",
+    "Direct local TestClient read of GET /api/v1/operator/health-status returned 200 OK with overall_status=degraded, canonical group order, browser-ready target_refs, and advisory secondary-control-path commands",
+    "Pantheon secondary-control-path commands match the documented degraded operator path guidance in services/control-plane/bff/DEGRADED_OPERATOR_PATH.md",
+    "The returned PKT-011 frontend-feedback request and docs/pantheon-feedback/PKT-011-health-status-board bundle are present in the sibling front repo",
+    "The exact published source_commit 87088d7a1efec434483fb97d16a3c34cbe9f37cd does not resolve in the sibling front repo",
+    "A similarly prefixed front commit, 87088d718dcbc6f07cc66932f44b5f16985583a9, does exist and contains the reviewed PKT-011 request pair, feedback bundle, and UI wiring files, but Pantheon did not substitute it for the exact published handoff SHA",
+    "Pantheon emits browser-oriented governance target_refs that match the canonical example payload, but the sibling front router still does not expose /governance-review-queue or /governance-approval-queue"
+  ],
+  "followup_scope": [
+    "Correct the exact published source_commit in the PKT-011 ui-done and frontend-feedback request pair so it resolves and truthfully anchors the reviewed Git-visible bundle",
+    "Keep the frontend on payload-owned target_refs and secondary_control_path targets only; do not synthesize alternate browser routes or fallback commands",
+    "Expose /governance-review-queue and /governance-approval-queue in the sibling front router, or emit the next coordination handoff explicitly naming governance destination dependency as the remaining downstream blocker"
+  ]
+}

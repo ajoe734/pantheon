@@ -1,0 +1,22 @@
+{
+  "task_id": "EP5-001",
+  "generated_at": "2026-04-24T14:29:48Z",
+  "mode": "rollback_drill",
+  "dry_run": false,
+  "runtime_manager_url": "http://10.140.0.5:28081",
+  "telemetry_url": "http://10.140.0.4:38083",
+  "binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+  "capital_pool_id": "pool-ep5-canary-3",
+  "notes": [
+    "This harness prepares or rehearses the rollback drill entry path only.",
+    "A successful run is not by itself an EP5 proof packet."
+  ],
+  "status": "executed",
+  "kill_switch_safe_mode": "paused",
+  "kill_switch_action_type": "pause",
+  "audit_entry_count": 3,
+  "rollback_action_type": "pause_then_replace",
+  "old_binding_status": "retired",
+  "new_binding_status": "active",
+  "replacement_binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91"
+}

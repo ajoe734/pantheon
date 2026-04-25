@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8006/api/deployment/plans/plan-ep4-b3265ce8/status",
+  "headers": {},
+  "body": {
+    "status": "executed"
+  }
+}

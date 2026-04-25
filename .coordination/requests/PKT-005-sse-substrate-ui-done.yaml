@@ -5,14 +5,28 @@ source_branch: main
 source_commit: c08acb3ea59f4c56ced578820aa6a5129a309de1
 screen: sse-reconciliation-substrate
 blocking: false
+status: completed
+pantheon_disposition: follow_up
+acknowledged_at: "2026-04-24T04:53:52Z"
+acknowledged_by: Codex
+resolved_at: "2026-04-24T04:53:52Z"
+review_file: .coordination/reviews/PKT-005-sse-substrate-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the current main-branch PKT-005 SSE substrate handoff
+  from /tmp/front-origin-main-verify at commit
+  c08acb3ea59f4c56ced578820aa6a5129a309de1. The published ui-done payload and
+  feedback bundle are present, but the companion frontend-feedback request is
+  missing and the main checkout regresses earlier accepted SSE behavior:
+  last_event_id and duplicate suppression advance before successful host apply,
+  accepted runtime or incident events remain informational, delayed-update
+  footer notes are absent, and live bff-gap results are dropped. No Pantheon
+  BFF contract or runtime follow-up is required; front follow-up is required on
+  the unchanged PKT-005 contract.
 
 summary: >-
-  SSE Reconciliation Substrate is implemented as a shared client layer in
-  src/lib/sseClient.ts, src/lib/sseReconnectManager.ts, and src/lib/sseReconciler.ts
-  and wired into all four relevant Operator Console screens (Deployment Review,
-  Incident Detail, Incident Action Drawer, Post-Incident Review). All three BFF SSE
-  streams are consumed through the shared client only. All acceptance criteria are met.
-  No BFF contract gaps were found.
+  SSE Reconciliation Substrate implemented as a shared client layer and wired
+  into all relevant Operator Console screens. No BFF contract gaps found. All
+  acceptance criteria met.
 
 changed_files:
   - src/lib/sseClient.ts
@@ -33,10 +47,8 @@ feedback_bundle:
   - docs/pantheon-feedback/PKT-005-sse-substrate/QA_STATUS.md
 
 follow_up_requested:
-  - review the SSE client implementation against the PKT-005 BFF contract
+  - review the SSE client layer against the PKT-005 BFF contract
   - confirm reconnect, replay, and idempotency behaviour using the example event fixtures
-  - confirm kill_switch_activated CTA gating on Incident Detail and IncidentActionDrawer
-  - confirm degradation banner is not derived from SSE payloads
   - publish the next response packet if Pantheon follow-up is required
 
 acceptance:

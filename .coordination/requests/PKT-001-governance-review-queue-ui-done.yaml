@@ -1,0 +1,31 @@
+feature_id: PKT-001-governance-review-queue
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 56ecdd48bb2fd422a6b1618b65906f02640c938a
+screen: governance-review-queue
+blocking: false
+
+summary: Governance Review Queue UI is published from a replayable front-repo commit and ready for Pantheon follow-up.
+
+changed_files:
+  - .coordination/requests/PKT-001-governance-review-queue-frontend-feedback.yaml
+  - .coordination/requests/PKT-001-governance-review-queue-ui-done.yaml
+  - docs/pantheon-feedback/PKT-001-governance-review-queue/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-001-governance-review-queue/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-001-governance-review-queue/QA_STATUS.md
+  - docs/pantheon-feedback/PKT-001-governance-review-queue/UI_DECISIONS.md
+  - src/components/AppSidebar.tsx
+  - src/pages/governance/GovernanceReviewQueue.tsx
+  - src/pages/governance/ReviewItemDetail.tsx
+  - src/pages/governance/types.ts
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - verify the server-backed filters, drawer data path, and degradation gating behave as intended
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

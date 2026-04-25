@@ -2,7 +2,7 @@
 
 ## Status
 
-**Contract published** — the Research Search route, result projection, filter semantics, and search-index adapter behavior are now the definitive implementation target for the Pantheon BFF. UI work must not start until Pantheon confirms the route is live and returning this field shape.
+**Route live** — `GET /api/v1/research/search` is confirmed live as of `2026-04-20T13:40:00Z` and returns the published `SearchResult` field shape plus `meta.index_adapter.*` metadata. Frontend handoff bundle published at `docs/pantheon-handoffs/RW-02-search/`. UI implementation may proceed.
 
 Task: `RW-02-SEARCH-001`
 

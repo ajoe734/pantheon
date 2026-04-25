@@ -1,5 +1,8 @@
 # Discussion Planning Mode
 
+Record note: this directory is a planning workspace and record, not immutable blueprint truth.
+If another planning session is active in `.orchestrator/planning-state.json`, that session is the operative planning record instead of this legacy phase1 workspace.
+
 This directory is the canonical workspace for `discussion_planning`.
 
 ## Goal

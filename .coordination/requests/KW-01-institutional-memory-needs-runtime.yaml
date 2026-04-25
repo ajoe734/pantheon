@@ -1,0 +1,28 @@
+feature_id: KW-01-institutional-memory
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: institutional-memory
+status: pending
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-20T13:45:17Z"
+summary: >-
+  Pantheon re-review of the returned KW-01 Institutional Memory ui-done handoff
+  confirms the front-end implementation is statically aligned on the published
+  list/detail contract and that the current workspace serves both
+  GET /api/v1/knowledge/memory and
+  GET /api/v1/knowledge/memory/{entry_id}. The remaining Pantheon-owned blocker
+  is href truth for source_event.href. Local authenticated FastAPI TestClient
+  probes of the live KW-01 BFF routes return route_href values under
+  /knowledge/memory/... and source_event.href values under
+  /operator/incidents/{incident_id}/review in both degraded and unavailable
+  modes. The sibling front repo mounts /knowledge/memory and
+  /knowledge/memory/:entry_id plus /operator/post-incident-review, but does not
+  mount /operator/incidents/:incidentId/review.
+next_step: >-
+  Verify the intended owner-screen destination for institutional-memory source
+  links in the current Pantheon workspace and deployed environment, then update
+  Pantheon-owned href truth accordingly. After that, hand control back to
+  front-sync / Pantheon review so KW-01 can close without inventing client-side
+  aliases or shadow navigation state.

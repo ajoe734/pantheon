@@ -6,60 +6,81 @@
 
 ## Summary
 
-Pantheon re-reviewed the PKT-005 SSE request pair after the front repo
-republished both canonical request files in commit
-`c63eebc8fb93c8be954725b26dcf662237f67c01`.
+Pantheon approved the PKT-005 SSE closeout against the Git-visible front
+publication tuple on `origin/pkt-004-detail-fix`:
 
-That republish now points both
+- reviewed source commit:
+  `eb1a6cbb727a681db21ecd4b121348605fb8a4d3`
+- canonical request-pair republish commit:
+  `42dc4856b36a7c92f5c40cafd94bf8ef09665bbe`
+
+That republish changes only the two PKT-005 request files and points both
 `.coordination/requests/PKT-005-sse-substrate-ui-done.yaml` and
-`.coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml` to the
-same reachable reviewed front source commit:
-`87088d718dcbc6f07cc66932f44b5f16985583a9`.
+`.coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml` back to
+the same truthful reviewed source commit
+`eb1a6cbb727a681db21ecd4b121348605fb8a4d3`.
 
-The earlier blocker from the prior review is resolved. The request pair is now
-replay-clean, the feedback bundle remains Git-visible from the republish
-commit, and no new Pantheon contract change or BFF gap is required for this
-loop.
+Current remote branch head `1a1a42eebda033a1fbda4696df5b81271f5eed9b`
+preserves that same request pair and feedback bundle. The earlier publication
+truth blocker is resolved. No new Pantheon contract change, BFF gap, or
+frontend SSE follow-up is required for this loop.
 
 ## Front-End Review Outcome
 
-- Pantheon review result: accepted for closeout
+- Pantheon review result: replay-clean and contract-aligned
 - No Pantheon API gap is requested from this pass
 - No new front-end behavior change is requested from Pantheon review
-- The PKT-005 SSE request pair is now aligned to a truthful, reachable
+- The PKT-005 SSE request pair is aligned to one truthful Git-visible
   publication tuple
 
 ## Verified Positives
 
 - Shared SSE transport stays inside the client layer; no raw `EventSource` is
   required in component files
-- The published feedback bundle remains Git-visible under
+- The approved feedback bundle remains Git-visible under
   `docs/pantheon-feedback/PKT-005-sse-substrate/`
-- The republished request pair is present in the same Git-visible commit:
+- The canonical republish commit contains the request pair:
   - `.coordination/requests/PKT-005-sse-substrate-ui-done.yaml`
   - `.coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml`
 - `API_GAP_REQUESTS.json` remains empty, consistent with the claimed no-gap
   closeout
-- Both request files now publish the reachable reviewed source commit:
-  `87088d718dcbc6f07cc66932f44b5f16985583a9`
+- Both request files now publish the reviewed source commit:
+  `eb1a6cbb727a681db21ecd4b121348605fb8a4d3`
+- The replay/dedupe edge Pantheon previously left open is now closed:
+  `SseClient.acknowledgeEvent()` and `SseReconciler.markApplied()` advance
+  replay state only after host apply
+- Required host screens now surface explicit realtime `bff-gap` alerts, render
+  delayed-update notes after 60 seconds of inactivity while connected, and
+  apply or refresh visible state on accepted events
 
 ## Verification Performed
 
-- Reviewed the Git-visible front request pair from the republish commit:
-  - `git -C ../front-ai-trading-system show c63eebc8fb93c8be954725b26dcf662237f67c01:.coordination/requests/PKT-005-sse-substrate-ui-done.yaml`
-  - `git -C ../front-ai-trading-system show c63eebc8fb93c8be954725b26dcf662237f67c01:.coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml`
-- Verified the reviewed source commit resolves and remains reachable:
-  - `git -C ../front-ai-trading-system rev-parse 87088d718dcbc6f07cc66932f44b5f16985583a9^{commit}`
-- Verified the feedback bundle is Git-visible from the same republish commit:
-  - `git -C ../front-ai-trading-system ls-tree -r --name-only c63eebc8fb93c8be954725b26dcf662237f67c01 -- .coordination/requests/PKT-005-sse-substrate-ui-done.yaml .coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml docs/pantheon-feedback/PKT-005-sse-substrate`
-- Re-checked the mirrored Pantheon packet:
-  - `docs/bff/PKT-005-sse-substrate.md`
-  - `docs/screens/PKT-005-sse-substrate.md`
-  - `docs/examples/PKT-005-sse-substrate.json`
+- Verified the canonical Git-visible request-pair republish:
+  - `git -C ../front-ai-trading-system show 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe:.coordination/requests/PKT-005-sse-substrate-ui-done.yaml`
+  - `git -C ../front-ai-trading-system show 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe:.coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml`
+- Verified the reviewed source commit resolves and is contained in the returned
+  front branch:
+  - `git -C ../front-ai-trading-system rev-parse eb1a6cbb727a681db21ecd4b121348605fb8a4d3^{commit}`
+  - `git -C ../front-ai-trading-system branch -r --contains eb1a6cbb727a681db21ecd4b121348605fb8a4d3`
+- Verified the replay delta is transport-only for PKT-005:
+  - `git -C ../front-ai-trading-system diff --name-only eb1a6cbb727a681db21ecd4b121348605fb8a4d3..42dc4856b36a7c92f5c40cafd94bf8ef09665bbe -- .coordination/requests/PKT-005-sse-substrate-ui-done.yaml .coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml docs/pantheon-feedback/PKT-005-sse-substrate src/lib/sseClient.ts src/lib/sseReconnectManager.ts src/lib/sseReconciler.ts src/pages/operator/DeploymentReviewConsole.tsx src/pages/operator/IncidentDetail.tsx src/pages/operator/IncidentActionDrawerPage.tsx src/pages/operator/PostIncidentReviewConsole.tsx src/pages/operator/DeploymentPlanDetail.tsx src/components/operator/IncidentActionDrawer.tsx src/pages/operator/types.ts`
+- Verified current remote head preserves the approved request pair and feedback
+  bundle:
+  - `git -C ../front-ai-trading-system diff --name-only 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe..1a1a42eebda033a1fbda4696df5b81271f5eed9b -- .coordination/requests/PKT-005-sse-substrate-ui-done.yaml .coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml docs/pantheon-feedback/PKT-005-sse-substrate`
+- Re-checked the contract bundle and reviewed source implementation:
+  - `docs/pantheon-handoffs/PKT-005-sse-substrate/bff/PKT-005-sse-substrate.md`
+  - `docs/pantheon-handoffs/PKT-005-sse-substrate/screens/PKT-005-sse-substrate.md`
   - `docs/pantheon-handoffs/PKT-005-sse-substrate/FRONTEND_CHANGE_SPEC.md`
+  - `../front-ai-trading-system/src/lib/sseClient.ts`
+  - `../front-ai-trading-system/src/lib/sseReconciler.ts`
+  - `../front-ai-trading-system/src/pages/operator/DeploymentReviewConsole.tsx`
+  - `../front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`
+  - `../front-ai-trading-system/src/pages/operator/IncidentActionDrawerPage.tsx`
+  - `../front-ai-trading-system/src/pages/operator/PostIncidentReviewConsole.tsx`
 
 ## Residual Risk
 
 - Live browser QA against a running Pantheon BFF was not rerun in this closeout.
-- This sync only clears the publication-truth blocker; any later runtime
-  divergence should publish a fresh follow-up instead of reopening this note.
+- Any future publish that repoints the PKT-005 request pair away from
+  `eb1a6cbb727a681db21ecd4b121348605fb8a4d3` should be treated as a fresh
+  review cycle rather than inheriting this approval automatically.

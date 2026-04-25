@@ -1,6 +1,6 @@
 {
-  "_note": "Contract-published example payloads for TW-03 Before/After Compare. Use as the implementation target for BFF and frontend integration. Do not use as mock production state.",
-  "_packet_status": "contract-published",
+  "_note": "Route-live example payloads for TW-03 Before/After Compare. BFF preview routes are live; use the live GET/POST preview route family for frontend integration. Do not use as mock production state.",
+  "_packet_status": "route-live",
   "_task": "TW-03-COMPARE-001",
   "preview_read_request": {
     "session_id": "trn-20260419-001",

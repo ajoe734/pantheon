@@ -1,0 +1,9 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:18082/api/governance/approvals/apv-ep4-7b75c6f8/review",
+  "headers": {},
+  "body": {
+    "actor_role": "governance_reviewer",
+    "actor_id": "ep4-governance-reviewer"
+  }
+}

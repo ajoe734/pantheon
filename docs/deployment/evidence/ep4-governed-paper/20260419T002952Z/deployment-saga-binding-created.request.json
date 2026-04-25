@@ -1,0 +1,10 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8006/api/deployment/sagas/deployment-saga-plan-ep4-b6db1fc9/binding-created",
+  "headers": {},
+  "body": {
+    "binding_id": "rb-9eda862f44824da89b68c1278c2baf6d",
+    "runtime_id": "paper-runtime-001",
+    "note": "execution plane created the governed paper binding"
+  }
+}

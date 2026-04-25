@@ -2,11 +2,12 @@
 
 ## Status
 
-**Contract ratified — pending BFF implementation.** The `2026-04-22`
-follow-up architecture response closes the remaining memo lifecycle, mapping,
-and governance-gate questions. `CW-04` is no longer blocked on system design;
-the remaining gap is implementing the route family against the ratified memo
-contract.
+**Route-live.** The `2026-04-22` follow-up architecture response closes the
+remaining memo lifecycle, mapping, and governance-gate questions, the current
+BFF implements the `GET /api/v1/consult/memos` route family against that
+ratified contract, and the module-local frontend handoff bundle is now
+published under `docs/pantheon-handoffs/CW-04-redteam-memo/`. Remaining work
+is activating the UI against the live memo surface.
 
 Task: `CW-04-REDTEAM-MEMO-001`
 
@@ -175,6 +176,12 @@ Frontend must never derive this signal from `status` alone.
 
 Freshness belongs in `meta.staleness`, not as a primary surface state.
 
+For memo detail, `degraded` still returns the full published detail envelope,
+including mapping and metadata fields; only
+`allowedActions.canInitiateGovernanceReview` is forced false. The
+`unavailable` branch is the only state that suppresses memo content fields such
+as `summary`, `recommendations[]`, and `evidence_refs[]`.
+
 ## Non-goals
 
 - The client must not derive memo lifecycle from transcript state.
@@ -188,3 +195,4 @@ Freshness belongs in `meta.staleness`, not as a primary surface state.
 ## Example Payload
 
 - `docs/examples/CW-04-redteam-memo.json`
+- `docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md`

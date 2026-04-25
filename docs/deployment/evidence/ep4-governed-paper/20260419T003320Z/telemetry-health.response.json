@@ -1,0 +1,8 @@
+{
+  "status": 200,
+  "payload": {
+    "service": "telemetry-ingest",
+    "started": true,
+    "status": "ok"
+  }
+}

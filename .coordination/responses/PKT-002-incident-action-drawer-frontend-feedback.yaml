@@ -1,0 +1,208 @@
+feature_id: PKT-002-incident-action-drawer
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-24T10:55:53Z'
+reviewed_commit: b1ee405d8c4e8096f73f1313092722a33ca3abff
+reviewed_source_commit: 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+request_pair_commit: b146ba7e40286753aa7419740dd695cdbbf6e5f5
+ui_done_source_commit: 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+frontend_feedback_source_commit: 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+verified_front_workspace_head: b146ba7e40286753aa7419740dd695cdbbf6e5f5
+verified_remote_publish_commit: b146ba7e40286753aa7419740dd695cdbbf6e5f5
+feedback_bundle_transport: >-
+  Reviewed UI source commit 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+  contains the refreshed PKT-002 request pair, feedback bundle, and reviewed
+  UI files. Front publish commit b146ba7e40286753aa7419740dd695cdbbf6e5f5 on
+  origin/pkt-004-detail-fix republishes the canonical request pair pinned back
+  to source commit 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 without changing
+  the reviewed UI slice, and `git diff --name-only
+  82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+  b146ba7e40286753aa7419740dd695cdbbf6e5f5` over the PKT-002
+  incident-action-drawer paths lists only the two request files.
+screen: incident-action-drawer
+workbench: operator-console
+screen_id: screen-operator-incident-action-drawer
+
+status: loop-complete
+disposition: close
+review_result: replay-clean-and-runtime-http-sse-verified
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed the returned PKT-002 Incident Action Drawer request
+  pair against the published PKT-002 command contract, the inherited PKT-005
+  SSE boundary rules, and the current origin/pkt-004-detail-fix transport
+  chain. The reviewed source commit
+  82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 resolves the prior front-owned
+  follow-up: `/operator/incidents/:incidentId/action` remains the mounted host
+  route, `IncidentActionDrawerPage` now waits for the drawer's initial
+  `GET /api/v1/kill-switch/status` snapshot before opening
+  `/api/v1/kill-switch/updates`, and the feedback bundle now truthfully states
+  that only runtime verification remains. The transport chain is replay-clean
+  as well: origin/pkt-004-detail-fix resolves to
+  b146ba7e40286753aa7419740dd695cdbbf6e5f5, and that publish commit repins the
+  request pair back to source commit 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+  without changing the reviewed UI files. Targeted TypeScript, eslint, and
+  production build verification all passed in an isolated checkout, and the
+  Pantheon PKT-002 command and kill-switch smoke subset returned
+  `8 passed, 12 deselected`. Live HTTP and SSE probes also passed: the active
+  local runtime at `http://127.0.0.1:18001` advertises the kill-switch
+  status, kill-switch updates, and operator commands routes; admin-auth live
+  reads and writes return contract-shaped payloads and receipts; the
+  kill-switch stream replays a valid `kill_switch_activated` event after a
+  Pantheon-owned internal test publish; and the front repo's shared
+  `SseReconciler` buffers then flushes that event on hydration exactly as the
+  committed action-drawer host expects. No new Pantheon API gap,
+  backend-delivery, or needs-runtime escalation is required for this cycle.
+
+acceptance_verified:
+  - criterion: Git-visible ui-done and frontend-feedback request pair plus feedback bundle are published for the reviewed cycle
+    status: pass
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` resolves to
+      b146ba7e40286753aa7419740dd695cdbbf6e5f5, and `git ls-tree` on that
+      publish commit returns the current PKT-002 request pair,
+      `docs/pantheon-feedback/PKT-002-incident-action-drawer/*`, and the
+      reviewed UI files.
+  - criterion: the published request pair points to an immutable reviewed PKT-002 action-drawer snapshot
+    status: pass
+    note: >-
+      Both published request bodies now set `source_commit` to
+      82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9, and
+      `git diff --name-only
+      82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+      b146ba7e40286753aa7419740dd695cdbbf6e5f5` over the PKT-002
+      incident-action-drawer paths changes only the two request files.
+  - criterion: PKT-002 read and write surfaces stay on the published endpoints only
+    status: pass
+    note: >-
+      `src/lib/bffClient.ts` still uses
+      `operatorApi.getKillSwitchStatus()` for `GET /api/v1/kill-switch/status`
+      and `operatorApi.sendIncidentActionCommand()` for
+      `POST /api/v1/operator/commands`; no component-level raw fetch or
+      alternate endpoint family was introduced.
+  - criterion: route host and initial-read-before-stream sequencing satisfy PKT-002 and PKT-005
+    status: pass
+    note: >-
+      `IncidentActionDrawerPage.tsx` now gates SSE setup on
+      `initialSnapshotReady`, while `IncidentActionDrawer.tsx` raises
+      `onInitialSnapshotReadyChange(true)` only after the drawer's initial
+      kill-switch snapshot resolves.
+  - criterion: command payload schema matches the published PKT-002 contract
+    status: pass
+    note: >-
+      `IncidentActionDrawer.tsx` still builds command-discriminated
+      `Runtime`-targeted payloads for `PauseExecution`, `IssueRiskOff`,
+      `LiquidateAll`, `HardRollback`, and `IssueSafeMode`, and
+      `python3 -m pytest -q services/control-plane/bff/smoke_test_incident.py
+      -k 'in05_pause_execution_command_schema or
+      in05_issue_risk_off_command_schema or
+      in05_liquidate_all_command_schema or
+      in05_hard_rollback_command_schema or
+      in05_issue_safe_mode_command_schema or
+      in05_kill_switch_status or
+      in05_kill_switch_unavailable_disables_actions or
+      in05_kill_switch_admin_only'` returned `8 passed, 12 deselected`.
+  - criterion: isolated front static verification passes on the replay-clean publish snapshot
+    status: pass
+    note: >-
+      In `/tmp/pkt002-action-drawer-q72lH1`,
+      `./node_modules/.bin/tsc --noEmit --pretty false`, targeted `npx eslint`
+      over the reviewed PKT-002 files, and `npm run build` all passed; Vite
+      emitted only its standard Browserslist and chunk-size warnings.
+  - criterion: the live Pantheon runtime exposes the kill-switch read, write, and stream routes with truthful auth behavior
+    status: pass
+    note: >-
+      `/openapi.json` on `http://127.0.0.1:18001` advertises
+      `/api/v1/kill-switch/status`, `/api/v1/kill-switch/updates`, and
+      `/api/v1/operator/commands`; operator-only auth returns
+      `403 INSUFFICIENT_ROLE` on the status route; and admin-auth live probes
+      return a contract-valid degraded snapshot plus accepted command receipts.
+  - criterion: the live kill-switch SSE substrate emits valid PKT-005 payloads that the front reconciler can hydrate
+    status: pass
+    note: >-
+      `POST /api/v1/internal/sse/publish?event_type=kill_switch_activated`
+      published `evt-1777027991-115d005e`, `GET /api/v1/kill-switch/updates`
+      replayed that event as a valid SSE block with `id`, `event`, and JSON
+      `data`, and a direct `SseReconciler` probe in the front repo buffered
+      then flushed the same event after `setHydrated(true)`.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the current remote-visible request-pair publish commit
+    path: ../front-ai-trading-system/.coordination/requests/PKT-002-incident-action-drawer-ui-done.yaml
+    note: >-
+      Pantheon verified that b146ba7e40286753aa7419740dd695cdbbf6e5f5 on
+      origin/pkt-004-detail-fix publishes both PKT-002 request files with
+      truthful `source_commit:
+      82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9`.
+  - action: inspect the metadata-only delta between the reviewed source and publish commit
+    path: ../front-ai-trading-system
+    note: >-
+      `git diff --name-only
+      82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+      b146ba7e40286753aa7419740dd695cdbbf6e5f5` over the PKT-002
+      incident-action-drawer paths shows only the two request files.
+  - action: rerun isolated front static verification
+    path: /tmp/pkt002-action-drawer-q72lH1
+    note: >-
+      `./node_modules/.bin/tsc --noEmit --pretty false`, targeted `npx eslint`
+      over `src/components/operator/IncidentActionDrawer.tsx`,
+      `src/pages/operator/IncidentActionDrawerPage.tsx`,
+      `src/lib/bffClient.ts`, `src/pages/operator/types.ts`, and `src/App.tsx`,
+      plus `npm run build`, all passed in an isolated checkout of publish
+      commit b146ba7e40286753aa7419740dd695cdbbf6e5f5.
+  - action: rerun the Pantheon PKT-002 command and kill-switch smoke slice
+    path: services/control-plane/bff/smoke_test_incident.py
+    note: >-
+      The targeted PKT-002 command and kill-switch subset passed with
+      `8 passed, 12 deselected` in the current Pantheon workspace.
+  - action: probe the live runtime read/write/auth surfaces over HTTP
+    path: http://127.0.0.1:18001
+    note: >-
+      Admin-auth `GET /api/v1/kill-switch/status` returned a contract-shaped
+      degraded/unavailable envelope, operator-only auth returned
+      `403 INSUFFICIENT_ROLE`, and admin-auth `POST /api/v1/operator/commands`
+      accepted published `PauseExecution` and `IssueSafeMode` payloads with
+      direct receipts.
+  - action: verify live kill-switch SSE replay and front hydration behavior
+    path: http://127.0.0.1:18001/api/v1/kill-switch/updates
+    note: >-
+      Pantheon used its existing internal SSE publish helper to emit a
+      `kill_switch_activated` event, confirmed the live stream replayed it as
+      valid SSE output, and confirmed the front repo's shared `SseReconciler`
+      buffers then flushes that event shape on hydration.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Live browser QA against a running Pantheon BFF was not rerun in this
+      closeout step. The current live runtime returned a degraded/unavailable
+      kill-switch snapshot during review, so a later ops QA pass should still
+      re-check the fallback and fully-unavailable presentation in browser.
+
+required_front_repo_updates: []
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. origin/pkt-004-detail-fix now points at
+  b146ba7e40286753aa7419740dd695cdbbf6e5f5, which publishes the current
+  PKT-002 action-drawer request pair pinned to reviewed source commit
+  82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9, the reviewed UI stays aligned with
+  the published PKT-002 command contract and PKT-005 composed-view-first SSE
+  rule, and live HTTP plus SSE probes no longer justify another Pantheon-owned
+  follow-up packet.
+
+risk_note: >-
+  Residual risk is limited to non-blocking live browser QA and runtime-state
+  variability, not request-pair truth, command-schema alignment, or the shared
+  kill-switch SSE substrate. The current loop can close without reopening BFF,
+  runtime, or front-end contract work.
+
+blocking: false
+lovable_ui_task_status: closed
+next_action: none
+review_findings_ref: .coordination/reviews/PKT-002-incident-action-drawer-review.md

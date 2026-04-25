@@ -9,7 +9,7 @@ Locked by: Codex2
 - Pantheon payload: `.coordination/requests/PKT-005-degradation-banner-frontend-feedback.yaml`
 - Companion completion payload: `.coordination/requests/PKT-005-degradation-banner-ui-done.yaml`
 - Reviewed front source commit: `7406990a8311ef6865491fcdb883b677a98ff6c9`
-- Pantheon contract publication commit: `77443031c31f772dc9ce6682a676e8fa09732cd5`
+- Pantheon contract publication commit: `77443032a240a3df49c329100ef2477a72a70e53`
 
 ## Current Lock State
 
@@ -35,7 +35,7 @@ Locked by: Codex2
 ### Delta 1: incident-response surface keys now match the reviewed UI lock
 
 The published PKT-005 contract under
-`pantheon-bff@77443031c31f772dc9ce6682a676e8fa09732cd5` now names the
+`pantheon-bff@77443032a240a3df49c329100ef2477a72a70e53` now names the
 incident-response surfaces as:
 
 - `incident`

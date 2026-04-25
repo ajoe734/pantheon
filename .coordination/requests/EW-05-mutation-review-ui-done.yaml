@@ -1,0 +1,71 @@
+feature_id: EW-05-mutation-review
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: b2baed2c1a6107f31f530fad127492f74f65607a
+screen: mutation-review
+blocking: false
+status: closed
+pantheon_disposition: loop-complete
+closed_at: "2026-04-20T16:19:46Z"
+closed_by: Codex
+review_file: .coordination/reviews/EW-05-mutation-review-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the returned EW-05 UI cycle against the published
+  contract, example payload, mirrored frontend-feedback bundle, sibling front
+  implementation, and the current BFF workspace. The postmortem deep-link
+  resolution, live 503 evidence_unavailable placeholder, nested fail-closed
+  validation, and request-pair replayability are now all verified, so no
+  Pantheon follow-up remains for this packet scope.
+
+summary: >-
+  EW-05 Mutation Review UI is implemented against the live Pantheon handoff.
+  The screen fetches GET /api/v1/operator/mutation-review/{decision_id},
+  renders Pantheon-owned mutation evidence and degradation states, submits
+  ApproveMutation / RejectMutation through the shared operator command route,
+  and re-fetches after command acceptance instead of inventing local decision
+  state. The follow-up return at source_commit
+  b2baed2c1a6107f31f530fad127492f74f65607a closes the remaining re-review
+  issues: linked_postmortem_id deep links now stay on
+  /operator/post-incident-review?postmortem=... until the destination resolves
+  the matching resolved incident, and a live 503 evidence_unavailable response
+  now renders the explicit unavailable placeholder instead of the generic
+  load-error branch. The nested fail-closed validation remains in place.
+  `npx eslint src/pages/operator/PostIncidentReviewConsole.tsx
+  src/pages/evolution/MutationReview.tsx` and `npm run build` both passed in
+  front-ai-trading-system.
+
+changed_files:
+  - .coordination/requests/EW-05-mutation-review-frontend-feedback.yaml
+  - docs/pantheon-feedback/EW-05-mutation-review/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/EW-05-mutation-review/UI_DECISIONS.md
+  - docs/pantheon-feedback/EW-05-mutation-review/QA_STATUS.md
+  - src/pages/evolution/MutationReview.tsx
+  - src/pages/operator/PostIncidentReviewConsole.tsx
+
+routes_registered:
+  - path: /evolution/mutation-review/:decision_id
+    component: MutationReview
+  - path: /personas/approval-decisions
+    component: ApprovalDecisionList
+  - path: /personas/approval-decisions/:decisionId
+    component: ApprovalDecisionDetail
+
+bff_routes_used:
+  - GET /api/v1/operator/mutation-review/{decision_id}
+  - POST /api/v1/operator/commands (ApproveMutation)
+  - POST /api/v1/operator/commands (RejectMutation)
+
+follow_up_requested:
+  - Pantheon reviewer verifies the postmortem deep-link resolution, 503 evidence_unavailable placeholder, and nested-field fail-closed behavior against the live EW-05 payload
+  - Pantheon reviewer reads the paired frontend-feedback bundle from this same publication cycle
+  - Pantheon advances the coordination packet to the next review/finalize step if no further contract issues remain
+
+acceptance:
+  - mutation review route is mounted at /evolution/mutation-review/:decision_id
+  - approval_decision_id deep links resolve through live approval-decision routes instead of NotFound
+  - linked_postmortem_id deep links keep the destination screen's postmortem query contract active until the matching incident is resolved
+  - live 503 evidence_unavailable responses render the explicit unavailable placeholder instead of the generic load-error branch
+  - malformed nested mutation-review payloads fail closed instead of rendering partial rows
+  - command submission uses Pantheon-owned operator command vocabulary and re-fetches the read route after success
+  - targeted eslint and production build pass in front-ai-trading-system

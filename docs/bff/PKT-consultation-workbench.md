@@ -2,7 +2,10 @@
 
 ## Purpose
 
-Provide one truthful overview route for the Consultation Workbench so the UI can show module order, existing support surfaces, and the remaining BFF gaps without pretending that consult requests, committee boards, or red-team memo flows are already live.
+Provide one truthful overview route for the Consultation Workbench so the UI can
+show module order, existing support surfaces, and the remaining frontend
+follow-up without downgrading live Consultation routes or pretending that a
+published module-local handoff packet is still a backend implementation gap.
 
 ## Primary Read Route
 
@@ -29,7 +32,7 @@ Required response fields:
   - `status`
   - `wave_order`
   - `summary`
-  - `missing_contracts[]`
+  - `live_routes[]`
   - `next_gate`
   - `upstream_dependencies[]`
 - `support_refs[]`
@@ -45,10 +48,13 @@ Required response fields:
 
 ## Design Rules
 
-- This packet is an overview surface only. It does not claim that `CW-01` to `CW-04` are implemented.
+- This packet is an overview surface only. `CW-01` through `CW-04` are live
+  today, and both `CW-02` and `CW-04` now have published module-local frontend
+  activation packets.
 - The UI must not invent consult request forms, committee verdicts, or memo state from packet-family prose.
 - Existing support refs and endpoint refs must render verbatim from backend-owned payload fields.
-- Missing-contract lists remain backend-owned. The UI must not compress or reorder them into a false “ready” state.
+- Module summaries and `live_routes[]` remain backend-owned. The UI must not
+  compress or reinterpret them into a false “complete” state.
 - This packet is read-only and adds no write authority.
 
 ## Example Payload

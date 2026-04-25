@@ -1,7 +1,7 @@
 feature_id: PKT-001-governance-review-queue
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: pending-execution
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: governance-workbench
@@ -18,12 +18,15 @@ constraints:
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
 acceptance:
-- build the Governance Review Queue list and item detail drawer
+- build or refresh the Governance Review Queue list and item detail drawer against
+  the existing BFF client
 - use only the existing BFF client
 - do not add raw fetch calls in component files
 - do not invent fields beyond this handoff packet
 - render all routing CTAs from backend-shaped allowedActions only
 - pass filters to the BFF as query parameters; do not filter client-side
+- treat meta.surfaces.review_queue and meta.surfaces.allowedActions as required and
+  fail closed if either is absent
 - display the degradation banner when any meta.surfaces entry is degraded or unavailable
 required_feedback:
 - docs/pantheon-feedback/PKT-001-governance-review-queue/LOVABLE_CHANGE_FEEDBACK.md
@@ -32,6 +35,7 @@ required_feedback:
 - docs/pantheon-feedback/PKT-001-governance-review-queue/QA_STATUS.md
 delivery_dependencies:
 - .coordination/responses/PKT-001-governance-review-queue-contract-ready.yaml
+- .coordination/responses/PKT-001-governance-review-queue-backend-delivery.yaml
 links:
   lovable_project_url: null
   bff_spec_path: docs/bff/PKT-001-governance-review-queue.md
@@ -44,3 +48,5 @@ gap_handoff_path: .coordination/requests/PKT-001-governance-review-queue-bff-gap
 gap_handoff_template: .coordination/requests/PKT-001-governance-review-queue-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-001-governance-review-queue-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-001-governance-review-queue-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-001-governance-review-queue-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-001-governance-review-queue-frontend-feedback.example.yaml

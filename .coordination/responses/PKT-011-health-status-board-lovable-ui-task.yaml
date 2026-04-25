@@ -1,0 +1,44 @@
+feature_id: PKT-011-health-status-board
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: operator-console
+screen: operator-health-status-board
+screen_id: screen-operator-health-status-board
+ui_spec_path: docs/screens/PKT-011-health-status-board.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-011-health-status-board/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/health-status
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- build the Operator Health Status Board from the single health-status route
+- use only the existing BFF client
+- keep the published five-group taxonomy unchanged
+- render the secondary control path panel only from backend-supplied fields
+- do not assemble this board from PKT-010, IN-01, governance queues, or kill-switch
+  calls in the browser
+required_feedback:
+- docs/pantheon-feedback/PKT-011-health-status-board/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-011-health-status-board/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-011-health-status-board/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-011-health-status-board/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-011-health-status-board-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-011-health-status-board.md
+  ui_spec_path: docs/screens/PKT-011-health-status-board.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-011-health-status-board/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-011-health-status-board.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-011-health-status-board
+gap_handoff_path: .coordination/requests/PKT-011-health-status-board-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-011-health-status-board-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-011-health-status-board-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-011-health-status-board-ui-done.example.yaml

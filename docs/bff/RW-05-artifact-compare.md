@@ -97,7 +97,10 @@ order and must not re-sort it client-side.
         "max_drawdown": -0.08,
         "annualized_return": 0.18
       },
-      "is_current_version": true
+      "is_current_version": true,
+      "allowedActions": {
+        "canCompare": true
+      }
     }
   ],
   "next_page_token": "eyJvZmZzZXQiOjIwfQ==",
@@ -110,6 +113,18 @@ order and must not re-sort it client-side.
   }
 }
 ```
+
+Each list row includes backend-owned compare authority:
+
+```json
+"allowedActions": {
+  "canCompare": true
+}
+```
+
+`allowedActions.canCompare` is the sole compare-selection authority for the
+registry and compare-page selector. Frontend must not derive selectability from
+`status`, lifecycle, or any other artifact field.
 
 **`meta.surfaces.artifact_list` values:**
 

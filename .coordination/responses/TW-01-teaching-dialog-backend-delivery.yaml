@@ -1,0 +1,23 @@
+feature_id: TW-01-teaching-dialog
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: trainer-workbench
+screen_id: screen-teaching-dialog
+status: delivered
+backend_commit: c2ded5aaefa7ba03b2ee43306859ce97013953ca
+working_tree_only: false
+verified_runtime_ref: pantheon-head@c2ded5aaefa7ba03b2ee43306859ce97013953ca
+live_http_runtime_ref: http://127.0.0.1:18001
+bff_contract_version: pantheon-bff@c2ded5aaefa7ba03b2ee43306859ce97013953ca
+delivery_note_path: docs/pantheon-delivery/TW-01-teaching-dialog/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/TW-01-teaching-dialog/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon reran the TW-01 closeout check on a fresh operator-bff runtime from
+  the current workspace. Live OpenAPI on http://127.0.0.1:18001 advertises the
+  full trainer session route family again, authenticated list reads return 200,
+  and `links.workbench_detail` still resolves to
+  `/trainer/sessions/{session_id}` as the reviewed front router expects. The
+  earlier runtime-refresh blocker is cleared and the Git-visible front
+  publication requirement is already satisfied, so no further Pantheon-side
+  follow-up remains for this TW-01 cycle.
+source_payload: .coordination/requests/TW-01-teaching-dialog-ui-done.yaml

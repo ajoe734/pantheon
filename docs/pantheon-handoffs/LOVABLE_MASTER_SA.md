@@ -135,10 +135,10 @@ Use this section order:
 | `Operator Console` | live operational monitoring and response | runtime, incidents, health, alerts, drift |
 | `Governance` | review, approval, promotion, rollback, audit | queue and decision work |
 | `Personas` | persona, binding, capital, deployment context | read-heavy Wave 1 workbench |
-| `Evolution` | post-incident, evolution decisions, lineage, mutation | EW-01–05 live; EW-04 and EW-05 current loops already closed |
+| `Evolution` | post-incident, evolution decisions, lineage, mutation | EW-01–05 live in Pantheon; the current front default branch now mounts the EW-04 and EW-05 live surfaces, so remaining work is closeout / follow-up truth sync rather than blocked-shell realignment |
 | `Research` | tickets, search, analysis, experiments, artifact compare | RW-01–05 are on the live-route side; RW-01 and RW-03 current loops are closed, and route-live activation packets are already published for RW-02, RW-04, and RW-05 |
 | `Knowledge` | memory, notes, evidence, insights, specs | KW-01–05 are on the live-route side; KW-01 current loop is closed, and route-live activation packets are already published for KW-02, KW-03, KW-04, and KW-05 |
-| `Consultation` | consult request, transcript, committee, red-team memo | CW-01–04 are on the live-route side; CW-01 and CW-03 current loops are closed, CW-02 activation packet is published, and CW-04 remains a front-owned replay-clean closeout |
+| `Consultation` | consult request, transcript, committee, red-team memo | CW-01–04 are on the live-route side; CW-02 current loop is closed, and the current front default branch now mounts the CW-01 / CW-03 / CW-04 live surfaces, so remaining work is closeout / follow-up truth sync rather than blocked-shell realignment |
 | `Trainer` | teaching dialog, controls, compare, replay | TW-01–04 are on the live-route side; TW-03 current loop is closed, and route-live activation packets are already published for TW-01, TW-02, and TW-04 |
 
 ### 4.4 Recommended shared page anatomy
@@ -335,13 +335,13 @@ Evolution Workbench bridges incident evidence, lineage, and governed follow-up.
 | `EW-01 Post-Incident Review` | resolved incident review context | split-pane evidence review | ready via `PKT-003` |
 | `EW-02 Evolution Center` | evolution decision browse and detail | board or list-detail | ready via `PKT-003` |
 | `EW-03 Lineage View` | lineage graph and edge detail | graph plus inspector | ready via `PKT-003` |
-| `EW-04 Inspiration Graph` | artifact-centered inspiration graph | graph plus strategy-tag rail | loop-complete for the current wave — the inspiration route is live and the current frontend loop is already closed |
-| `EW-05 Mutation Review` | approve or reject mutation follow-up | high-focus evidence review page | loop-complete for the current wave — the live handoff bundle was delivered and the current frontend loop is already closed |
+| `EW-04 Inspiration Graph` | artifact-centered inspiration graph | graph plus strategy-tag rail | route-live in Pantheon, and the current front default branch now mounts the live inspiration graph surface |
+| `EW-05 Mutation Review` | approve or reject mutation follow-up | high-focus evidence review page | route-live in Pantheon, and the current front default branch now mounts the live mutation review surface |
 
 ### Design intent
 
 The first three modules are the read-only evidence baseline.
-`EW-04` and `EW-05` are already on the live-route side of the boundary. Reuse the current handoff truth rather than treating either module as pending-BFF or blocked for a new implementation loop.
+`EW-04` and `EW-05` are already on the live-route side of the boundary, and the current front default branch now mounts their live surfaces. Do not treat either module as pending-BFF or as an active blocked-shell realignment lane unless a newer GitHub-visible review packet reopens it.
 
 ## 6.5 Research Workbench
 
@@ -416,16 +416,16 @@ Consultation Workbench is for structured consult flows, committee review, and re
 | Module | Purpose | Recommended presentation | Readiness |
 |---|---|---|---|
 | `PKT-consultation-workbench` | overview shell only | overview dashboard shell | overview ready |
-| `CW-01 Consult Request` | request composer and request lifecycle | list-detail plus composer | loop-complete for the current wave — live request routes exist and the current frontend loop is already closed |
+| `CW-01 Consult Request` | request composer and request lifecycle | list-detail plus composer | route-live in Pantheon, and the current front default branch now mounts the live request list/detail flow |
 | `CW-02 Debate Transcript` | ordered consultation transcript | transcript timeline plus evidence inspector | route-live — frontend activation packet already published at `docs/pantheon-handoffs/CW-02-debate-transcript/`; do not treat this module as missing-BFF work |
-| `CW-03 Committee Board` | committee state and sponsor outcome | board plus detail | loop-complete for the current wave — live committee routes exist and the current frontend loop is already closed |
-| `CW-04 Red-team Memo` | published memo and recommendations | document-like detail surface | route-live — memo route family is live and the module-local frontend handoff bundle is published |
+| `CW-03 Committee Board` | committee state and sponsor outcome | board plus detail | route-live in Pantheon, and the current front default branch now mounts the live committee board/detail flow |
+| `CW-04 Red-team Memo` | published memo and recommendations | document-like detail surface | route-live in Pantheon, and the current front default branch now mounts the live memo list/detail flow |
 
 ### Design intent
 
 This workbench should feel like a structured deliberation system, not chat UI.
 Chronology, actor identity, and evidence traceability matter more than conversational flair.
-`CW-01` through `CW-04` are already on the live-route side of the boundary. `CW-02` and `CW-04` both have published module-local activation packets, but only `CW-04` still carries an active front-owned replay-clean closeout follow-up.
+`CW-01` through `CW-04` are already on the live-route side of the boundary. `CW-02` is closed for the current wave, and the current front default branch now mounts the live `CW-01`, `CW-03`, and `CW-04` surfaces. Remaining work, where any still exists, should be read as closeout / follow-up truth sync rather than blocked-shell realignment or pending-BFF work.
 
 ## 6.8 Trainer Workbench
 

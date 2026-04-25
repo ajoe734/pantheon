@@ -1,0 +1,43 @@
+{
+  "status": 200,
+  "payload": [
+    {
+      "event_id": "f7340ebd-6276-46f5-ac17-e2d69e8f064b",
+      "event_type": "approval_decision_decided",
+      "decision_id": "apv-ep4-8cc78869",
+      "actor_id": "ep4-governance-reviewer",
+      "actor_role": "governance_reviewer",
+      "target_type": "registry_entry",
+      "target_id": "reg-ep4-c1be4993",
+      "detail": {
+        "outcome": "approved",
+        "rationale": "EP4 governed paper acceptance run"
+      },
+      "timestamp": "2026-04-19T00:36:58.612860Z"
+    },
+    {
+      "event_id": "2e29f3c8-f8ce-4c7c-a9cc-9c05f8eb29a3",
+      "event_type": "approval_decision_state_changed",
+      "decision_id": "apv-ep4-8cc78869",
+      "actor_id": "ep4-governance-reviewer",
+      "actor_role": "governance_reviewer",
+      "target_type": "registry_entry",
+      "target_id": "reg-ep4-c1be4993",
+      "detail": {
+        "new_state": "under_review"
+      },
+      "timestamp": "2026-04-19T00:36:58.605710Z"
+    },
+    {
+      "event_id": "15750248-1925-4dd0-9a4a-d84b907cce35",
+      "event_type": "approval_decision_created",
+      "decision_id": "apv-ep4-8cc78869",
+      "actor_id": null,
+      "actor_role": null,
+      "target_type": "registry_entry",
+      "target_id": "reg-ep4-c1be4993",
+      "detail": {},
+      "timestamp": "2026-04-19T00:36:58.599224Z"
+    }
+  ]
+}

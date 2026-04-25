@@ -1,0 +1,32 @@
+feature_id: KW-02-research-notes
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: e00d13dc220e4226f93c82e2c7dbc4a053601816
+screen: knowledge-research-notes
+status: complete
+
+summary: Research Notes list, detail, and create surfaces implemented against live Pantheon BFF routes. Owner identity, attachment labels, evidence resolution states, memory anchor lifecycle, and route_href fields all rendered as returned by BFF — no client-side derivation.
+
+routes_implemented:
+  - /knowledge/notes (ResearchNotesList)
+  - /knowledge/notes/new (CreateResearchNote)
+  - /knowledge/notes/:note_id (ResearchNoteDetail)
+
+endpoints_used:
+  - GET  /api/v1/knowledge/notes
+  - GET  /api/v1/knowledge/notes/{note_id}
+  - POST /api/v1/knowledge/notes
+
+acceptance_met:
+  uses_existing_bff_client_only: true
+  no_raw_fetch_in_components: true
+  no_demo_provider_imports: true
+  owner_identity_from_bff: true
+  attachment_label_from_bff: true
+  route_href_used_as_authority: true
+  evidence_resolution_state_respected: true
+  memory_lifecycle_status_respected: true
+  degradation_states_handled: true
+  attachment_type_immutable_after_create: true
+  server_assigned_owner_not_sent: true

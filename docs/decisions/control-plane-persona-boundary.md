@@ -5,6 +5,7 @@ Last updated: 2026-04-22
 Source of truth inputs:
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
 - `docs/reviews/Pantheon_Response_to_System_Design_Followup_Questions.md`
+- `docs/reviews/Pantheon_Response_to_Architecture_Blockers_Decision_Package.md`
 Tier: L1 Platform Architecture & Policy
 Scope: persona-service canonical ownership versus BFF-composed persona views
 Conflict rule: this decision governs persona boundary semantics until superseded by a newer explicit persona-boundary decision

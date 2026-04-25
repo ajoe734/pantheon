@@ -1,0 +1,18 @@
+feature_id: PKT-001-governance-review-queue
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: governance-workbench
+screen_id: screen-governance-review-queue
+status: delivered
+backend_commit: 67849d460e3c14e7399efc830b322b048c9557cc
+bff_contract_version: pantheon-bff@67849d460e3c14e7399efc830b322b048c9557cc
+delivery_note_path: docs/pantheon-delivery/PKT-001-governance-review-queue/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-001-governance-review-queue/CONTRACT_LOCK.json
+followup_expectation: >-
+  The governance review queue BFF envelope is now aligned to the published
+  contract. Resume the existing Lovable UI cycle against GET
+  /api/v1/operator/governance/review-queue and POST
+  /api/v1/operator/commands, then republish frontend-feedback and ui-done from
+  one truthful Git-visible front commit or emit a fresh bff-gap if a new
+  divergence is discovered.
+source_payload: .coordination/requests/PKT-001-governance-review-queue-bff-gap.yaml

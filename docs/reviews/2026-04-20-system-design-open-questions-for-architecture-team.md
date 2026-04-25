@@ -16,6 +16,7 @@
 ## 整合來源
 
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
+- `docs/reviews/Pantheon_Response_to_Architecture_Blockers_Decision_Package.md`
 - `docs/reviews/Pantheon_Response_to_Architecture_Team_Design_Input_List.md`
 - repo 現況中的 `WORKBENCH_DELIVERY_BACKLOG.md`、BFF contract、screen spec、packet family、frontend SA
 
@@ -25,13 +26,10 @@
 
 目前已整合後的系統設計藍圖結論是：
 
-1. 真正仍屬 architecture bucket 的，只剩：
-   - 全域 canonical conventions
-   - `LIN-002` lineage ownership
-   - persona boundary
-   - router / gateway / governance enforcement ownership
-2. 需要 ratification 的模組結論已大致拍板，不必再重畫高階藍圖。
-3. 大多數 route-live 或 contract-ready 模組，應直接進 implementation / hardening / UI activation，而不是繼續在 architecture lane 空轉。
+1. `Pantheon_Response_to_Architecture_Blockers_Decision_Package.md` 已在 substance 上回答先前的 architecture blockers 問題。
+2. 需要保留在 architecture bucket 的，主要只剩 cross-cutting canonical docs 與其 downstream rebaseline，不再是整批 module contract 本身。
+3. module readiness 一律以 `MODULE_READINESS_RATIFICATION_2026-04-20.md`、對應 `docs/bff/*.md`、以及 current repo truth 為準；不能把較早 snapshot 中的 `blocked` wording 直接覆蓋回來。
+4. 大多數 route-live 或 contract-ready 模組，應直接進 implementation / hardening / UI activation，而不是繼續在 architecture lane 空轉。
 
 ---
 
@@ -48,7 +46,7 @@
 - lifecycle / state naming 採「全域框架 + 領域子集」模式。
 - readiness ladder 正式需要收斂，不可再讓 backlog / SA / packet family 各自命名。
 
-正式期待交付：
+現已落文件：
 
 - `docs/conventions/GLOBAL_CANONICAL_CONVENTIONS.md`
 - `docs/conventions/BFF_RESPONSE_ENVELOPE.md`
@@ -63,7 +61,7 @@
 - BFF lineage / evolution surfaces 只能接 `lineage-read`，不能同時吃第二條 telemetry truth path。
 - telemetry lineage engine 可以作 internal substrate，但不能變成第二個 UI truth owner。
 
-正式期待交付：
+現已落文件：
 
 - `docs/decisions/LIN-002-lineage-ownership.md`
 
@@ -75,7 +73,7 @@
 - canonical persona truth 至少包含：`Persona`、`PersonaLifecycle`、`RoutePolicyRef`、`ConsultPolicyRef`、`PersonaCapabilityProfile`、`PersonaCapitalEligibility`、`PersonaSession` metadata。
 - BFF 只可做 operator-facing aggregation，不可反客為主取代 persona canonical object。
 
-正式期待交付：
+現已落文件：
 
 - `docs/decisions/control-plane-persona-boundary.md`
 
@@ -89,7 +87,7 @@
 - TTL 必須分 transport TTL 與 domain TTL 兩層定義 owner。
 - local intent classifier 可以保留 degraded fallback 身分，但不得作 production canonical truth。
 
-正式期待交付：
+現已落文件：
 
 - `docs/decisions/control-plane-router-enforcement-ownership.md`
 
@@ -97,59 +95,39 @@
 
 ## B. 已整合的 Ratification 結論
 
-### B1. RW-05 Artifact Compare
+### B1. 對 `Pantheon_Response_to_Architecture_Blockers_Decision_Package.md` 的整合判讀
 
 已整合結論：
 
-- `docs/bff/RW-05-artifact-compare.md` 應視為 canonical contract。
-- 正確 canonical status 是 `contract_ready`。
-- implementation lane 可以前進。
-- backlog / packet family / overview 應從「缺 contract」改為「contract published / pending BFF implementation」。
+- 該回覆已回答先前卡住的 global conventions、ownership / authority decisions、以及 `CW-03` partial activation wording。
+- Pantheon 接受它的 cross-cutting decision 內容。
+- 但 module-level final classification 不直接照抄；凡是 repo 已完成 ratification 或實作已前進的模組，仍以 `MODULE_READINESS_RATIFICATION_2026-04-20.md`、對應 `docs/bff/*.md`、以及 current repo truth 為準。
 
-### B2. CW-02 Debate Transcript
+工作規則：
 
-已整合結論：
+1. 若 response 與 conventions / decision docs 一致，直接以現有 canonical docs 為藍圖依據。
+2. 若 response 把某模組仍寫成 `blocked`，但 ratification + contract + code truth 已經把它往前推，則 current repo truth 優先。
+3. 不得因為讀到較早 snapshot 的 `blocked` wording，就把已 ratified / route-live 的模組退回 architecture lane。
 
-- 仍未達 fully locked。
-- append-only `TranscriptEvent` schema、ordering semantics、actor labeling、inline evidence-link semantics 都還沒正式 ratify。
-- canonical status 仍應為 `blocked`。
-- 只允許 shell / non-authoritative scaffolding，不允許正式 implementation lane 接手。
+### B2. 目前模組整合後的 working truth
 
-### B3. CW-04 Red-team Memo
+- `RW-05`：已不再只是 `contract_ready`，目前 repo truth 是 route-live。
+- `CW-02`：response 中的 transcript schema / ordering / actor / evidence 問題已被回答並吸收進 ratified contract；目前 repo truth 是 route-live，不再屬 architecture lane。
+- `CW-04`：response 中的 memo lifecycle / mapping / governance gate 問題已被回答；目前 working truth 是 ratified contract + pending BFF implementation。
+- `TW-02`：response 中的 patch semantics / rejected shape / diff rule 已被回答；目前 working truth 是 ratified contract + implementation in progress。
+- `KW-02` / `KW-03` / `KW-04`：已不只是 pending BFF 的 contract-ready wording；目前 repo truth 已進到 route-live。
+- `KW-05`：response 中的 version identity / lifecycle / compare semantics 已被回答並吸收進 ratified contract；目前 repo truth 是 route-live，不再屬 architecture lane。
 
-已整合結論：
+### B3. 對 readiness 文件的正式依據
 
-- `ConsultMemo` read model 接近，但未正式 ratify 完成。
-- `session_to_memo_mapping` 與 `allowedActions.canInitiateGovernanceReview` 都尚未鎖。
-- canonical status 仍應為 `blocked`。
-- 只允許 shell / non-authoritative scaffolding。
-
-### B4. TW-02 Parameter Controls
-
-已整合結論：
-
-- read contract、patch semantics、validation contract、diff shape 尚未 fully locked。
-- canonical status 仍應為 `blocked`。
-- 只允許 shell / form scaffolding，不允許正式 implementation lane 接手。
-
-### B5. KW-02 / KW-03 / KW-04 / KW-05
-
-已整合結論：
-
-- `KW-02`：`contract_ready`，pending BFF
-- `KW-03`：`contract_ready`，pending BFF
-- `KW-04`：`contract_ready`，pending BFF
-- `KW-05`：`blocked`
-
-補充判讀：
-
-- `KW-006` packet family 先前把 `KW-02` 到 `KW-05` 寫成 `ready / implemented / resolved`，屬於 overclaim。
-- `KW-02` 到 `KW-04` 不應再被一律視為 shell-only。
-- `KW-05` 仍不可離開 architecture bucket。
-
-正式期待交付：
+正式依據：
 
 - `MODULE_READINESS_RATIFICATION_2026-04-20.md`
+- `docs/bff/CW-02-debate-transcript.md`
+- `docs/bff/CW-04-redteam-memo.md`
+- `docs/bff/TW-02-parameter-controls.md`
+- `docs/bff/KW-05-strategy-spec.md`
+- `WORKBENCH_DELIVERY_BACKLOG.md`
 
 ---
 
@@ -186,8 +164,15 @@
 - `RW-04`
 - `RW-05`
 - `CW-01`
+- `CW-02`
 - `CW-03` 的 route / authority contract 本身
+- `CW-04`
 - `KW-01`
+- `KW-02`
+- `KW-03`
+- `KW-04`
+- `KW-05`
+- `TW-02`
 - `TW-01`
 - `TW-03`
 - `TW-04`
@@ -266,9 +251,11 @@
 
 ---
 
-## F. 接下來要回寫的 canonical 文件
+## F. 接下來要維護的 canonical 文件與實作 task
 
 ### 全域規範
+
+這些文件現已存在，後續工作是持續把 derived docs 對齊到它們：
 
 - `docs/conventions/GLOBAL_CANONICAL_CONVENTIONS.md`
 - `docs/conventions/BFF_RESPONSE_ENVELOPE.md`
@@ -276,6 +263,8 @@
 - `docs/conventions/MODULE_READINESS_LADDER.md`
 
 ### Ownership decisions
+
+這些文件現已存在，後續工作是把 control-plane / packet / SA wording 對齊到它們：
 
 - `docs/decisions/LIN-002-lineage-ownership.md`
 - `docs/decisions/control-plane-persona-boundary.md`
@@ -286,15 +275,43 @@
 - `MODULE_READINESS_RATIFICATION_2026-04-20.md`
 - backlog / SA / packet family / BFF overview 的 readiness truth 同步
 
-### 仍需 ratified contract 的模組
+### 仍在 implementation / hardening lane 的 task
+
+這一段在 2026-04-24 之後不應再把前一波 Pantheon task id 清單直接當成 active implementation lane。
+
+先前列在這裡的 `APP-003-CW04-IMPL-001`、`APP-003-TW02-IMPL-001`、`APP-003-RW01-HARDEN-001`、`APP-003-RW03-HARDEN-001`、`PER-001-RUNTIME-INTEGRATION-001`、`APP-003-TRUTH-SYNC-001`、`APP-003-PKT001-BFF-ALIGN-001`、`APP-003-ROUTE-LIVE-FRONTEND-001`、`APP-003-ROUTE-LIVE-FRONTEND-002`、`APP-003-CW04-FRONTEND-HANDOFF-001`、`APP-003-PKT001-PUBLICATION-REPLAY-001`、`APP-003-CW04-PUBLICATION-REPLAY-001`、`APP-003-PKT001-SURFACE-VALIDATION-001`、`APP-003-TRUTH-SYNC-002`、`APP-003-TRUTH-SYNC-003`、`OSS-003-DOC-SYNC-001` 都已 archive-done、review-complete、或轉入 closeout / history，不應再被讀成現在的主要實作缺口。
+
+截至目前，真正仍在執行面的剩餘工作是：
+
+- `EP5-002` 的 human-gated canary / live proof
+- 將 Lovable coordination 的 runtime proof 覆蓋從目前 board 顯示的 `32/46` 持續補齊
+- `TRL` / `Qlib` 從 smoke-tested 朝 activation-ready 收尾，但不應提早宣稱 production-governed activation
+- `FinRL` / `RLlib` / `Ray Tune` / `W&B` 仍依 entry criteria 維持 deferred，不屬於本輪未完成主線
+- 跨 repo backlog / SA / coordination summary / feature row metadata 的 rebaseline
+
+補充 truth：
+
+- `front-ai-trading-system` 的 GitHub-visible default branch 現在已經掛上 `EW-04`、`EW-05`、`CW-01`、`CW-03`、`CW-04` 的 live route，不應再把這批讀成 blocked-shell realignment 主線
+- `PKT-001-deployment-review` 與 `PKT-003-post-incident-review` 的 follow-up code 和 request pair 也已上 front default branch；剩餘若有未收斂者，應視為 review / closeout / truth-sync residual，而不是新的前端基礎實作缺口
+- `Settings` surface 已切到 Pantheon BFF-backed `/api/v1/settings*` 路由，不再是 demo-only page；後續若有工作，應視為 config-domain product refinement，而不是「尚未接 Pantheon」的整合缺口
+
+目前 active lane 請以 `current-work.md`、reopened execution tasks、以及各 repo 的 current default-branch truth 一起判讀，而不是只以上一波 closeout response 或已完成 task id 回推現況。
+
+### 已被回答、但不應重開為新 implementation task 的模組
 
 - `docs/bff/CW-02-debate-transcript.md`
 - `docs/bff/CW-04-redteam-memo.md`
 - `docs/bff/TW-02-parameter-controls.md`
 - `docs/bff/KW-05-strategy-spec.md`
 
+對應判讀：
+
+- `CW-02`：已 route-live，不重開新 implementation task
+- `KW-05`：已 route-live，不重開新 implementation task
+- `CW-04` / `TW-02`：保留既有 implementation task，不另開 duplicate task
+
 ---
 
 ## 一句話總結
 
-現在 Pantheon 需要 architecture team 補的，已不再是整張高階藍圖，而是把全域規範、少數 ownership decision、少數 blocked 模組 contract、以及 readiness truth 的最終映射正式落成；除這些之外，多數 workbench 模組都應直接轉入 implementation 與 UI handoff。
+現在 Pantheon 需要的，不再是重畫 architecture blueprint；`Pantheon_Response_to_Architecture_Blockers_Decision_Package.md` 已把最後的 cross-cutting 問題回答清楚，剩下的是把這些決策維持在 canonical docs 裡，並讓仍未完成的模組繼續留在 implementation / hardening / closeout lane，而不是退回 architecture lane。

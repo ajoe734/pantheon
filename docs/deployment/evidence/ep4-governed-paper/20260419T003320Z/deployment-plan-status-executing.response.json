@@ -1,0 +1,42 @@
+{
+  "status": 200,
+  "payload": {
+    "plan_id": "plan-ep4-04e96cf5",
+    "approval_decision_id": "apv-ep4-7b75c6f8",
+    "artifact_id": "reg-ep4-08be4264",
+    "artifact_version": "1.2.0",
+    "artifact_type": "model_artifact",
+    "strategy_id": "strategy-paper",
+    "capital_pool_id": "pool-ep4-6d3a19af",
+    "current_stage": "none",
+    "target_stage": "paper",
+    "transition_type": "activate",
+    "runtime_action": "deploy_new_binding",
+    "status": "executing",
+    "created_at": "2026-04-19T00:33:20Z",
+    "created_by": "oss-004c-ep4-harness",
+    "sponsor_persona_id": "persona-paper-ops",
+    "runtime_config_ref": null,
+    "binding_id": null,
+    "schedule_window": null,
+    "scale": {
+      "capital_scale_pct": 0.0,
+      "gross_scale_pct": 100.0,
+      "ramp_schedule": []
+    },
+    "rollback": {
+      "target_artifact_id": "reg-ep4-fallback-737c4e72",
+      "target_version": "1.1.9",
+      "action_type": "pause_then_replace",
+      "reason": "EP4 governed rollback drill fallback",
+      "verified_at": null
+    },
+    "pre_checks": [],
+    "post_checks": [],
+    "metadata": {
+      "source_task_id": "OSS-004C",
+      "acceptance_mode": "ep4_governed_paper"
+    },
+    "supersedes_plan_id": null
+  }
+}

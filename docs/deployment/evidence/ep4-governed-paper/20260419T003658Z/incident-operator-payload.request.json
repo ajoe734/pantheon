@@ -1,0 +1,6 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:38090/api/incidents/inc-ep4-6632363d/operator-payload",
+  "headers": {},
+  "body": null
+}

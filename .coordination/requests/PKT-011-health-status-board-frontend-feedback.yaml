@@ -1,0 +1,29 @@
+feature_id: PKT-011-health-status-board
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 87088d7a1efec434483fb97d16a3c34cbe9f37cd
+workbench: operator-console
+screen_id: screen-operator-health-status-board
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-011-health-status-board
+feedback_path: docs/pantheon-feedback/PKT-011-health-status-board/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-011-health-status-board/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-011-health-status-board/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-011-health-status-board/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - .coordination/requests/PKT-011-health-status-board-frontend-feedback.yaml
+  - .coordination/requests/PKT-011-health-status-board-ui-done.yaml
+  - docs/pantheon-feedback/PKT-011-health-status-board/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-011-health-status-board/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-011-health-status-board/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-011-health-status-board/QA_STATUS.md
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - src/lib/bffClient.ts
+  - src/pages/operator/OperatorHealthStatusBoard.tsx
+  - src/pages/operator/types.ts
+pantheon_review_hint: review-ui
+summary: Operator Health Status Board is implemented against the published PKT-011 contract, with a complete local feedback bundle and no open API gap from this pass.

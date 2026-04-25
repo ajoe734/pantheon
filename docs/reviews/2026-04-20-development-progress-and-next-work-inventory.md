@@ -124,6 +124,7 @@
   - `MLflow`
   - `vectorbt`
   - `statsmodels`
+  - `QuantLib`
 - Activation-ready but not fully integrated:
   - `Qlib`
   - `TRL`
@@ -131,8 +132,6 @@
   - `RLlib`
   - `Ray Tune`
   - `W&B`
-- Not integrated / not started:
-  - `QuantLib`
 
 所以 OSS 這一側的主藍圖 row 雖已完成，但成熟度仍未全部走到 runnable governed backend。
 
@@ -233,7 +232,6 @@
 
 - `OSS-NEXT-003` RL path activation gate closure
 - `OSS-NEXT-004` W&B defer / reopen packet decision
-- `OSS-NEXT-007` QuantLib task materialization
 - `OSS-NEXT-008` governed-path regression refresh
 
 其中 `W&B` 這條現在的 truth 不是「進 backend implementation」，而是先把 defer gate 與
@@ -322,7 +320,7 @@ reopen packet 條件鎖定清楚；最早 eligible reopen date 仍是 `2026-05-1
 1. `RL` path activation decision and first lane
 2. `W&B` defer closeout and reopen-packet definition
 3. `statsmodels` governed-path regression refresh
-4. `QuantLib` task materialization
+4. `QuantLib` governed-path regression refresh / CI matrix wiring
 5. 其他 governed-path regression refresh
 
 ---

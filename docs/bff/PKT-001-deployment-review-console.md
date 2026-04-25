@@ -90,6 +90,8 @@ All write actions use `POST /api/v1/operator/commands`.
 - The UI must not compute approval eligibility or risk classification locally.
 - When any surface in `meta.surfaces` is `degraded` or `unavailable`, the BFF must include a `degradation` object describing which surfaces are affected and whether CTAs should be disabled.
 - Downstream failure must surface through degradation metadata, never by silently returning empty values.
+- `GET /api/v1/runtime/{runtime_id}/events/stream` remains a `PKT-005` SSE substrate endpoint, not a new `PKT-001` snapshot route. Deployment Review may subscribe to it only after `runtime_binding.id` is known from the detail payload.
+- Runtime SSE is incremental only. The composed-view truth for list rows, detail content, degradation banners, and `allowedActions` remains owned by the PKT-001 snapshot responses.
 
 ## Example Payload
 

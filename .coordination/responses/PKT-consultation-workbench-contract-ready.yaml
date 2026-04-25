@@ -4,7 +4,7 @@ source_repo: ajoe734/pantheon
 screen: consultation-workbench-overview
 status: published
 published_at: "2026-04-18T12:00:00Z"
-description: "Consultation Workbench overview packet is contract-ready. Pantheon now publishes a truthful overview route, screen spec, and example payload without claiming CW-01 to CW-04 are implemented."
+description: "Consultation Workbench overview packet is contract-ready. Pantheon now publishes a truthful overview route, screen spec, and example payload as an overview surface only; module-level truth remains with the per-module contracts and current backlog state."
 artifacts:
   bff_contract: docs/bff/PKT-consultation-workbench.md
   screen_spec: docs/screens/PKT-consultation-workbench.md
@@ -27,4 +27,4 @@ acceptance_met:
   - front_repo_receives_handoff_bundle: true
 bff_caveats:
   - this packet is an overview surface only
-  - CW-01 to CW-04 remain blocked on net-new BFF routes and lifecycle contracts
+  - this packet must not flatten module truth: `CW-01` and `CW-03` are loop-complete for the current wave, while `CW-02` and `CW-04` both have live route families plus published frontend activation packets

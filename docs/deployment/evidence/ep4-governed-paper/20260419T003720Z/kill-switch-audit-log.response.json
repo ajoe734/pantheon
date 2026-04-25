@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "payload": {
+    "count": 1,
+    "entries": [
+      {
+        "action_type": "pause",
+        "actor_id": "ep4-operator-oncall",
+        "audit_id": "audit-de8130f2d062",
+        "audited_at": "2026-04-19T00:37:20Z",
+        "binding_id": "rb-8c00a26d1fee4fabb2afdd33c7e71ea7",
+        "capital_pool_id": "pool-ep4-92a5eb2c",
+        "command_id": "ks-543c52109bda",
+        "emergency_class": "hard",
+        "outcome_note": "hard emergency: operator_emergency_stop -> pause; safe mode normal -> paused",
+        "reason": "operator_emergency_stop",
+        "safe_mode_after": "paused",
+        "safe_mode_before": "normal",
+        "trigger_id": "trig-dba0103d7ecb"
+      }
+    ]
+  }
+}

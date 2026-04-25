@@ -21,7 +21,7 @@ Give researchers one coherent workbench for creating and tracking research ticke
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `RW-01` | Research Ticket | ticket list, ticket detail, lifecycle state machine | contract-published — pending BFF implementation | Wave 3 — 1st |
+| `RW-01` | Research Ticket | ticket list, ticket detail, lifecycle state machine | route-live — current frontend loop closed; no open Pantheon hardening blocker remains for the current wave | Wave 3 — 1st |
 | `RW-02` | Search | query input, result list, filter rail, result drilldown | **route-live — ready for Lovable implementation** | Wave 3 — 2nd |
 | `RW-03` | Analyze | analysis result view, metric aggregation, comparative summary | **route-live — ready for Lovable implementation** | Wave 3 — 3rd |
 | `RW-04` | Experiment Launch | launch form, parameter inputs, async run status, run history | **route-live — ready for Lovable implementation** | Wave 3 — 4th |
@@ -43,18 +43,18 @@ Give researchers one coherent workbench for creating and tracking research ticke
 
 | Route | Status | Notes |
 |---|---|---|
-| `POST /api/v1/research/tickets` | **contract published — pending BFF implementation** | create route spec published via `RW-01-FOUNDATION-001` in `docs/bff/RW-01-research-ticket.md`; BFF must implement the published title / description / priority / owner body schema |
-| `GET /api/v1/research/tickets` | **contract published — pending BFF implementation** | list route field shape, pagination, and `meta.surfaces.ticket_list` published via `RW-01-FOUNDATION-001` |
-| `GET /api/v1/research/tickets/{ticket_id}` | **contract published — pending BFF implementation** | detail route, lifecycle history, linked refs, and `allowedActions` published via `RW-01-FOUNDATION-001` |
-| `PATCH /api/v1/research/tickets/{ticket_id}` | **contract published — pending BFF implementation** | lifecycle transition and editable field semantics published via `RW-01-FOUNDATION-001` |
+| `POST /api/v1/research/tickets` | **live** | create route is mounted on the published title / description / priority / owner contract; no additional Pantheon route work is required for the current wave |
+| `GET /api/v1/research/tickets` | **live** | list route field shape, pagination, and `meta.surfaces.ticket_list` are mounted on the published contract; the prior hardening follow-up is now closed |
+| `GET /api/v1/research/tickets/{ticket_id}` | **live** | detail route, lifecycle history, linked refs, and `allowedActions` are mounted on the published contract; the prior hardening follow-up is now closed |
+| `PATCH /api/v1/research/tickets/{ticket_id}` | **live** | lifecycle transition and editable field semantics are mounted on the live route family; no Pantheon hardening blocker remains for the current wave |
 
 ### Packetization prerequisite
 
-The ticket lifecycle states, `allowedActions` shape, example payload, and frontend handoff bundle are now published as canonical BFF truth via `RW-01-FOUNDATION-001`. This remains the foundational entity for Search, Analyze, and Experiment Launch, and the live BFF routes still need to honor that published field shape.
+The ticket lifecycle states, `allowedActions` shape, example payload, and frontend handoff bundle are now published as canonical BFF truth via `RW-01-FOUNDATION-001`. This remains the foundational entity for Search, Analyze, and Experiment Launch, and the live BFF routes now honor that published field shape for the current wave.
 
 ### Lovable readiness gate
 
-`pending-bff` — the route specs, screen spec, example payload, and frontend handoff bundle already exist, but all four routes above still need live BFF implementation before UI work can begin.
+`route-live` — the RW-01 route family is mounted, the current frontend packet is already closed, and no Pantheon hardening blocker remains for the current wave. Lovable and downstream packet-family docs must not treat RW-01 as blocked or pending-BFF; reopen only if a later regression creates a new UI-facing contract change.
 
 ---
 

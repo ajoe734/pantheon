@@ -1,0 +1,37 @@
+feature_id: PKT-001-deployment-review
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: HEAD
+screen: deployment-review-console
+blocking: false
+
+summary: |
+  Deployment Review Console (list + detail) is wired up end-to-end against
+  the PKT-001 BFF contract. The list screen calls
+  GET /api/v1/operator/deployment-plans via operatorApi.listDeploymentPlans,
+  and the detail screen reuses operatorApi.getDeploymentReview /
+  getDeploymentPlanDetail. Both screens are now reachable from the
+  Operator Console group in the sidebar.
+
+changed_files:
+  - src/lib/bffClient.ts
+  - src/pages/operator/DeploymentReviewConsole.tsx
+  - src/pages/operator/DeploymentPlanDetail.tsx
+  - src/pages/operator/DeploymentPlanDetailRoute.tsx
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+
+routes:
+  - /operator/deployment-review
+  - /operator/deployment-plans/:planId
+
+follow_up_requested:
+  - confirm BFF endpoints listed above are deployed at the expected paths
+  - validate degradation banner surfaces match expectedSurfaceKeys
+  - publish next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

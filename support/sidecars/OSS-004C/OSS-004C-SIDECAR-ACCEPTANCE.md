@@ -35,16 +35,18 @@ support the reviewer without prescribing implementation steps.
 
 ## 2. Parent Task Truth
 
-From the current `ai-status.json` snapshot:
+From the current `ai-status.json` snapshot used for this review:
 
 - owner: `Codex`
 - reviewer: `Claude`
 - phase: `Phase 7: EP4 Proof Run`
-- status: `in_progress`
+- status: `review`
 - formal dependencies: `OSS-004A` (done), `OSS-004B` (done)
 - recorded acceptance:
   - `one integrated EP4 acceptance run is archived`
   - `evidence covers approval, runtime, telemetry, incident, and rollback together`
+- current archived evidence packet:
+  - `docs/deployment/evidence/ep4-governed-paper/20260419T003720Z`
 
 The accepted phase-7 planning session framed `OSS-004C` as:
 
@@ -133,13 +135,13 @@ proof planes.
 |---|---|---|
 | B-1 DeploymentPlan dispatches from VM-1 | Deployment service creates and dispatches a plan tied to the approval | Deployment service at `services/deployment/` |
 | B-2 Deployment saga records binding creation | VM-1 saga records `binding_created` and `runtime_active` events | Saga pattern documented in `dual-vm-acceptance-results.md` |
-| B-3 Plan dispatch response is archived as evidence | `plan-dispatch-response.json` and `saga-detail-response.json` are recorded | Evidence template defined in `dual-vm-acceptance-results.md` |
+| B-3 Plan dispatch response is archived as evidence | `deployment-plan-dispatch.response.json` and `deployment-saga-detail.response.json` are recorded | Evidence template defined in `dual-vm-acceptance-results.md` |
 
 ### Plane C: Runtime Binding
 
 | Check | What "done" means | Current substrate |
 |---|---|---|
-| C-1 RuntimeBinding is created on VM-2 runtime-manager | `runtime-deploy-response.json` shows binding created | VM-2 runtime-manager at `services/runtime-manager/main.py` |
+| C-1 RuntimeBinding is created on VM-2 runtime-manager | `runtime-deploy.response.json` shows binding created | VM-2 runtime-manager at `services/runtime-manager/main.py` |
 | C-2 Binding carries truthful authority refs | `binding_id`, `runtime_id`, `plan_id`, `persona_capital_binding_id` are all present | Locked by `services/execution/runtime-manager/contract.md` |
 | C-3 Binding identity crosses VM boundary cleanly | VM-1 telemetry can join on the binding created by VM-2 runtime-manager | Proven by `dual-vm-acceptance-results.md` acceptance item |
 
@@ -156,7 +158,7 @@ proof planes.
 
 | Check | What "done" means | Current substrate |
 |---|---|---|
-| E-1 Telemetry ingest receives events from VM-2 | VM-1 ingest counter increments after paper execution cycle | `telemetry-stats-before.json` vs `telemetry-stats-after-deploy.json` |
+| E-1 Telemetry ingest receives events from VM-2 | VM-1 ingest counter increments after paper execution cycle | `telemetry-stats-before-runtime.response.json` vs `telemetry-stats-after-deploy.response.json` |
 | E-2 Events carry canonical authority refs | Each event has `binding_id`, `runtime_id`, `capital_pool_id`, `artifact_id`, `deployment_stage` | Schema locked in `services/telemetry/telemetry_event.schema.json` |
 | E-3 Telemetry authority refs join the deployed binding | VM-1 can resolve the `binding_id` from VM-2 via runtime-manager lookup | Already tested in dual-VM harness baseline |
 
@@ -165,67 +167,87 @@ proof planes.
 | Check | What "done" means | Current substrate |
 |---|---|---|
 | F-1 Paper runtime health endpoint is responsive | `GET /health` returns `200` while runtime is active | `paper_runtime.py` HTTP server |
-| F-2 Kill-switch health check reflects paused state | After kill-switch, health endpoint or binding status reflects `paused` | `kill-switch-response.json` acceptance item |
+| F-2 Kill-switch health check reflects paused state | After kill-switch, health endpoint or binding status reflects `paused` | `kill-switch-dispatch.response.json` acceptance item |
 | F-3 Incident signal is observable from VM-1 | VM-1 can query binding status or telemetry to detect the paused state | Runtime-manager route on VM-2 + VM-1 telemetry lookthrough |
 
 ### Plane G: Kill-Switch
 
 | Check | What "done" means | Current substrate |
 |---|---|---|
-| G-1 VM-1 kill-switch stops the VM-2 binding | `kill-switch-response.json` shows `binding.status = paused` | VM-2 runtime-manager kill-switch route |
-| G-2 Safe mode is set and persisted | `safe-mode-response.json` shows the runtime-manager safe-mode flag is set | Safe-mode implementation via `DEPTH-EVO005` (commit `d0eb7ec`) |
-| G-3 Audit log records the kill-switch event | `kill-switch-audit-response.json` shows an audit entry | `services/governance/audit_log.py` |
+| G-1 VM-1 kill-switch stops the VM-2 binding | `kill-switch-dispatch.response.json` shows `binding.status = paused` | VM-2 runtime-manager kill-switch route |
+| G-2 Safe mode is set and persisted | `kill-switch-safe-mode.response.json` shows the runtime-manager safe-mode flag is set | Safe-mode implementation via `DEPTH-EVO005` (commit `d0eb7ec`) |
+| G-3 Audit log records the kill-switch event | `kill-switch-audit-log.response.json` shows an audit entry | `services/governance/audit_log.py` |
 
 ### Plane H: Rollback
 
 | Check | What "done" means | Current substrate |
 |---|---|---|
-| H-1 VM-1 rollback executes on VM-2 | `rollback-response.json` shows `old_binding.status = retired` and `new_binding.status = active` | VM-2 runtime-manager rollback route |
-| H-2 Telemetry reflects the post-rollback binding | `telemetry-stats-after-rollback.json` shows counter updates tied to the new binding | VM-1 ingest + runtime-manager lookup |
+| H-1 VM-1 rollback executes on VM-2 | `rollback-execute.response.json` shows `old_binding.status = retired` and `new_binding.status = active` | VM-2 runtime-manager rollback route |
+| H-2 Telemetry reflects the post-rollback binding | `telemetry-stats-after-rollback.response.json` shows counter updates tied to the new binding | VM-1 ingest + runtime-manager lookup |
 | H-3 Rollback evidence stays within EP4 scope | Rollback is proven for paper execution; live rollback semantics remain deferred to EP5 | `ROLLBACK_AND_POSITION_SEMANTICS.md` boundary |
 
 ---
 
 ## 6. Evidence Packet Shape
 
-`OSS-004C` must produce and archive at least the following evidence bundle. This is derived from
-the existing evidence template in `docs/deployment/dual-vm-acceptance-results.md` and extended for
-all named EP4 planes.
+The archived `OSS-004C` packet follows the evidence categories from
+`docs/deployment/dual-vm-acceptance-results.md`, but the repo-current EP4 packet uses richer
+per-step `*.request.json` / `*.response.json` filenames so every proof plane can be audited
+directly. Reviewer should expect at least the following evidence categories in the archived packet:
 
-```
+```text
 ep4-acceptance-run-<timestamp>/
-  summary.json                     # overall pass/fail + run metadata
-  plan-dispatch-response.json      # Plane B
-  saga-detail-response.json        # Plane B
-  runtime-deploy-response.json     # Plane C
-  vm2_paper-runtime.json           # Plane D health
-  telemetry-stats-before.json      # Plane E baseline
-  telemetry-stats-after-deploy.json # Plane E after paper execution
-  kill-switch-response.json        # Plane G
-  safe-mode-response.json          # Plane G
-  kill-switch-audit-response.json  # Plane G
-  rollback-response.json           # Plane H
-  telemetry-stats-after-rollback.json # Plane H
+  summary.json                                             # overall pass/fail + run metadata
+  approval-*.request.json / approval-*.response.json       # Plane A
+  deployment-plan-dispatch.response.json                   # Plane B
+  deployment-saga-detail.response.json                     # Plane B
+  runtime-deploy.response.json                             # Plane C
+  paper-runtime-health.response.json                       # Plane D
+  paper-runtime-state-after-signal.response.json           # Plane D
+  telemetry-stats-before-runtime.response.json             # Plane E baseline
+  telemetry-stats-after-deploy.response.json               # Plane E after paper execution
+  incident-create.response.json                            # Plane F
+  incident-operator-payload.response.json                  # Plane F
+  incident-resolve.response.json                           # Plane F
+  kill-switch-dispatch.response.json                       # Plane G
+  kill-switch-safe-mode.response.json                      # Plane G
+  kill-switch-audit-log.response.json                      # Plane G
+  rollback-execute.response.json                           # Plane H
+  telemetry-stats-after-rollback.response.json             # Plane H
 ```
 
-The `summary.json` must record:
+The current archived `summary.json` records the proof run in repo-current field names:
 
 | Field | Value |
 |---|---|
-| `run_timestamp` | ISO-8601 UTC |
-| `runner_host` | hostname or bastion |
-| `vm1_deployment_url` | actual URL used |
-| `vm1_telemetry_url` | actual URL used |
-| `vm2_runtime_manager_url` | actual URL used |
-| `vm2_paper_runtime_url` | actual URL used |
+| `run_timestamp_utc` | ISO-8601 UTC |
+| `source_task_id` | `OSS-004C` |
+| `approval_decision_id` | generated approval decision ID |
 | `plan_id` | generated plan ID |
 | `saga_id` | generated saga ID |
 | `initial_binding_id` | binding ID after deploy |
 | `replacement_binding_id` | binding ID after rollback |
-| `telemetry_counter_delta` | integer count |
-| `paper_bootstrap_stub` | `false` |
+| `incident_id` | generated incident ID |
+| `deploy_event_id` | deploy-side telemetry event ID |
+| `rollback_event_id` | rollback-side telemetry event ID |
+| `signal_id` | generated paper signal ID |
+| `paper_runtime_id` | paper runtime identity |
+| `telemetry_counter_before_runtime` | integer count before runtime activity |
+| `telemetry_counter_after_deploy_event` | integer count after deploy-side telemetry |
+| `telemetry_counter_after_rollback_event` | integer count after rollback-side telemetry |
+| `telemetry_trace_after_deploy_status` | HTTP status for deploy trace lookup |
+| `telemetry_trace_after_rollback_status` | HTTP status for rollback trace lookup |
+| `runtime_emitted_telemetry_sent` | runtime-emitted telemetry counter |
+| `processed_signal_count` | processed signal count |
+| `execution_event_count` | paper execution event count |
+| `kill_switch_state` | expected paused state before rollback |
+| `rollback_action_type` | expected `pause_then_replace` |
 | `overall_result` | `"pass"` or `"fail"` |
-| `ep4_claim` | `"EP4"` — do not write `"EP5"` here |
+| `output_dir` | archived packet directory |
+
+The run-local service URLs and the telemetry trace caveat are recorded in the packet `README.md`
+rather than in `summary.json`. The support requirement here is that the packet remain clearly
+bounded to `EP4` and not silently claim `EP5`.
 
 ---
 

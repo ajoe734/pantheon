@@ -2,30 +2,143 @@ feature_id: PKT-005-sse-substrate
 type: frontend-feedback
 source_repo: ajoe734/pantheon
 reviewed_by: Codex
-reviewed_at: '2026-04-19T00:00:00Z'
+reviewed_at: '2026-04-24T11:49:25Z'
+reviewed_commit: 0ee754bf0228a6998ace115f3277fdc30bcb15e1
+reviewed_source_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3
+request_pair_commit: 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe
 ui_done_source_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3
-disposition: approved
-cycle_reviewed: 3
+frontend_feedback_source_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3
+verified_remote_publish_commit: 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe
+verified_remote_branch_head: 1a1a42eebda033a1fbda4696df5b81271f5eed9b
+feedback_bundle_transport: >-
+  Reviewed source commit eb1a6cbb727a681db21ecd4b121348605fb8a4d3 contains the
+  shared SSE client/reconciler updates, the required host-screen wiring, the
+  canonical request pair, and docs/pantheon-feedback/PKT-005-sse-substrate/*.
+  Canonical republish commit 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe on
+  origin/pkt-004-detail-fix republishes both PKT-005 request files with
+  source_commit pinned back to that reviewed source snapshot, and current
+  remote head 1a1a42eebda033a1fbda4696df5b81271f5eed9b preserves the same
+  request pair and feedback bundle unchanged.
+screen: sse-reconciliation-substrate
+workbench: operator-console
+screen_id: surface-operator-sse-reconciliation
 
-summary: >-
-  Pantheon re-reviewed PKT-005-sse-substrate against the unchanged SSE
-  contract, the sibling front implementation, and the current paired handoff
-  publication. The returned implementation bundle commit
-  eb1a6cbb727a681db21ecd4b121348605fb8a4d3 now satisfies the prior five review
-  findings, and the current request-pair publication at
-  42dc4856b36a7c92f5c40cafd94bf8ef09665bbe truthfully points at that immutable
-  bundle SHA. No Pantheon BFF gap remains in this cycle.
-
-review_result: approved
+status: loop-complete
+disposition: close
+review_result: replay-clean-and-contract-aligned
 can_close: true
 
-gaps: []
+summary: >-
+  Pantheon re-reviewed the returned PKT-005 SSE substrate bundle against the
+  published contract, canonical example payload, and the Git-visible front
+  branch origin/pkt-004-detail-fix. The replay chain is now truthful: reviewed
+  source commit eb1a6cbb727a681db21ecd4b121348605fb8a4d3 contains the accepted
+  SSE implementation and feedback bundle, and canonical republish commit
+  42dc4856b36a7c92f5c40cafd94bf8ef09665bbe republishes both request files with
+  source_commit pinned back to that reviewed source snapshot. The current
+  remote branch head 1a1a42eebda033a1fbda4696df5b81271f5eed9b preserves the
+  same request pair and feedback bundle. Replay cursor advancement now happens
+  after host apply, required host surfaces reconcile accepted events into
+  visible state or refresh paths, delayed-update notes are present, and
+  reconciler-originated contract gaps surface explicitly. No Pantheon BFF or
+  runtime follow-up is required.
 
-next_action: >-
-  None. PKT-005-sse-substrate is approved and closed on the Pantheon side. No
-  further frontend or Pantheon BFF follow-up is required unless a new SSE
-  contract drift appears in a later cycle.
+acceptance_verified:
+  - criterion: publish the canonical ui-done and frontend-feedback request pair through a Git-visible replay-clean transport
+    status: pass
+    note: >-
+      `git show 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe:.coordination/requests/PKT-005-sse-substrate-ui-done.yaml`
+      and the companion frontend-feedback request both resolve from one
+      Git-visible republish commit on origin/pkt-004-detail-fix.
+  - criterion: both republished request bodies point to one truthful reviewed source commit
+    status: pass
+    note: >-
+      Both request files now publish
+      `source_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3`, and that commit
+      resolves and remains contained in origin/pkt-004-detail-fix.
+  - criterion: the republish delta is transport-only for the PKT-005 slice
+    status: pass
+    note: >-
+      Diffing
+      `eb1a6cbb727a681db21ecd4b121348605fb8a4d3..42dc4856b36a7c92f5c40cafd94bf8ef09665bbe`
+      over the PKT-005 request pair, feedback bundle, and reviewed SSE files
+      changes only the two request files.
+  - criterion: replay cursor advances only after successful host apply
+    status: pass
+    note: >-
+      Reviewed source commit `eb1a6cbb727a681db21ecd4b121348605fb8a4d3`
+      advances replay via `SseClient.acknowledgeEvent()` and commits dedupe via
+      `SseReconciler.markApplied()` only after accepted host apply.
+  - criterion: accepted runtime and incident events reconcile visible host state
+    status: pass
+    note: >-
+      Deployment Review refreshes its visible snapshot, Incident Detail updates
+      visible incident and kill-switch state, and Post-Incident Review updates
+      both the list row and selected detail state on accepted events.
+  - criterion: delayed-update note appears on live host surfaces after inactivity
+    status: pass
+    note: >-
+      Deployment Review, Incident Detail, Incident Action Drawer, and
+      Post-Incident Review now render the delayed-update note.
+  - criterion: reconciler-originated bff-gap results are surfaced instead of silently dropped
+    status: pass
+    note: >-
+      Host surfaces now render explicit SSE contract-gap alerts instead of
+      dropping malformed realtime payloads.
 
-pantheon_bff_gaps: []
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the canonical PKT-005 request-pair republish commit
+    path: ../front-ai-trading-system/.coordination/requests/PKT-005-sse-substrate-ui-done.yaml
+    note: >-
+      Confirmed `42dc4856b36a7c92f5c40cafd94bf8ef09665bbe` republishes both
+      canonical PKT-005 request files with truthful
+      `source_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3`.
+  - action: verify the reviewed source snapshot against the PKT-005 contract bundle
+    path: ../front-ai-trading-system
+    note: >-
+      Reviewed source commit
+      `eb1a6cbb727a681db21ecd4b121348605fb8a4d3` was checked against
+      `docs/pantheon-handoffs/PKT-005-sse-substrate/{bff,screens,FRONTEND_CHANGE_SPEC.md}`.
+  - action: inspect the transport-only replay delta for PKT-005
+    path: ../front-ai-trading-system
+    note: >-
+      Diffing the reviewed source commit to the canonical republish commit over
+      the PKT-005 slice changes only the two request files.
+  - action: verify the current remote branch head preserves the approved PKT-005 transport
+    path: ../front-ai-trading-system
+    note: >-
+      `git diff --name-only
+      42dc4856b36a7c92f5c40cafd94bf8ef09665bbe..1a1a42eebda033a1fbda4696df5b81271f5eed9b -- .coordination/requests/PKT-005-sse-substrate-ui-done.yaml .coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml docs/pantheon-feedback/PKT-005-sse-substrate`
+      is empty.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Live browser QA against a running Pantheon BFF remains outstanding. This
+      review covered the Git-visible replay chain and static contract
+      conformance, not deployed browser exercise.
+
+required_front_repo_updates: []
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. Reviewed source commit
+  eb1a6cbb727a681db21ecd4b121348605fb8a4d3 contains the advertised PKT-005
+  SSE implementation and feedback bundle, and origin/pkt-004-detail-fix now
+  exposes canonical republish commit
+  42dc4856b36a7c92f5c40cafd94bf8ef09665bbe, which republishes both request
+  files with truthful source_commit metadata back to that reviewed snapshot.
+
+risk_note: >-
+  Remaining risk is non-blocking live browser QA and future regressions outside
+  this approved publication tuple, not an open Pantheon contract, runtime
+  blocker, or replay-truth defect.
+
 blocking: false
+lovable_ui_task_status: closed
+next_action: none
 delivery_artifact_ref: .coordination/responses/PKT-005-sse-substrate-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/PKT-005-sse-substrate-review.md

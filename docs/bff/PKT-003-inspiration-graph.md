@@ -2,7 +2,7 @@
 
 ## Status
 
-**Contract published** — the route and field shape are the definitive spec for BFF implementation. The BFF route does not yet exist; this document is the implementation target. UI work must not start until the BFF confirms the route is live and returning this field shape.
+**Contract published, route live** — the field shape remains the definitive spec and `GET /api/v1/lineage/inspiration/{artifact_id}` is now implemented in the BFF. UI work must consume this route directly and must not reconstruct the view from raw lineage endpoints.
 
 Task: `EW-04-OPEN-001`
 

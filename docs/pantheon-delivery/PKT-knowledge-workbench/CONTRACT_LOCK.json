@@ -1,0 +1,38 @@
+{
+  "feature_id": "PKT-knowledge-workbench",
+  "status": "loop-complete",
+  "backend_commit": "3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "bff_contract_version": "pantheon-bff@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035+working-tree",
+  "source_payload": ".coordination/requests/PKT-knowledge-workbench-ui-done.yaml",
+  "source_commit": "77ab876e05dbb206f4fd4abc39051df86f6127c2",
+  "request_commit": "dbc4a16dc0e9f0b8d33e1576908341ea056c660d",
+  "frontend_feedback_source_commit": "77ab876e05dbb206f4fd4abc39051df86f6127c2",
+  "source_commit_note": "Reviewed UI implementation commit 77ab876e05dbb206f4fd4abc39051df86f6127c2 contains src/components/AppSidebar.tsx, src/lib/bffClient.ts, src/pages/workbench/KnowledgeWorkbench.tsx, src/pages/workbench/types.ts, the canonical request pair, and docs/pantheon-feedback/PKT-knowledge-workbench/*. Front publish commit dbc4a16dc0e9f0b8d33e1576908341ea056c660d on origin/pkt-004-detail-fix contains that canonical request pair and feedback bundle while truthfully pinning source_commit back to 77ab876e05dbb206f4fd4abc39051df86f6127c2.",
+  "verified_front_workspace_head": "dbc4a16dc0e9f0b8d33e1576908341ea056c660d",
+  "verified_remote_publish_commit": "dbc4a16dc0e9f0b8d33e1576908341ea056c660d",
+  "review_file": ".coordination/reviews/PKT-knowledge-workbench-review.md",
+  "feedback_request": ".coordination/requests/PKT-knowledge-workbench-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/workbench/knowledge"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-knowledge-workbench.md",
+    "docs/examples/PKT-knowledge-workbench.json",
+    "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Current remote branch head origin/pkt-004-detail-fix resolves to dbc4a16dc0e9f0b8d33e1576908341ea056c660d and contains the canonical request pair, docs/pantheon-feedback/PKT-knowledge-workbench/*, src/components/AppSidebar.tsx, src/lib/bffClient.ts, src/pages/workbench/KnowledgeWorkbench.tsx, and src/pages/workbench/types.ts",
+    "The published ui-done and frontend-feedback request pair on dbc4a16dc0e9f0b8d33e1576908341ea056c660d truthfully pins source_commit back to 77ab876e05dbb206f4fd4abc39051df86f6127c2",
+    "Knowledge nav truth fix is present on the published branch head: src/components/AppSidebar.tsx no longer marks /knowledge with comingSoon: true",
+    "Targeted Pantheon PKT-knowledge-workbench contract test passed: python3 -m pytest services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py -q",
+    "Direct local TestClient read of GET /api/v1/workbench/knowledge returned 200 OK with workbench_id=knowledge-workbench, overall_status=overview_ready, headline 'KW-01 to KW-05 are route-live', module_ids KW-01..KW-05, and packet_family.note describing route-live modules with remaining frontend activation in the current workspace"
+  ],
+  "followup_scope": [
+    "No additional Pantheon API or contract work is required for the current PKT-knowledge-workbench packet",
+    "No further front-end replay or Knowledge navigation truth follow-up is required for the current packet scope",
+    "Deployed browser QA against /knowledge remains deferred non-blocking follow-up"
+  ]
+}

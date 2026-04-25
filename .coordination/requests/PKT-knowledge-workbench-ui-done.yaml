@@ -1,0 +1,50 @@
+feature_id: PKT-knowledge-workbench
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 77ab876e05dbb206f4fd4abc39051df86f6127c2
+screen: knowledge-workbench-overview
+blocking: false
+status: closed
+pantheon_disposition: loop-complete
+closed_at: "2026-04-22T09:34:57Z"
+closed_by: Codex
+review_file: .coordination/reviews/PKT-knowledge-workbench-review.md
+resolution_summary: >-
+  Pantheon synced the approved PKT-knowledge-workbench closeout against the
+  replay-clean front request pair now tracked with source_commit
+  77ab876e05dbb206f4fd4abc39051df86f6127c2. The live /knowledge overview
+  remains aligned on GET /api/v1/workbench/knowledge, the stale Knowledge Soon
+  badge is no longer part of the reviewed route surface, and no Pantheon
+  follow-up remains for the current packet scope.
+
+summary: |
+  Knowledge Workbench overview is wired to the published PKT packet through
+  workbenchApi.getKnowledgeOverview (GET /api/v1/workbench/knowledge). The
+  /knowledge screen renders only backend-owned overview data: workbench header,
+  module order, support refs, and next steps. It keeps the packet explicitly
+  read-only and shows a canonical bff-gap state if required fields are missing.
+
+changed_files:
+  - src/lib/bffClient.ts
+  - src/pages/workbench/KnowledgeWorkbench.tsx
+  - src/pages/workbench/types.ts
+  - .coordination/requests/PKT-knowledge-workbench-bff-gap.example.yaml
+  - .coordination/requests/PKT-knowledge-workbench-ui-done.example.yaml
+  - docs/pantheon-feedback/PKT-knowledge-workbench/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-knowledge-workbench/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-knowledge-workbench/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-knowledge-workbench/QA_STATUS.md
+
+routes:
+  - /knowledge
+
+follow_up_requested:
+  - review the knowledge-workbench overview against the mirrored PKT contract and example payload
+  - validate live BFF behavior for contract-mismatch handling and packet-only messaging
+  - confirm the published overview remains truthful while KW-01 through KW-05 stay blocked
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

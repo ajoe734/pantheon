@@ -1,0 +1,24 @@
+feature_id: TW-04-teaching-replay
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: trainer-workbench
+screen_id: screen-teaching-replay
+status: delivered
+backend_commit: c2ded5aaefa7ba03b2ee43306859ce97013953ca
+working_tree_only: false
+verified_runtime_ref: pantheon-head@c2ded5aaefa7ba03b2ee43306859ce97013953ca
+live_http_runtime_ref: http://127.0.0.1:18001
+bff_contract_version: pantheon-bff@c2ded5aaefa7ba03b2ee43306859ce97013953ca
+delivery_note_path: docs/reviews/2026-04-22-exec-closeout-frontend-002-summary.md
+contract_lock_path: docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md
+followup_expectation: >-
+  Pantheon reran TW-04 against a fresh operator-bff runtime from the current
+  workspace. Live OpenAPI on http://127.0.0.1:18001 now advertises the full
+  replay route family, authenticated replay list/detail probes return 200,
+  browser-facing replay/session links match the mounted front routes, and
+  `event.evidence_ref.url_pattern` resolves to
+  `/operator/paper-live-drift/runtime-042` instead of the stale telemetry
+  fallback. The earlier runtime-refresh and route-topology follow-up is
+  complete, so no further Pantheon-side closeout work is required for this
+  TW-04 cycle.
+source_payload: .coordination/requests/TW-04-teaching-replay-needs-runtime.yaml

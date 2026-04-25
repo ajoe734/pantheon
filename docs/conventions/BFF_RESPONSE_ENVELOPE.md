@@ -5,6 +5,7 @@ Last updated: 2026-04-22
 Source of truth inputs:
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
 - `docs/reviews/Pantheon_Response_to_System_Design_Followup_Questions.md`
+- `docs/reviews/Pantheon_Response_to_Architecture_Blockers_Decision_Package.md`
 Tier: L1 Platform Architecture & Policy
 Scope: minimum shared BFF list/detail envelope and pagination wrapper
 Conflict rule: module contracts may extend the envelope with domain fields, but they should not remove or redefine the shared minimum fields documented here without an explicit narrower decision

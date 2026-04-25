@@ -4,21 +4,18 @@ Screen: `global-degradation-banner`.
 Workbench: `operator-console`.
 Screen ID: `surface-operator-global-degradation-banner`.
 Constraints:
-- use existing bff client only; do not add a dedicated health-check fetch
-- banner state must come exclusively from meta.staleness and meta.surfaces in the current screen's composed view response
+- use existing bff client only
 - do not add raw fetch in components
 - do not import demo providers
-- if any meta.surfaces key is absent from the BFF response, emit a bff-gap handoff instead of assuming ok
-- all five banner variants must be implemented (none, degraded, stale, partial, critical)
-- banner is non-dismissable
+- if any required field is missing, emit a bff-gap handoff instead of mocking
 Acceptance:
-- GlobalDegradationBanner component is implemented as a shared primitive
-- banner renders correctly in all five variants based on meta.surfaces content
-- banner is wired into Deployment Review (PKT-001), Incident Home and Incident Response (PKT-002), and Post-Incident Review (PKT-003)
-- no dedicated health-check fetch is added
-- banner disappears when all surfaces return to ok
-- STALE variant shows humanised age from meta.staleness.last_known_at
-- PARTIAL variant lists each surface by humanised name and status
+- implement the shared GlobalDegradationBanner component driven by meta.staleness and meta.surfaces
+- do not add a separate BFF health-check fetch to render the banner
+- banner state must be derived from the current screen's composed view response only
+- render all five banner variants (none, degraded, stale, partial, critical)
+- banner disappears automatically when all meta.surfaces entries return to ok
+- wire the banner into all three existing Operator Console screens (PKT-001, PKT-002, PKT-003)
+- if any meta.surfaces key is absent from the BFF response, emit a bff-gap handoff
 Completion handoff:
 - When the UI implementation is ready, write `.coordination/requests/PKT-005-degradation-banner-ui-done.yaml` using `.coordination/requests/PKT-005-degradation-banner-ui-done.example.yaml` as the template. Sync that file back to GitHub and stop so Pantheon supervisor can pick up review/integration work automatically.
 References:

@@ -1,5 +1,4 @@
-Prepare the `RW-02-search` pending-BFF placeholder in `front-ai-trading-system` using only Pantheon APIs.
-Do not build the production search screen until Pantheon confirms that GET `/api/v1/research/search` returns the published SearchResult field shape and includes the published `meta.index_adapter.*` metadata.
+Build the `RW-02-search` UI flow in `front-ai-trading-system` using only Pantheon APIs.
 If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `.coordination/requests/RW-02-search-bff-gap.yaml` using `.coordination/requests/RW-02-search-bff-gap.example.yaml` as the template. Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop.
 Screen: `research-search`.
 Workbench: `research-workbench`.
@@ -10,10 +9,8 @@ Constraints:
 - use existing bff client only
 - do not add raw fetch in components
 - do not import demo providers
-- do not build a client-side search corpus
 - if any required field is missing, emit a bff-gap handoff instead of mocking
 Acceptance:
-- keep the route on a blocked placeholder until Pantheon confirms the search route and adapter are live
 - fetch search results from GET /api/v1/research/search only
 - send q, match_type, status, date_range, page_token, and page_size exactly as published
 - render result rows from the published SearchResult object only

@@ -1,0 +1,13 @@
+{
+  "status": 404,
+  "payload": {
+    "error": {
+      "code": "LINEAGE_TARGET_NOT_FOUND",
+      "message": "No lineage target found for telemetry_event_trace",
+      "params": {
+        "event_id": "35b0c528-03c5-4111-9184-b4700e0518c0"
+      },
+      "query_family": "telemetry_event_trace"
+    }
+  }
+}

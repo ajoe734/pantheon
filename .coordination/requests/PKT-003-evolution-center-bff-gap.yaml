@@ -1,0 +1,115 @@
+feature_id: PKT-003-evolution-center
+type: bff-gap
+source_repo: pantheon
+screen: evolution-center
+blocking: false
+status: resolved
+assessed_at: "2026-04-16T00:00:00Z"
+assessed_by: Claude
+resolved_at: "2026-04-16T00:00:00Z"
+resolved_by: BP5-SVC-012/BP5-SVC-013/BP5-SVC-015
+
+summary: >-
+  Pantheon pre-assessed the BFF implementation for PKT-003-evolution-center
+  and found that all four required endpoints return shapes that diverge from
+  the published contract. RESOLVED: BP5-SVC-012, BP5-SVC-013, and BP5-SVC-015
+  completed the BFF alignment. All four endpoints now serve contract-correct
+  shapes (items array, page_info.next_page_token, meta.snapshot_at, canonical
+  field names). Contract tests in test_evolution_center_contract.py confirm
+  alignment. Lovable loop can resume.
+
+missing:
+  # GET /api/v1/evolution-decisions (EV-01) — 3 envelope-level gaps
+  - endpoint: GET /api/v1/evolution-decisions
+    field: items
+    reason: >-
+      BFF returns top-level 'data' array; contract requires 'items' array.
+      Evolution Decisions panel cannot bind to response without this key.
+  - endpoint: GET /api/v1/evolution-decisions
+    field: page_info.next_page_token
+    reason: >-
+      'page_info' object is entirely absent from the BFF response.
+      Pagination and load-more cannot function without next_page_token.
+  - endpoint: GET /api/v1/evolution-decisions
+    field: meta.snapshot_at
+    reason: >-
+      BFF returns meta.staleness dict and meta.total instead of meta.snapshot_at.
+      Staleness banner cannot anchor to a canonical timestamp.
+
+  # GET /api/v1/evolution-decisions/{decision_id} (EV-02) — 4 gaps
+  - endpoint: GET /api/v1/evolution-decisions/{decision_id}
+    field: updated_at
+    reason: >-
+      The read_store projector (_project_service_evolution_decision) does not map
+      updated_at from the underlying record. Decision Detail drawer cannot render
+      the last-updated timestamp.
+  - endpoint: GET /api/v1/evolution-decisions/{decision_id}
+    field: notes
+    reason: >-
+      The read_store projector does not map notes from the underlying record.
+      Decision Detail drawer cannot render the operator notes field.
+  - endpoint: GET /api/v1/evolution-decisions/{decision_id}
+    field: meta.snapshot_at
+    reason: >-
+      BFF returns meta.staleness dict instead of meta.snapshot_at.
+      Per-drawer staleness indicator cannot anchor to a canonical timestamp.
+  - endpoint: GET /api/v1/evolution-decisions/{decision_id}
+    field: response shape
+    reason: >-
+      BFF wraps the decision object under a 'data' key; contract expects the
+      detail object to be returned flat at the response root.
+
+  # GET /api/v1/freeze-orders (EV-03) — 4 gaps
+  - endpoint: GET /api/v1/freeze-orders
+    field: items
+    reason: >-
+      BFF returns top-level 'data' array; contract requires 'items' array.
+      Freeze Orders panel cannot bind to response without this key.
+  - endpoint: GET /api/v1/freeze-orders
+    field: freeze_order_id
+    reason: >-
+      Store data uses 'id' field; contract requires 'freeze_order_id'.
+      Freeze Orders rows cannot display canonical order identity.
+  - endpoint: GET /api/v1/freeze-orders
+    field: issued_at
+    reason: >-
+      Store data uses 'created_at' field; contract requires 'issued_at'.
+      Freeze Orders rows cannot display the issuance timestamp with the correct key.
+  - endpoint: GET /api/v1/freeze-orders
+    field: meta.snapshot_at
+    reason: >-
+      BFF returns meta.staleness and meta.total instead of meta.snapshot_at.
+      Panel staleness banner cannot anchor to a canonical timestamp.
+
+  # GET /api/v1/rollbacks (EV-04) — 4 gaps
+  - endpoint: GET /api/v1/rollbacks
+    field: items
+    reason: >-
+      BFF returns top-level 'data' array; contract requires 'items' array.
+      Rollbacks panel cannot bind to response without this key.
+  - endpoint: GET /api/v1/rollbacks
+    field: rollback_id
+    reason: >-
+      Store data uses 'id' field; contract requires 'rollback_id'.
+      Rollbacks rows cannot display canonical rollback identity.
+  - endpoint: GET /api/v1/rollbacks
+    field: executed_at
+    reason: >-
+      Store data uses 'initiated_at' field; contract requires 'executed_at'.
+      Rollbacks rows cannot display the execution timestamp with the correct key.
+  - endpoint: GET /api/v1/rollbacks
+    field: meta.snapshot_at
+    reason: >-
+      BFF returns meta.staleness and meta.total instead of meta.snapshot_at.
+      Panel staleness banner cannot anchor to a canonical timestamp.
+
+acceptance:
+  - BFF aligns GET /api/v1/evolution-decisions to return items array, page_info.next_page_token, and meta.snapshot_at
+  - BFF aligns GET /api/v1/evolution-decisions/{decision_id} to return flat object with updated_at, notes, and meta.snapshot_at
+  - BFF aligns GET /api/v1/freeze-orders to return items array with freeze_order_id, issued_at per item, and meta.snapshot_at
+  - BFF aligns GET /api/v1/rollbacks to return items array with rollback_id, executed_at per item, and meta.snapshot_at
+  - Pantheon publishes updated contract-ready and lovable-ui-task packets after alignment
+  - Lovable receives updated packets and resumes the implementation cycle
+
+delivery_note: docs/pantheon-delivery/PKT-003-evolution-center/DELIVERY_NOTE.md
+contract_lock: docs/pantheon-delivery/PKT-003-evolution-center/CONTRACT_LOCK.md

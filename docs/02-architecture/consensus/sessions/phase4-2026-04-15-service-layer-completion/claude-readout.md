@@ -1,169 +1,187 @@
-# Claude Readout — Phase 4: Service Layer Completion
+# Claude Readout — Phase 4: Service Layer Completion (Round 1 Refresh)
 
 ## Lane
 
 - Agent: Claude
-- Capability focus: Execution and control-plane architecture; governance-layer semantics; cross-service consistency; deployment readiness audit
+- Role: Facilitator + control-plane architecture reviewer
+- Refresh trigger: `phase2-phase6-gap-inventory.md` added as canonical planning input at 2026-04-15T11:55:00Z; this readout supersedes the Round 0 version.
 
 ## Canonical Sources Read
 
 - L0: `ai-status.json`, `current-work.md`
 - L1: `TARGET_ARCHITECTURE.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PERSONA_RUNTIME_MODEL.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`
 - L2: `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `Pantheon_單VM測試版_雙VM正式版_部署補充說明.md`, `Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md`
+- Session: `phase2-phase6-gap-inventory.md`, `starter-draft.md`, `codex-readout.md`, `gemini-readout.md`, `planning-session.json`
+- Repo direct: `services/control-plane/bff/command_executor.py`, `services/control-plane/bff/read_store.py`, `services/control_plane/internal_api.py`
 
-## Working Interpretation
+---
 
-### Architecture summary
+## 1. What the Gap Inventory Changes
 
-Pantheon's ROADMAP defines a strictly ordered phase sequence. Phases 0–2 (canonical docs, governance contracts, domain objects) are complete. The gap is that Phases 3–5 produced Python-level implementations but stopped short of wrapping them into deployable HTTP services. The jump to single-VM deployment requires closing this gap first.
+The core interpretation shift from the gap inventory is that phases 2–6 have **canonical baseline complete** but are still **delivery incomplete**. This distinction matters for task scoping.
 
-The 16-service inventory from `Pantheon_單VM測試版_雙VM正式版_部署補充說明.md` is the deployment target. Current repo state maps to:
+The inventory makes explicit what the Round 0 readout treated as a risk: the BFF snapshot fallback, the evolution placeholder commands, and the missing Dockerfiles are not deferred cleanup tasks — they are **blocking items** for any honest single-VM smoke test. The six-slice plan in `starter-draft.md` correctly identifies the compose-critical bridge. The remaining question this readout must answer is: does that bridge have the right shape, and are the open disagreements actually risks to execution?
 
-- **4 services**: have FastAPI HTTP surface (bff, persona, router, feedback)
-- **9 services**: have domain-object Python code only (promotion, telemetry-incident, lineage-read, evolution, registry-core, runtime-manager, optimizer, research-orchestrator, bff-completion)
-- **5 services**: do not exist in repo at all (openclaw-adapter, consultation, data-ingest, data-catalog, feature-svc)
+---
 
-### Delivery order
+## 2. Cited Observations
 
-For single-VM test environment, the dependency graph forces this wrapping order:
+### OBS-01: Evolution command boundary is a concrete code gap, not a design ambiguity
 
-1. **Infrastructure first**: postgres, redis/nats, minio (use official images — no code needed)
-2. **Core governance services** (promotion-svc, registry-core-svc): BFF depends on these for artifact metadata and approval state
-3. **Telemetry and lineage** (telemetry-incident-svc, lineage-read-svc): needed for operator surfaces
-4. **Execution services** (runtime-manager-svc, evolution-svc): needed for deployment flow validation
-5. **Optimizer** (optimizer-svc): depends on promotion and registry
-6. **Research** (research-orchestrator-svc, data-ingest-svc, data-catalog-svc, feature-svc): semi-independent; can be stubbed
-7. **BFF completion**: depends on all above services being reachable
-8. **Persona and consultation**: depends on BFF being stable
-9. **OpenClaw adapter**: stub is sufficient for test env
-10. **OSS workers** (dspy, imitation, mlflow): independent; add to compose
-11. **Docker-compose.test.yml + bootstrap**: final assembly
+`services/control-plane/bff/command_executor.py:157–183` (both `_execute_approve_evolution_decision` and `_execute_evolution_action`) explicitly say "internal API not yet defined; record decision locally." These functions return locally constructed dicts with no HTTP dispatch. This is different from the deployment/pause/rollback/kill-switch commands, which already POST to `_INTERNAL_API_BASE` at `:5001`.
 
-### Ownership boundaries
+Implication: the `SVC-RUNTIME-CONTROL` slice must resolve this. Either the evolution endpoints are added to `internal_api.py` (Flask, `:5001`) or they land in a new `governance-api` service. The open disagreement in `starter-draft.md` about where evolution endpoints live is a real execution blocker, not just an architectural preference.
 
-Per `TARGET_ARCHITECTURE.md` and `BINDING_AND_DEPLOYMENT_SEMANTICS.md`:
-- `promotion-svc` owns `ApprovalDecision` and `DeploymentPlan` write authority
-- `runtime-manager-svc` owns `RuntimeBinding` write authority — must be the only service that creates/updates runtime binding records
-- `telemetry-incident-svc` owns `TelemetryEvent` and `IncidentCase` writes
-- `lineage-read-svc` is read-only derived view — must not own any canonical truth
-- `evolution-svc` owns `EvolutionDecision`
-- `bff` is read-aggregation only — must not shadow-copy canonical objects
+**Cite**: `services/control-plane/bff/command_executor.py:157–183`; `phase2-phase6-gap-inventory.md §5 Phase 4`
 
-These ownership rules constrain the HTTP API surface for each service.
+### OBS-02: `internal_api.py` lazy-imports kill_switch_controller via a relative file path
 
-## Risks / Contradictions
+`services/control_plane/internal_api.py:26–56` resolves `_KILL_SWITCH_MODULE_PATH` relative to `__file__` and uses `importlib.util.spec_from_file_location`. In a Docker container, this requires the runtime-manager source to be present at the expected relative path. The Dockerfile for runtime-control must either COPY both modules into the image or mount both paths. If internal_api.py is simply containerized as-is, the service will fail on first kill-switch invocation unless this import path is explicitly tested.
 
-### Risk 1: BFF TODOs hide real missing functionality
-`services/control-plane/bff/main.py` has a FastAPI skeleton but several read surfaces depend on backend services that have no running instances. Until services like `promotion-svc`, `registry-core-svc`, and `telemetry-incident-svc` have HTTP endpoints, BFF completion is blocked. BFF completion should be sequenced AFTER the backing services are wrapped.
+Implication: `SVC-RUNTIME-CONTROL` acceptance criteria must include a live kill-switch invocation through the container, not just a health endpoint.
 
-### Risk 2: Group B stubs block test env acceptance criteria
-The single-VM acceptance criteria (from `Pantheon_單VM測試版_雙VM正式版_部署補充說明.md` §3.5) require BFF to reach `registry / promotion / telemetry / persona`. However three of the five Group B services (`consultation`, `data-catalog`, `feature-svc`) are not on the critical path for the §3.5 smoke tests. They can be minimal stubs that return 200 on `/health` and placeholder responses on primary endpoints — this unblocks the BFF integration path without requiring full implementation.
+**Cite**: `services/control_plane/internal_api.py:26–56`
 
-### Risk 3: openclaw-adapter is deeply incomplete
-`OSS_INTEGRATION_CHECKLIST.md` shows `OpenClaw` status as `adapter-started` — the `integrations/openclaw/` directory has only governance docs. For the test environment, `openclaw-adapter-svc` should be a stub that returns a mock session/tool-bridge response so that `persona-hub-svc` does not hard-fail. Real integration is a follow-on task (OSS-001 continuation).
+### OBS-03: BFF read_store is definitionally incompatible with a composable service stack
 
-### Risk 4: runtime-manager-svc in test env
-`runtime-manager-svc` (`services/execution/runtime-manager/`) has `runtime_binding.py` and `kill_switch_controller.py` as domain objects, not a server. For the test environment, a minimal FastAPI wrapper exposing `GET /bindings`, `POST /bindings`, `POST /kill-switch` is sufficient to validate the `DeploymentPlan → RuntimeBinding` flow. Real LEAN integration is out of scope for single-VM test env.
+`services/control-plane/bff/read_store.py:43–175` expresses the fallback chain: first try env-addressed JSON snapshot file, else return `_default_read_data()` seed. In a compose stack where `PANTHEON_GOVERNANCE_DATA_DIR` and `PANTHEON_RUNTIME_DATA_DIR` are not populated with live service output, the BFF will silently serve seed data. No compose smoke test can distinguish "BFF backed by real services" from "BFF serving seeds" without explicitly verifying that the backing services' write paths produced data that the BFF then reads.
 
-### Risk 5: No database migration system
-None of the existing services have a migration runner. This must be addressed in the bootstrap script — either via Alembic or plain SQL migration files. This is a deployment-gate item.
+Implication: `SVC-SURFACES` acceptance criteria should require end-to-end write → read verification (e.g., POST a deployment plan to governance-api, then confirm BFF returns that plan from its read surface), not just a health endpoint.
 
-## Suggested Task Slices
+**Cite**: `services/control-plane/bff/read_store.py:43–175`; `phase2-phase6-gap-inventory.md §5 Phase 5`
 
-The following is a proposed grouping. Codex should refine IDs and acceptance criteria in `starter-draft.md`.
+### OBS-04: internal_api.py is Flask, not FastAPI
 
-### Wave 1 — Infra + compose skeleton
-- `DEPLOY-001`: Write `docker-compose.test.yml` skeleton with infra services (postgres, redis, minio) and placeholder service entries; write `.env.example`
-- `DEPLOY-002`: Write `bootstrap.sh` and DB migration runner
+`services/control_plane/internal_api.py:12` imports Flask. All other deployable services in the repo use FastAPI. Containerizing internal_api as the long-lived `runtime-control` service would introduce a mixed-framework dependency surface. This is not a blocking issue, but reviewers should decide whether `SVC-RUNTIME-CONTROL` should: (a) wrap the Flask app as-is in its own Dockerfile, or (b) migrate to FastAPI for consistency.
 
-### Wave 2 — Core governance services wrapped
-- `SVC-001`: Wrap `promotion-svc` — FastAPI over `approval_decision.py`, `deployment_plan.py`; endpoints: `POST /approval-decisions`, `GET /approval-decisions/{id}`, `POST /deployment-plans`, `GET /deployment-plans/{id}`; Dockerfile
-- `SVC-002`: Wrap `registry-core-svc` — FastAPI over decision-domain; endpoints: `GET /artifacts`, `POST /artifacts`, `GET /artifacts/{id}`; Dockerfile
-- `SVC-003`: Wrap `telemetry-incident-svc` — FastAPI over `ingest_svc.py` + `incident.py`; endpoints: `POST /events`, `GET /incidents`, `POST /incidents`; Dockerfile
-- `SVC-004`: Wrap `lineage-read-svc` — FastAPI over `service.py`; read-only endpoints; Dockerfile
+**Cite**: `services/control_plane/internal_api.py:12`; `services/control-plane/router/Dockerfile:13-15` (FastAPI/uvicorn pattern)
 
-### Wave 3 — Execution and evolution
-- `SVC-005`: Wrap `runtime-manager-svc` — FastAPI over `runtime_binding.py` + `kill_switch_controller.py`; endpoints: `GET /bindings`, `POST /bindings`, `POST /kill-switch`; Dockerfile
-- `SVC-006`: Wrap `evolution-svc` — FastAPI over `evolution_controller.py` + `evolution_decision.py`; Dockerfile
-- `SVC-007`: Wrap `optimizer-svc` — FastAPI over `synthesizer.py`; Dockerfile
+### OBS-05: Port collision is confirmed and must be resolved before Compose assembly
 
-### Wave 4 — Research and data services
-- `SVC-008`: Wrap `research-orchestrator-svc` — add HTTP entrypoint to `services/research/`; existing Dockerfile needs update
-- `SVC-009`: Build `data-ingest-svc` stub — thin FastAPI wrapper over existing research ingest adapters; Dockerfile
-- `SVC-010`: Build `data-catalog-svc` stub — minimal FastAPI with `/health` + catalog list endpoint; Dockerfile
-- `SVC-011`: Build `feature-svc` stub — minimal FastAPI; Dockerfile
+`services/control-plane/router/Dockerfile` exposes `8001`. `services/control-plane/bff/main.py` runs its local dev runner on `8001`. This is confirmed in `codex-readout.md [R2]` and `gemini-readout.md §2.3`. The `SVC-BASELINE` slice must emit a committed port map. Gemini's proposed map (Router:8001, BFF:8003, Runtime-control:8004, Governance:8005, Telemetry:8006, Lineage:8007) is the most concrete proposal on the table and should be the starting point for consensus.
 
-### Wave 5 — App surfaces
-- `SVC-012`: Complete `bff` — wire real service URLs from env; replace TODO stubs with real HTTP client calls to backing services; complete smoke tests
-- `SVC-013`: Complete `persona-hub-svc` — add real business logic for session/registry flows; update Dockerfile
-- `SVC-014`: Build `consultation-svc` stub — minimal FastAPI; Dockerfile
-- `SVC-015`: Build `openclaw-adapter-svc` stub — mock session/tool-bridge responses; Dockerfile
+**Cite**: `services/control-plane/router/Dockerfile`; `codex-readout.md [R2]`; `gemini-readout.md §2.3`
 
-### Wave 6 — Compose assembly and smoke test
-- `DEPLOY-003`: Update `docker-compose.test.yml` with all services from Waves 2–5; wire service URLs via env
-- `DEPLOY-004`: Write healthcheck + smoke test script; run against full compose stack
-- `DEPLOY-005`: Write Golden Replay runbook (per §3.5 of `Pantheon_單VM測試版_雙VM正式版_部署補充說明.md`)
+### OBS-06: Postgres is completely absent from the current docker-compose.yml
 
-## Verified Repo Evidence (2026-04-15 scan)
+The existing `docker-compose.yml` has nine services: lean, signal-store (Redis), router, persona, dspy-worker, qlib-worker, finrl-worker, imitation-worker, mlflow-server. No Postgres. No MinIO. No ClickHouse. Any governance or telemetry service that writes to persistent storage in the test environment needs this resolved before `SVC-COMPOSE` is meaningful.
 
-The following facts are drawn from a live scan of the repo; they ground the abstractions above.
+**Cite**: `docker-compose.yml:22-100`; `phase2-phase6-gap-inventory.md §5 Phase 3`
 
-### docker-compose.yml — actual current services
-`docker-compose.yml` has **9 entries**:
-- `lean` (LEAN execution engine, build from `./lean`)
-- `signal-store` (Redis, port 6379)
-- `control-plane-router` (FastAPI, port 8001, Dockerfile present)
-- `control-plane-persona` (FastAPI, port 8002, Dockerfile present)
-- `dspy-worker` (learning, no port)
-- `qlib-worker` (research, no port)
-- `finrl-worker` (research, no port)
-- `imitation-worker` (learning, no port)
-- `mlflow-server` (port 5000, Dockerfile present)
+### OBS-07: Phase 5 workbench and Phase 6 OSS adapter state
 
-**Postgres is absent.** No DB service of any kind is in the compose file.
+- Phase 5 workbench expansion: `current-work.md` shows 11 Lovable-ready packets, 9 waiting for front-end, 0 returned `ui-done`, 2 with frontend feedback. This is active inflight work. It is correctly scoped as follow-on after the compose stack is runnable.
+- Phase 6 OSS: `OSS_INTEGRATION_CHECKLIST.md` places OpenClaw at `adapter-started`, DSPy/imitation/MLflow at `smoke-tested`, and everything else at `criteria-defined` or `version-pinned`. None of these are compose-critical for the first single-VM smoke stack. The `openclaw-adapter-svc` stub approach (health + passthrough) from the starter-draft is correct for this wave.
 
-### Services with main.py + Dockerfile (ready to deploy today)
-- `services/control-plane/router` ✓
-- `services/control-plane/persona` ✓
-- `services/research/` (has a Dockerfile; also sub-Dockerfiles for dspy, qlib, finrl, imitation, mlflow)
-- `services/learning/dspy`, `services/learning/imitation`
+**Cite**: `phase2-phase6-gap-inventory.md §5 Phase 5 and Phase 6`; `OSS_INTEGRATION_CHECKLIST.md`
 
-### Services with main.py but NO Dockerfile (Dockerfile needed, then add to compose)
-- `services/control-plane/bff` — full FastAPI app with `CommandStore`, `ReadSurfaceStore`, operator endpoints
-- `services/control-plane/feedback`
-- `services/channels/web`, `services/channels/telegram`, `services/channels/discord`
+---
 
-### Services with domain objects but NO HTTP entry point (main.py + Dockerfile both needed)
-- `services/telemetry` — `ingest_svc.py` is an in-process class; no `main.py`
-- `services/execution/runtime-manager` — `runtime_binding.py`, `kill_switch_controller.py`
-- `services/registry` — `gate.py`, `cli.py`, promotion pipeline
-- `services/registry-core/decision-domain`
-- `services/optimizer-svc` — `portfolio_synthesis` module
-- `services/incident` — `incident.py` domain object + schemas
+## 3. Positions on Open Disagreements (starter-draft.md)
 
-### Services not found in `services/` directory
-- `decision-engine-svc` — not found; may be inside registry-core decision-domain
-- `openclaw-adapter-svc` — only governance docs in `integrations/openclaw/`
-- `consultation-svc` — schema/contract docs in BFF area but no service dir
-- `data-ingest-svc`, `data-catalog-svc`, `feature-svc` — not present
+### Q1: Should `internal_api.py` become the long-lived `runtime-control` service, or only a temporary adapter?
 
-### Planning session state (Round 0)
-- `starter-draft.md` — completely unpopulated (all fields are blank placeholders)
-- All other readouts (Codex, Gemini, Qwen, Copilot) — template stubs only, no content
-- `baton-log.md` — only bootstrap entry; Codex has not yet logged receipt of baton
-- `review-round-01.md` — pending, no comments
+**Position**: Wrap `internal_api.py` as-is for the first compose-critical wave; schedule a FastAPI migration as a follow-on. Reason: the Flask app already dispatches real kill-switch, pause, rollback, and deployment-approval commands through the KillSwitchController. Rewriting it before the stack is composable adds risk without adding compose-blocking value. The acceptance criteria for `SVC-RUNTIME-CONTROL` should require an explicit test that the lazy import path works correctly from inside the Docker container.
+
+### Q2: Where do evolution approval/action endpoints live — runtime-control or governance-api?
+
+**Position**: Evolution approval/action endpoints belong in `governance-api`. Reason: `TARGET_ARCHITECTURE.md §3` separates the side-effectful runtime command path (kill-switch, pause, rollback, binding mutation) from the approval/governance flow (ApprovalDecision, EvolutionDecision). The runtime-control service owns real-time intervention; governance-api owns the approval lifecycle. Putting evolution commands in runtime-control would conflate these two planes. The concrete fix is: add `/evolution-decisions/{id}/approve` and `/evolution-decisions/{id}/execute-action` to the governance-api service, and update `command_executor.py:157–183` to POST to `PANTHEON_GOVERNANCE_API_URL` instead of recording locally.
+
+### Q3: Must BFF rewiring happen in the same wave as Dockerization?
+
+**Position**: Yes, and the `SVC-SURFACES` acceptance criteria must require it. Reason: as OBS-03 shows, BFF Dockerization without rewiring produces a container that silently serves seed data. The smoke test cannot verify integration unless BFF is genuinely reading from service-produced data. Shipping "BFF Dockerized but still on snapshots/defaults" would be a false positive on compose completion. The additional work is small: replace `CanonicalSnapshotAdapter` read paths with HTTP client calls to governance-api and runtime-control, both of which will be live services at that point.
+
+### Q4: Should `web` and `cron` be in the default single-VM profile?
+
+**Position**: Keep both out of the default profile for this wave. `services/channels/web/main.py` is a thin proxy to router and has no backing state — it adds no integration value to the compose smoke test. `cron` would require its own workflow-runner packaging. Both can be `--profile optional` entries in the compose file, but they should not gate the compose smoke acceptance criteria.
+
+---
+
+## 4. Facilitator Notes: Cross-Readout Coverage
+
+### Readout status as of this refresh
+
+| Lane    | Status          | Key contribution |
+|---------|-----------------|-----------------|
+| Codex   | submitted       | Repo evidence, concrete service class citations, six-slice table |
+| Gemini  | submitted (needs_refresh flag) | Port collision, resource limits, Golden Replay dependency on telemetry/lineage serviceization |
+| Qwen    | not yet submitted | Schema/contract boundary review for governance-api and evolution endpoints is still missing |
+| Copilot | not yet submitted | Research readiness, external source assumptions, and acceptance wording review is still missing |
+
+### Gaps in current readout coverage
+
+1. **Schema and contract formalization** for the governance-api surface is not yet reviewed. Qwen's lane focus (object boundaries, contract gaps) is specifically the right input for OBS-01 and the evolution endpoint placement decision. The current readouts do not provide any analysis of what the `governance-api` HTTP surface should look like beyond "expose the existing domain objects."
+
+2. **Research and data service acceptance criteria** are not yet reviewed. The `data-ingest-svc`, `data-catalog-svc`, and `feature-svc` stubs are included in the scope but their acceptance wording in starter-draft.md is thin. Copilot's review is needed before the consensus packet can close the `SVC-COMPOSE` acceptance criteria.
+
+3. **Golden Replay acceptance criteria** are referenced by Gemini but not formalized. `GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md` (referenced by Gemini but not in the current brief file set) should be confirmed as in-scope or out-of-scope for this wave's smoke test. Clarifying this gates the `SVC-EVIDENCE` acceptance criteria.
+
+### What the consensus packet needs from missing readouts
+
+- From Qwen: proposed HTTP interface shapes for governance-api (approval/deployment/evolution endpoints); opinion on whether evolution command endpoint belongs in runtime-control or governance-api
+- From Copilot: acceptance wording for research/data stub services; assessment of whether `data-ingest-svc` as a thin wrapper over existing ingest adapters is safe or introduces a new external dependency path
+
+---
+
+## 5. Risk Synthesis
+
+| Risk | Source | Severity | Resolution slot |
+|------|--------|----------|-----------------|
+| Evolution commands are local placeholders with no dispatch URL | OBS-01, `command_executor.py:157-183` | Blocking | `SVC-GOVERNANCE-API` acceptance criteria |
+| `internal_api.py` lazy file-path import breaks in Docker without explicit path setup | OBS-02, `internal_api.py:26-56` | High | `SVC-RUNTIME-CONTROL` acceptance criteria must include live kill-switch from container |
+| BFF silently serves seed data even after Dockerization unless rewiring is in the same wave | OBS-03, `read_store.py:43-175` | High | `SVC-SURFACES` acceptance criteria must require end-to-end write → read verification |
+| Flask vs FastAPI mismatch in runtime-control vs all other services | OBS-04 | Low (deferred) | Explicitly called out in `SVC-RUNTIME-CONTROL`; FastAPI migration as follow-on |
+| Port collision: router and BFF both bind 8001 | OBS-05 | Blocking for compose | `SVC-BASELINE` must emit committed port map |
+| Postgres absent from compose; no persistent storage for governance or telemetry services | OBS-06 | Blocking for compose | `SVC-BASELINE` must include infrastructure services |
+| Phase 5 workbench expansion and Phase 6 OSS adapters not in scope of first wave | OBS-07 | Correctly scoped | No action; confirm in consensus packet |
+
+---
+
+## 6. Recommended Additions to Task Acceptance Criteria
+
+These are additive to `starter-draft.md`; I am not rewriting the draft. Codex should incorporate these into the acceptance criteria when the starter-draft is next updated.
+
+**SVC-BASELINE** — must also specify:
+- The committed port map for all services (using Gemini's proposal as the base)
+- Which infrastructure services (postgres, redis/nats, minio) are in the default compose profile
+- The `PANTHEON_GOVERNANCE_DATA_DIR` and `PANTHEON_RUNTIME_DATA_DIR` volume mount contract
+
+**SVC-RUNTIME-CONTROL** — must also specify:
+- Live kill-switch command invocation from inside the Docker container (not just `/health` passing)
+- That the `_KILL_SWITCH_MODULE_PATH` env var is tested/documented for container use
+- Resolution of the evolution command endpoint placement (per Q2 position above)
+
+**SVC-GOVERNANCE-API** — must also specify:
+- `/evolution-decisions/{id}/approve` and `/evolution-decisions/{id}/execute-action` endpoints are present
+- `command_executor.py:157-183` is updated to dispatch to `PANTHEON_GOVERNANCE_API_URL`
+
+**SVC-SURFACES** — must also specify:
+- End-to-end write → read verification: POST a deployment plan to governance-api, confirm BFF reads it back from its read surface (not from default seed)
+- BFF `CanonicalSnapshotAdapter` is replaced (or gated behind an explicit "test bootstrap" flag, not the default path)
+
+---
+
+## 7. Facilitator Recommendation for Next Steps
+
+1. **This readout is submitted.** Update planning state accordingly.
+2. **Qwen and Copilot are next.** Readout coverage gaps for schema/contract and research acceptance wording are the principal blocking items for consensus packet completion.
+3. **Do not draft the consensus packet until Qwen submits.** The evolution endpoint placement decision (Q2) depends on Qwen's schema review. The six-slice table can be accepted as the correct first-wave scope; the internal shape of `SVC-GOVERNANCE-API` and its acceptance criteria cannot be finalized without Qwen.
+4. **Gemini's port map proposal** (Router:8001, Persona:8002, BFF:8003, Runtime-control:8004, Governance:8005, Telemetry:8006, Lineage:8007) is the most concrete artifact ready for adoption. Codex should adopt it or propose an explicit alternative in the next starter-draft update.
+
+---
 
 ## Citations
 
-- [TARGET_ARCHITECTURE.md §3] Responsibility split: ownership boundaries for each plane
-- [BINDING_AND_DEPLOYMENT_SEMANTICS.md] ApprovalDecision → DeploymentPlan → RuntimeBinding chain
-- [BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md] BFF is read-aggregation, not canonical truth owner
-- [Pantheon_單VM測試版_雙VM正式版_部署補充說明.md §3.2] 16-service single-VM target inventory
-- [Pantheon_單VM測試版_雙VM正式版_部署補充說明.md §3.5] Single-VM acceptance criteria (smoke tests)
-- [ROADMAP.md Phase 3–5] TEL/LIN/INC (Phase 3), EVO (Phase 4), PER/APP (Phase 5)
-- [OSS_INTEGRATION_CHECKLIST.md] OpenClaw is `adapter-started` only — stub is the correct test-env approach
-- [docker-compose.yml] 9 services listed; Postgres absent; BFF absent; telemetry-ingest absent
-- [services/control-plane/bff/main.py:1-60] Complete FastAPI BFF app — deployable after Dockerfile is added
-- [services/telemetry/ingest_svc.py:1-40] `TelemetryIngestService` is an in-process class; HTTP wrapper required
-- [starter-draft.md] Blank placeholders — Codex has not yet seeded the shared draft
-- [planning-session.json:14-19] Baton sequence: Codex → Qwen → Gemini → Copilot → Claude
+- [R1] `services/control-plane/bff/command_executor.py:157–183` — evolution commands are local placeholders with no internal API dispatch
+- [R2] `services/control-plane/bff/command_executor.py:21–25` — `PANTHEON_INTERNAL_API_URL` defaults to `http://localhost:5001`; deployment/pause/rollback already dispatch there
+- [R3] `services/control_plane/internal_api.py:12` — Flask import; all other deployed services use FastAPI
+- [R4] `services/control_plane/internal_api.py:26–56` — lazy file-path import of kill_switch_controller; will break in Docker without explicit path configuration
+- [R5] `services/control-plane/bff/read_store.py:43–175` — snapshot → default seed fallback; confirmed as main BFF read path
+- [R6] `docker-compose.yml:22-100` — current nine services; Postgres, MinIO, BFF, governance, telemetry absent
+- [C1] `phase2-phase6-gap-inventory.md §5` — per-phase residual gap analysis; source for all cross-phase gap claims
+- [C2] `phase2-phase6-gap-inventory.md §6` — priority order: SVC-BASELINE → SVC-RUNTIME-CONTROL → SVC-GOVERNANCE-API → SVC-EVIDENCE → SVC-SURFACES → Phase 5 workbench → Phase 6 real integrations
+- [C3] `starter-draft.md` — six-slice plan and open disagreements
+- [C4] `codex-readout.md [R2, R3, R4]` — repo-evidence citations for port collision, BFF snapshot path, and evolution placeholder
+- [C5] `gemini-readout.md §2.3` — port map proposal and resource-limit recommendation
+- [C6] `TARGET_ARCHITECTURE.md §3` — responsibility split: runtime-control vs governance plane
+- [C7] `OSS_INTEGRATION_CHECKLIST.md` — OpenClaw `adapter-started`; DSPy/imitation/MLflow `smoke-tested`; everything else `criteria-defined` or `version-pinned`

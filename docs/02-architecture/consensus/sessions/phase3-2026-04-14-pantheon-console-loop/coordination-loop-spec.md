@@ -189,7 +189,8 @@ Semantics:
 - `feedback_path` should point to `docs/pantheon-feedback/<feature>/LOVABLE_CHANGE_FEEDBACK.md` so Pantheon has a stable human-readable summary anchor for review.
 - `changed_files` is required so Pantheon review can target the right front-end files.
 - `pantheon_review_hint` is a short machine-readable hint such as `review-ui`, `update-bff`, or `prepare-backend-delivery`.
-- `source_commit` pins the front-repo commit Pantheon should inspect during review or replay.
+- `source_commit` inside `frontend-feedback` pins the reviewed front-repo UI cycle commit that Pantheon should inspect.
+- The transport envelope `source_commit` points to the commit that actually contains `payload_path` and must remain replayable.
 - `frontend-feedback` summarizes the cycle outcome but does not replace `bff-gap` or `ui-done`; those payloads remain the authoritative branch signal for blocked versus completed UI execution.
 
 ### `backend-delivery`
@@ -226,7 +227,7 @@ Semantics:
 All receivers for `repository_dispatch` or `workflow_dispatch` replay events must enforce the same validation rules before acting on a payload:
 
 1. `feature_id` in the transport envelope must match `feature_id` inside the referenced YAML payload.
-2. `payload_path` must exist at `source_commit` in `source_repo`.
+2. `payload_path` must exist at the transport envelope `source_commit` in `source_repo`.
 3. The payload `type` must be valid for the incoming `event_type`.
 4. Repo-relative support-file paths referenced by the payload must stay inside the owning repo and must not be rewritten into absolute paths.
 5. Replays must use `trigger_mode=replay` and include `replay_of`.
@@ -275,7 +276,7 @@ Every `repository_dispatch` or `workflow_dispatch` replay event in this loop mus
 - `feature_id`: canonical feature or packet id
 - `payload_path`: repo-relative path to the YAML payload that the receiver must load
 - `source_repo`: repo that owns the payload and commit reference
-- `source_commit`: commit sha that produced the payload or most recently validated it
+- `source_commit`: transport commit sha that contains `payload_path` and was used to publish or replay the event
 - `source_ref`: branch or tag used when a human replay targets a named ref instead of only a sha
 - `trigger_mode`: `normal` or `replay`
 - `origin_workflow`: workflow or orchestrator entrypoint that emitted the dispatch
@@ -479,7 +480,8 @@ Validation rules:
 - Replay inputs are `feature_id`, `event_type`, `payload_path`, and the source commit or ref that originally produced the payload.
 - Replay must validate that `payload_path` still exists and that `type` matches `event_type` before dispatch.
 - Replay reuses the existing payload file; if content must change, a new normal-cycle payload must be published instead of mutating the replay target.
-- `backend-delivery.source_payload` and `frontend-feedback.source_commit` are the canonical join points for replaying the last Pantheon or front-repo step.
+- `backend-delivery.source_payload` and `frontend-feedback.source_commit` are the canonical review join points for the last Pantheon or front-repo step.
+- The transport replay tuple remains `payload_path` plus the transport envelope `source_commit`.
 - Replaying `pantheon.contract_ready` or `pantheon.backend_delivery` also requires the mirrored handoff bundle to exist at the referenced front-repo paths before dispatch is retried.
 - Replaying `pantheon.frontend_feedback`, `pantheon.bff_gap`, or `pantheon.ui_done` requires the front-repo commit to contain the referenced feedback bundle or request payload unchanged at `payload_path`.
 - Successful replay must preserve the original feature-scoped filename. Operators may advance the source commit to a newer validating commit only when the payload file contents remain byte-equivalent.

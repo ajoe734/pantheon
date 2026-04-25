@@ -1,9 +1,9 @@
 feature_id: TW-04-teaching-replay
 type: frontend-feedback
 source_repo: ajoe734/pantheon
-reviewed_by: Codex
-reviewed_at: '2026-04-21T06:14:36Z'
-reviewed_commit: 6c66ce504e753a864d3dbb8cc6fb6b350da23af4
+reviewed_by: Codex2
+reviewed_at: '2026-04-22T06:19:57Z'
+reviewed_commit: c2ded5aaefa7ba03b2ee43306859ce97013953ca
 ui_done_source_commit: 93a4b58891031442133a6966d0354ae216a80b72
 frontend_feedback_source_commit: 93a4b58891031442133a6966d0354ae216a80b72
 verified_front_workspace_head: 93a4b58891031442133a6966d0354ae216a80b72
@@ -11,33 +11,23 @@ screen: teaching-replay
 workbench: trainer-workbench
 screen_id: screen-teaching-replay
 
-disposition: follow-up-required
-review_result: tw04-ui-contract-aligned-but-runtime-refresh-and-evidence-route-validation-remain
-can_close: false
+disposition: approved
+review_result: tw04-ui-contract-aligned-runtime-and-route-topology-verified
+can_close: true
 
 summary: >-
-  Pantheon re-reviewed the returned TW-04 ui-done and frontend-feedback
-  request pair against the published Teaching Replay contract, canonical
-  example payload, current sibling front implementation, the local Pantheon
-  FastAPI app, and the active operator-bff runtime. The returned front slice is
-  internally consistent and replay-clean from `origin/pkt-004-detail-fix`:
-  source commit `93a4b58891031442133a6966d0354ae216a80b72` contains the TW-04
-  UI files, request pair, and feedback bundle; the front router mounts
-  `/trainer/replay` and `/trainer/replay/:session_id`; the replay pages route
-  all TW-04 traffic through `tw04ReplayApi`; and targeted eslint plus
-  `npm run build` passed in the sibling workspace. Pantheon revalidated the
-  BFF contract slice with
-  `python3 -m pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q`
-  (`32 passed`), confirmed that both the BFF and front derive
-  `expected_candidate_snapshot_at` from the latest backend-provided
-  `events[].eval_ref.candidate_snapshot_at`, and corrected the local TW-04
-  replay/session browser-link projection so seeded local probes now return
-  `/trainer/replay/{session_id}` and `/trainer/sessions/{session_id}` in line
-  with the canonical docs and mounted front routes. The loop still cannot close
-  because the active runtime at http://127.0.0.1:18001 remains stale and does
-  not expose the TW-04 route family over live HTTP, and because live
-  `event.evidence_ref.url_pattern` targets still need deployed-route
-  validation.
+  Pantheon rechecked the TW-04 return on a fresh operator-bff runtime started
+  from the current workspace at http://127.0.0.1:18001. The returned front
+  slice remains replay-clean from `origin/pkt-004-detail-fix`, the TW-04
+  contract suite still passes, and live HTTP now confirms the replay route
+  family is mounted again. `GET /openapi.json` advertises the replay list,
+  replay detail, commit, and discard routes; authenticated replay list/detail
+  probes return `200`; browser-facing `links.replay_detail`,
+  `links.self`, and `links.session_detail` match the mounted front routes; and
+  live `event.evidence_ref.url_pattern` resolves to
+  `/operator/paper-live-drift/runtime-042`. The earlier runtime-refresh and
+  route-topology follow-up is complete, so this TW-04 cycle can close
+  truthfully.
 
 acceptance_verified:
   - criterion: mount the teaching replay list and detail routes in the reviewed front router
@@ -224,7 +214,7 @@ risk_note: >-
   until the running runtime serves TW-04 over real HTTP and the live evidence
   targets resolve to deployed routes.
 
-lovable_ui_task_status: followup-required
-next_action: runtime-refresh-and-tw04-route-topology-validation
+lovable_ui_task_status: closed
+next_action: none
 delivery_artifact_ref: .coordination/requests/TW-04-teaching-replay-needs-runtime.yaml
 review_findings_ref: .coordination/reviews/TW-04-teaching-replay-review.md

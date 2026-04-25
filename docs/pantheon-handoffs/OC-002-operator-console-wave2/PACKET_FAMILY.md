@@ -5,7 +5,7 @@
 - Packet family ID: `OC-002`
 - Workbench: Operator Console
 - Phase origin: `BP5-WB-002`
-- Lovable readiness: **not ready** — none of the five Wave 2 modules has a published operator-shell packet or handoff bundle yet; `OC-03` and `OC-04` can reuse live read primitives and degraded-path policy, but `OC-01`, `OC-02`, and `OC-05` still require net-new aggregation contracts before frontend handoff is honest
+- Lovable readiness: **ready** — `OC-01` through `OC-05` now have published operator-shell packets and handoff bundles; the remaining work for this family is frontend implementation and loop closure
 - Recommended wave: Wave 2 after the existing Operator Console baseline (`PKT-001`, `PKT-002`, `PKT-003`, `PKT-005`)
 - Owner: Codex2
 - Reviewer: Claude
@@ -47,11 +47,11 @@ The critical boundary is unchanged: Wave 2 may summarize or cross-link existing 
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `OC-04` | Runtime state board | live runtime roster, current stage, runtime status, telemetry summary, rollback-history entry points, and last-updated timestamps | not ready | Wave 2 — 1st |
-| `OC-03` | Health status board | control-plane and data-surface health overview, degraded-surface summary, safe-mode state, and secondary control path guidance | not ready | Wave 2 — 2nd |
-| `OC-02` | Alerts rail | chronological operator alerts for incidents, governance risk, kill-switch changes, and runtime anomalies | not ready | Wave 2 — 3rd |
-| `OC-01` | Operator Home dashboard | top-level operator landing screen summarizing incidents, governance queue, runtime health, safe-mode state, and escalation shortcuts | not ready | Wave 2 — 4th |
-| `OC-05` | Paper / Live Drift view | paper-vs-live comparison with baseline snapshot, observed drift, evidence refs, and required follow-up path | not ready | Wave 2 — 5th |
+| `OC-04` | Runtime state board | live runtime roster, current stage, runtime status, telemetry summary, rollback-history entry points, and last-updated timestamps | ready | Wave 2 — 1st |
+| `OC-03` | Health status board | control-plane and data-surface health overview, degraded-surface summary, safe-mode state, and secondary control path guidance | ready | Wave 2 — 2nd |
+| `OC-02` | Alerts rail | chronological operator alerts for incidents, governance risk, kill-switch changes, and runtime anomalies | ready | Wave 2 — 3rd |
+| `OC-01` | Operator Home dashboard | top-level operator landing screen summarizing incidents, governance queue, runtime health, safe-mode state, and escalation shortcuts | ready | Wave 2 — 4th |
+| `OC-05` | Paper / Live Drift view | paper-vs-live comparison with baseline snapshot, observed drift, evidence refs, and required follow-up path | ready | Wave 2 — 5th |
 
 ---
 
@@ -66,25 +66,29 @@ The critical boundary is unchanged: Wave 2 may summarize or cross-link existing 
 
 ### Canonical anchors already available
 
+- `GET /api/v1/operator/runtime-state` (`PKT-010`)
 - `GET /api/v1/runtimes/{runtime_id}/status` (`RT-03`)
 - `GET /api/v1/runtimes/{runtime_id}/rollbacks` (`RT-04`)
 - `GET /api/v1/telemetry/{runtime_id}/summary` (`TL-02`)
 - `GET /api/v1/runtime/{runtime_id}/events/stream` (`PKT-005` substrate)
+- `docs/bff/PKT-010-runtime-state-board.md`
+- `docs/screens/PKT-010-runtime-state-board.md`
+- `docs/pantheon-handoffs/PKT-010-runtime-state-board/FRONTEND_CHANGE_SPEC.md`
 
-These primitives are real, but they are single-runtime reads. They do not by themselves define a canonical multi-runtime operator board.
+Pantheon now publishes the multi-runtime operator roster route and packet bundle. The lower-level runtime and telemetry primitives remain the underlying anchors, but the frontend no longer needs to stitch them together row-by-row.
 
-### Backend gaps
+### Contract status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/runtime-state` | **missing** | primary operator-owned roster route; must return `runtimes[]` with stable `runtime_id`, `deployment_stage`, `status`, summary telemetry block, rollback link refs, and `meta.surfaces.runtime_state` |
-| Runtime-board aggregation contract | **missing** | defines how `RT-03`, `RT-04`, and `TL-02` are merged into one roster row without client-side joins |
-| Multi-runtime pagination and sort contract | **missing** | runtime board cannot rely on hidden browser ordering; roster sort and filter semantics must be backend-owned |
-| Runtime mismatch wording | **missing** | stale vs unavailable runtime-state copy must be tied to `meta.surfaces.runtime_state`, not inferred from absent telemetry fields |
+| `GET /api/v1/operator/runtime-state` | **live** | primary operator-owned roster route now returns `runtimes[]`, `page_info`, `meta.total`, `meta.sort`, and `meta.surfaces.runtime_state` |
+| Runtime-board aggregation contract | **published** | `docs/bff/PKT-010-runtime-state-board.md` locks row ownership for stage, status, telemetry summary, rollback summary, and refs |
+| Multi-runtime pagination and sort contract | **published** | `sort_by`, `sort_order`, `page_token`, and `page_size` are now backend-owned route semantics |
+| Runtime mismatch wording | **published** | stale vs unavailable wording is tied to `meta.surfaces.runtime_state`, `runtime_roster`, `telemetry_summary`, and `rollback_history` |
 
 ### Packetization prerequisite
 
-`OC-04` may become Lovable-ready only when the operator-owned roster route exists or an equivalent explicit BFF aggregation contract is published with the same field ownership. The UI must not fan out per-row requests to stitch the roster together.
+`OC-04` now satisfies its packetization prerequisite in the current workspace. The route, BFF contract, example payload, screen spec, and frontend change spec all exist. The next step is frontend implementation, not more Pantheon-owned aggregation work for this packet.
 
 ---
 
@@ -99,25 +103,29 @@ These primitives are real, but they are single-runtime reads. They do not by the
 
 ### Canonical anchors already available
 
+- `GET /api/v1/operator/health-status` (`PKT-011`)
 - `GET /api/v1/kill-switch/status` (`IN-05`)
 - `docs/bff/PKT-005-degradation-banner.md`
 - `services/control-plane/bff/DEGRADED_OPERATOR_PATH.md`
 - `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`
+- `docs/bff/PKT-011-health-status-board.md`
+- `docs/screens/PKT-011-health-status-board.md`
+- `docs/pantheon-handoffs/PKT-011-health-status-board/FRONTEND_CHANGE_SPEC.md`
 
-These documents define how degradation behaves. They do not yet define a page-shaped operator health board.
+Pantheon now publishes the operator-owned health board route and packet bundle. The degradation and kill-switch documents remain the policy anchors, but the frontend no longer needs to invent a page-shaped health merge from those sources.
 
-### Backend gaps
+### Contract status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/health-status` | **missing** | preferred composed health route; must return grouped health sections, safe-mode state, `secondary_control_path`, and `meta.surfaces.health_status` |
-| Health merge contract over `meta.surfaces` | **missing** | acceptable alternative to a dedicated route only if the merge rules, surface groups, and copy ownership are explicitly published; the browser must not invent them ad hoc |
-| Surface-group taxonomy | **missing** | defines stable groups such as `runtime`, `telemetry`, `incident`, `governance`, and `kill_switch` plus their operator-facing labels |
-| Secondary control path display contract | **missing** | determines when admin CLI / internal API guidance appears and which exact fallback targets are shown for degraded vs total outage states |
+| `GET /api/v1/operator/health-status` | **live** | primary operator-owned health route now returns grouped health sections, safe-mode state, `secondary_control_path`, and `meta.surfaces.health_status` |
+| Health merge contract over `meta.surfaces` | **published** | `docs/bff/PKT-011-health-status-board.md` locks group ownership and top-level health semantics |
+| Surface-group taxonomy | **published** | the `runtime`, `telemetry`, `incident`, `governance`, and `kill_switch` taxonomy is now canonical in `PKT-011` |
+| Secondary control path display contract | **published** | `secondary_control_path.mode`, `reason`, and `targets[]` are now backend-owned |
 
 ### Packetization prerequisite
 
-`OC-03` is blocked until either a dedicated health route exists or the health-board merge contract is published as canonical BFF-facing truth. Merely having `PKT-005` and `IN-05` does not authorize the frontend to compute overall health from arbitrary existing responses.
+`OC-03` now satisfies its packetization prerequisite in the current workspace. The route, BFF contract, example payload, screen spec, and frontend change spec all exist. The next step is frontend implementation, not more Pantheon-owned aggregation work for this packet.
 
 ---
 
@@ -132,25 +140,31 @@ These documents define how degradation behaves. They do not yet define a page-sh
 
 ### Canonical anchors already available
 
+- `GET /api/v1/operator/alerts` (`PKT-012`)
 - `GET /api/v1/incidents`
 - `GET /api/v1/operator/governance/review-queue`
+- `GET /api/v1/operator/governance/approval-queue`
 - `GET /api/v1/kill-switch/status`
-- `GET /api/v1/incidents/stream`, `GET /api/v1/kill-switch/updates`
+- `GET /api/v1/operator/runtime-state`
+- `docs/bff/PKT-012-alerts-rail.md`
+- `docs/screens/PKT-012-alerts-rail.md`
+- `docs/pantheon-handoffs/PKT-012-alerts-rail/FRONTEND_CHANGE_SPEC.md`
 
-These routes expose raw ingredients. They do not define one canonical operator alert feed.
+Pantheon now publishes the operator-owned alert feed route and packet bundle. The lower-level incident, governance, kill-switch, and runtime primitives remain the underlying anchors, but the frontend no longer needs to decide what becomes an operator alert.
 
-### Backend gaps
+### Contract status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/alerts` | **missing** | primary operator alert-feed route; must return `alerts[]` with stable `alert_id`, `severity`, `category`, `raised_at`, `summary`, `target_ref`, and `meta.surfaces.alerts` |
-| Alert severity taxonomy | **missing** | canonical enum and grouping rules are required before any alert chip, banner, or sorting behavior is packetized |
-| Alert acknowledgement contract | **missing** | if acknowledgement is part of the screen, the command path must be explicit, e.g. `POST /api/v1/operator/commands` with `AcknowledgeOperatorAlert`; otherwise the packet must remain read-only and omit the CTA |
-| Runtime anomaly projection | **missing** | defines how runtime or telemetry anomalies become alert items without requiring the client to inspect raw telemetry deltas |
+| `GET /api/v1/operator/alerts` | **live** | primary operator alert-feed route now returns `alerts[]`, `summary`, and `meta.surfaces.alerts` |
+| Alert severity taxonomy | **published** | `critical`, `high`, `medium`, and `low` are now canonical operator alert severities |
+| Stable `alert_id` contract | **published** | incident, governance, kill-switch, and runtime alerts now carry stable backend-owned IDs |
+| Alert acknowledgement contract | **omitted by design** | `meta.acknowledgement_supported = false` keeps this packet explicitly read-only |
+| Runtime anomaly projection | **published** | runtime anomalies are now backend-projected from runtime roster and telemetry summaries |
 
 ### Packetization prerequisite
 
-`OC-02` cannot be handed to Lovable until the alert feed exists with stable `alert_id` values and a published severity taxonomy. No client-side merge of incident rows, governance queue items, SSE events, and kill-switch badges is permitted as a substitute.
+`OC-02` now satisfies its packetization prerequisite in the current workspace. The route, BFF contract, example payload, screen spec, and frontend change spec all exist. The next step is frontend implementation, not more Pantheon-owned aggregation work for this packet.
 
 ---
 
@@ -165,23 +179,29 @@ These routes expose raw ingredients. They do not define one canonical operator a
 
 ### Canonical anchors already available
 
-- `GET /api/v1/operator/governance/review-queue`
-- `GET /api/v1/incidents`
-- `GET /api/v1/kill-switch/status`
-- `OC-03` and `OC-04` once their contracts exist
+- `GET /api/v1/operator/home` (`PKT-013`)
+- `GET /api/v1/operator/alerts` (`PKT-012`)
+- `GET /api/v1/operator/health-status` (`PKT-011`)
+- `GET /api/v1/operator/runtime-state` (`PKT-010`)
+- `docs/bff/PKT-013-operator-home.md`
+- `docs/screens/PKT-013-operator-home.md`
+- `docs/pantheon-handoffs/PKT-013-operator-home/FRONTEND_CHANGE_SPEC.md`
 
-### Backend gaps
+Pantheon now publishes the operator-home aggregation route and packet bundle. The dashboard summarizes already-published operator-shell truth instead of forcing the UI to invent card hierarchy or escalation ordering.
+
+### Contract status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/home` | **missing** | preferred composed home route; must return all dashboard cards plus `meta.snapshot_at` and `meta.surfaces.operator_home` |
-| Operator-home aggregation contract | **missing** | if the home screen is built from existing routes, the cross-card merge rules, card ownership, and freshness semantics must be published explicitly |
-| Summary-card hierarchy | **missing** | card order, escalation priority, and empty/degraded copy must be backend-owned or packet-defined, not invented in the UI |
-| Cross-link contract | **missing** | each summary card needs stable target refs into the authoritative downstream screen instead of synthetic browser routes |
+| `GET /api/v1/operator/home` | **live** | primary operator-home route now returns `overall_status`, `cards[]`, `escalation_shortcuts[]`, `safe_mode_state`, and `meta.surfaces.operator_home` |
+| Operator-home aggregation contract | **published** | `docs/bff/PKT-013-operator-home.md` locks card ownership, card order, and shared snapshot semantics |
+| Summary-card hierarchy | **published** | the `alerts`, `incidents`, `governance`, `runtime`, and `health` cards are now backend-owned |
+| Escalation shortcut contract | **published** | shortcut ordering and priority are now backend-owned rather than browser-inferred |
+| Cross-link contract | **published** | each card now ships stable target refs to existing owner screens |
 
 ### Packetization prerequisite
 
-`OC-01` depends on the stable summary contracts established by `OC-02`, `OC-03`, and `OC-04`. It is explicitly blocked from Lovable until the operator-home aggregation contract is real. The dashboard must summarize existing operator truth, not become a mega-packet that redefines it.
+`OC-01` now satisfies its packetization prerequisite in the current workspace. The route, BFF contract, example payload, screen spec, and frontend change spec all exist. The next step is frontend implementation, not more Pantheon-owned aggregation work for this packet.
 
 ---
 
@@ -197,41 +217,34 @@ These routes expose raw ingredients. They do not define one canonical operator a
 
 ### Canonical anchors already available
 
+- `GET /api/v1/operator/paper-live-drift/{runtime_id}` (`PKT-014`)
 - `PAPER_CANARY_LIVE_POLICY.md`
 - existing promotion-review semantics in `F-042`
 - `services/control-plane/governance/approval_decision.py` evidence type `drift_report`
-- evolution and incident evidence objects already used in `PKT-003`
+- `docs/bff/PKT-014-paper-live-drift.md`
+- `docs/screens/PKT-014-paper-live-drift.md`
+- `docs/pantheon-handoffs/PKT-014-paper-live-drift/FRONTEND_CHANGE_SPEC.md`
 
-These are policy and evidence anchors only. They are not a front-end comparison surface.
+Pantheon now publishes the paper/live drift route and packet bundle. The policy and evidence documents remain the canonical anchors, but the frontend no longer needs to invent a comparison object from them.
 
-### Backend gaps
+### Contract status
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/operator/paper-live-drift/{runtime_id}` | **missing** | primary composed drift route; must return `paper_baseline`, `observed_state`, grouped drift metrics, threshold evaluation, evidence refs, `recommended_actions[]`, and `meta.surfaces.paper_live_drift` |
-| Drift comparison object | **missing** | canonical field shape for grouped metrics, threshold outcomes, and evidence linkage does not yet exist as BFF truth |
-| Backend-shaped follow-up actions | **missing** | the route must return typed follow-up actions or target refs; the UI must not infer whether to open promotion review, incident response, or evolution review from raw metric values |
-| Drift threshold narrative | **missing** | policy thresholds and override context need operator-facing copy and labels resolved in the backend or packet, not improvised in the browser |
+| `GET /api/v1/operator/paper-live-drift/{runtime_id}` | **live** | primary drift route now returns `paper_baseline`, `observed_state`, `drift_groups[]`, `threshold_evaluation`, `evidence_refs[]`, and `recommended_actions[]` |
+| Drift comparison object | **published** | `docs/bff/PKT-014-paper-live-drift.md` locks group ownership, threshold evaluation, and evidence linkage |
+| Backend-shaped follow-up actions | **published** | recommended actions now point to existing owner screens rather than browser-inferred decisions |
+| Drift threshold narrative | **published** | breach vs watch copy is now backend-owned in the threshold evaluation object |
 
 ### Packetization prerequisite
 
-`OC-05` stays blocked until the dedicated drift route exists with a stable comparison object. Policy text plus existing approval or evolution objects are not enough for a truthful screen packet.
+`OC-05` now satisfies its packetization prerequisite in the current workspace. The route, BFF contract, example payload, screen spec, and frontend change spec all exist. The next step is frontend implementation, not more Pantheon-owned aggregation work for this packet.
 
 ---
 
 ## Backend Gap Matrix
 
-| Route or contract | Module(s) | Gap type | Blocking what |
-|---|---|---|---|
-| `GET /api/v1/operator/runtime-state` | `OC-04`, `OC-01` | missing read route | runtime roster, telemetry summary rail, home-screen runtime cards |
-| Runtime-board aggregation contract | `OC-04`, `OC-01`, `OC-03` | missing BFF contract | roster rows, runtime health grouping, home-card rollups |
-| `GET /api/v1/operator/health-status` or equivalent explicit merge contract | `OC-03`, `OC-01` | missing read route or merge contract | health board, safe-mode summary, operator-home health cards |
-| Surface-group health taxonomy | `OC-03`, `OC-02`, `OC-01` | missing BFF contract | health sections, alert category mapping, home summary copy |
-| `GET /api/v1/operator/alerts` | `OC-02`, `OC-01` | missing read route | alerts rail, home alert summary |
-| Alert severity taxonomy and stable `alert_id` contract | `OC-02`, `OC-01` | missing BFF contract | alert chips, ordering, acknowledgement, home incident-risk rollup |
-| `GET /api/v1/operator/home` or equivalent explicit aggregation contract | `OC-01` | missing read route or merge contract | entire home dashboard |
-| `GET /api/v1/operator/paper-live-drift/{runtime_id}` | `OC-05` | missing read route | entire paper/live drift view |
-| Drift comparison object and `recommended_actions[]` | `OC-05` | missing BFF contract | grouped metrics, threshold callouts, evidence drawer, follow-up CTAs |
+No Pantheon-owned backend gaps remain for the current Wave 2 packet scope. The remaining work is frontend implementation and loop closure across `OC-01` to `OC-05`.
 
 ---
 
@@ -241,7 +254,7 @@ These are policy and evidence anchors only. They are not a front-end comparison 
 |---|---|---|---|
 | Wave 1 baseline | `OC-06` to `OC-10` | existing operator screens and substrates already settle deployment review, incident control, post-incident review, degradation, and SSE behavior | none |
 | Wave 2 — 1st | `OC-04 Runtime state board` | all later Wave 2 modules need stable runtime identity and last-known runtime state before they can summarize or alert on it | inherits RT/TL reads and `PKT-005` SSE substrate |
-| Wave 2 — 2nd | `OC-03 Health status board` | health grouping should be built on top of the runtime roster and the existing degradation substrate, not the other way around | depends on `OC-04` roster identity plus `PKT-005` banner semantics |
+| Wave 2 — 2nd | `OC-03 Health status board` | health grouping is now published and can anchor alert taxonomy and home-screen health cards | depends on `OC-04` roster identity plus `PKT-005` banner semantics |
 | Wave 2 — 3rd | `OC-02 Alerts rail` | severity and routing rules become stable only after runtime-state and health-group vocabulary are defined | depends on `OC-03`, `OC-04`, incident feed, governance queue identity, and kill-switch state |
 | Wave 2 — 4th | `OC-01 Operator Home dashboard` | the home screen should summarize already-defined runtime, health, and alert modules instead of inventing their contracts internally | depends on `OC-02`, `OC-03`, and `OC-04` summary contracts |
 | Wave 2 — 5th | `OC-05 Paper / Live Drift view` | drift review is the farthest-from-ready module because it needs a net-new comparison object and follow-up action contract | depends on paper/live policy plus stable runtime and alert context from earlier Wave 2 modules |
@@ -258,7 +271,7 @@ A Wave 2 Operator Console module may move from **not ready** to **ready** only w
 4. The module clearly links to existing Wave 1 owner screens instead of duplicating deployment, incident, rollback, or kill-switch action semantics.
 5. A screen spec, BFF contract, example payload, and frontend handoff bundle exist for the module.
 
-No `OC-01` or `OC-05` surface may be handed to Lovable before its aggregation contract is explicit. That is a hard gate for this family.
+All Wave 2 Operator Console modules now satisfy the aggregation-contract gate for Lovable handoff. The remaining gate is frontend implementation and review closure.
 
 ---
 
@@ -313,4 +326,3 @@ If a Wave 2 module shows stale, degraded, or unavailable state:
 - Degradation and fallback: `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `services/control-plane/bff/DEGRADED_OPERATOR_PATH.md`
 - Stage semantics: `PAPER_CANARY_LIVE_POLICY.md`
 - Handoff directory: `docs/pantheon-handoffs/OC-002-operator-console-wave2/`
-

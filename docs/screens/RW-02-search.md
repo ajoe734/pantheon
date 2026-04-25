@@ -5,12 +5,12 @@
 - Workbench: Research Workbench
 - Screen ID: `screen-research-search`
 - Feature ID: `RW-02-search`
-- Packet status: **contract-published** — query, result, and adapter semantics are defined; BFF implementation is the remaining gate before UI work starts
+- Packet status: **route-live** — BFF route `GET /api/v1/research/search` and `meta.index_adapter.*` are confirmed live; UI work is unblocked
 - Task: `RW-02-SEARCH-001`
 
 ## Contract Note
 
-The Research Search contract is now published. UI implementation must not start until Pantheon confirms that the search route is live, returns the published result shape, and exposes the search-index adapter metadata.
+The Research Search route and index-adapter metadata are confirmed live. UI implementation may proceed against the published result shape and backend-owned filter semantics.
 
 The UI must not build or search the corpus in client state, and it must not infer result drilldowns from local route conventions.
 
@@ -26,13 +26,13 @@ Primary route:
 
 ## Readiness Gate
 
-Do not open the production page until Pantheon confirms:
+Pantheon has confirmed the live route returns:
 
-1. `GET /api/v1/research/search` is live with `q`, `match_type`, `status`, `date_range`, pagination, and `meta.surfaces.search_results`.
-2. The response includes the published `SearchResult` row shape, including `links.result_detail` and `links.linked_ticket_detail`.
-3. The response includes `meta.index_adapter.*` so the UI can render search-corpus freshness truthfully.
+1. `GET /api/v1/research/search` with `q`, `match_type`, `status`, `date_range`, pagination, and `meta.surfaces.search_results`
+2. The published `SearchResult` row shape, including `links.result_detail` and `links.linked_ticket_detail`
+3. `meta.index_adapter.*` so the UI can render corpus freshness truthfully
 
-Until those gates are met, render a blocked placeholder for `/research/search`. No invented corpus or client-side search.
+If any required field is absent from the live payload, emit a `bff-gap` handoff instead of rendering with invented corpus or drilldown state.
 
 ## Page Sections
 

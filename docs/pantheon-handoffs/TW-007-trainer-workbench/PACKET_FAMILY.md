@@ -5,7 +5,7 @@
 - Packet family ID: `TW-007`
 - Workbench: Trainer Workbench
 - Phase origin: `BP5-WB-007`
-- Lovable readiness: **partial** — `TW-01` Teaching Dialog, `TW-02` Parameter Controls, `TW-03` Before/After Compare, and `TW-04` Teaching Replay contracts are published via `TW-01-FOUNDATION-001`, `TW-02-CONTROLS-001`, `TW-03-COMPARE-001`, and `TW-04-REPLAY-001`; all four modules still require live BFF implementation before UI work can begin
+- Lovable readiness: **partial** — `TW-01` Teaching Dialog, `TW-02` Parameter Controls, `TW-03` Before/After Compare, and `TW-04` Teaching Replay route families are live; the `TW-02` module-local frontend handoff bundle is now published, and the remaining work is frontend activation/closeout
 - Recommended wave: Wave 3 — after Operator Console (Waves 1–2), Persona Workbench (Waves 1–2), and Governance / Evolution workbench packetization are settled
 - Owner: Claude
 - Reviewer: Codex2
@@ -39,10 +39,10 @@ The existing teaching-history read surfaces are evidence inputs. They do **not**
 
 | Module ID | Module name | Screen / surface scope | Lovable readiness | Wave order |
 |---|---|---|---|---|
-| `TW-01` | Teaching Dialog | start session, show transcript, send coaching messages, display session status and actor context | contract-published — pending BFF implementation | Wave 3 — 1st |
-| `TW-02` | Parameter Controls | inspect current control state, edit control patches, surface validation or warning feedback | contract-published — pending BFF implementation | Wave 3 — 2nd |
-| `TW-03` | Before/After Compare | preview metrics, warnings, control-state diff, and rapid-eval result summary | contract-published — pending BFF implementation | Wave 3 — 3rd |
-| `TW-04` | Teaching Replay | teaching-session history, ordered event replay, commit or discard evidence, and replay entrypoint | contract-published — pending BFF implementation | Wave 3 — 4th |
+| `TW-01` | Teaching Dialog | start session, show transcript, send coaching messages, display session status and actor context | route-live — frontend follow-up required | Wave 3 — 1st |
+| `TW-02` | Parameter Controls | inspect current control state, edit control patches, surface validation or warning feedback | route-live — handoff bundle at `docs/pantheon-handoffs/TW-02-parameter-controls/` | Wave 3 — 2nd |
+| `TW-03` | Before/After Compare | preview metrics, warnings, control-state diff, and rapid-eval result summary | route-live — frontend handoff ready | Wave 3 — 3rd |
+| `TW-04` | Teaching Replay | teaching-session history, ordered event replay, commit or discard evidence, and replay entrypoint | route-live — frontend handoff ready | Wave 3 — 4th |
 
 ---
 
@@ -61,20 +61,20 @@ The existing teaching-history read surfaces are evidence inputs. They do **not**
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `POST /api/v1/trainer/sessions` | **contract published — pending BFF implementation** | create route spec published via `TW-01-FOUNDATION-001` in `docs/bff/TW-01-teaching-dialog.md`; BFF must implement the published `persona_id` / `session_type` / `objective` / `context_refs[]` body schema |
-| `GET /api/v1/trainer/sessions/:id` | **contract published — pending BFF implementation** | session detail and transcript field shape, actor context, ordered `events[]`, and `meta.surfaces.trainer_dialog` are published via `TW-01-FOUNDATION-001` |
-| `GET /api/v1/trainer/sessions` | **contract published — pending BFF implementation** | session list route, filters, pagination, summary fields, and `meta.surfaces.trainer_dialog` are published via `TW-01-FOUNDATION-001` |
-| `POST /api/v1/trainer/sessions/:id/message` | **contract published — pending BFF implementation** | coaching message route, `message_body` request shape, rejection when `status != active`, and backend-echoed `TeachingEvent` response are published via `TW-01-FOUNDATION-001` |
-| Trainer session lifecycle contract | **contract published — pending BFF implementation** | read-side lifecycle semantics (`active`, `paused`, `completed`, `abandoned`), immutable `persona_id`, and dialog write gating are published via `TW-01-FOUNDATION-001`; this slice does not yet publish dedicated pause, complete, or abandon write routes |
-| `TeachingEvent` schema (TW-01 subset) | **contract published — pending BFF implementation** | dialog transcript subset (`event_id`, `session_id`, `actor`, `message_body`, `emitted_at`, `sequence_number`, optional `outcome_signal`) and append-only ordering guarantee are published via `TW-01-FOUNDATION-001` |
+| `POST /api/v1/trainer/sessions` | **live** | resolved — create route is mounted in the current Pantheon BFF workspace and returns the published `persona_id` / `session_type` / `objective` / `context_refs[]` response contract |
+| `GET /api/v1/trainer/sessions/:id` | **live** | resolved — session detail, actor context, ordered `events[]`, and `meta.surfaces.trainer_dialog` are mounted in the current Pantheon BFF workspace |
+| `GET /api/v1/trainer/sessions` | **live** | resolved — session list filters, pagination, summary fields, and `meta.surfaces.trainer_dialog` are mounted in the current Pantheon BFF workspace |
+| `POST /api/v1/trainer/sessions/:id/message` | **live** | resolved — coaching message route, `message_body` request shape, rejection when `status != active`, and backend-echoed `TeachingEvent` response are mounted in the current Pantheon BFF workspace |
+| Trainer session lifecycle contract | **resolved** | canonical read-side lifecycle semantics (`active`, `paused`, `completed`, `abandoned`), immutable `persona_id`, and dialog write gating are now served by the live TW-01 route family |
+| `TeachingEvent` schema (TW-01 subset) | **resolved** | dialog transcript subset (`event_id`, `session_id`, `actor`, `message_body`, `emitted_at`, `sequence_number`, optional `outcome_signal`) and append-only ordering guarantee are now served by the live TW-01 route family |
 
 ### Packetization prerequisite
 
-The trainer-session lifecycle, dialog-grade `TeachingEvent` schema subset, example payload, and frontend handoff bundle are now published as canonical BFF truth via `TW-01-FOUNDATION-001`. `TW-01` remains the foundational entity for `TW-02` through `TW-04`, and the live BFF routes still need to honor that published field shape.
+The trainer-session lifecycle, dialog-grade `TeachingEvent` schema subset, example payload, and frontend handoff bundle are now published as canonical BFF truth via `TW-01-FOUNDATION-001`, and the live Pantheon BFF route family honors that published field shape. `TW-01` remains the foundational entity for `TW-02` through `TW-04`.
 
 ### Lovable readiness gate
 
-`pending-bff` — the route specs, screen spec, example payload, and frontend handoff bundle already exist, but the four TW-01 routes still need live BFF implementation before UI work can begin.
+`route-live` — the route family, screen spec, example payload, and frontend handoff bundle are aligned with the live BFF implementation. The current TW-01 frontend return is still under Pantheon follow-up review, so any further front loop must republish a truthful `ui-done` + `frontend-feedback` bundle instead of reopening route-live truth.
 
 ---
 
@@ -83,28 +83,33 @@ The trainer-session lifecycle, dialog-grade `TeachingEvent` schema subset, examp
 ### Surface scope
 
 - **Control state panel**: displays the current mutable control parameters for an active training session. The control-state object is BFF-provided and includes at minimum: `control_id`, `parameter_key`, `current_value`, `allowed_range` (min/max or allowed set), `unit`, and a `last_modified_at` timestamp. Do not construct the control state from any client-side session cache.
-- **Patch editor**: an edit form that allows the operator to adjust one or more control parameters within their `allowed_range`. The patch payload targets `POST /api/v1/trainer/sessions/:id/patch`. Each patch is a structured delta: `[{parameter_key, proposed_value}]`. The patch CTA must be disabled when session `status != active`.
-- **Validation and warning feedback**: the BFF must return a synchronous validation response on every patch submission. The response must include `valid: bool`, `warnings: [{parameter_key, warning_code, message}]`, and `applied: bool`. If `valid = false`, the editor highlights the offending parameter without applying changes. If `valid = true` and the patch is accepted with warnings, the UI renders the warning banner alongside the backend-authored inline diff from `updated_controls[]`.
-- **Control-state diff preview**: after a successful patch, the panel shows the before/after delta inline — `previous_value` vs. `new_value` — for each changed parameter. This diff is rendered from the BFF patch response, not derived client-side.
-- **Degradation**: when `meta.surfaces.trainer_controls` is `degraded`, show the last-known control state with a staleness banner. When `unavailable`, show the canonical unavailable banner. The patch CTA must be hidden whenever the surface is `degraded` or `unavailable` — do not allow mutations against a stale control state.
+- **Patch editor**: an edit form that allows the operator to adjust one or more control parameters within their `allowed_range`. The patch payload targets `POST /api/v1/trainer/sessions/:id/patch`. Each patch is a structured delta: `[{parameter_key, proposed_value}]`. The patch CTA is visible only when `allowedActions.canPatchControls` is true and `meta.surfaces.trainer_controls.state = ok`.
+- **Validation and warning feedback**: the BFF returns one of two authoritative outcomes on every patch submission. Accepted patches return `status = accepted`, `warnings[]`, `diff.updated_controls[]`, and `current_controls[]`. Invalid patches return `status = rejected`, `error_code`, `field_errors[]`, `rejected_changes[]`, and `current_controls[]`. The UI must not invent its own validation contract.
+- **Control-state diff preview**: after an accepted patch, the panel shows the backend-authored delta from `diff.updated_controls[]`, including `field`, `before`, `after`, and `validation_status`. The frontend must not derive a before/after diff from prior fetches.
+- **Degradation**: when `meta.surfaces.trainer_controls.state` is `degraded`, show the last-known control state with the canonical degradation banner and suppress the patch CTA. When `unavailable`, show the canonical unavailable banner. Freshness still comes from `meta.staleness`, not from a separate `"stale"` surface state.
 
 ### Backend gaps
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/trainer/sessions/:id/controls` | **contract published — pending BFF implementation** | published via `TW-02-CONTROLS-001`; route must return the full mutable control-state object, `allowedActions.canPatchControls`, and `meta.surfaces.trainer_controls` |
-| `POST /api/v1/trainer/sessions/:id/patch` | **contract published — pending BFF implementation** | published via `TW-02-CONTROLS-001`; body remains `patches: [{parameter_key, proposed_value}]`; route must reject when session `status != active` or patch authority is false |
-| Control-state schema | **contract published — pending BFF implementation** | `ControlParameter` is now canonically defined in `docs/bff/TW-02-parameter-controls.md` with backend-owned `allowed_range`, `display_label`, and control typing |
-| Patch validation contract | **contract published — pending BFF implementation** | synchronous validation, warning taxonomy, explicit `rejected_patches[]`, and `applied: false` semantics are now published as canonical BFF truth |
-| Patch diff response shape | **contract published — pending BFF implementation** | `updated_controls[]` now requires `previous_value` and `new_value`; this is the backend-owned diff source for `TW-02` and `TW-03` |
+| `GET /api/v1/trainer/sessions/:id/controls` | **live** | mounted in the current Pantheon BFF workspace and returns the mutable control-state object, `allowedActions.canPatchControls`, and `meta.surfaces.trainer_controls` on the published field shape |
+| `POST /api/v1/trainer/sessions/:id/patch` | **live** | mounted in the current Pantheon BFF workspace; body remains `patches: [{parameter_key, proposed_value}]` and the route rejects when session `status != active` or patch authority is false |
+| Control-state schema | **resolved** | the live route family now serves the canonical `ControlParameter` shape from `docs/bff/TW-02-parameter-controls.md`, including backend-owned `allowed_range`, `display_label`, and control typing |
+| Patch validation contract | **resolved** | accepted and rejected patch outcomes are now explicit on the live route family: `status = accepted` uses `warnings[]`, while `status = rejected` uses `error_code`, `field_errors[]`, and `rejected_changes[]` |
+| Patch diff response shape | **resolved** | `diff.updated_controls[]` now serves the backend-owned `field`, `before`, `after`, and `validation_status` diff rows that downstream Trainer surfaces must render verbatim |
 
 ### Packetization prerequisite
 
-The control-patch payload, the `ControlParameter` schema, the validation and warning contract, and the control-state diff semantics are now published as canonical BFF truth via `TW-02-CONTROLS-001`. Live BFF routes still need to honor that field shape before Lovable can build the production page. `TW-02` remains downstream of `TW-01` session identity and lifecycle semantics.
+The control-patch payload, the `ControlParameter` schema, the validation and warning contract, the control-state diff semantics, and the module-local frontend handoff bundle are now published as canonical truth via `TW-02-CONTROLS-001`. The live Pantheon BFF route family honors that field shape, and `TW-02` remains downstream of `TW-01` session identity and lifecycle semantics.
 
 ### Lovable readiness gate
 
-`pending-bff` — the route specs, screen spec, and example payload now exist, but the controls read route and patch route still need live BFF implementation before UI work can begin.
+`route-live` — the controls read route and patch route are live, the frontend handoff bundle is published, and the remaining work is frontend activation against the current BFF behavior.
+
+- BFF contract: `docs/bff/TW-02-parameter-controls.md`
+- Screen spec: `docs/screens/TW-02-parameter-controls.md`
+- Example payload: `docs/examples/TW-02-parameter-controls.json`
+- Frontend handoff: `docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md`
 
 ---
 
@@ -114,7 +119,7 @@ The control-patch payload, the `ControlParameter` schema, the validation and war
 
 - **Metric panels**: side-by-side or before/after display of the key performance metrics produced by a rapid-eval of the current session state. The compare surface reads from a dedicated preview or rapid-eval route — it must not derive metric values from raw control-state diffs or client-side simulations.
 - **Warning hierarchy**: tiered warning display drawn from the BFF preview response. Warning levels must be BFF-defined (at minimum `critical`, `high`, `medium`, `informational`). Do not derive warning severity client-side.
-- **Control-state diff view**: a structured display of which parameters changed between the baseline session state and the patched candidate state. The diff comes from backend-authored `control_diff[]` in the preview response and preserves the `previous_value` / `new_value` semantics published by `TW-02`.
+- **Control-state diff view**: a structured display of which parameters changed between the baseline session state and the patched candidate state. The diff comes from backend-authored `control_diff[]` in the preview response and preserves the backend-owned before/after semantics published by `TW-02`.
 - **Rapid-eval result summary**: a top-level summary card drawn from the preview response: `eval_id`, `status` (`complete | pending | failed | preview_unavailable`), `baseline_snapshot_at`, `candidate_snapshot_at`, `metric_delta[]`, `warning_count_by_level`, and a `preview_quality` indicator.
 - **`preview_unavailable` degraded state**: when the BFF returns `preview_unavailable` or `meta.surfaces.trainer_preview` is `unavailable`, the compare panel must display a canonical degraded-preview message (not a blank panel). The degraded copy must name the surface and explain that the rapid-eval is temporarily unavailable, without surfacing internal error codes.
 - **Refresh**: a manual refresh CTA that re-triggers the rapid-eval via the preview route. Refresh must be disabled while a previous eval `status = pending`. The CTA is absent when `preview_unavailable`.
@@ -123,19 +128,24 @@ The control-patch payload, the `ControlParameter` schema, the validation and war
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| Preview / rapid-eval route | **contract published — pending BFF implementation** | published via `TW-03-COMPARE-001` in `docs/bff/TW-03-before-after-compare.md`; `GET /api/v1/trainer/sessions/:id/preview` reads compare state and `POST /api/v1/trainer/sessions/:id/preview` performs manual refresh with `refresh_mode = manual` |
-| Preview response contract | **contract published — pending BFF implementation** | `control_diff[]`, `metric_delta[]`, `warnings[]`, `warning_count_by_level`, `preview_quality`, `degraded_copy`, and `allowedActions.canRefreshPreview` are now canonical BFF truth via `TW-03-COMPARE-001` |
-| `preview_unavailable` degraded contract | **contract published — pending BFF implementation** | `status = preview_unavailable` must return a structured payload with backend-authored degraded copy instead of a `5xx` or blank panel |
-| Async eval status polling (if applicable) | **contract published — pending BFF implementation** | pending responses now publish `poll_interval_ms = 3000`, `max_wait_ms = 45000`, and `deadline_at`; BFF must not leave preview status permanently `pending` |
-| `meta.surfaces.trainer_preview` | **contract published — pending BFF implementation** | every preview response now includes `meta.surfaces.trainer_preview` for PKT-005 degradation banner wiring |
+| Preview / rapid-eval route | **live** | `GET /api/v1/trainer/sessions/:id/preview` and `POST /api/v1/trainer/sessions/:id/preview` are mounted in the current Pantheon BFF workspace; manual refresh requires `refresh_mode = manual` and the read route supports `eval_id` polling |
+| Preview response contract | **resolved** | the live TW-03 route family now serves `control_diff[]`, `metric_delta[]`, `warnings[]`, `warning_count_by_level`, `preview_quality`, `degraded_copy`, `polling`, and `allowedActions.canRefreshPreview` on the published field shape |
+| `preview_unavailable` degraded contract | **resolved** | `status = preview_unavailable` now returns a structured success body with backend-authored degraded copy instead of a `5xx` or blank panel |
+| Async eval status polling (if applicable) | **resolved** | pending responses now serve `poll_interval_ms = 3000`, `max_wait_ms = 45000`, and `deadline_at`; the live BFF does not leave preview status permanently `pending` |
+| `meta.surfaces.trainer_preview` | **resolved** | every live preview response now includes `meta.surfaces.trainer_preview` for PKT-005 degradation banner wiring |
 
 ### Packetization prerequisite
 
-The preview route family, compare response contract, warning hierarchy, `preview_unavailable` degraded branch, polling semantics, and `meta.surfaces.trainer_preview` staleness signal are now published as canonical BFF truth via `TW-03-COMPARE-001`. Live BFF routes still need to honor that field shape before Lovable can build the production page. `TW-03` remains downstream of `TW-01` session identity and `TW-02` control diff semantics.
+The preview route family, compare response contract, warning hierarchy, `preview_unavailable` degraded branch, polling semantics, and `meta.surfaces.trainer_preview` staleness signal are now aligned with the live Pantheon implementation via `TW-03-COMPARE-001`. `TW-03` is route-live and may be handed to Lovable now. It remains downstream of `TW-01` session identity and the backend-owned control diff semantics shared with `TW-02`.
 
 ### Lovable readiness gate
 
-`pending-bff` — the compare route specs, screen spec, and example payload now exist, but the preview read route and manual refresh route still need live BFF implementation before UI work can begin.
+`route-live` — the preview read route and manual refresh route are live, and the screen spec, example payload, and frontend handoff bundle are aligned with the current BFF implementation.
+
+- BFF contract: `docs/bff/TW-03-before-after-compare.md`
+- Screen spec: `docs/screens/TW-03-before-after-compare.md`
+- Example payload: `docs/examples/TW-03-before-after-compare.json`
+- Frontend handoff: `docs/pantheon-handoffs/TW-03-before-after-compare/FRONTEND_CHANGE_SPEC.md`
 
 ---
 
@@ -154,24 +164,25 @@ The preview route family, compare response contract, warning hierarchy, `preview
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| Standalone Trainer replay read route | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `GET /api/v1/trainer/replay` and `GET /api/v1/trainer/replay/{session_id}` now define the replay list/detail projections, ordered `TeachingEvent` playback, `meta.surfaces.trainer_replay`, and `allowedActions.canCommit` / `allowedActions.canDiscard` |
-| `TeachingEvent` schema (full) | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; extends the TW-01 dialog-event subset to include `event_type`, resolved `evidence_ref`, `patch_delta`, `eval_ref`, and event-level artifact refs while preserving append-only `sequence_number` ordering |
-| BFF-resolved evidence links | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `TeachingEvent.evidence_ref` is now a typed canonical link object (`{type, id, display_label, url_pattern}`) and must be fully resolved by the BFF before it reaches the client |
-| Commit contract | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `POST /api/v1/trainer/sessions/{session_id}/commit` is now gated by `allowedActions.canCommit`, requires `expected_candidate_snapshot_at`, appends a `commit` event, and returns replay-resolution plus artifact refs |
-| Discard contract | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; `POST /api/v1/trainer/sessions/{session_id}/discard` is now gated by `allowedActions.canDiscard`, requires `expected_candidate_snapshot_at`, appends a `discard` event, and returns replay-resolution plus artifact refs |
-| Before/after artifact refs | **contract published — pending BFF implementation** | published via `TW-04-REPLAY-001`; replay detail and commit/discard responses now expose backend-owned `before_artifact_ref`, `candidate_artifact_ref`, and `after_artifact_ref` semantics so downstream review surfaces do not need to reconstruct artifact lineage from event history |
+| Standalone Trainer replay read route | **live** | resolved — `GET /api/v1/trainer/replay` and `GET /api/v1/trainer/replay/{session_id}` are mounted in the current Pantheon BFF workspace and return the published replay list/detail projections, ordered `TeachingEvent` playback, `meta.surfaces.trainer_replay`, and `allowedActions.canCommit` / `allowedActions.canDiscard` |
+| `TeachingEvent` schema (full) | **resolved** | the live TW-04 route family now serves the replay-grade `TeachingEvent` schema, including `event_type`, resolved `evidence_ref`, `patch_delta`, `eval_ref`, and event-level artifact refs while preserving append-only `sequence_number` ordering |
+| BFF-resolved evidence links | **resolved** | `TeachingEvent.evidence_ref` is now served as a typed canonical link object (`{type, id, display_label, url_pattern}`) by the live TW-04 route family; the client no longer needs to resolve evidence navigation from raw identifiers |
+| Commit contract | **live** | resolved — `POST /api/v1/trainer/sessions/{session_id}/commit` is mounted, gated by `allowedActions.canCommit`, requires `expected_candidate_snapshot_at`, appends a `commit` event, and returns replay-resolution plus artifact refs |
+| Discard contract | **live** | resolved — `POST /api/v1/trainer/sessions/{session_id}/discard` is mounted, gated by `allowedActions.canDiscard`, requires `expected_candidate_snapshot_at`, appends a `discard` event, and returns replay-resolution plus artifact refs |
+| Before/after artifact refs | **resolved** | replay detail and commit/discard responses now serve backend-owned `before_artifact_ref`, `candidate_artifact_ref`, and `after_artifact_ref` semantics so downstream review surfaces do not need to reconstruct artifact lineage from event history |
 
 ### Packetization prerequisite
 
-The replay route family, the full `TeachingEvent` schema (including `control_patch`, `preview_trigger`, `commit`, and `discard` event types), the BFF-resolved evidence link contract, the commit and discard write paths with `allowedActions` gating, and the before/candidate/after artifact refs are now published as canonical BFF truth via `TW-04-REPLAY-001`. Live BFF routes still need to honor that field shape before Lovable can build the production page. `TW-04` remains downstream of `TW-01` transcript events and `TW-03` compare evidence identity.
+The replay route family, the full `TeachingEvent` schema (including `control_patch`, `preview_trigger`, `commit`, and `discard` event types), the BFF-resolved evidence link contract, the commit and discard write paths with `allowedActions` gating, the before/candidate/after artifact refs, and the frontend handoff bundle are now aligned with the live Pantheon implementation via `TW-04-REPLAY-001`. `TW-04` is route-live and may be handed to Lovable now. It remains downstream of `TW-01` transcript events and `TW-03` compare evidence identity.
 
 ### Lovable readiness gate
 
-`pending-bff` — the replay route family, screen spec, and example payload now exist, but the replay read routes and commit/discard write routes still need live BFF implementation before UI work can begin.
+`route-live` — the replay list/detail routes and commit/discard write routes are live, and the screen spec, example payload, and frontend handoff bundle are aligned with the current BFF implementation.
 
 - BFF contract: `docs/bff/TW-04-teaching-replay.md`
 - Screen spec: `docs/screens/TW-04-teaching-replay.md`
 - Example payload: `docs/examples/TW-04-teaching-replay.json`
+- Frontend handoff: `docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md`
 
 ---
 
@@ -181,28 +192,28 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 
 | Route or contract | Module(s) | Gap type | Blocking what |
 |---|---|---|---|
-| `POST /api/v1/trainer/sessions` | TW-01 | missing write route | session creation; entire TW-01 dialog shell and all downstream module identity |
-| `GET /api/v1/trainer/sessions/:id` | TW-01 | missing read route | session detail and transcript panel |
-| `GET /api/v1/trainer/sessions` | TW-01 | missing read route | session list in dialog |
-| `POST /api/v1/trainer/sessions/:id/message` | TW-01 | missing write route | coaching message composer; blocked when `status != active` |
-| Trainer session lifecycle contract | TW-01, TW-02, TW-03, TW-04 | missing lifecycle contract | `active → paused → completed | abandoned` state machine; blocks all four modules because session `status` governs all write-path CTAs |
-| `TeachingEvent` schema (TW-01 subset) | TW-01 | missing object contract | dialog transcript ordering, append-only guarantee, `sequence_number` |
-| `GET /api/v1/trainer/sessions/:id/controls` | TW-02 | contract published — pending BFF implementation | entire Parameter Controls module |
-| `POST /api/v1/trainer/sessions/:id/patch` | TW-02 | contract published — pending BFF implementation | control patch CTA; gated by `status = active`; blocks TW-03 (compare evaluates patched candidate) |
-| Control-state schema | TW-02 | contract published — pending BFF implementation | `ControlParameter` object; `allowed_range`; blocks patch editor and validation display until the BFF serves it live |
-| Patch validation contract | TW-02 | contract published — pending BFF implementation | synchronous `valid / warnings[] / rejected_patches[]` response; blocks warning feedback in editor and TW-03 compare until live |
-| Patch diff response shape | TW-02, TW-03 | contract published — pending BFF implementation | `previous_value` and `new_value` in `updated_controls[]`; blocks inline control-state diff in TW-03 compare until live |
-| Preview / rapid-eval route | TW-03 | contract published — pending BFF implementation | compare read and refresh route family are published; live BFF must implement both endpoints |
-| Preview response contract | TW-03 | contract published — pending BFF implementation | `control_diff[]`, `metric_delta[]`, `warnings[]`, `warning_count_by_level`, and `preview_quality` are now locked for metric panels and warning hierarchy |
-| `preview_unavailable` degraded contract | TW-03 | contract published — pending BFF implementation | degraded-state copy is now explicit canonical payload, not a `5xx` fallback |
-| Async eval status polling semantics | TW-03 | contract published — pending BFF implementation | polling interval, max wait, and deadline behavior are published for a safe UI polling loop |
-| `meta.surfaces.trainer_preview` | TW-03 | contract published — pending BFF implementation | degradation banner wiring for the compare surface is now canonical |
-| Standalone Trainer replay read route | TW-04 | contract published — pending BFF implementation | replay list/detail route family is published in `docs/bff/TW-04-teaching-replay.md`; BFF must implement the routes against the canonical field shape |
-| `TeachingEvent` schema (full) | TW-04 | contract published — pending BFF implementation | replay-grade event schema is now locked in `docs/bff/TW-04-teaching-replay.md`; client must not derive evidence or event ordering locally |
-| BFF-resolved evidence links | TW-04 | contract published — pending BFF implementation | typed `evidence_ref` link objects are now canonical in `docs/bff/TW-04-teaching-replay.md`; BFF must resolve them before serving replay events |
-| Commit contract | TW-04 | contract published — pending BFF implementation | commit route, request guard, authority gating, and appended `commit` event are now canonical in `docs/bff/TW-04-teaching-replay.md` |
-| Discard contract | TW-04 | contract published — pending BFF implementation | discard route, request guard, authority gating, and appended `discard` event are now canonical in `docs/bff/TW-04-teaching-replay.md` |
-| Before/after artifact refs | TW-04 | contract published — pending BFF implementation | replay detail and decision responses now expose backend-owned artifact refs for before/candidate/after comparison |
+| `POST /api/v1/trainer/sessions` | TW-01 | **live** | resolved — session creation route is mounted and serves the published create contract |
+| `GET /api/v1/trainer/sessions/:id` | TW-01 | **live** | resolved — session detail and transcript panel are mounted on the published field shape |
+| `GET /api/v1/trainer/sessions` | TW-01 | **live** | resolved — session list route is mounted with persona/status filters and pagination |
+| `POST /api/v1/trainer/sessions/:id/message` | TW-01 | **live** | resolved — coaching message composer path is mounted and enforces the published active-session guard |
+| Trainer session lifecycle contract | TW-01, TW-02, TW-03, TW-04 | **resolved** — `docs/bff/TW-01-teaching-dialog.md` | `active → paused → completed | abandoned` state machine now anchors all downstream Trainer modules |
+| `TeachingEvent` schema (TW-01 subset) | TW-01 | **resolved** — `docs/bff/TW-01-teaching-dialog.md` | dialog transcript ordering, append-only guarantee, and `sequence_number` semantics are live |
+| `GET /api/v1/trainer/sessions/:id/controls` | TW-02 | live | entire Parameter Controls module now has a mounted read surface in the current BFF |
+| `POST /api/v1/trainer/sessions/:id/patch` | TW-02 | live | control patch CTA is backend-gated by `status = active` and `allowedActions.canPatchControls` |
+| Control-state schema | TW-02 | resolved | `ControlParameter` object and `allowed_range` now come from the live BFF rather than placeholder-only packet text |
+| Patch validation contract | TW-02 | resolved | accepted patches now return `warnings[]`, while rejected patches return `error_code`, `field_errors[]`, and `rejected_changes[]` on the live route family |
+| Patch diff response shape | TW-02, TW-03 | resolved | accepted patch responses now expose backend-owned `diff.updated_controls[]` rows with `field`, `before`, `after`, and `validation_status` |
+| Preview / rapid-eval route | TW-03 | **live** | resolved — compare read and manual refresh route family is mounted in the current Pantheon BFF workspace |
+| Preview response contract | TW-03 | **resolved** — `docs/bff/TW-03-before-after-compare.md` | compare payload, warning hierarchy, control diff, degraded copy, and preview quality are live on the published field shape |
+| `preview_unavailable` degraded contract | TW-03 | **resolved** — `docs/bff/TW-03-before-after-compare.md` | degraded-state copy is now an explicit structured payload, not a `5xx` fallback |
+| Async eval status polling semantics | TW-03 | **resolved** — `docs/bff/TW-03-before-after-compare.md` | polling interval, max wait, and deadline behavior are now served live for a safe UI polling loop |
+| `meta.surfaces.trainer_preview` | TW-03 | **resolved** — `docs/bff/TW-03-before-after-compare.md` | degradation banner wiring for the compare surface is live and backend-owned |
+| Standalone Trainer replay read route | TW-04 | **live** | resolved — replay list/detail route family is mounted in the current Pantheon BFF workspace and returns the published field shape |
+| `TeachingEvent` schema (full) | TW-04 | **resolved** — `docs/bff/TW-04-teaching-replay.md` | replay-grade event schema is live; the client must not derive evidence or event ordering locally |
+| BFF-resolved evidence links | TW-04 | **resolved** — `docs/bff/TW-04-teaching-replay.md` | typed `evidence_ref` link objects are live and BFF-resolved before replay events reach the client |
+| Commit contract | TW-04 | **live** | resolved — commit route, request guard, authority gating, and appended `commit` event are mounted in the current Pantheon workspace |
+| Discard contract | TW-04 | **live** | resolved — discard route, request guard, authority gating, and appended `discard` event are mounted in the current Pantheon workspace |
+| Before/after artifact refs | TW-04 | **resolved** | replay detail and decision responses now expose backend-owned artifact refs for before/candidate/after comparison |
 
 ---
 
@@ -212,7 +223,7 @@ Each row is scoped to one or more modules. A module advances to Lovable-ready wh
 |---|---|---|---|
 | Wave 3 — 1st | `TW-01 Teaching Dialog` | establishes the trainer-session entity, `session_id`, transcript event contract, and lifecycle contract that every later module references; the transcript is the evidentiary backbone of the entire workbench | none — can start when Wave 3 opens |
 | Wave 3 — 2nd | `TW-02 Parameter Controls` | patch semantics only make sense after a concrete training session and current control state exist; the patch validation and diff response feed directly into the compare surface | `TW-01`: `session_id`, `status = active`, and transcript event ordering contract |
-| Wave 3 — 3rd | `TW-03 Before/After Compare` | preview and rapid-eval outputs compare a candidate patch against a known session state; the compare surface is only meaningful after patches exist to compare | `TW-02`: control-patch payload, `updated_controls[]` with `previous_value`, and patch validation contract; `TW-01`: session state for the baseline snapshot |
+| Wave 3 — 3rd | `TW-03 Before/After Compare` | preview and rapid-eval outputs compare a candidate patch against a known session state; the compare surface is only meaningful after patches exist to compare | `TW-02`: control-patch payload, `diff.updated_controls[]`, and patch validation contract; `TW-01`: session state for the baseline snapshot |
 | Wave 3 — 4th | `TW-04 Teaching Replay` | replay is only honest once session events, compare artifacts, commit and discard semantics, and before/after artifact refs are stable and addressable; the replay surface is the durable record of the complete teaching arc | `TW-01`: session identity and transcript events; `TW-03`: before/after compare evidence refs. The full replay-grade `TeachingEvent` schema remains `TW-04` scope. |
 
 ---
@@ -225,9 +236,9 @@ A Trainer Workbench module moves from **not ready** to **ready** (and may be han
 2. The module's `meta.surfaces.*` staleness signal is defined and wired through to the canonical degradation banner (`PKT-005`).
 3. All `allowedActions` authority signals for that module are backend-shaped and documented.
 4. An example payload JSON exists for the module's primary read surface.
-5. All upstream prerequisite modules are already Lovable-ready (per the dependency chain above).
+5. All upstream prerequisite modules are already Lovable-ready, or the specific upstream contracts they contribute are already carried by the live module payload and documented here.
 
-No Trainer Workbench module should be handed to Lovable before its own criteria and all upstream criteria are met.
+No Trainer Workbench module should be handed to Lovable before its own criteria and the relevant upstream contract criteria are met.
 
 ---
 
@@ -261,7 +272,7 @@ All Trainer Workbench write actions must follow the `allowedActions` authority p
 
 ### Degradation banner inheritance
 
-All four modules must inherit the canonical degradation banner from `PKT-005`. The banner must be non-dismissable. Individual surface staleness states (`meta.surfaces.trainer_dialog`, `meta.surfaces.trainer_controls`, `meta.surfaces.trainer_preview`, `meta.surfaces.trainer_replay`) must be passed through from the BFF — never derived locally.
+All four modules must inherit the canonical degradation banner from `PKT-005`. The banner must be non-dismissable. Individual surface-state envelopes (`meta.surfaces.trainer_dialog`, `meta.surfaces.trainer_controls.state`, `meta.surfaces.trainer_preview`, `meta.surfaces.trainer_replay`) plus `meta.staleness` must be passed through from the BFF — never derived locally.
 
 ### `preview_unavailable` is not a loading state
 

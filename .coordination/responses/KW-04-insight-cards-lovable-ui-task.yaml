@@ -1,7 +1,7 @@
 feature_id: KW-04-insight-cards
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: ready
+status: closed
 pantheon_pr: null
 base_url: null
 workbench: knowledge-workbench

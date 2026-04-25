@@ -1,0 +1,82 @@
+feature_id: RW-01-research-ticket
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 93a4b58891031442133a6966d0354ae216a80b72
+source_commit_note: >-
+  RW-01 UI implementation is replayable from Git-visible commit
+  93a4b58891031442133a6966d0354ae216a80b72 on branch pkt-004-detail-fix.
+  Pantheon confirmed the RW-01 route family is live again on 2026-04-21.
+screen: research-ticket
+blocking: false
+status: completed
+pantheon_disposition: approved
+acknowledged_at: "2026-04-21T16:41:35Z"
+acknowledged_by: Codex
+resolved_at: "2026-04-21T16:41:35Z"
+review_file: .coordination/reviews/RW-01-research-ticket-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the returned RW-01 ui-done/frontend-feedback bundle
+  against the published contract, canonical example payload, sibling front
+  implementation, and the live operator-bff runtime. The reviewed front branch
+  remains replay-clean from origin/pkt-004-detail-fix at commit
+  93a4b58891031442133a6966d0354ae216a80b72, targeted front verification
+  passed, the Pantheon-owned RW-01 contract slice now passes again after
+  refreshing its stale seeded-list expectation, and live HTTP verification now
+  shows the active runtime serving the RW-01 route family. Authenticated 18001
+  list/detail probes return truthful degraded envelopes, a workspace-backed
+  uvicorn probe returns truthful unavailable list/detail envelopes, and no
+  contract gap remains. The loop can close on the Pantheon side.
+
+summary: |
+  Research Ticket is implemented in the front repo through rw01TicketApi with a
+  contract-shaped composer, list route, and detail route; lifecycle history
+  renders strictly from lifecycle_history[]; close/archive remain explicit
+  allowedActions-only transitions; owner selection uses backend-provided persona
+  identities; linked experiments/artifacts are read-only refs; both routes keep
+  the truthful blocked placeholder for any future route-not-live regression; and
+  the active Pantheon runtime now publishes /api/v1/research/tickets* again for
+  live review.
+
+changed_files:
+  - .coordination/requests/RW-01-research-ticket-frontend-feedback.yaml
+  - src/pages/research/ResearchTicketList.tsx
+  - src/pages/research/ResearchTicketDetail.tsx
+  - src/pages/research/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - .coordination/requests/RW-01-research-ticket-ui-done.yaml
+  - docs/pantheon-feedback/RW-01-research-ticket/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/RW-01-research-ticket/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/RW-01-research-ticket/UI_DECISIONS.md
+  - docs/pantheon-feedback/RW-01-research-ticket/QA_STATUS.md
+
+routes:
+  - /research/tickets
+  - /research/tickets/:ticket_id
+
+acceptance_evidence:
+  - python3 -m pytest services/control-plane/bff/test_rw01_research_ticket_contract.py -q -> 6 passed
+  - curl http://127.0.0.1:18001/openapi.json confirms GET/POST and GET/PATCH for the RW-01 route family
+  - authenticated live HTTP list probe on 18001 returned 200 with meta.surfaces.ticket_list = degraded
+  - authenticated live HTTP detail probe on 18001 returned 200 with meta.surfaces.ticket_detail = degraded
+  - workspace-backed HTTP unavailable probes on 18012 returned 200 with ticket_list = unavailable and ticket_detail = unavailable
+  - source commit 93a4b58891031442133a6966d0354ae216a80b72 is remote-visible on origin/pkt-004-detail-fix
+  - targeted eslint and tsc passed for the RW-01 front files
+  - sibling front production build passed
+
+follow_up_requested:
+  - close the task through the normal Pantheon review -> review_approved -> done flow if no contract gaps remain
+  - run deployed browser QA against the mounted /research/tickets and /research/tickets/:ticket_id routes as non-blocking confirmation
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
+
+coordination_updates:
+  contract_ready: .coordination/responses/RW-01-research-ticket-contract-ready.yaml
+  lovable_ui_task: .coordination/responses/RW-01-research-ticket-lovable-ui-task.yaml
+  frontend_feedback_response: .coordination/responses/RW-01-research-ticket-frontend-feedback.yaml
+  needs_runtime: .coordination/requests/RW-01-research-ticket-needs-runtime.yaml

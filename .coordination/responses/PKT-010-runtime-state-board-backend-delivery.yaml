@@ -1,0 +1,21 @@
+feature_id: PKT-010-runtime-state-board
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: screen-operator-runtime-state-board
+status: delivered
+backend_commit: 3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035
+bff_contract_version: pantheon-bff@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035
+delivery_note_path: docs/pantheon-delivery/PKT-010-runtime-state-board/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-010-runtime-state-board/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-010 ui-done handoff against the
+  published contract, example payload, current frontend-feedback request, the
+  sibling front implementation, and the current Pantheon BFF workspace. GET
+  /api/v1/operator/runtime-state is live, targeted PKT-010 contract tests
+  pass, and a direct local route probe returns 200 OK with truthful degraded
+  metadata in the current workspace. The remaining open issues are front-owned
+  replay truthfulness and Pantheon-owned rollback href truth: keep the next UI
+  cycle open until the front repo republishes a replay-clean request pair and
+  Pantheon locks truthful deployed semantics for rollback_summary.href.
+source_payload: .coordination/requests/PKT-010-runtime-state-board-ui-done.yaml

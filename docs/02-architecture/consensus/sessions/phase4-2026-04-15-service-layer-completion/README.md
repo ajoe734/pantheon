@@ -1,5 +1,7 @@
 # Discussion Planning Mode — Phase 4: Service Layer Completion
 
+Record note: this session directory is planning history and execution-shaping record material, not canonical blueprint truth.
+
 This directory is the canonical workspace for `discussion_planning`.
 
 ## Session
@@ -43,8 +45,15 @@ Repo audit on 2026-04-15 revealed that after 2–3 development rounds, only 4 of
 
 ### Gap Audit
 - `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/claude-readout.md`
+- `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md`
 
 ## Gap Summary
+
+Cross-phase interpretation:
+
+- Phase 2 through Phase 6 already have archived canonical baseline tasks, but the repo is still missing the operational baseline needed to treat those phases as delivery-complete.
+- The new `phase2-phase6-gap-inventory.md` file is the bridge document for this round. Treat it as the canonical summary of what is still missing across service exposure, command-plane convergence, packet coverage, and OSS integration execution.
+- This planning round should not re-litigate whether the phase 2 through phase 6 semantic contracts exist; it should focus on how to turn the remaining operational gaps into executable slices.
 
 ### Group A — Domain objects exist, need HTTP wrapper + Dockerfile (9 services)
 
@@ -82,13 +91,14 @@ Repo audit on 2026-04-15 revealed that after 2–3 development rounds, only 4 of
 | Output | Owner | Path |
 |---|---|---|
 | `starter-draft.md` | Codex | this dir |
-| `review-round-01.md` | Qwen, Gemini, Copilot, Claude | this dir |
+| `review-round-01.md` | Gemini, Claude (Qwen coverage), Codex (Copilot coverage) | this dir |
 | `consensus-packet.md` | Claude | this dir |
 | `execution-materialization.md` | Codex | this dir |
 
 ## Baton Loop
 
 1. Every lane reads this README and brief files, writes an independent readout using `LLM_READOUT_TEMPLATE.md`
+   If a provider repeatedly stalls, the session may keep the agent-of-record file path but use documented fallback coverage from a healthy lane.
 2. `Codex` seeds `starter-draft.md` with proposed task slices
 3. Cross-review in `review-round-01.md`
 4. `Claude` drafts `consensus-packet.md`

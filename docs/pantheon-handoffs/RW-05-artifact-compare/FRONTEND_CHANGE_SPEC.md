@@ -72,6 +72,7 @@ interface ArtifactSummary {
     annualized_return: number | null;
   };
   is_current_version: boolean;
+  allowedActions: { canCompare: boolean };
 }
 ```
 

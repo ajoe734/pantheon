@@ -1,0 +1,17 @@
+{
+  "incident_id": "inc-single-vm-40ae6d31",
+  "title": "DEPLOY-006 single-VM smoke incident",
+  "status": "open",
+  "severity": "high",
+  "binding_id": "rb-7f36e32776cb47458394abb17c6446f5",
+  "deployment_stage": "paper",
+  "deployment_plan_id": "plan-single-vm-40ae6d31",
+  "capital_pool_id": "pool-single-vm-40ae6d31",
+  "persona_capital_binding_id": "pcb-single-vm-40ae6d31",
+  "artifact_id": "reg-strat-single-vm-1.0.0-fd546e08",
+  "artifact_version": "1.0.0",
+  "runtime_id": "runtime-single-vm-40ae6d31",
+  "trace_id": "trace-single-vm-40ae6d31",
+  "evidence_summary": "single-VM smoke validation incident",
+  "telemetry_event_ids": []
+}

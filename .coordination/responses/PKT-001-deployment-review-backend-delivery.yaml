@@ -1,0 +1,25 @@
+feature_id: PKT-001-deployment-review
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: screen-operator-deployment-review
+status: followup-required
+backend_commit: f85d6bdec9a8d7e5ca7a11899a6545b842882fda
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@f85d6bdec9a8d7e5ca7a11899a6545b842882fda
+bff_contract_version: pantheon-bff@f85d6bdec9a8d7e5ca7a11899a6545b842882fda+working-tree
+delivery_note_path: docs/pantheon-delivery/PKT-001-deployment-review/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-001-deployment-review/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-001 ui-done handoff on origin/main
+  against the canonical contract, example payload, and current BFF workspace.
+  `GET /api/v1/operator/deployment-plans` and
+  `GET /api/v1/operator/deployment-review/{plan_id}` remain live in this
+  workspace, and the targeted PKT-001 contract proof passed (`3 passed`) on
+  2026-04-24. No new Pantheon endpoint, contract expansion, or runtime handoff
+  is required. The remaining next step is front-owned only: publish the
+  required frontend-feedback bundle, republish ui-done from the same immutable
+  front commit with `source_commit` pinned to that SHA instead of `HEAD`, and
+  fail closed on the required PKT-001 `meta.surfaces` key sets in the list and
+  detail readers before redispatching review on the unchanged contract.
+source_payload: .coordination/requests/PKT-001-deployment-review-ui-done.yaml

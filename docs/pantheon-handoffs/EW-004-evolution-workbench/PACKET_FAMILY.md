@@ -14,7 +14,7 @@
 
 ## Objective
 
-Consolidate the Evolution Workbench into one truthful family that reuses the ready `PKT-003` evidence surfaces, preserves the blocked state of the Inspiration Graph draft, and defines Mutation Review against the canonical `EvolutionDecision`, `IncidentCase`, `Postmortem`, `ApprovalDecision`, and rollback semantics already landed in policy and service-contract work.
+Consolidate the Evolution Workbench into one truthful family that reuses the ready `PKT-003` evidence surfaces, incorporates the now-live Inspiration Graph route and handoff bundle, and defines Mutation Review against the canonical `EvolutionDecision`, `IncidentCase`, `Postmortem`, `ApprovalDecision`, and rollback semantics already landed in policy and service-contract work.
 
 No Evolution Workbench screen may invent graph structure, mutation authority, or rollback behavior client-side. Read surfaces stay BFF-composed, and all mutation authority remains bounded by the canonical write-owner split between governance, deployment, runtime, and research planes.
 
@@ -24,9 +24,9 @@ No Evolution Workbench screen may invent graph structure, mutation authority, or
 
 | Artifact | Location | What it defines |
 |---|---|---|
-| `PKT-003` packet family | `docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/PKT-003-post-incident-evolution-packet-family.md` | Existing ready baseline for `EW-01 Post-Incident Review`, `EW-02 Evolution Center`, and `EW-03 Lineage View`; also records blocked draft expectations for `EW-04 Inspiration Graph` and `EW-05 Mutation Review` |
+| `PKT-003` packet family | `docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/PKT-003-post-incident-evolution-packet-family.md` | Existing ready baseline for `EW-01 Post-Incident Review`, `EW-02 Evolution Center`, and `EW-03 Lineage View`; also records the original phase-3 blocked-draft expectations for `EW-04 Inspiration Graph` and `EW-05 Mutation Review` |
 | `PKT-003` ready handoffs | `docs/pantheon-handoffs/PKT-003-post-incident-review/`, `docs/pantheon-handoffs/PKT-003-evolution-center/`, `docs/pantheon-handoffs/PKT-003-lineage-view/` | Contract-ready frontend handoff bundles for the three read-only baseline surfaces |
-| `EW-04` contract artifacts | `docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, `docs/examples/PKT-003-inspiration-graph.json`, `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` | Contract published via `EW-04-OPEN-001`: route spec, composed object, example payload, and frontend handoff bundle now exist; BFF route implementation is pending |
+| `EW-04` contract artifacts | `docs/screens/PKT-003-inspiration-graph.md`, `docs/bff/PKT-003-inspiration-graph.md`, `docs/examples/PKT-003-inspiration-graph.json`, `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` | Route live via `EW-04-OPEN-001`: route spec, composed object, example payload, and frontend handoff bundle now exist; BFF route `GET /api/v1/lineage/inspiration/{artifact_id}` is implemented and the frontend lane is unblocked |
 | Evolution policy and object contract | `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `services/control-plane/governance/evolution_decision.contract.md`, `services/control-plane/governance/evolution_decision.schema.json` | Canonical `EvolutionDecision` lifecycle, normalized action families, review and approval chain, execution-result semantics, cooldown rules, and object field names |
 | Approval authority contract | `services/control-plane/governance/contract.md` | Canonical `ApprovalDecision` lifecycle and the rule that evolution approvals must flow through `ApprovalDecision`, not shadow approval semantics |
 | Incident backbone | `services/incident/contract.md`, `services/incident/incident_case.schema.json`, `services/incident/postmortem.schema.json` | Canonical `IncidentCase` and `Postmortem` objects, lineage links into evolution, and the incident/postmortem evidence chain used by post-incident and mutation review surfaces |
@@ -129,10 +129,10 @@ Do not expose `root_type` as a working filter until the registry metadata prereq
 
 | Route or contract | Status | Notes |
 |---|---|---|
-| `GET /api/v1/lineage/inspiration/{artifact_id}` | **contract published — pending BFF implementation** | route spec published via `EW-04-OPEN-001` in `docs/bff/PKT-003-inspiration-graph.md`; must own graph assembly and return `artifact_id`, `inspiration_edges[]`, `strategy_tags[]`, `meta.snapshot_at`, and `meta.surfaces.inspiration`; live implementation not yet confirmed |
-| Inspiration graph composed object | **contract published — pending BFF implementation** | field shape published via `EW-04-OPEN-001` in `docs/bff/PKT-003-inspiration-graph.md`; no live implementation backs it yet |
+| `GET /api/v1/lineage/inspiration/{artifact_id}` | **live** | route spec published via `EW-04-OPEN-001` in `docs/bff/PKT-003-inspiration-graph.md`; BFF owns graph assembly and now returns the published `artifact_id`, `inspiration_edges[]`, `strategy_tags[]`, `meta.snapshot_at`, and `meta.surfaces.inspiration` field shape |
+| Inspiration graph composed object | **live** | field shape published via `EW-04-OPEN-001` in `docs/bff/PKT-003-inspiration-graph.md`; the composed object is now backed by the live BFF inspiration route |
 | Lineage root-type registry prerequisite | **partial** | `LN-03` exists, but the creative-edge addressability prerequisite for typed inspiration traversal is not yet locked; do not treat raw lineage primitives as a substitute for the dedicated route |
-| Frontend handoff bundle | **published** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` now exists; Lovable UI task activates once BFF confirms the live route |
+| Frontend handoff bundle | **published and active** via `EW-04-OPEN-001` | `docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md` now exists; the route is confirmed live, so the frontend production lane is unblocked |
 
 ### Packetization prerequisite
 

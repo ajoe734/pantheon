@@ -14,16 +14,26 @@ Build the **Promotion Review** screen inside `front-ai-trading-system`. This scr
 ## Files to Create or Modify
 
 ```
-src/app/governance/promotion-review/page.tsx                  — route entrypoint for the Promotion Review screen
-src/features/governance-review/components/promotion-review-shell.tsx
-                                                            — page shell, section rendering, and explicit state handling
-src/features/governance-review/types.ts                      — Promotion Review response types
+src/pages/promotion/PromotionReview.tsx                      — existing Promotion Review screen entrypoint and shell
+src/pages/promotion/types.ts                                 — Promotion Review response types and surface status union
 src/lib/bffClient.ts                                         — Promotion Review read and command helpers
 ```
+
+Use the existing promotion page modules already present in `front-ai-trading-system`.
+Do not create a parallel `src/app/...` or `src/features/...` tree for this handoff.
 
 ## API Integration
 
 Use the existing BFF client in `src/lib/bffClient.ts`. Do not add raw `fetch` or `axios` calls in component files.
+
+Before continuing UI implementation, apply these frontend-side integration fixes that caused the
+original `F-042-bff-gap` handoff:
+
+- Send `Authorization: Bearer <token>` on every stateful Pantheon BFF request in `src/lib/bffClient.ts`.
+- Parse the standard `detail.error.*` envelope from Pantheon BFF responses in `src/lib/bffClient.ts`.
+  Do not regress to an `errors[]` client contract.
+- Use `'unavailable'` as the surface status variant in `src/pages/promotion/types.ts`.
+  Do not regress to `'error'` for this state.
 
 ### Fetch promotion review payload
 
@@ -123,7 +133,7 @@ Reject uses the same payload shape with `"action": "reject"` and `"approval_deci
 
 ## Component Structure
 
-### `promotion-review-shell.tsx`
+### `PromotionReview.tsx`
 
 - Render the header with feature title, deployment artifact identity, target stage, and readiness badge.
 - Render the review summary using backend-shaped fields only:
@@ -133,11 +143,13 @@ Reject uses the same payload shape with `"action": "reject"` and `"approval_deci
   - `review.governanceOutcome`
   - `review.riskSummary`
   - `latestRun.progress`
+- Treat `review.decisionState`, `review.decidedAt`, and `review.reviewer` as optional
+  echoes. Do not require them when the canonical `approval_decision.*` fields are present.
 - Render the allowed actions panel from `allowedActions.canPromoteToPaper` only. Do not derive CTA visibility from plan stage, approval outcome, or runtime status.
 - Render supporting evidence from the published response fields and trace references. Do not synthesize extra governance or safety summaries in the client.
 - Render loading, empty, degraded, and error states as explicitly distinct states. Do not fall back to mock content.
 
-### `page.tsx`
+### Route wiring
 
 - Read the `plan_id` route context or screen parameter required for `GET /api/v1/operator/deployment-review/{plan_id}`.
 - Delegate all network activity to the shared BFF client layer.

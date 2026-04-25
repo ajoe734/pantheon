@@ -104,6 +104,20 @@ Approve payload:
 
 Reject payload: same structure with `"action": "reject"` and `"approval_decision": "reject"`. `verification_notes` is required when rejecting.
 
+### Optional runtime live updates
+
+`PKT-001` does not add a new live-update endpoint. If the screen decorates the
+detail panel with runtime events after `runtime_binding.id` is known, it must
+reuse the shared `PKT-005` substrate at:
+
+```
+GET /api/v1/runtime/{runtime_id}/events/stream
+```
+
+This SSE path is incremental-only cross-cut infrastructure. It must not replace
+the PKT-001 snapshot responses as the source of truth for list data, detail
+data, degradation banners, or CTA authority.
+
 ## Component Structure
 
 ### `DeploymentReviewConsole.tsx`
@@ -128,7 +142,7 @@ Reject payload: same structure with `"action": "reject"` and `"approval_decision
 
 ## Constraints
 
-- Use the existing BFF client only. Do not add raw `fetch` or `axios` in component files.
+- Snapshot reads and writes stay on the existing BFF client. If runtime live updates are used, route them through the shared `PKT-005` `SseClient` substrate only.
 - Do not import or use any demo provider or mock data layer.
 - CTA visibility (`canApprove`, `canReject`, `canPromoteToPaper`) must come from `allowedActions` in the BFF response. Do not derive eligibility locally.
 - If a required `allowedActions` field is absent from the BFF response, write `.coordination/requests/PKT-001-deployment-review-bff-gap.yaml` using `.coordination/requests/PKT-001-deployment-review-bff-gap.example.yaml` as the template and stop implementation.

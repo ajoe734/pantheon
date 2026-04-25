@@ -1,0 +1,52 @@
+feature_id: PKT-010-runtime-state-board
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: be42f22c2388076af4bb7b1f1d4209aaf90af6a8
+screen: operator-runtime-state-board
+blocking: false
+status: acknowledged
+pantheon_disposition: blocked
+acknowledged_at: "2026-04-19T12:33:28Z"
+acknowledged_by: Codex
+review_file: .coordination/reviews/PKT-010-runtime-state-board-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the returned UI cycle and confirmed the PKT-010 screen
+  remains statically aligned on the published single-roster contract and the
+  current BFF route is live, but the loop cannot close yet. The current front
+  request pair still is not replay-clean from the exact immutable commit it
+  advertises, and Pantheon has not yet locked truthful deployed semantics for
+  rollback_summary.href.
+
+summary: |
+  Operator Runtime State Board is wired up against the PKT-010 BFF contract
+  through operatorApi.getRuntimeStateBoard (GET /api/v1/operator/runtime-state).
+  The screen renders one server-backed runtime roster, backend-owned
+  deployment-stage and status filters, server sort controls, and
+  next_page_token pagination without RT-03, RT-04, or TL-02 browser joins.
+
+changed_files:
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - src/lib/bffClient.ts
+  - src/pages/operator/OperatorRuntimeStateBoard.tsx
+  - src/pages/operator/types.ts
+  - .coordination/requests/PKT-010-runtime-state-board-frontend-feedback.yaml
+  - docs/pantheon-feedback/PKT-010-runtime-state-board/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-010-runtime-state-board/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-010-runtime-state-board/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-010-runtime-state-board/QA_STATUS.md
+
+routes:
+  - /operator/runtime-state
+
+follow_up_requested:
+  - review the runtime-state board against the mirrored PKT-010 contract and example payload
+  - validate degraded and unavailable surface behavior against a live BFF response
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

@@ -5,7 +5,7 @@
 - Feature ID: `RW-02-search`
 - Screen ID: `screen-research-search`
 - Workbench: Research Workbench
-- Packet status: contract-published — UI implementation must not start until the BFF route is live
+- Packet status: contract-ready — UI implementation may proceed against the live BFF route
 - Task: `RW-02-SEARCH-001`
 
 ## Summary
@@ -22,13 +22,13 @@ src/lib/bffClient.ts                           — add RW-02 search call
 
 ## Readiness Gate
 
-Do not open the production page until Pantheon confirms the following are live and returning the published field shape:
+Pantheon has confirmed the following are live and returning the published field shape:
 
 - `GET /api/v1/research/search`
 - `meta.index_adapter.*` in the search response
 - `links.result_detail` and `links.linked_ticket_detail` in every search row
 
-Until then, render a blocked placeholder. No invented corpus or local search.
+Build the production page against this live route. If any required field is absent or diverges from the synced contract, emit `.coordination/requests/RW-02-search-bff-gap.yaml` instead of falling back to placeholder or mock state.
 
 ## API Integration
 
@@ -92,7 +92,6 @@ Required response-only fields:
 - Do not build a client-side search index.
 - Do not reuse ticket, experiment, or artifact list data as a substitute for the search route.
 - Do not infer result drilldowns from local route conventions; use `links.*`.
-- Do not start production UI until Pantheon confirms the route is live.
 - If any required field is missing, emit a `bff-gap` handoff instead of mocking.
 
 ## Degradation Handling

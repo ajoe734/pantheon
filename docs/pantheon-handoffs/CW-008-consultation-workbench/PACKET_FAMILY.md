@@ -169,8 +169,8 @@ The committee lifecycle states, participant and referral semantics, `committee_r
 - **Evidence drawer**: expandable drawer for each recommendation showing the linked evidence objects (telemetry, lineage, consult session, incident case). Evidence links are BFF-resolved — do not construct evidence URLs client-side.
 - **Downstream review handoff**: when the memo is published and governance routing is valid, the surface shows a downstream handoff CTA if `allowedActions.canInitiateGovernanceReview` is `true`. This signal is backend-owned and depends on memo lifecycle, target validity, authority, duplicate-review suppression, and evidence availability.
 - **Session-to-memo mapping**: memo detail must expose an explicit `session_to_memo_mapping` object tying the source consultation session and transcript to the published memo. The UI must not derive this mapping from raw session data.
-- **Memo list**: paginated list of all red-team memos filterable by `status`. Each row shows `memo_id`, `status`, `linked_request_id`, `author_ref`, and a recommendation count.
-- **Degradation**: when `meta.surfaces.redteam_memo` is `degraded`, show the last-known memo state with a staleness banner. When `unavailable`, show the canonical unavailable banner with no memo content.
+- **Memo list**: paginated list of all red-team memos filterable by `status`. Each row shows `memo_id`, `status`, `linked_request_id`, `recommendation_count`, `published_at`, and `created_at`.
+- **Degradation**: when `meta.surfaces.redteam_memo.state = "degraded"`, show the last-known memo state with a staleness banner. When `meta.surfaces.redteam_memo.state = "unavailable"`, show the canonical unavailable banner with no memo content.
 
 ### Backend gaps
 
@@ -288,7 +288,7 @@ Session creation, outcome recording, and evidence attachment remain Persona Plan
 
 ### Degradation banner inheritance
 
-All four modules must inherit the canonical degradation banner from `PKT-005`. The banner must be non-dismissable. Individual surface staleness states (`meta.surfaces.consult_request_detail`, `meta.surfaces.transcript`, `meta.surfaces.committee_board`, `meta.surfaces.redteam_memo`) must be passed through from the BFF — never derived locally.
+All four modules must inherit the canonical degradation banner from `PKT-005`. The banner must be non-dismissable. Individual surface health fields (`meta.surfaces.consult_request_detail`, `meta.surfaces.transcript.state`, `meta.surfaces.committee_board`, `meta.surfaces.redteam_memo.state`) must be passed through from the BFF — never derived locally.
 
 ### Relationship to existing consultation read surfaces
 

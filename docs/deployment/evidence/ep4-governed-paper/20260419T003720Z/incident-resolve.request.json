@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:38090/api/incidents/inc-ep4-c1c15d4c/status",
+  "headers": {},
+  "body": {
+    "status": "resolved"
+  }
+}

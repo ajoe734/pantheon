@@ -5,12 +5,12 @@
 - Workbench: Trainer Workbench
 - Screen ID: `screen-teaching-dialog`
 - Feature ID: `TW-01-teaching-dialog`
-- Packet status: **contract-published** — trainer-session lifecycle, transcript event shape, and create/list/detail/message semantics are defined; live BFF implementation is still the gate before UI work starts
+- Packet status: **route-live** — trainer-session lifecycle, transcript event shape, and create/list/detail/message semantics are defined and the current Pantheon BFF workspace serves the route family; the next front cycle should activate the live UI and republish a replayable request pair
 - Task: `TW-01-FOUNDATION-001`
 
 ## Contract Note
 
-The Trainer Workbench now has a published foundation slice for teaching dialog. UI implementation must not start until Pantheon confirms the create, list, detail, and message routes are live and returning the published field shape.
+The Trainer Workbench now has a live foundation slice for teaching dialog. Pantheon has confirmed the create, list, detail, and message routes in the current BFF workspace, so the next UI cycle should remove any pending-BFF placeholder and exercise the published route family directly.
 
 The UI must not infer trainer-session lifecycle, transcript ordering, actor context, or dialog write authority from client-side state, Persona teaching-history responses, or local message cache.
 
@@ -27,14 +27,14 @@ Primary routes:
 
 ## Readiness Gate
 
-Do not open the production page until Pantheon confirms:
+Pantheon has confirmed:
 
 1. `POST /api/v1/trainer/sessions` is live with the published create body and response shape.
 2. `GET /api/v1/trainer/sessions` is live with `persona_id`, `status`, pagination, and `meta.surfaces.trainer_dialog`.
 3. `GET /api/v1/trainer/sessions/{session_id}` is live with ordered `events[]`, `actor_context`, `session_summary`, and `allowedActions.canSendMessage`.
 4. `POST /api/v1/trainer/sessions/{session_id}/message` is live and echoes the accepted `TeachingEvent` from the backend.
 
-Until those gates are met, render a pending-BFF placeholder for both routes. No invented session rows, no local transcript cache, and no substitution with Persona teaching history.
+Do not reopen a pending-BFF placeholder for these routes. Instead, keep the UI on the live endpoints, preserve the full published create shape (including optional `context_refs[]`), and republish the canonical `ui-done` plus `frontend-feedback` bundle from one truthful front commit.
 
 ## Page Sections
 
@@ -140,7 +140,7 @@ The frontend must not infer lifecycle transitions or expose pause, complete, or 
 - Do not substitute Persona Management teaching-history data for the Trainer Workbench session list or dialog detail.
 - Do not derive transcript ordering, actor context, or lifecycle state client-side.
 - Do not infer message-send authority from `status`; use `allowedActions.canSendMessage`.
-- Do not start production UI until Pantheon confirms the routes are live.
+- Do not reintroduce a pending-BFF gate for these routes now that Pantheon has confirmed them live.
 - If any required field is missing, emit a `bff-gap` handoff instead of mocking the missing state.
 
 ## Acceptance

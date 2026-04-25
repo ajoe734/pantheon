@@ -1,0 +1,6 @@
+{
+  "actor_role": "governance_reviewer",
+  "actor_id": "deploy-006-smoke-approver",
+  "outcome": "approved",
+  "rationale": "DEPLOY-006 single-VM smoke acceptance"
+}

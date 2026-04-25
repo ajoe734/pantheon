@@ -8,25 +8,20 @@ source_commit_note: >-
   head; no new git commit was created in this task.
 screen: research-search
 blocking: false
-status: acknowledged
-pantheon_disposition: blocked
-acknowledged_at: "2026-04-20T14:03:25Z"
-acknowledged_by: Codex
+status: closed
+pantheon_disposition: loop_complete
+acknowledged_at: "2026-04-22T06:19:57Z"
+acknowledged_by: Codex2
 review_file: .coordination/reviews/RW-02-search-review.md
 resolution_summary: >-
-  Pantheon re-reviewed the returned RW-02 Search working-tree implementation
-  against the published contract, example payload, current sibling front
-  changes, and the current Pantheon BFF app. The prior client-side contract
-  mismatches are fixed: the screen now sends only published query params,
-  recognizes the documented simple error envelope, suppresses authoritative
-  degraded empty-state messaging, and renders a dedicated 503 unavailable
-  notice. The loop still cannot close. The active operator-bff runtime at
-  http://127.0.0.1:18001 remains stale and returns 404 for
-  GET /api/v1/research/search, the backend-owned drilldown hrefs currently
-  returned by Pantheon (/research/tickets/*, /research/experiments/*,
-  /research/artifacts/*) do not resolve to mounted owner screens in the current
-  front router, and the returned request pair plus feedback bundle are still
-  working-tree only rather than replay-clean from one immutable front commit.
+  Pantheon reran RW-02 against a fresh operator-bff runtime started from the
+  current workspace at http://127.0.0.1:18001. The search route now serves
+  live HTTP truthfully: `GET /api/v1/research/search?q=momentum` returns `200`
+  with the published search payload shape, backend-owned drilldown hrefs, and
+  degraded `meta.index_adapter.*` metadata. The reviewed frontend slice remains
+  contract-aligned, and the prior runtime-refresh follow-up is complete for
+  this screen. Remaining unresolved owner-detail routes belong to their own
+  feature slices and do not block RW-02 closeout.
 
 summary: |
   Research Search is implemented against the live RW-02 Pantheon route

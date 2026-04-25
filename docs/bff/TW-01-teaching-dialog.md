@@ -2,7 +2,7 @@
 
 ## Status
 
-**Contract published** — the trainer-session identity, read-side lifecycle semantics, dialog event shape, and create/list/detail/message route shapes are now the definitive implementation target for the Pantheon BFF. UI work must not start until Pantheon confirms the routes are live and returning this field shape.
+**Route live** — the trainer-session create, list, detail, and message routes are confirmed live as of `2026-04-20T14:14:33Z` and return the published trainer-session and `TeachingEvent` field shape in the current Pantheon workspace. The next front-owned cycle should remove the pending gate, keep the full published create shape including optional `context_refs[]`, and republish the canonical `ui-done` plus `frontend-feedback` request pair from one truthful Git-visible commit.
 
 Task: `TW-01-FOUNDATION-001`
 

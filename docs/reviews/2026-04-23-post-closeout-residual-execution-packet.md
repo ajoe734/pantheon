@@ -62,7 +62,7 @@ This is a truth-sync / tracking hygiene residual, not an implementation hole.
 
 | Task ID | Owner | Reviewer | Depends On | Scope |
 |---|---|---|---|---|
-| `APP-003-CW04-PUBLICATION-REPLAY-001` | Codex | Codex2 | `APP-003-CW04-FRONTEND-HANDOFF-001` | Track and close the remaining `CW-04` replay-clean front publication follow-up so the reviewed UI, request pair, and feedback bundle are all Git-visible from one truthful commit. |
+| `APP-003-CW04-PUBLICATION-REPLAY-001` | Codex | Codex3 | `APP-003-CW04-FRONTEND-HANDOFF-001` | Track and close the remaining `CW-04` replay-clean front publication follow-up so the reviewed UI, request pair, and feedback bundle are all Git-visible from one truthful commit. |
 | `APP-003-PKT001-SURFACE-VALIDATION-001` | Codex | Codex2 | `APP-003-PKT001-PUBLICATION-REPLAY-001` | Track and close the remaining `PKT-001` front fail-closed validation refresh around required `meta.surfaces` keys and the follow-on feedback republish. |
 | `APP-003-TRUTH-SYNC-003` | Codex | Codex2 | - | Rebaseline backlog / SA / tracked-feature truth so already archived completions are no longer represented as still-open Pantheon residues. |
 

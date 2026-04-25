@@ -85,7 +85,7 @@ No blocking findings.
 
 `PKT-009-governance-audit-rail` is loop-complete for the current packet scope.
 
-`BP6-LUV-020` is ready for Claude review.
+Close `BP6-LUV-020`.
 
 ## Residual Risk
 

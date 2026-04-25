@@ -1,0 +1,38 @@
+{
+  "feature_id": "PKT-012-alerts-rail",
+  "status": "front-followup-required",
+  "backend_commit": "d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff",
+  "bff_contract_version": "pantheon-bff@d32e906bed3c44a7b22bfe4a6fe9ccdcaeadafff+working-tree",
+  "source_payload": ".coordination/requests/PKT-012-alerts-rail-ui-done.yaml",
+  "source_commit": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "verified_front_workspace_head": "37a622bca69a95e2aae46aa8c6b0432ad72082a8",
+  "review_file": ".coordination/reviews/PKT-012-alerts-rail-review.md",
+  "feedback_request": ".coordination/requests/PKT-012-alerts-rail-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/alerts"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-012-alerts-rail.md",
+    "docs/examples/PKT-012-alerts-rail.json",
+    "docs/screens/PKT-012-alerts-rail.md",
+    "docs/pantheon-handoffs/PKT-012-alerts-rail/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Sibling front production build passed: npm run build",
+    "Targeted changed-file eslint passed: npx eslint src/App.tsx src/lib/bffClient.ts src/pages/operator/OperatorAlertsRail.tsx src/pages/operator/types.ts",
+    "Targeted Pantheon PKT-012 contract tests passed: python3 -m pytest services/control-plane/bff/test_pkt012_alerts_rail_contract.py -q",
+    "Direct local TestClient read of GET /api/v1/operator/alerts returned 200 OK with summary.total_active=5, highest_severity=critical, meta.surfaces.alerts.status=degraded, and browser-style target_ref href values in the current workspace",
+    "The sibling front checkout now contains the PKT-012 frontend-feedback request and docs/pantheon-feedback/PKT-012-alerts-rail bundle as working-tree artifacts",
+    "Commit 37a622bca69a95e2aae46aa8c6b0432ad72082a8 does not contain the PKT-012 ui-done request, frontend-feedback request, or feedback bundle, so the current source_commit still points at a code-only commit rather than a replay-clean publication commit"
+  ],
+  "followup_scope": [
+    "Publish the canonical PKT-012 frontend-feedback request and feedback bundle from the front repo",
+    "Republish the PKT-012 ui-done request from the same truthful immutable front commit as the feedback bundle and reviewed UI files",
+    "Update source_commit in both front-authored PKT-012 requests so they point at that exact publication commit",
+    "Keep the frontend on payload-owned target_ref rendering only; do not synthesize alternate browser routes",
+    "Run deferred live browser QA in a deployed Pantheon environment to confirm the published target_ref hrefs land on the intended owner screens"
+  ]
+}
