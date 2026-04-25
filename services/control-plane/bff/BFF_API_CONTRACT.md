@@ -327,7 +327,7 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 |---|---|---|---|---|
 | `/api/v1/capital-pools` | GET | CP-01 | `{ data: [CapitalPool], meta }` | `status`, `risk_policy_ref` |
 | `/api/v1/capital-pools/{pool_id}` | GET | CP-02 | `{ data: CapitalPool + bindings[], meta }` | — |
-| `/api/v1/bindings` | GET | CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `capital_pool_id`, `role`, `validity` |
+| `/api/v1/bindings` | GET | CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `persona_id`, `capital_pool_id`, `role`, `validity` |
 | `/api/v1/bindings/{binding_id}` | GET | CP-04 | `{ data: PersonaCapitalBinding + Persona, meta }` | — |
 
 ### 9.3 Deployment Surfaces (DP-01–DP-04)
@@ -336,9 +336,9 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/deployment-plans` | GET | DP-01 | `{ data: [DeploymentPlan], meta }` | `stage`, `target_pool_id` |
+| `/api/v1/deployment-plans` | GET | DP-01 | `{ data: [DeploymentPlan], meta }` | `status`, `capital_pool_id` |
 | `/api/v1/deployment-plans/{plan_id}` | GET | DP-02 | `{ data: DeploymentPlan + ApprovalDecision, meta }` | — |
-| `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `reviewer`, `time_range` |
+| `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `state` |
 | `/api/v1/approval-decisions/{decision_id}` | GET | DP-04 | `{ data: ApprovalDecision, meta }` | — |
 
 ### 9.4 Runtime Surfaces (RT-01–RT-04)
@@ -370,9 +370,9 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/lineage` | GET | LN-01 | `{ data: [LineageEdge], meta }` | `artifact_id` |
-| `/api/v1/lineage/edges/{edge_id}` | GET | LN-02 | `{ data: LineageEdge, meta }` | — |
-| `/api/v1/lineage/graph` | GET | LN-03 | `{ data: [LineageEdge], meta }` | `root_type`, `root_id`, `depth` |
+| `/api/v1/lineage` | GET | LN-01 | `{ items: [{ artifact_id, edge_count, last_edge_at }], page_info: { next_page_token }, meta }` | `artifact_id`, `page_token`, `page_size` |
+| `/api/v1/lineage/edges/{edge_id}` | GET | LN-02 | `{ id, from_artifact_id, to_artifact_id, relationship, created_at, meta }` | — |
+| `/api/v1/lineage/graph` | GET | LN-03 | `{ nodes: [{ artifact_id, artifact_version, artifact_type }], edges: [{ id, from_artifact_id, to_artifact_id, relationship }], meta }` | `root_type`, `root_id`, `depth` |
 
 ### 9.7 Incident Surfaces (IN-01–IN-05)
 
@@ -392,10 +392,10 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/evolution-decisions` | GET | EV-01 | `{ data: [EvolutionDecision], meta }` | `action_type`, `risk_level`, `status` |
-| `/api/v1/evolution-decisions/{decision_id}` | GET | EV-02 | `{ data: EvolutionDecision, meta }` | — |
-| `/api/v1/freeze-orders` | GET | EV-03 | `{ data: [FreezeOrder], meta }` | `status`, `scope` |
-| `/api/v1/rollbacks` | GET | EV-04 | `{ data: [RollbackRecord], meta }` | `runtime_id`, `action_type`, `time_range` |
+| `/api/v1/evolution-decisions` | GET | EV-01 | `{ items: [EvolutionDecision], page_info: { next_page_token }, meta: { snapshot_at } }` | `action_type`, `risk_level`, `status`, `page_token`, `page_size` |
+| `/api/v1/evolution-decisions/{decision_id}` | GET | EV-02 | `EvolutionDecision` fields at the response root plus `meta: { snapshot_at }` | — |
+| `/api/v1/freeze-orders` | GET | EV-03 | `{ items: [FreezeOrder], meta: { snapshot_at } }` | `status`, `scope` |
+| `/api/v1/rollbacks` | GET | EV-04 | `{ items: [RollbackRecord], meta: { snapshot_at } }` | `runtime_id`, `action_type`, `time_range` |
 
 ---
 
@@ -405,6 +405,13 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 | Route | Composes | Primary Use Case | Min Role |
 |---|---|---|---|
+| `/api/v1/operator/runtime-state` | RT-03, RT-04, TL-02 | Multi-runtime operator roster with telemetry and rollback summaries | `operator` |
+| `/api/v1/operator/health-status` | RT-01, TL-02, IN-01, governance review + approval queues, IN-05 | Operator health board with safe-mode state and fallback guidance | `operator` |
+| `/api/v1/operator/alerts` | IN-01, governance review + approval queues, IN-05, RT-01, TL-02 | Operator alert rail with backend-owned severity, category, and target refs | `operator` |
+| `/api/v1/operator/home` | OC-02, OC-03, OC-04 summaries plus IN-05 safe-mode state | Operator home dashboard with card hierarchy and escalation shortcuts | `operator` |
+| `/api/v1/operator/paper-live-drift/{runtime_id}` | drift report, RT-01, TL-02, TL-03, approval decision, incidents, evolution evidence | Paper-vs-live drift review with backend-owned threshold evaluation and follow-up actions | `operator` |
+| `/api/v1/workbench/consultation` | CW-008 packet-family truth only | Consultation Workbench overview surface; truthful module status without fake request or committee UI | `operator` |
+| `/api/v1/workbench/knowledge` | KW-006 packet-family truth only | Knowledge Workbench overview surface; truthful module status without fake registry or evidence UI | `operator` |
 | `/api/v1/operator/deployment-review/{plan_id}` | DP-02, CP-02, CP-04, RT-02, RT-04 | Pre-deployment approval review | `operator` |
 | `/api/v1/operator/incident-response/{incident_id}` | IN-02, RT-03, TL-02, RT-04, EV-04, IN-05 | Active incident response | `operator` |
 | `/api/v1/operator/post-incident-review/{incident_id}` | IN-04, EV-01, EV-02, LN-01, TL-03 | Post-incident analysis | `operator` |
@@ -543,9 +550,9 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Incident (IN) | IN-01 to IN-05 | 5 |
 | Evolution (EV) | EV-01 to EV-04 | 4 |
 | **Canonical v1 Subtotal** | | **33** |
-| Composed views | 4 | 4 |
+| Composed views | 9 | 9 |
 | SSE streams | 3 | 3 |
-| **Total v1 endpoints** | | **40** |
+| **Total v1 endpoints** | | **45** |
 
 ---
 

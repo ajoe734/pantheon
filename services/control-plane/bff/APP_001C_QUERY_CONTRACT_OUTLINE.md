@@ -388,7 +388,7 @@ The transport mechanism (SSE vs WebSocket) is tracked in OPEN_QUESTIONS.md. The 
 |---|---|---|
 | CP-01 | `{ data: [CapitalPool], meta }` | `status`, `risk_policy_ref` |
 | CP-02 | `{ data: CapitalPool + bindings[], meta }` | — |
-| CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `capital_pool_id`, `role`, `validity` |
+| CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `persona_id`, `capital_pool_id`, `role`, `validity` |
 | CP-04 | `{ data: PersonaCapitalBinding + persona, meta }` | — |
 
 ### 9.3 Runtime Surfaces (RT-01–RT-04)

@@ -1,0 +1,204 @@
+# Dedicated VM-2 execution-plane stack for the EP4 paper execution package.
+#
+# Usage:
+#   docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml up -d
+#
+# This slice intentionally excludes control-plane services such as operator-bff,
+# persona, registry, promotion, lineage-read, governance, and telemetry. It
+# packages the execution-plane substrate needed to prove the VM-1 / VM-2 split:
+# runtime-manager, a truthful paper execution runtime package, and mock
+# broker/exchange sidecars behind an execution-only secret boundary.
+
+name: pantheon-exec
+
+services:
+  signal-store:
+    image: redis:7-alpine
+    ports:
+      - "${SIGNAL_STORE_PORT:-26379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  runtime-manager:
+    build:
+      context: .
+      dockerfile: services/runtime-manager/Dockerfile
+    environment:
+      PORT: "8081"
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: ${PANTHEON_RUNTIME_BINDING_STORE_PATH:-/data/runtime/runtime_bindings.json}
+      PANTHEON_EXEC_RUNTIME_MANAGER_DIR: /workspace/services/execution/runtime-manager
+      PANTHEON_SINGLE_RUNTIME_ENFORCED: ${PANTHEON_SINGLE_RUNTIME_ENFORCED:-true}
+    volumes:
+      - runtime-data:/data/runtime
+    ports:
+      - "${RUNTIME_MANAGER_PORT:-28081}:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/__health__', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  broker-adapter:
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+    environment:
+      PORT: "8097"
+      PANTHEON_RUNTIME_ROLE: broker-adapter-sidecar
+      PANTHEON_RUNTIME_MODE: ${PANTHEON_EXECUTION_MODE:-paper}
+      PANTHEON_RUNTIME_ID: ${PANTHEON_BROKER_RUNTIME_ID:-broker-adapter-001}
+      PANTHEON_ADAPTER_MODE: ${BROKER_ADAPTER_MODE:-mock}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_WORKSPACE_REF: ${PANTHEON_WORKSPACE_REF:-workspace-paper}
+      PANTHEON_AUTH_PROFILE_REF: ${PANTHEON_AUTH_PROFILE_REF:-auth-profile-paper}
+      PANTHEON_PERSONA_ID: ${PANTHEON_PERSONA_ID:-persona-paper-ops}
+      PANTHEON_SESSION_ID: ${PANTHEON_SESSION_ID:-session-paper-runtime}
+      PANTHEON_TRACE_ID: ${PANTHEON_TRACE_ID:-trace-paper-runtime}
+      PANTHEON_REQUEST_ID: ${PANTHEON_REQUEST_ID:-request-paper-runtime}
+      PANTHEON_REQUIRED_SECRET_KEYS: BROKER_API_KEY,BROKER_API_SECRET
+      PANTHEON_SECRETS_OPTIONAL: ${PANTHEON_SECRETS_OPTIONAL:-true}
+      BROKER_API_KEY: ${BROKER_API_KEY:-}
+      BROKER_API_SECRET: ${BROKER_API_SECRET:-}
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+    ports:
+      - "${BROKER_ADAPTER_PORT:-28097}:8097"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/__health__', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  exchange-adapter:
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+    environment:
+      PORT: "8098"
+      PANTHEON_RUNTIME_ROLE: exchange-adapter-sidecar
+      PANTHEON_RUNTIME_MODE: ${PANTHEON_EXECUTION_MODE:-paper}
+      PANTHEON_RUNTIME_ID: ${PANTHEON_EXCHANGE_RUNTIME_ID:-exchange-adapter-001}
+      PANTHEON_ADAPTER_MODE: ${EXCHANGE_ADAPTER_MODE:-mock}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_WORKSPACE_REF: ${PANTHEON_WORKSPACE_REF:-workspace-paper}
+      PANTHEON_AUTH_PROFILE_REF: ${PANTHEON_AUTH_PROFILE_REF:-auth-profile-paper}
+      PANTHEON_PERSONA_ID: ${PANTHEON_PERSONA_ID:-persona-paper-ops}
+      PANTHEON_SESSION_ID: ${PANTHEON_SESSION_ID:-session-paper-runtime}
+      PANTHEON_TRACE_ID: ${PANTHEON_TRACE_ID:-trace-paper-runtime}
+      PANTHEON_REQUEST_ID: ${PANTHEON_REQUEST_ID:-request-paper-runtime}
+      PANTHEON_REQUIRED_SECRET_KEYS: EXCHANGE_API_KEY,EXCHANGE_API_SECRET
+      PANTHEON_SECRETS_OPTIONAL: ${PANTHEON_SECRETS_OPTIONAL:-true}
+      EXCHANGE_API_KEY: ${EXCHANGE_API_KEY:-}
+      EXCHANGE_API_SECRET: ${EXCHANGE_API_SECRET:-}
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+    ports:
+      - "${EXCHANGE_ADAPTER_PORT:-28098}:8098"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8098/__health__', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  pantheon-paper-runtime:
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+    environment:
+      PORT: "8010"
+      PANTHEON_RUNTIME_ROLE: pantheon-paper-execution-runtime
+      PANTHEON_RUNTIME_MODE: ${PANTHEON_EXECUTION_MODE:-paper}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_WORKSPACE_REF: ${PANTHEON_WORKSPACE_REF:-workspace-paper}
+      PANTHEON_AUTH_PROFILE_REF: ${PANTHEON_AUTH_PROFILE_REF:-auth-profile-paper}
+      PANTHEON_PERSONA_ID: ${PANTHEON_PERSONA_ID:-persona-paper-ops}
+      PANTHEON_STRATEGY_ID: ${PANTHEON_STRATEGY_ID:-strategy-paper}
+      PANTHEON_SESSION_ID: ${PANTHEON_SESSION_ID:-session-paper-runtime}
+      PANTHEON_TRACE_ID: ${PANTHEON_TRACE_ID:-trace-paper-runtime}
+      PANTHEON_REQUEST_ID: ${PANTHEON_REQUEST_ID:-request-paper-runtime}
+      PANTHEON_TELEMETRY_URL: ${PANTHEON_TELEMETRY_URL:-}
+      SIGNAL_STORE_URL: ${SIGNAL_STORE_URL:-redis://signal-store:6379}
+      PANTHEON_SIGNAL_QUEUE_KEY: ${PANTHEON_SIGNAL_QUEUE_KEY:-pantheon:signals:pending}
+      PANTHEON_BROKER_ADAPTER_URL: http://broker-adapter:8097
+      PANTHEON_EXCHANGE_ADAPTER_URL: http://exchange-adapter:8098
+      PANTHEON_LEAN_CONFIG_PATH: /workspace/lean/Launcher/config.json
+      PANTHEON_PAPER_RUNTIME_ID: ${PANTHEON_PAPER_RUNTIME_ID:-paper-runtime-001}
+    depends_on:
+      signal-store:
+        condition: service_healthy
+      runtime-manager:
+        condition: service_healthy
+      broker-adapter:
+        condition: service_healthy
+      exchange-adapter:
+        condition: service_healthy
+    ports:
+      - "${LEAN_PAPER_PORT:-28110}:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/__health__', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  pantheon-lean-live:
+    profiles: ["live"]
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+    environment:
+      PORT: "8011"
+      PANTHEON_RUNTIME_ROLE: pantheon-lean-live-runtime
+      PANTHEON_RUNTIME_MODE: live
+      PANTHEON_RUNTIME_ID: ${PANTHEON_LIVE_RUNTIME_ID:-live-runtime-001}
+      PANTHEON_ADAPTER_MODE: ${BROKER_ADAPTER_MODE:-mock}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_WORKSPACE_REF: ${PANTHEON_WORKSPACE_REF:-workspace-live}
+      PANTHEON_AUTH_PROFILE_REF: ${PANTHEON_AUTH_PROFILE_REF:-auth-profile-live}
+      PANTHEON_PERSONA_ID: ${PANTHEON_PERSONA_ID:-persona-live-ops}
+      PANTHEON_SESSION_ID: ${PANTHEON_SESSION_ID:-session-live-runtime}
+      PANTHEON_TRACE_ID: ${PANTHEON_TRACE_ID:-trace-live-runtime}
+      PANTHEON_REQUEST_ID: ${PANTHEON_REQUEST_ID:-request-live-runtime}
+      PANTHEON_TELEMETRY_URL: ${PANTHEON_TELEMETRY_URL:-}
+      PANTHEON_REQUIRED_SECRET_KEYS: BROKER_API_KEY,BROKER_API_SECRET,EXCHANGE_API_KEY,EXCHANGE_API_SECRET
+      PANTHEON_SECRETS_OPTIONAL: "false"
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      broker-adapter:
+        condition: service_healthy
+      exchange-adapter:
+        condition: service_healthy
+    ports:
+      - "${LEAN_LIVE_PORT:-28111}:8011"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/__health__', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  runtime-data:
