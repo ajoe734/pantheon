@@ -1,0 +1,45 @@
+feature_id: PKT-004-capital-binding-drilldowns
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: loop-complete
+pantheon_pr: null
+base_url: null
+workbench: persona-workbench
+screen: capital-binding-drilldowns
+screen_id: null
+ui_spec_path: docs/screens/PKT-004-capital-binding-drilldowns.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-004-capital-binding-drilldowns/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/capital-pools
+- GET /api/v1/capital-pools/{pool_id}
+- GET /api/v1/bindings
+- GET /api/v1/bindings/{binding_id}
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- build the four Capital/Binding Drilldown surfaces (CP-01 to CP-04)
+- use only the existing BFF client
+- pass filters as query parameters to the BFF; do not filter client-side
+- no write actions are defined in this module
+required_feedback:
+- docs/pantheon-feedback/PKT-004-capital-binding-drilldowns/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-004-capital-binding-drilldowns/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-004-capital-binding-drilldowns/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-004-capital-binding-drilldowns/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-004-capital-binding-drilldowns-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-004-capital-binding-drilldowns.md
+  ui_spec_path: docs/screens/PKT-004-capital-binding-drilldowns.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-004-capital-binding-drilldowns/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-004-capital-binding-drilldowns.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-004-capital-binding-drilldowns
+gap_handoff_path: .coordination/requests/PKT-004-capital-binding-drilldowns-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-004-capital-binding-drilldowns-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.example.yaml

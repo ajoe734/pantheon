@@ -1,0 +1,35 @@
+{
+  "feature_id": "F-042",
+  "status": "followup-required",
+  "backend_commit": "160581b91b55daed6fcfeda41ca1cee29a4b9113",
+  "bff_contract_version": "pantheon-bff@160581b91b55daed6fcfeda41ca1cee29a4b9113",
+  "source_payload": ".coordination/requests/F-042-frontend-feedback.yaml",
+  "reported_source_commit": "79dc1b5ecef69125fb51f1519893c2e87020864d",
+  "review_file": ".coordination/reviews/BP6-LUV-015-review.md",
+  "needs_runtime_request": ".coordination/requests/F-042-needs-runtime.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/deployment-review/{plan_id}",
+    "POST /api/v1/operator/commands"
+  ],
+  "contract_paths": [
+    "docs/bff/F-042-promotion-review.md",
+    "docs/examples/F-042-review-page.json",
+    "docs/screens/F-042-promotion-review.md",
+    "docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "resolved_findings": [
+    "Pantheon does not require any new F-042 endpoint or contract change for the returned cycle-2 packet",
+    "The runtime checkout blocker tracked by F-042-needs-runtime is already resolved"
+  ],
+  "open_findings": [
+    "GitHub API cannot resolve reported source commit 79dc1b5ecef69125fb51f1519893c2e87020864d in ajoe734/front-ai-trading-system",
+    "GitHub main still publishes older F-042 ui-done/frontend-feedback request bodies anchored to 03833940782906b7f28cdb3867352793a1ad7d6c and c34048e2e096d3fe9bde1c216c0613535d71f07d",
+    "The front-owned F-042 feedback bundle has not yet been republished from a GitHub-visible cycle-2 source tuple"
+  ],
+  "followup_scope": [
+    "Push the claimed cycle-2 F-042 source tuple to GitHub or republish from a newer GitHub-visible commit in ajoe734/front-ai-trading-system",
+    "Ensure the canonical ui-done and frontend-feedback request bodies both set source_commit to that actual GitHub-visible publication commit",
+    "Publish docs/pantheon-feedback/F-042/ from the same GitHub-visible commit as the request pair",
+    "Keep the Pantheon contract unchanged: GET /api/v1/operator/deployment-review/{plan_id}, POST /api/v1/operator/commands, detail.error.*, and ok/degraded/unavailable surface status"
+  ]
+}

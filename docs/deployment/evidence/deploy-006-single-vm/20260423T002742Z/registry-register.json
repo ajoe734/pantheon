@@ -1,0 +1,14 @@
+{
+  "registry_id": "reg-single-vm-20508572",
+  "artifact_type": "model_artifact",
+  "strategy_id": "strat-single-vm",
+  "version": "1.0.0",
+  "artifact_state": "draft",
+  "checksum": "sha256:single-vm-20508572",
+  "lineage": {
+    "source_run_ids": ["run-single-vm-20508572"]
+  },
+  "deployment_summary": {
+    "current_stage": "none"
+  }
+}

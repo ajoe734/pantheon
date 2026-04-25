@@ -1,0 +1,49 @@
+feature_id: KW-04-insight-cards
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: closed
+pantheon_pr: null
+base_url: null
+workbench: knowledge-workbench
+screen: knowledge-insight-cards
+screen_id: screen-knowledge-insight-card-list
+ui_spec_path: null
+frontend_change_spec_path: docs/pantheon-handoffs/KW-04-insight-cards/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/knowledge/insights
+- GET /api/v1/knowledge/insights/{insight_id}
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- build the Insight Cards list and detail surfaces in front-ai-trading-system
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- render backend-owned filter metadata, confidence, scope context, and supersession
+  data as published
+- do not recreate the insight-card synthesis pipeline in the browser
+- emit a bff-gap handoff if any required field is absent
+- publish ui-done and frontend-feedback from one Git-visible commit
+required_feedback:
+- docs/pantheon-feedback/KW-04-insight-cards/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/KW-04-insight-cards/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/KW-04-insight-cards/UI_DECISIONS.md
+- docs/pantheon-feedback/KW-04-insight-cards/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/KW-04-insight-cards-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/KW-04-insight-cards.md
+  ui_spec_path: null
+  frontend_change_spec_path: docs/pantheon-handoffs/KW-04-insight-cards/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/KW-04-insight-cards.json
+  handoff_bundle_dir: docs/pantheon-handoffs/KW-04-insight-cards
+gap_handoff_path: .coordination/requests/KW-04-insight-cards-bff-gap.yaml
+gap_handoff_template: .coordination/requests/KW-04-insight-cards-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/KW-04-insight-cards-ui-done.yaml
+completion_handoff_template: .coordination/requests/KW-04-insight-cards-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/KW-04-insight-cards-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/KW-04-insight-cards-frontend-feedback.example.yaml

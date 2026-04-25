@@ -1,0 +1,94 @@
+feature_id: KW-04-insight-cards
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-24T03:39:04Z'
+reviewed_commit: f85d6bdec9a8d7e5ca7a11899a6545b842882fda
+ui_done_source_commit: 68afd384867499f28672d9702a02c7dca24abcae
+frontend_feedback_source_commit: 68afd384867499f28672d9702a02c7dca24abcae
+verified_front_workspace_head: 7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f
+verified_remote_main_commit: 7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f
+screen: knowledge-insight-cards
+workbench: knowledge-workbench
+
+disposition: close
+review_result: contract-aligned-and-feedback-bundle-complete
+can_close: true
+
+summary: >-
+  Pantheon reviewed the returned KW-04 Insight Cards ui-done and
+  frontend-feedback bundle against the published contract, mirrored examples,
+  and the current Pantheon BFF workspace. The current front main snapshot at
+  7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f contains the canonical request pair
+  and feedback bundle, the request metadata points back to the reviewed UI
+  source commit 68afd384867499f28672d9702a02c7dca24abcae, TypeScript compile
+  passes from the verified front worktree, and the Pantheon KW-04 contract
+  slice still passes locally. No new Pantheon API gap remains in this loop.
+
+acceptance_verified:
+  - criterion: publish a Git-visible ui-done request, frontend-feedback request, and feedback bundle
+    status: pass
+    note: >-
+      Pantheon verified the canonical KW-04 request pair and
+      docs/pantheon-feedback/KW-04-insight-cards/* in the remote-visible
+      front main snapshot 7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f, with both
+      request files pinned back to source_commit
+      68afd384867499f28672d9702a02c7dca24abcae.
+  - criterion: front TypeScript compile passes from the reviewed front snapshot
+    status: pass
+    note: >-
+      `npx tsc --noEmit` passed in the isolated /tmp/front-origin-main-verify
+      worktree at 7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f.
+  - criterion: Pantheon KW-04 contract slice still passes
+    status: pass
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_kw04_insight_cards_contract.py`
+      passed with 3 tests in the current Pantheon workspace.
+  - criterion: no new BFF gap was returned for KW-04
+    status: pass
+    note: >-
+      The reviewed front main snapshot contains KW-04 ui-done and
+      frontend-feedback handoffs and no KW-04 bff-gap request.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the remote-visible KW-04 request pair and feedback bundle
+    path: /tmp/front-origin-main-verify/.coordination/requests/KW-04-insight-cards-ui-done.yaml
+    note: >-
+      Pantheon verified the KW-04 ui-done request, frontend-feedback request,
+      and feedback bundle from the clean origin/main worktree at
+      7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f.
+  - action: verify the Pantheon-owned KW-04 contract slice
+    path: services/control-plane/bff/test_kw04_insight_cards_contract.py
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_kw04_insight_cards_contract.py`
+      passed with 3 tests.
+  - action: verify the reviewed front TypeScript compile
+    path: /tmp/front-origin-main-verify
+    note: >-
+      `npx tsc --noEmit` passed from the verified front main worktree.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed-environment browser QA remains outstanding after closeout. This
+      loop verified the request pair, feedback bundle, TypeScript compile, and
+      Pantheon contract slice only.
+
+required_front_repo_updates: []
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. The KW-04 request pair and feedback bundle are now visible on the front
+  main branch, the request metadata resolves back to the reviewed UI source
+  commit 68afd384867499f28672d9702a02c7dca24abcae, TypeScript compile passes,
+  and the Pantheon KW-04 contract slice still passes.
+
+risk_note: >-
+  Remaining risk is post-close browser QA only. This review did not rerun a
+  deployed browser session.
+
+lovable_ui_task_status: closed
+next_action: none

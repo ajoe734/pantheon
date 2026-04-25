@@ -1,0 +1,55 @@
+feature_id: PKT-013-operator-home
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: be42f22c2388076af4bb7b1f1d4209aaf90af6a8
+screen: operator-home-dashboard
+blocking: false
+status: completed
+pantheon_disposition: approved
+acknowledged_at: "2026-04-18T09:39:09Z"
+acknowledged_by: Codex
+resolved_at: "2026-04-19T12:37:01Z"
+review_file: .coordination/reviews/PKT-013-operator-home-review.md
+resolution_summary: >-
+  Pantheon re-reviewed the returned PKT-013 cycle and verified that canonical
+  request-pair commit 2779d23 now points at replayable transport commit
+  be42f22c2388076af4bb7b1f1d4209aaf90af6a8 on pushed branch
+  pkt-004-detail-fix. Governance owner links now land on routed aliases, the
+  local changed-file ESLint slice is clean, and the loop can close from the
+  Pantheon side.
+
+summary: |
+  Operator Home Dashboard is wired to the PKT-013 operator-home contract
+  through operatorApi.getOperatorHome (GET /api/v1/operator/home). The screen
+  preserves backend-owned card order, escalation shortcut order, safe-mode
+  state, and degraded or unavailable surface treatment without rebuilding the
+  dashboard from alerts, incidents, governance, runtime, telemetry, or
+  kill-switch primitives.
+
+changed_files:
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - src/lib/bffClient.ts
+  - src/pages/operator/OperatorHomeDashboard.tsx
+  - src/pages/operator/types.ts
+  - .coordination/requests/PKT-013-operator-home-bff-gap.example.yaml
+  - .coordination/requests/PKT-013-operator-home-ui-done.example.yaml
+  - docs/pantheon-feedback/PKT-013-operator-home/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-013-operator-home/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-013-operator-home/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-013-operator-home/QA_STATUS.md
+
+routes:
+  - /operator/home
+
+follow_up_requested:
+  - review the operator-home dashboard against the mirrored PKT-013 contract and example payload
+  - validate degraded and unavailable operator-home behavior against a live BFF response
+  - confirm backend-supplied target hrefs are the intended owner-screen destinations in the deployed environment
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

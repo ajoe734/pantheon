@@ -1,0 +1,21 @@
+feature_id: KW-05-strategy-spec
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: knowledge-workbench
+screen_id: screen-knowledge-strategy-spec-list
+status: followup-required
+backend_commit: b1ee405d8c4e8096f73f1313092722a33ca3abff
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@b1ee405d8c4e8096f73f1313092722a33ca3abff
+bff_contract_version: pantheon-bff@b1ee405d8c4e8096f73f1313092722a33ca3abff+working-tree
+delivery_note_path: docs/pantheon-delivery/KW-05-strategy-spec/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/KW-05-strategy-spec/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the Git-visible KW-05 UI cycle against the current
+  contract, example payload, and returned branch. No new Pantheon endpoint,
+  compare semantics change, ancestry rule, or runtime handoff is required. The
+  next step is front-owned only: refresh the Git-visible feedback bundle so it
+  truthfully matches the delivered compare surface, or backfill compare
+  required-field validation and republish the request pair if the UI commit
+  changes.
+source_payload: .coordination/requests/KW-05-strategy-spec-frontend-feedback.yaml

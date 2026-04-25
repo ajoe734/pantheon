@@ -1,0 +1,219 @@
+{
+  "overall_status": "degraded",
+  "headline": "Some services degraded",
+  "message": "3 of 5 health groups need attention.",
+  "group_counts": {
+    "ok": 2,
+    "degraded": 3,
+    "unavailable": 0
+  },
+  "safe_mode_state": {
+    "status": "off",
+    "kill_switch_status": "armed",
+    "active": false,
+    "last_confirmed_at": "2026-04-18T06:00:00Z",
+    "last_triggered_at": null,
+    "secondary_path_available": true
+  },
+  "secondary_control_path": {
+    "mode": "advisory",
+    "reason": "Some health groups are degraded. Use the secondary control path to verify current control-plane state before critical decisions.",
+    "targets": [
+      {
+        "operation": "Health diagnostics",
+        "channel": "admin_cli",
+        "command": "pantheon admin health",
+        "api_path": "GET /admin/health",
+        "required_role": "operator",
+        "requires_mfa": false
+      },
+      {
+        "operation": "Runtime status",
+        "channel": "admin_cli",
+        "command": "pantheon admin runtime status --runtime={runtime_id}",
+        "api_path": "GET /admin/runtimes/{runtime_id}/status",
+        "required_role": "operator",
+        "requires_mfa": false
+      },
+      {
+        "operation": "Kill-switch status",
+        "channel": "admin_cli",
+        "command": "pantheon admin kill-switch status",
+        "api_path": "GET /admin/kill-switch/status",
+        "required_role": "operator",
+        "requires_mfa": false
+      }
+    ]
+  },
+  "groups": [
+    {
+      "group_id": "runtime",
+      "label": "Runtime",
+      "status": "ok",
+      "summary": "1 runtime(s) tracked across 1 stage(s).",
+      "details": {
+        "total_runtime_count": 1,
+        "by_stage": {
+          "paper": 1
+        },
+        "by_status": {
+          "idle": 1
+        }
+      },
+      "surface_refs": [
+        {
+          "surface_key": "runtime_roster",
+          "status": "ok",
+          "source": "canonical"
+        }
+      ],
+      "target_refs": [
+        {
+          "label": "Runtime State Board",
+          "href": "/operator/runtime-state"
+        }
+      ]
+    },
+    {
+      "group_id": "telemetry",
+      "label": "Telemetry",
+      "status": "degraded",
+      "summary": "Telemetry coverage available for all 1 runtime(s).",
+      "details": {
+        "total_runtime_count": 1,
+        "covered_runtime_count": 1,
+        "missing_runtime_count": 0,
+        "latest_collected_at": "2026-04-10T15:00:00Z"
+      },
+      "surface_refs": [
+        {
+          "surface_key": "telemetry_summary",
+          "status": "degraded",
+          "source": "local_snapshot"
+        }
+      ],
+      "target_refs": [
+        {
+          "label": "Runtime State Board",
+          "href": "/operator/runtime-state"
+        }
+      ]
+    },
+    {
+      "group_id": "incident",
+      "label": "Incident",
+      "status": "ok",
+      "summary": "1 active incident(s); highest severity sev1.",
+      "details": {
+        "total_incident_count": 2,
+        "active_incident_count": 1,
+        "open_count": 1,
+        "in_progress_count": 0,
+        "highest_severity": "sev1"
+      },
+      "surface_refs": [
+        {
+          "surface_key": "incident_list",
+          "status": "ok",
+          "source": "service_store"
+        }
+      ],
+      "target_refs": [
+        {
+          "label": "Incident Home",
+          "href": "/operator/incidents"
+        }
+      ]
+    },
+    {
+      "group_id": "governance",
+      "label": "Governance",
+      "status": "degraded",
+      "summary": "2 governance item(s) pending review or approval.",
+      "details": {
+        "review_queue_count": 1,
+        "approval_queue_count": 1,
+        "total_pending_items": 2,
+        "highest_risk_level": "high"
+      },
+      "surface_refs": [
+        {
+          "surface_key": "review_queue",
+          "status": "degraded",
+          "source": "local_snapshot"
+        },
+        {
+          "surface_key": "approval_queue",
+          "status": "degraded",
+          "source": "local_snapshot"
+        }
+      ],
+      "target_refs": [
+        {
+          "label": "Governance Review Queue",
+          "href": "/governance-review-queue"
+        },
+        {
+          "label": "Governance Approval Queue",
+          "href": "/governance-approval-queue"
+        }
+      ]
+    },
+    {
+      "group_id": "kill_switch",
+      "label": "Kill Switch",
+      "status": "degraded",
+      "summary": "Kill-switch armed; safe mode off.",
+      "details": {
+        "kill_switch_status": "armed",
+        "safe_mode_status": "off",
+        "active_command_count": 0,
+        "last_confirmed_at": "2026-04-18T06:00:00Z",
+        "last_triggered_at": null,
+        "secondary_path_available": true
+      },
+      "surface_refs": [
+        {
+          "surface_key": "kill_switch",
+          "status": "degraded",
+          "source": "local_snapshot"
+        }
+      ],
+      "target_refs": [
+        {
+          "label": "Health Status Board",
+          "href": "/operator/health-status"
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-18T06:15:00Z",
+    "surfaces": {
+      "health_status": {
+        "status": "degraded",
+        "source": "bff_composed"
+      },
+      "runtime": {
+        "status": "ok",
+        "source": "bff_composed"
+      },
+      "telemetry": {
+        "status": "degraded",
+        "source": "bff_composed"
+      },
+      "incident": {
+        "status": "ok",
+        "source": "bff_composed"
+      },
+      "governance": {
+        "status": "degraded",
+        "source": "bff_composed"
+      },
+      "kill_switch": {
+        "status": "degraded",
+        "source": "bff_composed"
+      }
+    }
+  }
+}

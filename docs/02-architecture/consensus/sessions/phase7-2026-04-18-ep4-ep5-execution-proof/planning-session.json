@@ -1,0 +1,638 @@
+{
+  "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+  "phase": "phase7",
+  "profile": "generic",
+  "status": "accepted",
+  "planning_mode": "discussion_planning",
+  "runtime_mode": "supervisor_managed_execution",
+  "summary": "Turn EP3 deployment evidence into a plan for stable EP4 and explicitly scoped EP5 prerequisites.",
+  "objective": "Turn the current EP3-bounded deployment evidence into a dependency-aware plan for stable EP4, while explicitly separating later EP5 canary/live proof from paper-runtime proof.",
+  "facilitator": "Claude",
+  "baton_owner": "Codex",
+  "starter_owner": "Codex",
+  "next_reviewer": "Claude",
+  "baton_sequence": [
+    "Codex",
+    "Gemini",
+    "Claude"
+  ],
+  "review_sequence": [
+    "Gemini",
+    "Claude",
+    "Codex"
+  ],
+  "brief_files": [
+    "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
+    "DEVELOPMENT_WORKBREAKDOWN.md",
+    "ROADMAP.md",
+    "OPENCLAW_RUNTIME_CONTRACT.md",
+    "PAPER_CANARY_LIVE_POLICY.md",
+    "ROLLBACK_AND_POSITION_SEMANTICS.md",
+    "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+    "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+    "docs/deployment/single-vm-smoke-results.md",
+    "docs/deployment/dual-vm-acceptance-results.md",
+    "integrations/openclaw/evidence_pack.md",
+    "docs/reviews/2026-04-17-oss-next-008-governed-regression-refresh.md",
+    "docs/reviews/2026-04-18-current-state-reconciliation.md",
+    "docs/reviews/2026-04-18-ep4-ep5-planning-entry-packet.md"
+  ],
+  "expected_outputs": [
+    {
+      "id": "document_reconciliation",
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/document-reconciliation.md",
+      "owner": "Codex",
+      "status": "not_started"
+    },
+    {
+      "id": "execution_materialization",
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md",
+      "owner": "Codex",
+      "status": "not_started"
+    },
+    {
+      "id": "consensus_packet",
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+      "owner": "Claude",
+      "status": "not_started"
+    }
+  ],
+  "lane_focus": {
+    "Claude": "Facilitate EP4/EP5 consensus, own runtime and rollback semantics review, and prepare the human gate packet.",
+    "Claude2": "",
+    "Codex": "Ground the EP4/EP5 plan in repo evidence, seed the shared draft, and turn converged proof-raising decisions into execution slices.",
+    "Gemini": "Stress-test runtime packaging, auth, dual-VM proof feasibility, and canary/live infrastructure readiness.",
+    "Qwen": "Optional schema and contract critique if needed; not on the primary review path for this session.",
+    "Copilot": "Optional research and external-dependency critique if needed; not on the primary review path for this session."
+  },
+  "fallback_policy": {},
+  "current_round": 1,
+  "document_reconciliation_status": "not_needed",
+  "consensus_status": "accepted",
+  "human_gate_status": "approved",
+  "artifacts": {
+    "planning_readme": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/README.md",
+      "status": "active"
+    },
+    "planning_session": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+      "status": "accepted"
+    },
+    "readout_template": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/LLM_READOUT_TEMPLATE.md",
+      "status": "ready"
+    },
+    "starter_draft": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/starter-draft.md",
+      "status": "active"
+    },
+    "baton_log": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/baton-log.md",
+      "status": "active"
+    },
+    "supervisor_queue": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/supervisor-queue.md",
+      "status": "active"
+    },
+    "document_reconciliation": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/document-reconciliation.md",
+      "status": "not_needed"
+    },
+    "consensus_packet": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+      "status": "accepted"
+    },
+    "review_rounds": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/review-round-*.md",
+      "status": "completed"
+    }
+  },
+  "readouts": {
+    "Claude": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/claude-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-18T15:27:21Z"
+    },
+    "Claude2": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/claude2-readout.md",
+      "status": "pending",
+      "updated_at": null
+    },
+    "Codex": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/codex-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-18T14:29:47Z"
+    },
+    "Gemini": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/gemini-readout.md",
+      "status": "submitted",
+      "updated_at": "2026-04-18T14:24:32Z"
+    },
+    "Qwen": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/qwen-readout.md",
+      "status": "waived",
+      "updated_at": "2026-04-18T14:26:04Z"
+    },
+    "Copilot": {
+      "path": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/copilot-readout.md",
+      "status": "waived",
+      "updated_at": "2026-04-18T14:26:04Z"
+    }
+  },
+  "cross_review_rounds": [
+    {
+      "round": 1,
+      "status": "completed",
+      "reviewers": [
+        "Gemini",
+        "Claude",
+        "Codex"
+      ],
+      "updated_at": "2026-04-18T15:27:21Z",
+      "summary": "Primary review path converged on EP4-first materialization and deferred EP5-002 boundary."
+    }
+  ],
+  "unresolved_items": [
+    {
+      "id": "EP5-BOUNDARY-001",
+      "severity": "medium",
+      "status": "tracking",
+      "summary": "EP5-002 remains a deferred canary/live proof slice and should stay outside the initial EP4 materialization batch unless a later explicit gate expands scope."
+    }
+  ],
+  "proposed_execution_tasks": [
+    {
+      "id": "OSS-004A",
+      "title": "Stabilize the runtime auth/authority path for EP4",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "Phase 7: EP4 Proof Raising",
+      "summary_zh": "穩定 EP4 所需的 runtime auth/authority path：補齊 runtime-manager token flow、paper runtime identity、telemetry authority refs 與 OpenClaw/Pantheon adapter 邊界。",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [
+        "runtime auth and authority path is explicit||dual-VM paper proof no longer depends on ambiguous identity or token assumptions"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+        "phase": "phase7",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+        "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-004B",
+      "title": "Replace bootstrap paper runtime with final truthful paper execution package",
+      "owner": "Claude",
+      "reviewer": "Gemini",
+      "phase": "Phase 7: EP4 Proof Raising",
+      "summary_zh": "把 VM-2 bootstrap paper runtime 換成最終 truthful paper execution package 或 signal-consumer path，讓 DEPLOY-009 不再只停在 bootstrap health。",
+      "depends_on": [
+        "OSS-004A"
+      ],
+      "artifacts": [],
+      "acceptance": [
+        "bootstrap wrapper replaced or formally retired||paper execution package is the truthful EP4 substrate"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+        "phase": "phase7",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+        "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-004C",
+      "title": "Run integrated governed paper execution acceptance for EP4",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "phase": "Phase 7: EP4 Proof Run",
+      "summary_zh": "執行並封存一次整合式 governed paper acceptance：approval -> deployment -> runtime binding -> paper execution -> telemetry -> incident/health -> kill-switch/rollback。",
+      "depends_on": [
+        "OSS-004A",
+        "OSS-004B"
+      ],
+      "artifacts": [],
+      "acceptance": [
+        "one integrated EP4 acceptance run is archived||evidence covers approval runtime telemetry incident and rollback together"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+        "phase": "phase7",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+        "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+      }
+    },
+    {
+      "id": "OSS-004D",
+      "title": "Publish EP4 evidence packet and reconcile status truth",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "phase": "Phase 7: EP4 Evidence Publication",
+      "summary_zh": "發布 EP4 evidence packet，並把 status/tracking layers 對齊，讓 repo 可 truthfully claim stable EP4穩定而非更高。",
+      "depends_on": [
+        "OSS-004C"
+      ],
+      "artifacts": [],
+      "acceptance": [
+        "EP4 evidence packet published||status layers do not overclaim beyond EP4"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+        "phase": "phase7",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+        "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+      }
+    },
+    {
+      "id": "EP5-001",
+      "title": "Prepare canary/live execution prerequisites",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "phase": "Phase 7: EP5 Prerequisites",
+      "summary_zh": "準備 canary/live prerequisite：真實 broker/venue config、縮量資本 gate、operator approval checklist 與 rollback drill harness。",
+      "depends_on": [
+        "OSS-004C"
+      ],
+      "artifacts": [],
+      "acceptance": [
+        "canary prerequisites are explicit||no EP5 claim is made without real infrastructure readiness"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+        "phase": "phase7",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+        "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+      }
+    },
+    {
+      "id": "EP5-002",
+      "title": "Execute first canary/live proof packet",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "Phase 7: EP5 Proof",
+      "summary_zh": "在 broker、資本與 operator prerequisite 真正具備後，執行並封存第一次 canary/live proof packet，含 rollback drill 與 operator signoff。",
+      "depends_on": [
+        "EP5-001"
+      ],
+      "artifacts": [],
+      "acceptance": [
+        "first canary or live proof packet archived||rollback drill and operator signoff included"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+        "phase": "phase7",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+        "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+      }
+    }
+  ],
+  "recent_events": [
+    {
+      "ts": "2026-04-19T03:28:54Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:29:04Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:29:14Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:29:51Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:30:01Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:30:11Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:30:50Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:31:01Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:31:11Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:31:53Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:32:03Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:32:13Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:32:53Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:33:04Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:33:16Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:33:54Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:34:05Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:34:15Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:34:53Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:35:04Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:35:14Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:35:52Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:36:02Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:36:17Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:36:55Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:37:06Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:37:17Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:37:56Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:38:06Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:38:14Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:38:58Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:39:08Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:39:20Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:39:59Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:40:10Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:40:18Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:40:25Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:41:05Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:41:15Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    },
+    {
+      "ts": "2026-04-19T03:41:26Z",
+      "agent": "Codex",
+      "type": "execution_tasks_materialized",
+      "message": "Materialized 0 new tasks and refreshed 0 existing tasks in ai-status.json. Skipped 4 archived terminal tasks.",
+      "status": "approved"
+    }
+  ],
+  "updated_at": "2026-04-24T13:16:48Z",
+  "initial_materialization_task_ids": [
+    "OSS-004A",
+    "OSS-004B",
+    "OSS-004C",
+    "OSS-004D"
+  ],
+  "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+  "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+  "materialization_contract": {
+    "type": "discussion_planning",
+    "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+    "phase": "phase7",
+    "profile": "generic",
+    "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+    "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+    "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+    "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md",
+    "source_plane": "planning",
+    "planning_mode": "discussion_planning",
+    "document_reconciliation_status": "not_needed",
+    "runtime_mode": "supervisor_managed_execution",
+    "consensus_status": "accepted",
+    "human_gate_status": "approved",
+    "proposed_execution_tasks": 6,
+    "initial_materialization_task_ids": [
+      "OSS-004A",
+      "OSS-004B",
+      "OSS-004C",
+      "OSS-004D"
+    ],
+    "initial_materialization_task_count": 4
+  },
+  "materialized_at": "2026-04-19T03:41:26Z"
+}

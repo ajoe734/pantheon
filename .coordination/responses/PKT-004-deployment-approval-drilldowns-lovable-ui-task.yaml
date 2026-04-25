@@ -1,0 +1,46 @@
+feature_id: PKT-004-deployment-approval-drilldowns
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: loop-complete
+pantheon_pr: null
+base_url: null
+workbench: persona-workbench-shared-with-governance-workbench
+screen: deployment-approval-drilldowns
+screen_id: null
+ui_spec_path: docs/screens/PKT-004-deployment-approval-drilldowns.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-004-deployment-approval-drilldowns/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/deployment-plans
+- GET /api/v1/deployment-plans/{plan_id}
+- GET /api/v1/approval-decisions
+- GET /api/v1/approval-decisions/{decision_id}
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- build the four Deployment/Approval Drilldown surfaces (DP-01 to DP-04) as read-only
+- use only the existing BFF client
+- do not implement approve/reject/promote CTAs; cross-link to PKT-001 governance screens
+  instead
+- pass filters as query parameters to the BFF; do not filter client-side
+required_feedback:
+- docs/pantheon-feedback/PKT-004-deployment-approval-drilldowns/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-004-deployment-approval-drilldowns/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-004-deployment-approval-drilldowns/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-004-deployment-approval-drilldowns/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-004-deployment-approval-drilldowns-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-004-deployment-approval-drilldowns.md
+  ui_spec_path: docs/screens/PKT-004-deployment-approval-drilldowns.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-004-deployment-approval-drilldowns/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-004-deployment-approval-drilldowns.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-004-deployment-approval-drilldowns
+gap_handoff_path: .coordination/requests/PKT-004-deployment-approval-drilldowns-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-004-deployment-approval-drilldowns-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-004-deployment-approval-drilldowns-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-004-deployment-approval-drilldowns-ui-done.example.yaml

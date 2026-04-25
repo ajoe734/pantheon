@@ -1,0 +1,61 @@
+feature_id: EW-05-mutation-review
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: loop-complete
+cycle: 2
+pantheon_pr: null
+base_url: null
+workbench: evolution-workbench
+screen: mutation-review
+screen_id: screen-evolution-mutation-review
+ui_spec_path: docs/screens/EW-05-mutation-review.md
+frontend_change_spec_path: docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/mutation-review/{decision_id}
+- POST /api/v1/operator/commands (ApproveMutation)
+- POST /api/v1/operator/commands (RejectMutation)
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+- render the live HTTP 503 evidence_unavailable response as the explicit
+  unavailable-state placeholder instead of the generic load-error branch
+- fail closed when required nested fields inside change_details,
+  threshold_triggers, required_approvals, review_chain, evidence_refs, or a
+  non-null rollback_followthrough are missing
+- publish the required EW-05 feedback bundle on the next return cycle
+acceptance:
+- fetch decision projection from GET /api/v1/operator/mutation-review/{decision_id}
+  only
+- render Approve CTA only when allowedActions.canApproveMutation is true and meta.surfaces.mutation_review
+  is not unavailable
+- render Reject CTA only when allowedActions.canRejectMutation is true and meta.surfaces.mutation_review
+  is not unavailable
+- submit ApproveMutation or RejectMutation via POST /api/v1/operator/commands
+- suppress both CTAs when meta.surfaces.mutation_review is unavailable
+- render non-dismissable staleness banner when meta.surfaces.mutation_review is stale
+- do not compute authority signals, risk level, or change semantics client-side
+- re-fetch read route after command submission to confirm state; do not optimistically
+  update decision_state
+required_feedback:
+- docs/pantheon-feedback/EW-05-mutation-review/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/EW-05-mutation-review/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/EW-05-mutation-review/UI_DECISIONS.md
+- docs/pantheon-feedback/EW-05-mutation-review/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/EW-05-mutation-review-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/EW-05-mutation-review.md
+  ui_spec_path: docs/screens/EW-05-mutation-review.md
+  frontend_change_spec_path: docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/EW-05-mutation-review.json
+  handoff_bundle_dir: docs/pantheon-handoffs/EW-05-mutation-review
+gap_handoff_path: .coordination/requests/EW-05-mutation-review-bff-gap.yaml
+gap_handoff_template: .coordination/requests/EW-05-mutation-review-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/EW-05-mutation-review-ui-done.yaml
+completion_handoff_template: .coordination/requests/EW-05-mutation-review-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/EW-05-mutation-review-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/EW-05-mutation-review-review.md

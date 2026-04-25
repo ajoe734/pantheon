@@ -1,0 +1,52 @@
+{
+  "status": 200,
+  "payload": {
+    "audit_entry": {
+      "action_type": "pause",
+      "actor_id": "operator-oncall",
+      "audit_id": "audit-4f0356920caa",
+      "audited_at": "2026-04-24T14:29:48Z",
+      "binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+      "capital_pool_id": "pool-ep5-canary-3",
+      "command_id": "ks-5b327d2c0bf8",
+      "emergency_class": "soft",
+      "outcome_note": "soft emergency: canary_underperformance -> pause; safe mode normal -> paused",
+      "reason": "canary_underperformance",
+      "safe_mode_after": "paused",
+      "safe_mode_before": "normal",
+      "trigger_id": "trig-77ecf8595baf"
+    },
+    "binding_action": {
+      "action": "pause",
+      "binding": {
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.2",
+        "binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "deployment_mode": "canary",
+        "effective_at": "2026-04-24T14:29:47Z",
+        "persona_capital_binding_id": "pcb-ep5-canary-3",
+        "plan_id": "plan-ep5-canary-20260424-003",
+        "runtime_id": "paper-runtime-rollback-001",
+        "status": "paused"
+      }
+    },
+    "command": {
+      "action_type": "pause",
+      "actor_id": "operator-oncall",
+      "binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+      "bypass_review_queue": true,
+      "capital_pool_id": "pool-ep5-canary-3",
+      "command_id": "ks-5b327d2c0bf8",
+      "dispatch_path": "runtime_manager_fast_path",
+      "emergency_class": "soft",
+      "issued_at": "2026-04-24T14:29:48Z",
+      "metadata": {
+        "trigger_reason": "canary_underperformance"
+      },
+      "priority": 2,
+      "trigger_id": "trig-77ecf8595baf"
+    },
+    "safe_mode_after": "paused"
+  }
+}

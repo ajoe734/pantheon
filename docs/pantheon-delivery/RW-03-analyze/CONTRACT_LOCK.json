@@ -1,0 +1,52 @@
+{
+  "feature_id": "RW-03-analyze",
+  "status": "loop-complete",
+  "backend_commit": "b0975f50fb1b657c2ae95ae1a132e02b7474439b",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@b0975f50fb1b657c2ae95ae1a132e02b7474439b",
+  "live_http_runtime_ref": "http://127.0.0.1:18001",
+  "auxiliary_runtime_refs": [
+    "http://127.0.0.1:18013",
+    "http://127.0.0.1:18014"
+  ],
+  "bff_contract_version": "pantheon-bff@b0975f50fb1b657c2ae95ae1a132e02b7474439b+working-tree",
+  "source_payload": ".coordination/requests/RW-03-analyze-ui-done.yaml",
+  "source_commit": "ef9b4d7b4f69ac829ea097fff0bef889d42e46dc",
+  "request_pair_commit": "e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f",
+  "source_commit_note": "Reviewed UI implementation commit ef9b4d7b4f69ac829ea097fff0bef889d42e46dc contains ResearchAnalyze.tsx, ResearchAnalyzeDetail.tsx, the RW-03 type additions, and the Health.tsx listing update. Front publish commit e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f on origin/pkt-004-detail-fix contains the canonical request pair, docs/pantheon-feedback/RW-03-analyze/*, the App/AppSidebar/WorkbenchBreadcrumb shell wiring, shared bffClient state, and the reviewed Analyze UI files while truthfully pinning source_commit back to ef9b4d7b4f69ac829ea097fff0bef889d42e46dc.",
+  "verified_front_workspace_head": "e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f",
+  "verified_remote_publish_commit": "e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f",
+  "review_file": ".coordination/reviews/RW-03-analyze-review.md",
+  "feedback_request": ".coordination/requests/RW-03-analyze-frontend-feedback.yaml",
+  "needs_runtime_request": ".coordination/requests/RW-03-analyze-needs-runtime.yaml",
+  "endpoints": [
+    "GET /api/v1/research/analysis",
+    "GET /api/v1/research/analysis/{analysis_id}"
+  ],
+  "contract_paths": [
+    "docs/bff/RW-03-analyze.md",
+    "docs/examples/RW-03-analyze.json",
+    "docs/screens/RW-03-analyze.md",
+    "docs/pantheon-handoffs/RW-03-analyze/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "runtime_refresh_required": false,
+  "verification_evidence": [
+    "Targeted Pantheon RW-03 contract tests passed: python3 -m pytest -q services/control-plane/bff/test_rw03_analyze_contract.py",
+    "Live OpenAPI on http://127.0.0.1:18001 advertises GET /api/v1/research/analysis and GET /api/v1/research/analysis/{analysis_id}",
+    "Authenticated live HTTP list/detail probes on 18001 returned 200 with degraded RW-03 envelopes, backend-owned metric_group_refs[]/metric_groups[], backend-authored comparative_summary, and links.linked_experiment_detail",
+    "Authenticated live HTTP missing-id probe on 18001 returned 404 OBJECT_NOT_FOUND",
+    "Missing auth returned 401 INVALID_TOKEN and viewer auth returned 403 INSUFFICIENT_ROLE on 18001",
+    "Workspace-backed unavailable probes on 18013 returned 200 list/detail envelopes with meta.surfaces.analysis_results = unavailable",
+    "Service-backed stale probes on 18014 returned 200 list/detail envelopes with meta.surfaces.analysis_results = stale",
+    "Sibling front targeted eslint passed for the reviewed RW-03 files",
+    "Sibling front production build passed: npm run build",
+    "git ls-remote --heads origin pkt-004-detail-fix now returns e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f, and git ls-tree on that publish commit returns the canonical request pair, docs/pantheon-feedback/RW-03-analyze/*, App/AppSidebar/WorkbenchBreadcrumb, shared bffClient state, Health.tsx, and the ResearchAnalyze UI files",
+    "The published request pair truthfully pins source_commit back to ef9b4d7b4f69ac829ea097fff0bef889d42e46dc"
+  ],
+  "followup_scope": [
+    "No additional Pantheon API or contract work is required for the current RW-03 Analyze packet",
+    "Deployed browser QA against /research/analyze and /research/analyze/:analysis_id remains deferred non-blocking follow-up",
+    "Capture a truthful direct stale-state RW-03 response once the active operator-bff on 18001 exposes one directly"
+  ]
+}

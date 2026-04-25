@@ -1,0 +1,35 @@
+{
+  "feature_id": "RW-05-artifact-compare",
+  "status": "delivered",
+  "backend_commit": "b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "bff_contract_version": "pantheon-bff@b1ee405d8c4e8096f73f1313092722a33ca3abff+working-tree",
+  "source_payload": ".coordination/requests/RW-05-artifact-compare-bff-gap.yaml",
+  "reported_source_commit": "6321613cff3c49b11a7619e0f9170217a27a7b17",
+  "verified_remote_branch": "origin/pkt-004-detail-fix",
+  "verified_remote_branch_commit": "1a1a42eebda033a1fbda4696df5b81271f5eed9b",
+  "endpoints": [
+    "GET /api/v1/artifacts",
+    "GET /api/v1/artifacts/{artifact_id}",
+    "GET /api/v1/artifacts/compare"
+  ],
+  "contract_paths": [
+    "docs/bff/RW-05-artifact-compare.md",
+    "docs/examples/RW-05-artifact-compare.json",
+    "docs/pantheon-handoffs/RW-05-artifact-compare/FRONTEND_CHANGE_SPEC.md",
+    "services/control-plane/bff/test_rw05_artifact_compare_contract.py"
+  ],
+  "closure_evidence": [
+    "Pantheon now publishes artifacts[].allowedActions.canCompare on GET /api/v1/artifacts using the same comparable-status rule as the detail and compare surfaces",
+    "python3 -m pytest -q services/control-plane/bff/test_rw05_artifact_compare_contract.py returned 6 passed",
+    "python3 -m json.tool docs/examples/RW-05-artifact-compare.json returned successfully after the list payload was republished with allowedActions.canCompare",
+    "The canonical front-owned bff-gap is published on origin/pkt-004-detail-fix at commit 1a1a42eebda033a1fbda4696df5b81271f5eed9b and points to reviewed UI commit 6321613cff3c49b11a7619e0f9170217a27a7b17",
+    "The canonical BFF contract, example payload, frontend handoff, backend-delivery record, and bff-gap resolution review now agree on the list-level compare-authority model"
+  ],
+  "required_follow_up": [
+    "sync the refreshed RW-05 response packet into front-ai-trading-system",
+    "verify the reviewed registry and compare selectors against list-level allowedActions.canCompare",
+    "republish a truthful ui-done and frontend-feedback pair from reviewed UI commit 6321613cff3c49b11a7619e0f9170217a27a7b17"
+  ]
+}

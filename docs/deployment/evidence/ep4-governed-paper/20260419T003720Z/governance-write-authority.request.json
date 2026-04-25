@@ -1,0 +1,6 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:18082/api/governance/write-authority",
+  "headers": {},
+  "body": null
+}

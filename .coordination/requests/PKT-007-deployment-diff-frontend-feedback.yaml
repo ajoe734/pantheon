@@ -1,0 +1,28 @@
+feature_id: PKT-007-deployment-diff
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 87340e96ce4247ccc177e8dff7579e804991b895
+workbench: governance-workbench
+screen_id: screen-governance-deployment-diff
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-007-deployment-diff
+feedback_path: docs/pantheon-feedback/PKT-007-deployment-diff/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-007-deployment-diff/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-007-deployment-diff/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-007-deployment-diff/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - .coordination/requests/PKT-007-deployment-diff-frontend-feedback.yaml
+  - .coordination/requests/PKT-007-deployment-diff-ui-done.yaml
+  - docs/pantheon-feedback/PKT-007-deployment-diff/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-007-deployment-diff/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-007-deployment-diff/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-007-deployment-diff/QA_STATUS.md
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/lib/bffClient.ts
+  - src/pages/governance/GovernanceDeploymentDiff.tsx
+  - src/pages/governance/types.ts
+pantheon_review_hint: review-ui
+summary: Governance Deployment Diff now reads the published PKT-007 BFF payload through the shared client, renders the diff directly from changes[], and preserves backend-shaped approval and escalation gating.

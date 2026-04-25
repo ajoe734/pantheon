@@ -1,0 +1,54 @@
+feature_id: CW-04-redteam-memo
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: ready
+pantheon_pr: null
+base_url: null
+workbench: consultation-workbench
+screen: redteam-memo
+screen_id: screen-consultation-redteam-memo
+ui_spec_path: docs/screens/CW-04-redteam-memo.md
+frontend_change_spec_path: docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/consult/memos
+- GET /api/v1/consult/memos/{memo_id}
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- fetch memo list from GET /api/v1/consult/memos with the published status, page_token,
+  and page_size semantics only
+- fetch memo detail from GET /api/v1/consult/memos/{memo_id} only
+- navigate to detail using route_href from list rows; do not construct memo URLs from
+  ids
+- render the mapping panel from session_to_memo_mapping exactly as supplied
+- resolve evidence navigation only from evidence_refs[].link; do not construct links
+  from id or artifact_ref
+- render freshness from meta.staleness and surface health from meta.surfaces.redteam_memo.state
+  without conflating them
+- show the governance CTA only when allowedActions.canInitiateGovernanceReview is
+  true
+- keep recommendations[] as plain ordered strings; do not add severity or workflow
+  columns
+- emit a bff-gap handoff if any required field is absent
+required_feedback:
+- docs/pantheon-feedback/CW-04-redteam-memo/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/CW-04-redteam-memo/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/CW-04-redteam-memo/UI_DECISIONS.md
+- docs/pantheon-feedback/CW-04-redteam-memo/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/CW-04-redteam-memo-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/CW-04-redteam-memo.md
+  ui_spec_path: docs/screens/CW-04-redteam-memo.md
+  frontend_change_spec_path: docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/CW-04-redteam-memo.json
+  handoff_bundle_dir: docs/pantheon-handoffs/CW-04-redteam-memo
+gap_handoff_path: .coordination/requests/CW-04-redteam-memo-bff-gap.yaml
+gap_handoff_template: .coordination/requests/CW-04-redteam-memo-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/CW-04-redteam-memo-ui-done.yaml
+completion_handoff_template: .coordination/requests/CW-04-redteam-memo-ui-done.example.yaml

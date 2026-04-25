@@ -1,0 +1,61 @@
+feature_id: PKT-007-deployment-diff
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: followup-required
+cycle: 2
+pantheon_pr: null
+base_url: null
+workbench: governance-workbench
+screen: governance-deployment-diff
+screen_id: screen-governance-deployment-diff
+ui_spec_path: docs/screens/PKT-007-deployment-diff.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-007-deployment-diff/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/deployment-diff/{plan_id}
+- POST /api/v1/operator/commands
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+- publish ui-done and frontend-feedback from a transport-replayable front-repo
+  commit that contains the returned handoff payloads
+- do not leave GovernanceDeploymentDiff.tsx or the PKT-007 feedback bundle only
+  in the working tree when republishing this cycle
+acceptance:
+- build the Governance Deployment Diff screen with plan identity header, change summary
+  rail, and field diff table
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- do not construct the diff from raw deployment plan fields; all diff entries must
+  come from changes[] in the BFF response
+- render all CTAs from backend-shaped allowedActions only
+- render risk tier labels as supplied by the BFF; do not reclassify
+- disable the approval CTA and show unavailable-data message when meta.surfaces.deployment_diff
+  is unavailable
+- republished frontend-feedback and ui-done payloads truthfully reference the
+  same Git-visible front commit that contains the PKT-007 request pair,
+  feedback bundle, and governance deployment diff UI files
+required_feedback:
+- docs/pantheon-feedback/PKT-007-deployment-diff/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-007-deployment-diff/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-007-deployment-diff/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-007-deployment-diff/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-007-deployment-diff-contract-ready.yaml
+- .coordination/responses/PKT-007-deployment-diff-backend-delivery.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-007-deployment-diff.md
+  ui_spec_path: docs/screens/PKT-007-deployment-diff.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-007-deployment-diff/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-007-deployment-diff.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-007-deployment-diff
+  backend_delivery_path: .coordination/responses/PKT-007-deployment-diff-backend-delivery.yaml
+gap_handoff_path: .coordination/requests/PKT-007-deployment-diff-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-007-deployment-diff-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-007-deployment-diff-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-007-deployment-diff-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-007-deployment-diff-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/PKT-007-deployment-diff-review.md

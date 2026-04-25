@@ -1,0 +1,38 @@
+{
+  "feature_id": "PKT-002-incident-home",
+  "status": "loop-complete",
+  "backend_commit": "b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "verified_runtime_ref": "pantheon-head@b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "live_http_runtime_ref": "http://127.0.0.1:18001",
+  "bff_contract_version": "pantheon-bff@b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "source_payload": ".coordination/requests/PKT-002-incident-home-ui-done.yaml",
+  "reported_source_commit": "82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9",
+  "request_pair_commit": "1a1a42eebda033a1fbda4696df5b81271f5eed9b",
+  "verified_front_workspace_head": "1a1a42eebda033a1fbda4696df5b81271f5eed9b",
+  "verified_remote_publish_commit": "1a1a42eebda033a1fbda4696df5b81271f5eed9b",
+  "review_file": ".coordination/reviews/PKT-002-incident-home-review.md",
+  "frontend_feedback_response": ".coordination/responses/PKT-002-incident-home-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/incidents",
+    "GET /api/v1/kill-switch/status"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-002-incident-home.md",
+    "docs/examples/PKT-002-incident-home.json",
+    "docs/screens/PKT-002-incident-home.md",
+    "docs/pantheon-handoffs/PKT-002-incident-home/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "closure_evidence": [
+    "Reviewed source commit 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 refreshes the PKT-002 feedback bundle so its route narration and API-gap state are truthful again, and fixes Incident Home row navigation to /operator/incidents/${incident_id}.",
+    "Current publish commit 1a1a42eebda033a1fbda4696df5b81271f5eed9b on origin/pkt-004-detail-fix republishes the canonical PKT-002 request pair and points both request bodies back to source commit 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9.",
+    "git diff --name-only 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 1a1a42eebda033a1fbda4696df5b81271f5eed9b -- over the reviewed PKT-002 scope lists only the two request files.",
+    "Sibling front verification passed: ./node_modules/.bin/tsc --noEmit --pretty false, targeted npx eslint over the reviewed PKT-002 files, npx --yes tsx src/components/GlobalDegradationBanner.test.tsx, and npm run build.",
+    "Pantheon's incident-home acceptance slice passed locally with 5 passed and 15 deselected.",
+    "The active local operator-bff runtime advertises GET /api/v1/incidents and GET /api/v1/kill-switch/status in /openapi.json."
+  ],
+  "followup_scope": [
+    "Live browser QA against a running Pantheon BFF remains deferred and non-blocking.",
+    "If a future live payload diverges from the accepted split-read surface shape, publish a fresh bff-gap or needs-runtime handoff instead of widening the UI contract locally."
+  ]
+}

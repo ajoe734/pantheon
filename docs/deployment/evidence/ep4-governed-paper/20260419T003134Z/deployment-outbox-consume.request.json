@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8006/api/deployment/outbox/deployment-saga-plan-ep4-48a69496-evt-0001/consume",
+  "headers": {},
+  "body": {
+    "consumer_name": "ep4-governed-acceptance"
+  }
+}

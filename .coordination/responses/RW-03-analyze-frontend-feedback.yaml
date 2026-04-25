@@ -1,0 +1,206 @@
+feature_id: RW-03-analyze
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-21T20:55:05Z'
+reviewed_commit: 684de90fa27f493238f908e5b3efe1f1cf543cab
+ui_done_source_commit: ef9b4d7b4f69ac829ea097fff0bef889d42e46dc
+frontend_feedback_source_commit: ef9b4d7b4f69ac829ea097fff0bef889d42e46dc
+verified_front_workspace_head: e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f
+verified_remote_publish_commit: e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f
+feedback_bundle_transport: >-
+  Reviewed UI implementation commit ef9b4d7b4f69ac829ea097fff0bef889d42e46dc
+  resolves to a tree that contains ResearchAnalyze.tsx,
+  ResearchAnalyzeDetail.tsx, src/pages/research/types.ts,
+  src/lib/bffClient.ts, src/App.tsx, src/components/AppSidebar.tsx,
+  src/components/WorkbenchBreadcrumb.tsx, and src/pages/health/Health.tsx.
+  Front publish commit e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f on
+  origin/pkt-004-detail-fix contains the canonical request pair,
+  docs/pantheon-feedback/RW-03-analyze bundle, and the same reviewed UI files,
+  with both request bodies pinned back to that implementation commit.
+screen: research-analyze
+workbench: research-workbench
+screen_id: screen-research-analyze
+
+disposition: close
+review_result: replay-clean-and-contract-aligned
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed the returned RW-03 ui-done and frontend-feedback bundle
+  against the published Research Analyze contract, canonical example payload,
+  sibling front implementation, and the live operator-bff runtime. The replay
+  chain is now truthful: origin/pkt-004-detail-fix resolves to
+  e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f, that publish commit contains the
+  canonical request pair and feedback bundle, and both request bodies point to
+  implementation commit ef9b4d7b4f69ac829ea097fff0bef889d42e46dc. The reviewed
+  UI keeps list queries limited to ticket_id, experiment_id, status,
+  date_range, page_token, and page_size through rw03AnalyzeApi.list(); renders
+  backend-owned summary rows, metric_group_refs, and pagination without local
+  grouping or diff logic; and renders detail summary, metric_groups, and
+  comparative_summary directly from rw03AnalyzeApi.detail() while preserving
+  backend order and distinguishing 404 OBJECT_NOT_FOUND from route-not-live
+  404s. Pantheon reran
+  `python3 -m pytest -q services/control-plane/bff/test_rw03_analyze_contract.py`
+  (`4 passed`), confirmed live 18001 route publication plus degraded
+  list/detail envelopes and 404 OBJECT_NOT_FOUND, reran sibling-front targeted
+  eslint, and reran `npm run build` successfully. No new Pantheon API gap
+  remains in this loop.
+
+acceptance_verified:
+  - criterion: mount /research/analyze and /research/analyze/:analysis_id in the reviewed front router
+    status: pass
+    note: >-
+      App.tsx mounts both routes, AppSidebar exposes the Analyze nav entry,
+      and WorkbenchBreadcrumb maps /research/analyze to Research Workbench /
+      Analyze in the current remote-visible front tree.
+  - criterion: route list reads through rw03AnalyzeApi.list using only published query params and backend page_token/page_size
+    status: pass
+    note: >-
+      ResearchAnalyze derives ticket_id, experiment_id, status, date_range,
+      page_token, and page_size from URL search params only and forwards them
+      verbatim through rw03AnalyzeApi.list().
+  - criterion: render backend-owned summary rows, metric_group_refs, ordering, and drilldown links without local synthesis
+    status: pass
+    note: >-
+      ResearchAnalyze renders data[] in returned order, displays
+      metric_group_refs[] as informational chips only, and navigates through
+      links.workbench_detail plus links.linked_ticket_detail without alternate
+      path construction.
+  - criterion: render detail summary, metric_groups, and comparative_summary from the single detail payload only
+    status: pass
+    note: >-
+      ResearchAnalyzeDetail calls rw03AnalyzeApi.detail() once per analysis_id
+      and maps summary, metric_groups, comparison highlights, and
+      interpretation text directly from the returned payload without
+      client-side regrouping or diff assembly.
+  - criterion: distinguish route-not-live from OBJECT_NOT_FOUND on detail 404s
+    status: pass
+    note: >-
+      ResearchAnalyzeDetail treats 404 OBJECT_NOT_FOUND as the explicit
+      missing-analysis branch and reserves generic 404 handling for the
+      route-not-live placeholder.
+  - criterion: keep linked_experiment_detail truthful to the current mounted owner route
+    status: pass
+    note: >-
+      Live detail response on 18001 returned linked_experiment_detail
+      /research/experiments/exp-20260419-012, and the current front router
+      mounts /research/experiments/:experiment_id.
+  - criterion: Pantheon live runtime advertises the RW-03 route family and returns the published auth-gated field shape
+    status: pass
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_rw03_analyze_contract.py`
+      returned `4 passed`, live OpenAPI on 18001 listed both routes,
+      operator-auth list/detail returned degraded contract-shaped payloads,
+      missing auth returned 401 INVALID_TOKEN, viewer auth returned 403
+      INSUFFICIENT_ROLE, and missing detail returned 404 OBJECT_NOT_FOUND.
+  - criterion: unavailable and stale RW-03 surface handling remain truthfully exercised in Pantheon-controlled probes
+    status: pass
+    note: >-
+      `.coordination/requests/RW-03-analyze-needs-runtime.yaml` records a
+      workspace-backed unavailable HTTP probe on 18013 and a service-backed
+      stale HTTP probe on 18014, while the shared 18001 runtime remains
+      route-live and degraded for the same contract slice.
+  - criterion: targeted eslint and production build pass for the reviewed RW-03 slice
+    status: pass
+    note: >-
+      Pantheon reran targeted `npx eslint` on the RW-03 files and
+      `npm run build` in ../front-ai-trading-system on 2026-04-21; both
+      passed, with only the existing non-blocking Vite chunk-size warning and
+      Browserslist age notice during build.
+  - criterion: publish ui-done and frontend-feedback from a truthful Git-visible request pair or transport chain
+    status: pass
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` now resolves to
+      e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f, `git ls-tree` on
+      ef9b4d7b4f69ac829ea097fff0bef889d42e46dc returns the reviewed RW-03 UI
+      files, and `git ls-tree` on
+      e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f returns the canonical request
+      pair, docs/pantheon-feedback/RW-03-analyze/*, and the same reviewed UI
+      files in Git-visible history.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the current remote-visible request-pair publish commit
+    path: ../front-ai-trading-system
+    note: >-
+      `git ls-remote --heads origin pkt-004-detail-fix` now resolves to
+      e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f, and
+      `git branch -r --contains e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f`
+      returns origin/pkt-004-detail-fix.
+  - action: verify the reviewed UI implementation commit contains the full RW-03 file set
+    path: ../front-ai-trading-system
+    note: >-
+      `git ls-tree -r --name-only
+      ef9b4d7b4f69ac829ea097fff0bef889d42e46dc -- ...` returns
+      src/pages/research/ResearchAnalyze.tsx,
+      src/pages/research/ResearchAnalyzeDetail.tsx,
+      src/pages/research/types.ts, src/lib/bffClient.ts, src/App.tsx,
+      src/components/AppSidebar.tsx,
+      src/components/WorkbenchBreadcrumb.tsx, and src/pages/health/Health.tsx.
+  - action: verify the publish commit contains the canonical request pair and feedback bundle
+    path: ../front-ai-trading-system/.coordination/requests/RW-03-analyze-ui-done.yaml
+    note: >-
+      `git ls-tree -r --name-only
+      e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f -- ...` returns the canonical
+      request pair, docs/pantheon-feedback/RW-03-analyze/*, and the same
+      reviewed UI files.
+  - action: verify the RW-03 BFF contract slice
+    path: services/control-plane/bff/test_rw03_analyze_contract.py
+    note: >-
+      `python3 -m pytest -q services/control-plane/bff/test_rw03_analyze_contract.py`
+      returned `4 passed`.
+  - action: validate live HTTP route publication and error handling on the active runtime
+    path: http://127.0.0.1:18001
+    note: >-
+      Live OpenAPI on 18001 lists both RW-03 routes; operator-auth list/detail
+      returned degraded contract-shaped payloads; missing auth returned
+      401 INVALID_TOKEN; viewer auth returned 403 INSUFFICIENT_ROLE; and
+      missing detail returned 404 OBJECT_NOT_FOUND.
+  - action: re-run targeted front validation on the sibling workspace
+    path: ../front-ai-trading-system
+    note: >-
+      Pantheon reran targeted `npx eslint` on the RW-03 files and
+      `npm run build`; both passed, with only the existing non-blocking Vite
+      chunk-size warning and Browserslist age notice during build.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed browser QA remains outstanding for /research/analyze and
+      /research/analyze/:analysis_id, including linked_experiment_detail
+      navigation in the deployed environment.
+  - type: runtime
+    status: deferred_non_blocking
+    note: >-
+      Direct active-runtime stale-state capture on http://127.0.0.1:18001
+      remains deferred until the shared runtime exposes one directly; current
+      closeout evidence includes truthful service-backed stale envelopes on
+      18014 and workspace-backed unavailable envelopes on 18013.
+
+required_front_repo_updates: []
+
+required_pantheon_updates: []
+
+loop_close_condition: >-
+  Met. Reviewed UI implementation commit
+  ef9b4d7b4f69ac829ea097fff0bef889d42e46dc contains the advertised RW-03 file
+  set, and origin/pkt-004-detail-fix now points at
+  e9f93f5fab05ede7fb56bddb33e171dfee0f9f6f, which republishes the canonical
+  request pair and feedback bundle with truthful source_commit metadata back to
+  that implementation commit. The Pantheon contract slice passes and the live
+  18001 runtime advertises the RW-03 route family with truthful degraded and
+  OBJECT_NOT_FOUND behavior.
+
+risk_note: >-
+  Remaining risk is post-close browser/runtime follow-up only. The replay chain
+  is now truthful, the Pantheon contract slice passes, and the live HTTP route
+  family is advertised, but this closeout did not run deployed browser QA and
+  the shared 18001 runtime still does not expose a direct stale envelope.
+
+lovable_ui_task_status: closed
+next_action: none
+delivery_artifact_ref: .coordination/responses/RW-03-analyze-backend-delivery.yaml
+review_findings_ref: .coordination/reviews/RW-03-analyze-review.md

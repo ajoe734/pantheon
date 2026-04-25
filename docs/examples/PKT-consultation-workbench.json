@@ -1,0 +1,131 @@
+{
+  "workbench_id": "consultation-workbench",
+  "label": "Consultation Workbench",
+  "route_href": "/consultation",
+  "overall_status": "partial_ready",
+  "headline": "CW-01 through CW-04 are live in the BFF, and both CW-02 and CW-04 frontend packets are published",
+  "summary": "CW-01 request create/list/detail/cancel routes are live. CW-02 transcript route is live with ordered TranscriptEvent stream, actor identity, degradation semantics, and a published frontend activation packet. CW-03 committee list/detail and sponsor-decision routes are fully live. CW-04 memo list/detail routes are live with backend-owned mapping, evidence links, governance handoff gating, and a published module-local frontend handoff bundle. The remaining work is UI activation and truthful loop closeout, not backend implementation.",
+  "packet_family": {
+    "family_id": "CW-008",
+    "path": "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
+    "lovable_readiness": "partial_ready",
+    "note": "All four consultation BFF modules are live. CW-02 and CW-04 both have published module-local frontend handoff bundles."
+  },
+  "module_counts": {
+    "total": 4,
+    "ready": 4,
+    "not_ready": 0
+  },
+  "modules": [
+    {
+      "module_id": "CW-01",
+      "label": "Consult Request",
+      "status": "ready",
+      "wave_order": 1,
+      "summary": "Request create/list/detail/cancel routes are live. Request-to-session lifecycle and linked_session_id contract are implemented.",
+      "live_routes": [
+        "POST /api/v1/consult/requests",
+        "GET /api/v1/consult/requests",
+        "GET /api/v1/consult/requests/{request_id}",
+        "POST /api/v1/consult/requests/{request_id}/cancel"
+      ],
+      "next_gate": "CW-01 is live. CW-02 (Debate Transcript) may proceed.",
+      "upstream_dependencies": []
+    },
+    {
+      "module_id": "CW-02",
+      "label": "Debate Transcript",
+      "status": "ready",
+      "wave_order": 2,
+      "summary": "Transcript route is live. Ordered TranscriptEvent stream with actor identity, sequence_no ordering, from_sequence_no filtering, and degradation semantics are implemented.",
+      "live_routes": [
+        "GET /api/v1/consultations/{session_id}/transcript"
+      ],
+      "next_gate": "Activate the CW-02 transcript UI against the published frontend packet; CW-03 and CW-04 may continue consuming the live transcript truth.",
+      "upstream_dependencies": [
+        "CW-01"
+      ]
+    },
+    {
+      "module_id": "CW-03",
+      "label": "Committee Board",
+      "status": "ready",
+      "wave_order": 3,
+      "summary": "Committee list/detail routes, sponsor-decision authority, and transcript dependency (CW-02) are all live. Full production handoff is unblocked.",
+      "live_routes": [
+        "GET /api/v1/committees",
+        "GET /api/v1/committees/{committee_id}",
+        "POST /api/v1/operator/commands (RecordSponsorDecision)"
+      ],
+      "next_gate": "CW-03 is fully live. Proceed with CW-04 Red-team Memo implementation.",
+      "upstream_dependencies": [
+        "CW-01",
+        "CW-02"
+      ]
+    },
+    {
+      "module_id": "CW-04",
+      "label": "Red-team Memo",
+      "status": "ready",
+      "wave_order": 4,
+      "summary": "Memo list/detail routes are live. Backend-owned mapping, evidence links, degradation semantics, and governance handoff authority are implemented.",
+      "live_routes": [
+        "GET /api/v1/consult/memos",
+        "GET /api/v1/consult/memos/{memo_id}"
+      ],
+      "next_gate": "Activate the CW-04 memo UI against the published frontend handoff packet and preserve backend-owned mapping, evidence, and governance semantics.",
+      "upstream_dependencies": [
+        "CW-01",
+        "CW-02"
+      ]
+    }
+  ],
+  "support_refs": [
+    {
+      "ref_id": "consultation-surface-contract",
+      "label": "Consultation Surface Contract",
+      "ref_type": "document",
+      "value": "services/control-plane/bff/CONSULTATION_SURFACE_CONTRACT.md",
+      "note": "Existing CS-01 to CS-06 persona-side read surfaces; not a workbench IA."
+    },
+    {
+      "ref_id": "persona-consultations",
+      "label": "Persona consultation list",
+      "ref_type": "endpoint",
+      "value": "/api/v1/personas/{persona_id}/consultations",
+      "note": "Existing persona-scoped consultation list and detail support."
+    },
+    {
+      "ref_id": "persona-consult-policy",
+      "label": "Persona consult policy",
+      "ref_type": "endpoint",
+      "value": "/api/v1/personas/{persona_id}/consult-policy",
+      "note": "Existing consult-policy read surface used by persona-side consultation flows."
+    },
+    {
+      "ref_id": "persona-runtime-model",
+      "label": "Persona Runtime Model",
+      "ref_type": "document",
+      "value": "PERSONA_RUNTIME_MODEL.md",
+      "note": "Canonical source for consultation roles, session metadata, and ConsultPolicy fields."
+    }
+  ],
+  "next_steps": [
+    "Activate the CW-02 transcript UI against the published frontend packet now that the route family is live.",
+    "Activate the CW-04 memo UI against the published frontend packet and keep governance CTA authority backend-owned.",
+    "Keep this overview read-only; do not invent request forms or memo state in the browser."
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-22T00:00:00Z",
+    "surfaces": {
+      "overview": {
+        "status": "ok",
+        "source": "bff_static"
+      },
+      "packet_family": {
+        "status": "ok",
+        "source": "canonical"
+      }
+    }
+  }
+}

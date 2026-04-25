@@ -1,0 +1,27 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8006/api/deployment/plans/plan-ep4-b3265ce8/dispatch",
+  "headers": {},
+  "body": {
+    "trace_id": "986938ad-4e7f-4270-88a1-3c0caae91bb2",
+    "workflow_id": "pantheon.ep4.governed-paper",
+    "source_task_id": "OSS-004C",
+    "registry_entry": {
+      "registry_id": "reg-ep4-c1be4993",
+      "artifact_type": "model_artifact",
+      "strategy_id": "strategy-paper",
+      "version": "1.2.0",
+      "artifact_state": "approved",
+      "checksum": "sha256:ep4-b1356ac8",
+      "approved_at": "2026-04-19T00:36:58Z",
+      "lineage": {
+        "source_run_ids": [
+          "ep4-run-b1356ac8"
+        ]
+      },
+      "deployment_summary": {
+        "current_stage": "none"
+      }
+    }
+  }
+}

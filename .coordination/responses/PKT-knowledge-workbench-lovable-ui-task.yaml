@@ -1,0 +1,44 @@
+feature_id: PKT-knowledge-workbench
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: loop-complete
+pantheon_pr: null
+base_url: null
+workbench: knowledge-workbench
+screen: knowledge-workbench-overview
+screen_id: screen-knowledge-workbench-overview
+ui_spec_path: docs/screens/PKT-knowledge-workbench.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-knowledge-workbench/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/workbench/knowledge
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+acceptance:
+- build the Knowledge Workbench landing page from the single overview route
+- render module order, support refs, and next steps only from backend-owned payload
+  fields
+- do not invent registry, evidence-browser, or strategy-spec compare UI in this packet
+required_feedback:
+- docs/pantheon-feedback/PKT-knowledge-workbench/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-knowledge-workbench/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-knowledge-workbench/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-knowledge-workbench/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-knowledge-workbench-contract-ready.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-knowledge-workbench.md
+  ui_spec_path: docs/screens/PKT-knowledge-workbench.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-knowledge-workbench/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-knowledge-workbench.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-knowledge-workbench
+gap_handoff_path: .coordination/requests/PKT-knowledge-workbench-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-knowledge-workbench-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-knowledge-workbench-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-knowledge-workbench-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-knowledge-workbench-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/PKT-knowledge-workbench-review.md

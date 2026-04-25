@@ -1,0 +1,6 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:18082/api/governance/approvals/latest-approved?target_type=registry_entry&target_id=reg-ep4-c1be4993",
+  "headers": {},
+  "body": null
+}

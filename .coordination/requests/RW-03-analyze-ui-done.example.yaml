@@ -1,0 +1,32 @@
+feature_id: RW-03-analyze
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 1111111111111111111111111111111111111111
+screen: research-analyze
+blocking: false
+
+summary: Research Analyze UI is implemented and ready for Pantheon follow-up.
+
+changed_files:
+  - src/pages/research/ResearchAnalyzeList.tsx
+  - src/pages/research/ResearchAnalyzeDetail.tsx
+  - src/pages/research/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+
+routes:
+  - /research/analyze
+  - /research/analyze/:analysis_id
+
+follow_up_requested:
+  - review the analysis list and detail UI against the latest Pantheon contract and example payload
+  - validate metric_groups[] rendering order against backend-supplied grouping
+  - validate comparative_summary rendering against the single detail payload
+  - confirm degraded and unavailable behavior against meta.surfaces.analysis_results
+  - run the next integration or acceptance step
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

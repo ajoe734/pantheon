@@ -1,0 +1,14 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:18082/api/governance/approvals",
+  "headers": {},
+  "body": {
+    "decision_id": "apv-ep4-c95034c6",
+    "target_type": "registry_entry",
+    "target_id": "reg-ep4-24cb8960",
+    "target_version": "1.2.0",
+    "risk_level": "low",
+    "capital_pool_id": "pool-ep4-5ef928b1",
+    "persona_id": "persona-paper-ops"
+  }
+}

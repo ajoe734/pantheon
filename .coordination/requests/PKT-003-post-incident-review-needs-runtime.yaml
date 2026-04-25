@@ -1,0 +1,33 @@
+feature_id: PKT-003-post-incident-review
+type: needs-runtime
+source_repo: pantheon
+target_repo: ajoe734/front-ai-trading-system
+screen: post-incident-review-console
+status: pending
+worker_kind: runtime-worker
+requested_by: front-sync-worker
+created_at: "2026-04-24T09:21:40Z"
+summary: >-
+  Pantheon re-review of the replay-clean PKT-003 Post-Incident Review return
+  confirms the front implementation at source commit
+  c9b03d7ba1439db4f956c56106925675a98f8512 is contract-aligned and
+  GitHub-visible through origin/pkt-004-detail-fix at publish commit
+  1df4a64047055ca3ea802d61c1df78211884aee2. The remaining Pantheon-owned
+  blocker is live runtime data availability for post-incident validation:
+  `/openapi.json` on `http://127.0.0.1:18001` advertises
+  `GET /api/v1/incidents`, `GET /api/v1/incidents/stream`, and
+  `GET /api/v1/operator/post-incident-review/{incident_id}`, but the live
+  resolved-incident list currently returns `items[] = []` and detail probes
+  for the seeded incident ids `inc-20260409-002` and `inc-20260410-001`
+  return `404 OBJECT_NOT_FOUND`. That prevents end-to-end validation of the
+  selected detail surface and PKT-005 SSE follow-up path on a live Pantheon
+  BFF without inventing local shadow data.
+next_step: >-
+  Refresh the active operator-bff runtime or its backing incident and
+  postmortem dataset so `http://127.0.0.1:18001` exposes at least one
+  resolved incident and a matching post-incident detail payload, then rerun
+  live operator-auth probes for
+  `GET /api/v1/incidents?status=resolved`,
+  `GET /api/v1/operator/post-incident-review/{incident_id}?snapshot=preferred`,
+  and `GET /api/v1/incidents/stream`. After that, hand control back to
+  Pantheon review / front-sync so PKT-003 can close from live-route truth.

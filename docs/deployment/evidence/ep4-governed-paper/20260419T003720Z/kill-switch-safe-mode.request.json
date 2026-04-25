@@ -1,0 +1,8 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:28081/api/kill-switch/pool-ep4-92a5eb2c/safe-mode",
+  "headers": {
+    "Authorization": "Bearer runtime-control-internal"
+  },
+  "body": null
+}

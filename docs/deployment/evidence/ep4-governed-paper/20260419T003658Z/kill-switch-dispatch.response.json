@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "payload": {
+    "error": {
+      "code": "KILL_SWITCH_ERROR",
+      "message": "Invalid kill-switch trigger: Unknown trigger reason: 'ep4_governed_acceptance_incident'. Must be one of: ['broker_position_mismatch_critical', 'canary_underperformance', 'drawdown_hard_breach', 'drift_above_warning_threshold', 'loader_anomaly_no_breach', 'operator_emergency_stop', 'repeated_reject_rate_increase', 'runtime_unexpected_order_pattern', 'severity_1_incident', 'slippage_deterioration', 'unauthorized_artifact_binding_mismatch']"
+    }
+  }
+}

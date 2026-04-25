@@ -1,0 +1,42 @@
+feature_id: PKT-007-deployment-diff
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 87340e96ce4247ccc177e8dff7579e804991b895
+screen: governance-deployment-diff
+blocking: false
+status: acknowledged
+pantheon_disposition: blocked
+acknowledged_at: "2026-04-18T06:00:00Z"
+acknowledged_by: Codex2
+review_file: .coordination/reviews/PKT-007-deployment-diff-review.md
+resolution_summary: >-
+  Pantheon reviewed the returned UI cycle and confirmed the screen is
+  statically aligned on the published PKT-007 contract, but the loop cannot
+  close yet. The current BFF still lacks the contracted deployment-diff read
+  route and EscalateDiff command support, and the advertised front
+  source_commit does not replay the reviewed publication set.
+
+summary: Governance Deployment Diff UI is implemented against the published PKT-007 contract and ready for Pantheon follow-up.
+
+changed_files:
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/lib/bffClient.ts
+  - src/pages/governance/GovernanceDeploymentDiff.tsx
+  - src/pages/governance/types.ts
+  - .coordination/requests/PKT-007-deployment-diff-frontend-feedback.yaml
+  - docs/pantheon-feedback/PKT-007-deployment-diff/LOVABLE_CHANGE_FEEDBACK.md
+  - docs/pantheon-feedback/PKT-007-deployment-diff/API_GAP_REQUESTS.json
+  - docs/pantheon-feedback/PKT-007-deployment-diff/UI_DECISIONS.md
+  - docs/pantheon-feedback/PKT-007-deployment-diff/QA_STATUS.md
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - verify that the paired frontend-feedback bundle is mirrored back into Pantheon
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

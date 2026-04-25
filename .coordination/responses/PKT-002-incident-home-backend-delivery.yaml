@@ -1,0 +1,31 @@
+feature_id: PKT-002-incident-home
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: screen-operator-incident-home
+status: delivered
+backend_commit: b1ee405d8c4e8096f73f1313092722a33ca3abff
+verified_runtime_ref: pantheon-head@b1ee405d8c4e8096f73f1313092722a33ca3abff
+live_http_runtime_ref: http://127.0.0.1:18001
+bff_contract_version: pantheon-bff@b1ee405d8c4e8096f73f1313092722a33ca3abff
+delivery_note_path: docs/pantheon-delivery/PKT-002-incident-home/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-002-incident-home/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-002 Incident Home cycle against the
+  published split-read contract, mirrored request pair, refreshed feedback
+  bundle, sibling front implementation, and the current Pantheon acceptance
+  slice. No additional Pantheon or front-end implementation follow-up is
+  required for the current packet scope: the screen still reads only
+  GET /api/v1/incidents and GET /api/v1/kill-switch/status, the feedback
+  bundle is truthful again, row navigation now stays on
+  /operator/incidents/${incident_id}, and the replay-clean request pair is
+  published on origin/pkt-004-detail-fix through reviewed source commit
+  82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 and current publish commit
+  1a1a42eebda033a1fbda4696df5b81271f5eed9b. Remaining work is limited to
+  deferred non-blocking live browser QA.
+source_payload: .coordination/requests/PKT-002-incident-home-ui-done.yaml
+reported_source_commit: 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9
+request_pair_commit: 1a1a42eebda033a1fbda4696df5b81271f5eed9b
+verified_front_workspace_head: 1a1a42eebda033a1fbda4696df5b81271f5eed9b
+verified_remote_publish_commit: 1a1a42eebda033a1fbda4696df5b81271f5eed9b
+pantheon_api_gap: false

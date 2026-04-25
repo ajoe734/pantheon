@@ -1,0 +1,25 @@
+feature_id: PKT-003-evolution-center
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 8314ef67016a15ced808e4aded16cc0686de25a1
+screen: evolution-center
+blocking: false
+
+summary: Evolution Center UI is implemented against the published PKT-003 BFF contract and ready for Pantheon follow-up.
+
+changed_files:
+  - src/pages/evolution/Center.tsx
+  - src/pages/evolution/EvolutionCenter.tsx
+  - src/pages/evolution/EvolutionDecisionDetail.tsx
+  - src/pages/evolution/types.ts
+
+follow_up_requested:
+  - review the UI against the latest Pantheon contract and example payload
+  - run the next integration / acceptance step
+  - publish the next response packet if Pantheon follow-up is required
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts

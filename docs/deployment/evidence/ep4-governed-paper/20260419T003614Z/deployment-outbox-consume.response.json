@@ -1,0 +1,15 @@
+{
+  "status": 200,
+  "payload": {
+    "consumer_name": "ep4-governed-acceptance",
+    "event_id": "deployment-saga-plan-ep4-4291de2e-evt-0001",
+    "idempotency_key": "deployment-saga-plan-ep4-4291de2e:1:runtime.binding.requested",
+    "aggregate_type": "deployment_saga",
+    "aggregate_id": "deployment-saga-plan-ep4-4291de2e",
+    "sequence_no": 1,
+    "trace_id": "db150ff6-521f-440d-967d-cb62ccfcc97b",
+    "status": "applied",
+    "processed_at": "2026-04-19T00:36:15Z",
+    "notes": null
+  }
+}

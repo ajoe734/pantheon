@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "payload": {
+    "detail": "Event failed validation; see DLQ for details",
+    "status": "rejected"
+  }
+}

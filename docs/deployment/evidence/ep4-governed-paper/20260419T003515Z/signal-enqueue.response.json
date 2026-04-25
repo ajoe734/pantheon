@@ -1,0 +1,19 @@
+{
+  "queue_length_after_rpush": 1,
+  "signal_payload": {
+    "signal_id": "signal-ep4-cbb347bf",
+    "version": "1.0",
+    "strategy_id": "strategy-paper",
+    "timestamp": "2026-04-19T00:35:16Z",
+    "symbol": "AAPL.US",
+    "action": "BUY",
+    "direction": "LONG",
+    "quantity": 10,
+    "quantity_type": "SHARES",
+    "metadata": {
+      "source_worker": "oss-004c-ep4-harness",
+      "confidence_score": 1.0
+    }
+  },
+  "signal_queue_key": "pantheon:signals:pending"
+}

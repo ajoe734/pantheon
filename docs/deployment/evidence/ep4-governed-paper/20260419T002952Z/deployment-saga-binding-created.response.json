@@ -1,0 +1,29 @@
+{
+  "status": 200,
+  "payload": {
+    "owner_service": "runtime-manager-svc",
+    "event": {
+      "event_id": "deployment-saga-plan-ep4-b6db1fc9-evt-0002",
+      "event_type": "runtime.load.requested",
+      "aggregate_type": "deployment_saga",
+      "aggregate_id": "deployment-saga-plan-ep4-b6db1fc9",
+      "sequence_no": 2,
+      "causal_parent_id": "deployment-saga-plan-ep4-b6db1fc9-evt-0001",
+      "event_time": "2026-04-19T00:29:53Z",
+      "emitted_at": "2026-04-19T00:29:53Z",
+      "trace_id": "8725fa9a-a429-4adc-9cc4-1aa432bc5785",
+      "idempotency_key": "deployment-saga-plan-ep4-b6db1fc9:2:runtime.load.requested",
+      "payload": {
+        "plan_id": "plan-ep4-b6db1fc9",
+        "binding_id": "rb-9eda862f44824da89b68c1278c2baf6d",
+        "runtime_id": "paper-runtime-001",
+        "target_stage": "paper",
+        "runtime_action": "deploy_new_binding"
+      }
+    },
+    "status": "pending",
+    "delivery_attempts": 0,
+    "published_at": null,
+    "last_error": null
+  }
+}

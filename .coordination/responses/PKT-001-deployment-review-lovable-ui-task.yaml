@@ -1,0 +1,67 @@
+feature_id: PKT-001-deployment-review
+type: lovable-ui-task
+project: ajoe734/front-ai-trading-system
+status: followup-required
+cycle: 2
+pantheon_pr: null
+base_url: null
+workbench: operator-console
+screen: deployment-review-console
+screen_id: screen-operator-deployment-review
+ui_spec_path: docs/screens/PKT-001-deployment-review-console.md
+frontend_change_spec_path: docs/pantheon-handoffs/PKT-001-deployment-review/FRONTEND_CHANGE_SPEC.md
+allowed_endpoints:
+- GET /api/v1/operator/deployment-plans
+- GET /api/v1/operator/deployment-review/{plan_id}
+- POST /api/v1/operator/commands
+constraints:
+- use existing bff client only
+- do not add raw fetch in components
+- do not import demo providers
+- if any required field is missing, emit a bff-gap handoff instead of mocking
+- publish ui-done and frontend-feedback from one Git-visible front commit for
+  the next PKT-001 cycle; do not leave the feedback bundle working-tree-only
+- do not leave `source_commit: HEAD` in the republished ui-done or
+  frontend-feedback payloads
+- use the shared degradation helper to fail closed on the required PKT-001
+  `meta.surfaces` key sets before treating the list or detail payload as
+  contract-complete
+acceptance:
+- build the Deployment Review Console list and detail panels
+- use only the existing BFF client
+- do not add raw fetch calls in component files
+- do not invent fields beyond this handoff packet
+- render all CTAs from backend-shaped allowedActions only
+- display the degradation banner when any meta.surfaces entry is degraded or unavailable
+- fail closed when list `meta.surfaces.deployment_plans` or
+  `meta.surfaces.allowedActions` is missing
+- fail closed when detail `meta.surfaces.deployment_plan`,
+  `meta.surfaces.approval_decision`, `meta.surfaces.allowedActions`,
+  `meta.surfaces.latestRun`, `meta.surfaces.review`, or
+  `meta.surfaces.runtime_binding` is missing
+- republished frontend-feedback and ui-done payloads truthfully reference the
+  same immutable front commit that contains the request pair, feedback bundle,
+  and reviewed PKT-001 UI files
+required_feedback:
+- docs/pantheon-feedback/PKT-001-deployment-review/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-001-deployment-review/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-001-deployment-review/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-001-deployment-review/QA_STATUS.md
+delivery_dependencies:
+- .coordination/responses/PKT-001-deployment-review-contract-ready.yaml
+- .coordination/responses/PKT-001-deployment-review-backend-delivery.yaml
+links:
+  lovable_project_url: null
+  bff_spec_path: docs/bff/PKT-001-deployment-review-console.md
+  ui_spec_path: docs/screens/PKT-001-deployment-review-console.md
+  frontend_change_spec_path: docs/pantheon-handoffs/PKT-001-deployment-review/FRONTEND_CHANGE_SPEC.md
+  example_payload_paths:
+  - docs/examples/PKT-001-deployment-review-console.json
+  handoff_bundle_dir: docs/pantheon-handoffs/PKT-001-deployment-review
+  backend_delivery_path: .coordination/responses/PKT-001-deployment-review-backend-delivery.yaml
+gap_handoff_path: .coordination/requests/PKT-001-deployment-review-bff-gap.yaml
+gap_handoff_template: .coordination/requests/PKT-001-deployment-review-bff-gap.example.yaml
+completion_handoff_path: .coordination/requests/PKT-001-deployment-review-ui-done.yaml
+completion_handoff_template: .coordination/requests/PKT-001-deployment-review-ui-done.example.yaml
+frontend_feedback_handoff_path: .coordination/requests/PKT-001-deployment-review-frontend-feedback.yaml
+review_findings_ref: .coordination/reviews/PKT-001-deployment-review-review.md

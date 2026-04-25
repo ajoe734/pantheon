@@ -1,0 +1,68 @@
+feature_id: RW-02-search
+type: ui-done
+source_repo: ajoe734/front-ai-trading-system
+source_branch: pkt-004-detail-fix
+source_commit: 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4
+source_commit_note: >-
+  UI implementation is present in the current workspace on top of this branch
+  head; no new git commit was created in this task.
+screen: research-search
+blocking: false
+status: closed
+pantheon_disposition: loop_complete
+acknowledged_at: "2026-04-22T06:19:57Z"
+acknowledged_by: Codex2
+review_file: .coordination/reviews/RW-02-search-review.md
+resolution_summary: >-
+  Pantheon reran RW-02 against a fresh operator-bff runtime started from the
+  current workspace at http://127.0.0.1:18001. The search route now serves
+  live HTTP truthfully: `GET /api/v1/research/search?q=momentum` returns `200`
+  with the published search payload shape, backend-owned drilldown hrefs, and
+  degraded `meta.index_adapter.*` metadata. The reviewed frontend slice remains
+  contract-aligned, and the prior runtime-refresh follow-up is complete for
+  this screen. Remaining unresolved owner-detail routes belong to their own
+  feature slices and do not block RW-02 closeout.
+
+summary: |
+  Research Search is implemented against the live RW-02 Pantheon route
+  GET /api/v1/research/search through rw02SearchApi. The UI sends the
+  published query params only, renders backend-owned SearchResult rows only,
+  preserves backend ordering and relevance_score, uses links.result_detail and
+  links.linked_ticket_detail for drilldowns, and renders degradation plus
+  corpus-freshness state from meta.surfaces.search_results and
+  meta.index_adapter.*.
+
+changed_files:
+  - src/pages/research/ResearchSearch.tsx
+  - src/pages/research/types.ts
+  - src/lib/bffClient.ts
+  - src/App.tsx
+  - src/components/AppSidebar.tsx
+  - src/components/WorkbenchBreadcrumb.tsx
+  - src/pages/health/Health.tsx
+
+routes:
+  - /research
+  - /research/search
+
+acceptance_evidence:
+  - targeted Pantheon RW-02 contract tests passed: python3 -m pytest -q services/control-plane/bff/test_rw02_search_contract.py
+  - current Pantheon app returns 200 degraded RW-02 search payload via local TestClient with ticket, experiment, and artifact links plus meta.index_adapter.*
+  - seeded Pantheon app returns 503 search_unavailable with meta.surfaces.search_results=unavailable
+  - sibling front ESLint passed for the reviewed RW-02 files
+  - sibling front production build passed for the reviewed working-tree slice
+
+follow_up_requested:
+  - review the research-search screen against the latest Pantheon contract and example payload
+  - validate degraded and unavailable behavior against a live BFF response
+  - confirm the BFF-provided result_detail and linked_ticket_detail links resolve to the intended owner screens in the deployed environment
+
+acceptance:
+  - supervisor detects the completed UI handoff automatically
+  - the next Pantheon-owned step is dispatched without a manual nudge
+  - follow-up state is written back through GitHub-visible coordination artifacts
+
+coordination_updates:
+  contract_ready: .coordination/responses/RW-02-search-contract-ready.yaml
+  lovable_ui_task: .coordination/responses/RW-02-search-lovable-ui-task.yaml
+  needs_runtime: .coordination/requests/RW-02-search-needs-runtime.yaml

@@ -1,0 +1,28 @@
+feature_id: PKT-003-lineage-view
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 51a5cb9
+workbench: evolution-workbench
+screen_id: screen-evolution-lineage
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-003-lineage-view
+feedback_path: docs/pantheon-feedback/PKT-003-lineage-view/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-003-lineage-view/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-003-lineage-view/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-003-lineage-view/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - src/lib/bffClient.ts
+  - src/pages/lineage/Lineage.tsx
+  - src/pages/lineage/LineageView.tsx
+  - src/pages/lineage/LineageList.tsx
+  - src/pages/lineage/LineageGraph.tsx
+  - src/pages/lineage/LineageEdgeDetail.tsx
+  - src/pages/lineage/types.ts
+pantheon_review_hint: review-ui
+summary: >-
+  Lineage View now uses the published Pantheon lineage read routes only;
+  graph-edge selection drives the edge drawer, the empty graph state renders
+  explicit "No lineage recorded" copy, and no open API gap was found in the
+  mirrored PKT-003 packet.

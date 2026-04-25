@@ -1,0 +1,29 @@
+{
+  "feature_id": "PKT-004-capital-binding-drilldowns",
+  "status": "followup-required",
+  "backend_commit": "c3fd4fcca91465e552ed548f7d5fb2a84995f3ec",
+  "bff_contract_version": "pantheon-bff@c3fd4fcca91465e552ed548f7d5fb2a84995f3ec",
+  "source_payload": ".coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.yaml",
+  "source_commit": "6c6b4e884c8eb6537b6bf46b59971aaee852ed7d",
+  "endpoints": [
+    "GET /api/v1/capital-pools",
+    "GET /api/v1/capital-pools/{pool_id}",
+    "GET /api/v1/bindings",
+    "GET /api/v1/bindings/{binding_id}"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-004-capital-binding-drilldowns.md",
+    "docs/examples/PKT-004-capital-binding-drilldowns.json",
+    "docs/screens/PKT-004-capital-binding-drilldowns.md"
+  ],
+  "pantheon_api_gap": false,
+  "coordination_followups": [
+    ".coordination/requests/PKT-004-capital-binding-drilldowns-frontend-feedback.yaml",
+    "docs/pantheon-feedback/PKT-004-capital-binding-drilldowns/"
+  ],
+  "followup_scope": [
+    "publish one Git-visible front commit that contains the PKT-004 capital-binding request pair, feedback bundle, and the claimed CP-01 to CP-04 UI files",
+    "set both ui-done.source_commit and frontend-feedback.source_commit to that same truthful publication commit",
+    "redispatch Pantheon review on the unchanged PKT-004 contract after the replay-clean front publication exists"
+  ]
+}

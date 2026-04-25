@@ -1,0 +1,122 @@
+feature_id: KW-01-institutional-memory
+type: frontend-feedback
+source_repo: ajoe734/pantheon
+reviewed_by: Codex
+reviewed_at: '2026-04-20T13:48:43Z'
+reviewed_commit: 78f022e787b08787d1e3feebd79794a51780e270
+ui_done_source_commit: ba560610044d5f11c97b2b48cfb5b7621d812e4e
+feedback_bundle_commit: 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4
+verified_front_workspace_head: 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4
+screen: institutional-memory
+workbench: knowledge-workbench
+screen_id: null
+
+disposition: close
+review_result: contract-aligned-and-owner-screen-links-now-match-mounted-routes
+can_close: true
+
+summary: >-
+  Pantheon re-reviewed the returned KW-01 Institutional Memory ui-done packet
+  against the published KW-01 contract, synced example payload, sibling front
+  implementation, and the current Pantheon BFF workspace. The Git-visible
+  evidence chain is now truthful: ui-done source commit
+  ba560610044d5f11c97b2b48cfb5b7621d812e4e contains the claimed route wiring,
+  shared BFF client helpers, and Institutional Memory list/detail screens,
+  while front branch head 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4 publishes
+  the canonical ui-done request and the full KW-01 feedback bundle. The
+  reviewed UI keeps list/detail reads on GET /api/v1/knowledge/memory and
+  GET /api/v1/knowledge/memory/{entry_id}, preserves BFF-owned filter
+  vocabulary, route_href navigation, source_event.href linking, superseded
+  visibility, and degraded or unavailable handling without inventing client
+  ranking or lifecycle state. Pantheon also re-validated the local KW-01 BFF
+  contract slice and corrected the fallback/example source_event.href values so
+  current payloads now resolve to mounted owner screens in the accepted front
+  route map.
+
+acceptance_verified:
+  - criterion: fetch memory list and detail from the published KW-01 BFF routes only
+    status: pass
+    note: >-
+      The reviewed front source commit reads through institutionalMemoryApi.list()
+      and institutionalMemoryApi.getDetail() in src/lib/bffClient.ts and does
+      not introduce component-level raw fetch or shadow endpoints.
+  - criterion: keep Pantheon-owned filter vocabulary, pagination, and superseded visibility truthful
+    status: pass
+    note: >-
+      InstitutionalMemoryList forwards knowledge_type, scope, scope_filter,
+      tags, page, and page_size exactly as query params, preserves backend
+      ordering, and renders superseded entries instead of hiding them.
+  - criterion: use route_href and source_event.href exactly as BFF-owned navigation targets
+    status: pass
+    note: >-
+      List rows navigate with route_href, and the detail screen renders
+      source_event.href verbatim. Pantheon updated the seeded KW-01
+      source-event destinations so current fallback/example payloads now target
+      mounted owner screens: /operator/post-incident-review?incident=... and
+      /evolution/mutation-review/:decision_id.
+  - criterion: keep degraded and unavailable list/detail behavior truthful
+    status: pass
+    note: >-
+      Local FastAPI TestClient verification confirmed degraded list responses
+      keep rows visible, unavailable list responses suppress the list,
+      degraded detail responses preserve the returned entry, and unavailable
+      detail responses surface explicit unavailable-state copy without
+      fabricated content.
+  - criterion: publish a Git-visible ui-done handoff and required feedback bundle
+    status: pass
+    note: >-
+      Front source commit ba560610044d5f11c97b2b48cfb5b7621d812e4e contains the
+      advertised KW-01 UI files, and front branch head
+      2820e449dc95ab4677d9a7dc61d6eb7da4363aa4 contains the canonical ui-done
+      request plus docs/pantheon-feedback/KW-01-institutional-memory/*.
+
+api_gaps: []
+
+pantheon_actions_completed:
+  - action: verify the KW-01 BFF contract slice
+    path: services/control-plane/bff/test_kw01_institutional_memory_contract.py
+    note: >-
+      `python3 -m pytest services/control-plane/bff/test_kw01_institutional_memory_contract.py -q`
+      passed with 4 tests in the current Pantheon workspace.
+  - action: validate degraded and unavailable list/detail behavior through a local BFF response
+    path: services/control-plane/bff/main.py
+    note: >-
+      A local FastAPI TestClient probe confirmed `memory_list=degraded`
+      preserves rows, `memory_list=unavailable` suppresses the list,
+      `entry_detail/source_context=degraded` preserve the detail payload, and
+      `entry_detail/source_context=unavailable` returns explicit unavailable
+      surfaces while keeping the source_event href untouched.
+  - action: confirm BFF-owned href targets match mounted owner screens
+    path: services/control-plane/bff/read_store.py
+    note: >-
+      Pantheon corrected the fallback/example KW-01 source_event hrefs from
+      the stale `/operator/incidents/:id/review` and
+      `/operator/mutation-review?decision=...` shapes to the mounted front
+      routes `/operator/post-incident-review?incident=...` and
+      `/evolution/mutation-review/:decision_id`, and updated the regression
+      expectation plus example payload accordingly.
+
+follow_up_items:
+  - type: qa
+    status: deferred_non_blocking
+    note: >-
+      Deployed-environment browser QA remains outstanding. This cycle verified
+      the Pantheon BFF locally and cross-checked the mounted front route table,
+      but it did not exercise an external deployed environment.
+
+loop_close_condition: >-
+  Met. UI source commit ba560610044d5f11c97b2b48cfb5b7621d812e4e contains the
+  claimed KW-01 implementation, front branch head
+  2820e449dc95ab4677d9a7dc61d6eb7da4363aa4 publishes the canonical ui-done
+  handoff and required feedback bundle, and the Pantheon-side owner-link drift
+  in current KW-01 fallback/example payloads has been corrected.
+
+risk_note: >-
+  Remaining risk is runtime-only. The reviewed source commit and feedback
+  bundle are replayable, and Pantheon's local BFF verification now returns
+  truthful list/detail surface states plus mounted owner-screen hrefs, but this
+  review did not validate a deployed environment in-browser.
+
+lovable_ui_task_status: closed
+next_action: none
+review_findings_ref: .coordination/reviews/KW-01-institutional-memory-review.md

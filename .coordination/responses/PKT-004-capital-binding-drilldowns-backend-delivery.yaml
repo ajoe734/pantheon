@@ -1,0 +1,25 @@
+feature_id: PKT-004-capital-binding-drilldowns
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: persona-workbench
+screen_id: capital-binding-drilldowns
+status: followup-required
+backend_commit: c3fd4fcca91465e552ed548f7d5fb2a84995f3ec
+bff_contract_version: pantheon-bff@c3fd4fcca91465e552ed548f7d5fb2a84995f3ec
+delivery_note_path: docs/pantheon-delivery/PKT-004-capital-binding-drilldowns/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-004-capital-binding-drilldowns/CONTRACT_LOCK.json
+followup_expectation: >-
+  Current PKT-004 review confirms the CP-01 to CP-04 implementation is aligned
+  to the published capital-pool and binding read routes, the current sibling
+  front tree passes build plus targeted ESLint, and Pantheon's targeted
+  PKT-004 contract test passes on the unchanged backend. The remaining blocker
+  is transport truth: ui-done.source_commit is 6c6b4e884c8eb6537b6bf46b59971aaee852ed7d,
+  frontend-feedback.source_commit is still 46a7a947fee0a375007115df100bac1d84e06e82,
+  and neither advertised front commit contains the referenced
+  docs/pantheon-feedback/PKT-004-capital-binding-drilldowns bundle. No new
+  endpoint or shadow state is authorized. The next front-owned cycle must
+  publish one Git-visible commit containing the request pair, feedback bundle,
+  and claimed UI files, point both request bodies at that same truthful
+  source_commit, and then redispatch Pantheon review on the unchanged PKT-004
+  contract.
+source_payload: .coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.yaml

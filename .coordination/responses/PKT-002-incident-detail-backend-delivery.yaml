@@ -1,0 +1,29 @@
+feature_id: PKT-002-incident-detail
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: operator-console
+screen_id: screen-operator-incident-detail
+status: delivered
+backend_commit: 67849d460e3c14e7399efc830b322b048c9557cc
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@67849d460e3c14e7399efc830b322b048c9557cc
+bff_contract_version: pantheon-bff@67849d460e3c14e7399efc830b322b048c9557cc+working-tree
+delivery_note_path: docs/pantheon-delivery/PKT-002-incident-detail/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-002-incident-detail/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-002 Incident Detail cycle against the
+  published contract, mirrored request pair, feedback bundle, sibling front
+  implementation, and the local Pantheon acceptance slice. No additional
+  front-end implementation follow-up is required for the current packet scope:
+  the canonical composed route remains
+  GET /api/v1/operator/incident-response/{incident_id}, the delivered UI keeps
+  live updates on the existing PKT-005 SSE substrate, and the previous route,
+  opened_at, rationale-copy, and replayability defects are resolved. One
+  non-blocking Pantheon contract note remains for future write enablement:
+  HardRollback still lacks a canonical target_artifact_id source when launched
+  from Incident Detail, so that command must remain disabled from this host
+  context until Pantheon publishes it.
+source_payload: .coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml
+reported_source_commit: eb1a6cbb727a681db21ecd4b121348605fb8a4d3
+verified_front_workspace_head: 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe
+pantheon_api_gap: false

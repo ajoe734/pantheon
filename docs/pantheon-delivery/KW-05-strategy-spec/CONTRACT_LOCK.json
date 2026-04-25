@@ -1,0 +1,36 @@
+{
+  "feature_id": "KW-05-strategy-spec",
+  "status": "front-followup-required",
+  "backend_commit": "b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "bff_contract_version": "pantheon-bff@b1ee405d8c4e8096f73f1313092722a33ca3abff+working-tree",
+  "source_payload": ".coordination/requests/KW-05-strategy-spec-frontend-feedback.yaml",
+  "reported_source_commit": "6321613cff3c49b11a7619e0f9170217a27a7b17",
+  "resolved_local_source_commit": "6321613cff3c49b11a7619e0f9170217a27a7b17",
+  "verified_front_workspace_head": "1a1a42eebda033a1fbda4696df5b81271f5eed9b",
+  "verified_remote_branch_head": "1a1a42eebda033a1fbda4696df5b81271f5eed9b",
+  "endpoints": [
+    "GET /api/v1/knowledge/strategy-specs",
+    "GET /api/v1/knowledge/strategy-specs/{strategy_id}",
+    "GET /api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+    "GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare"
+  ],
+  "contract_paths": [
+    "docs/bff/KW-05-strategy-spec.md",
+    "docs/examples/KW-05-strategy-spec.json",
+    "docs/pantheon-handoffs/KW-05-strategy-spec/FRONTEND_CHANGE_SPEC.md",
+    "services/control-plane/bff/test_kw05_strategy_spec_contract.py"
+  ],
+  "closure_evidence": [
+    "Pantheon still serves the full KW-05 list/detail/versions/compare route family in the current workspace and python3 -m pytest -q services/control-plane/bff/test_kw05_strategy_spec_contract.py returned 3 passed",
+    "The canonical KW-05 ui-done request, frontend-feedback request, and four-file feedback bundle resolve directly from origin/pkt-004-detail-fix at 1a1a42eebda033a1fbda4696df5b81271f5eed9b",
+    "The published source_commit 6321613cff3c49b11a7619e0f9170217a27a7b17 is contained in origin/pkt-004-detail-fix and remains replayable from the returned branch",
+    "The Git-visible feedback bundle still claims compare-field contract mismatch alerts that StrategySpecCompare.tsx does not implement"
+  ],
+  "required_follow_up": [
+    "refresh the Git-visible KW-05 feedback bundle so it stops claiming compare-field contract mismatch alerts that the current UI does not implement, or add the missing compare required-field validation to the UI",
+    "if the UI code changes to backfill compare validation, republish both request files with the new full source_commit; otherwise the current source_commit can remain unchanged",
+    "redispatch Pantheon review on the unchanged KW-05 contract"
+  ]
+}

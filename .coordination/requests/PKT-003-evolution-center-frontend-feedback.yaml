@@ -1,0 +1,21 @@
+feature_id: PKT-003-evolution-center
+type: frontend-feedback
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 8314ef67016a15ced808e4aded16cc0686de25a1
+workbench: evolution-workbench
+screen_id: screen-evolution-center
+status: completed
+feedback_bundle_dir: docs/pantheon-feedback/PKT-003-evolution-center
+feedback_path: docs/pantheon-feedback/PKT-003-evolution-center/LOVABLE_CHANGE_FEEDBACK.md
+api_gap_requests_path: docs/pantheon-feedback/PKT-003-evolution-center/API_GAP_REQUESTS.json
+ui_decisions_path: docs/pantheon-feedback/PKT-003-evolution-center/UI_DECISIONS.md
+qa_status_path: docs/pantheon-feedback/PKT-003-evolution-center/QA_STATUS.md
+blocking_summary: ""
+changed_files:
+  - src/pages/evolution/Center.tsx
+  - src/pages/evolution/EvolutionCenter.tsx
+  - src/pages/evolution/EvolutionDecisionDetail.tsx
+  - src/pages/evolution/types.ts
+pantheon_review_hint: review-ui
+summary: Evolution Center now reads the published Pantheon decision, freeze-order, and rollback routes through the shared BFF client with explicit stale, permission, empty, and contract-gap states.

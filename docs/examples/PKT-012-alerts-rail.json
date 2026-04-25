@@ -1,0 +1,140 @@
+{
+  "alerts": [
+    {
+      "alert_id": "alert-runtime-runtime-042",
+      "severity": "critical",
+      "category": "runtime",
+      "raised_at": "2026-04-18T06:10:00Z",
+      "summary": "Runtime runtime-042 anomaly: drawdown is 0.125; fill rate dropped to 0.89.",
+      "target_ref": {
+        "surface_id": "OC-04",
+        "label": "Open runtime state board",
+        "href": "/operator/runtime-state",
+        "target_id": "runtime-042"
+      }
+    },
+    {
+      "alert_id": "alert-kill-switch-state",
+      "severity": "critical",
+      "category": "kill_switch",
+      "raised_at": "2026-04-18T06:08:00Z",
+      "summary": "Kill-switch active; operator intervention is required.",
+      "target_ref": {
+        "surface_id": "OC-03",
+        "label": "Open health status board",
+        "href": "/operator/health-status",
+        "target_id": "triggered"
+      }
+    },
+    {
+      "alert_id": "alert-incident-inc-001",
+      "severity": "critical",
+      "category": "incident",
+      "raised_at": "2026-04-18T06:05:00Z",
+      "summary": "Active incident: Unexpected drawdown in persona-alpha.",
+      "target_ref": {
+        "surface_id": "PKT-002",
+        "label": "Open incident response",
+        "href": "/operator/incidents/inc-001",
+        "target_id": "inc-001"
+      }
+    },
+    {
+      "alert_id": "alert-approval-appr-001",
+      "severity": "high",
+      "category": "governance",
+      "raised_at": "2026-04-18T06:04:00Z",
+      "summary": "Approval required: DeploymentPlan appr-001.",
+      "target_ref": {
+        "surface_id": "GV-02",
+        "label": "Open approval queue",
+        "href": "/governance-approval-queue",
+        "target_id": "appr-001"
+      }
+    },
+    {
+      "alert_id": "alert-governance-review-gov-review-001",
+      "severity": "medium",
+      "category": "governance",
+      "raised_at": "2026-04-18T06:03:00Z",
+      "summary": "Pending governance review: DeploymentPlan gov-review-001.",
+      "target_ref": {
+        "surface_id": "PKT-001",
+        "label": "Open governance review queue",
+        "href": "/governance-review-queue",
+        "target_id": "gov-review-001"
+      }
+    }
+  ],
+  "summary": {
+    "total_active": 5,
+    "highest_severity": "critical",
+    "by_severity": {
+      "critical": 3,
+      "high": 1,
+      "medium": 1,
+      "low": 0
+    },
+    "by_category": {
+      "incident": 1,
+      "kill_switch": 1,
+      "governance": 2,
+      "runtime": 1
+    }
+  },
+  "meta": {
+    "snapshot_at": "2026-04-18T09:25:20Z",
+    "acknowledgement_supported": false,
+    "surfaces": {
+      "alerts": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "Operator alert feed is available, but one or more contributing surfaces are degraded."
+      },
+      "incident_feed": {
+        "status": "ok",
+        "source": "service_store"
+      },
+      "review_queue": {
+        "status": "degraded",
+        "source": "local_snapshot",
+        "note": "Served from local BFF snapshot fallback instead of a backend-owned read store.",
+        "staleness": {
+          "served_from": "local_snapshot",
+          "last_known_at": "2026-04-18T09:25:20Z"
+        }
+      },
+      "approval_queue": {
+        "status": "degraded",
+        "source": "local_snapshot",
+        "note": "Served from local BFF snapshot fallback instead of a backend-owned read store.",
+        "staleness": {
+          "served_from": "local_snapshot",
+          "last_known_at": "2026-04-18T09:25:20Z"
+        }
+      },
+      "kill_switch": {
+        "status": "degraded",
+        "source": "local_snapshot",
+        "note": "Served from local BFF snapshot fallback instead of a backend-owned read store.",
+        "staleness": {
+          "served_from": "local_snapshot",
+          "last_known_at": "2026-04-18T09:25:20Z"
+        }
+      },
+      "runtime_roster": {
+        "status": "ok",
+        "source": "canonical"
+      },
+      "telemetry_summary": {
+        "status": "degraded",
+        "source": "local_snapshot",
+        "note": "Served from local BFF snapshot fallback instead of a backend-owned read store.",
+        "staleness": {
+          "served_from": "local_snapshot",
+          "last_known_at": "2026-04-18T09:25:20Z"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "status": 200,
+  "payload": {
+    "backpressure": {
+      "buffer_utilization_critical": 0.9,
+      "buffer_utilization_high": 0.7,
+      "current_concurrency": 4,
+      "error_rate_critical": 0.3,
+      "error_rate_high": 0.1,
+      "last_evaluated_at": 500362.33125223,
+      "max_concurrency": 8,
+      "min_concurrency": 1,
+      "pressure_level": "normal",
+      "recent_errors": 0,
+      "recent_writes": 0
+    },
+    "buffer": {
+      "capacity": 100000,
+      "is_closed": false,
+      "size": 0,
+      "total_dequeued": 0,
+      "total_enqueued": 0,
+      "total_rejected": 0,
+      "type": "in_memory",
+      "utilization_pct": 0.0
+    },
+    "dead_letter_queue": {
+      "incident_fired": false,
+      "incident_threshold": 100,
+      "memory_entries": 79,
+      "spill_path": "/data/telemetry/dead_letter.jsonl",
+      "tag_counts": {
+        "schema_violation": 79
+      },
+      "total_rejected": 79
+    },
+    "service": {
+      "dedup_tracked_ids": 0,
+      "started": true,
+      "total_duplicates": 0,
+      "total_ingested": 0,
+      "total_rejected": 79,
+      "uptime_seconds": 92420.53
+    },
+    "writer": {
+      "batch_interval": 1.0,
+      "batch_size": 500,
+      "batches_flushed": 0,
+      "max_retries": 5,
+      "running": true,
+      "total_dlq": 0,
+      "total_failed": 0,
+      "total_retried": 0,
+      "total_written": 0
+    }
+  }
+}

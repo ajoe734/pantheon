@@ -1,0 +1,50 @@
+feature_id: EW-05-mutation-review
+type: bff-gap
+source_repo: ajoe734/front-ai-trading-system
+source_branch: main
+source_commit: 0000000000000000000000000000000000000000
+screen: mutation-review
+blocking: true
+assessed_at: "2026-04-20T00:00:00Z"
+assessed_by: Codex2
+
+summary: >-
+  The original EW-05 BFF gap is now resolved in the local Pantheon workspace.
+  Pantheon exposes GET /api/v1/operator/mutation-review/{decision_id}, returns
+  allowedActions.canApproveMutation / canRejectMutation plus
+  meta.surfaces.mutation_review, and accepts ApproveMutation / RejectMutation
+  via POST /api/v1/operator/commands. The frontend lane should resume against
+  the refreshed handoff bundle and emit a new bff-gap only if the live payload
+  later diverges from the published contract.
+
+missing: []
+
+acceptance:
+  - BFF implements GET /api/v1/operator/mutation-review/{decision_id} and returns the published MutationReviewProjection field shape
+  - BFF returns allowedActions.canApproveMutation and allowedActions.canRejectMutation on the read route
+  - BFF returns meta.surfaces.mutation_review on the read route with fresh | stale | unavailable semantics
+  - BFF accepts ApproveMutation and RejectMutation at POST /api/v1/operator/commands with the published request vocabulary
+  - Pantheon validates the repaired EW-05 read and write surfaces locally before refreshing the contract-ready and lovable-ui-task packets
+  - Lovable/front-end receives the refreshed packet bundle and resumes the implementation cycle
+
+resolved: true
+resolved_at: "2026-04-20T00:00:00Z"
+resolved_by: Codex2
+resolution: >-
+  Verified the live BFF implementation and tests in the local Pantheon
+  workspace. GET /api/v1/operator/mutation-review/{decision_id} is implemented
+  in services/control-plane/bff/main.py, the read projection returns
+  allowedActions.canApproveMutation / canRejectMutation and
+  meta.surfaces.mutation_review, and POST /api/v1/operator/commands accepts the
+  published ApproveMutation / RejectMutation payloads. Pantheon refreshed the
+  EW-05 contract-ready and lovable-ui-task packets so the frontend lane can
+  proceed.
+resolution_artifacts:
+  - services/control-plane/bff/main.py
+  - services/control-plane/bff/models.py
+  - services/control-plane/bff/test_ew05_mutation_review_contract.py
+  - services/control-plane/bff/test_governance_command_submission.py
+  - services/control-plane/bff/test_command_executor.py
+  - .coordination/responses/EW-05-mutation-review-contract-ready.yaml
+  - .coordination/responses/EW-05-mutation-review-lovable-ui-task.yaml
+  - .coordination/reviews/EW-05-mutation-review-bff-gap-resolution.md

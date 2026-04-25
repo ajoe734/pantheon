@@ -1,0 +1,34 @@
+{
+  "_note": "Route-live example payload for GET /api/v1/lineage/inspiration/{artifact_id}. Use as the reference shape for the live BFF route and UI integration. Do not use as mock data in production code.",
+  "_packet_status": "route-live",
+  "_task": "EW-04-OPEN-001",
+  "artifact_id": "artifact-abc123",
+  "inspiration_edges": [
+    {
+      "source_artifact_id": "artifact-def456",
+      "relationship_type": "derived_from",
+      "influence_weight": 0.85
+    },
+    {
+      "source_artifact_id": "artifact-ghi789",
+      "relationship_type": "strategy_applied",
+      "influence_weight": 0.60
+    },
+    {
+      "source_artifact_id": "artifact-jkl012",
+      "relationship_type": "inspired_by",
+      "influence_weight": 0.40
+    }
+  ],
+  "strategy_tags": [
+    "momentum-alpha",
+    "low-volatility",
+    "sector-rotation"
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-19T03:00:00Z",
+    "surfaces": {
+      "inspiration": "fresh"
+    }
+  }
+}

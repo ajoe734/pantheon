@@ -1,0 +1,52 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:38083/api/telemetry/ingest",
+  "headers": {},
+  "body": {
+    "event_id": "71662fe2-bff1-4cf6-ae05-e0e82ace1894",
+    "event_type": "deploy_completed",
+    "created_at": "2026-04-19T00:36:15Z",
+    "execution_mode": "paper",
+    "environment": "paper",
+    "deployment_stage": "paper",
+    "binding_id": "rb-e5e03cb15aa146d6a3822af75ae3dc0c",
+    "runtime_id": "paper-runtime-001",
+    "capital_pool_id": "pool-ep4-19cb448c",
+    "artifact_id": "reg-ep4-e9c37d42",
+    "artifact_version": "1.2.0",
+    "plan_id": "plan-ep4-4291de2e",
+    "persona_capital_binding_id": "pcb-ep4-30258555",
+    "trace_id": "db150ff6-521f-440d-967d-cb62ccfcc97b",
+    "authority_refs": {
+      "write_owner": "runtime-manager",
+      "authority_source": "runtime_binding",
+      "runtime_role": "pantheon-paper-execution-runtime",
+      "runtime_mode": "paper",
+      "workspace_ref": "workspace-paper",
+      "auth_profile_ref": "auth-profile-paper",
+      "persona_id": "persona-paper-ops",
+      "session_id": "session-ep4-eb3ead3f",
+      "trace_id": "db150ff6-521f-440d-967d-cb62ccfcc97b",
+      "request_id": "req-ep4-c5bf934a"
+    },
+    "target": {
+      "registry_id": "reg-ep4-e9c37d42",
+      "strategy_id": "strategy-paper",
+      "artifact_version": "1.2.0",
+      "artifact_type": "model_artifact",
+      "promotion_state": "paper"
+    },
+    "metrics": {
+      "action": "deploy_completed"
+    },
+    "metadata": {
+      "source_task_id": "OSS-004C",
+      "acceptance_mode": "governed_ep4_packet",
+      "runtime_package": "paper_execution_runtime",
+      "is_real_order": false,
+      "is_real_capital": false,
+      "capital_scale_pct": 0,
+      "sim_fill_flag": true
+    }
+  }
+}

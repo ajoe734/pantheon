@@ -1,0 +1,23 @@
+feature_id: PKT-007-deployment-diff
+type: backend-delivery
+target_repo: ajoe734/front-ai-trading-system
+workbench: governance-workbench
+screen_id: screen-governance-deployment-diff
+status: delivered
+backend_commit: fc48401ff083259aa819e80d132ee191d59a05e6
+working_tree_only: true
+verified_runtime_ref: pantheon-working-tree@fc48401ff083259aa819e80d132ee191d59a05e6
+bff_contract_version: pantheon-bff@fc48401ff083259aa819e80d132ee191d59a05e6+working-tree
+delivery_note_path: docs/pantheon-delivery/PKT-007-deployment-diff/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/PKT-007-deployment-diff/CONTRACT_LOCK.json
+followup_expectation: >-
+  Pantheon re-reviewed the returned PKT-007 ui-done handoff against the
+  published contract, example payload, mirrored frontend-feedback request, and
+  the current Pantheon BFF workspace. GET
+  /api/v1/operator/deployment-diff/{plan_id} is now live, POST
+  /api/v1/operator/commands now accepts EscalateDiff, and targeted contract
+  plus command-executor tests pass in this workspace. The remaining open issue
+  for PKT-007 is front-owned replay truthfulness: keep the current follow-up UI
+  cycle open until the front repo republishes a replay-clean frontend-feedback
+  and ui-done pair from one truthful Git-visible commit.
+source_payload: .coordination/requests/PKT-007-deployment-diff-ui-done.yaml
