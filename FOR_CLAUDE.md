@@ -6,8 +6,8 @@
 Read these files first:
 
 1. `AI_COLLABORATION_GUIDE.md`
-2. `current-work.md`
-3. `ai-status.json`
+2. `ai-status.json`
+3. `current-work.md`
 4. `TARGET_ARCHITECTURE.md`
 5. `CANONICAL_DOCUMENT_MAP.md`
 6. `ROADMAP.md`
