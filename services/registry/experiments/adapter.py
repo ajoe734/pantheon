@@ -10,6 +10,7 @@ from typing import Any, Mapping, Protocol
 
 PRIMARY_BACKEND = "mlflow"
 MLFLOW_VERSION_PIN = "3.10.1"
+WANDB_PREP_VERSION = "deferred-prep-offline"
 TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
 _LINEAGE_KEYS = (
     "parent_registry_ids",
@@ -93,12 +94,18 @@ class ExperimentSyncResult:
 
 
 class ExperimentBackend(Protocol):
+    backend_name: str
+    tracking_version: str
+
     def record(self, record: ExperimentRecord) -> ExperimentRef:
         ...
 
 
 class InMemoryMlflowBackend:
     """Test backend that mirrors the MLflow record shape without external dependencies."""
+
+    backend_name = PRIMARY_BACKEND
+    tracking_version = MLFLOW_VERSION_PIN
 
     def __init__(self, tracking_uri: str = "memory://mlflow"):
         self.tracking_uri = tracking_uri
@@ -116,7 +123,7 @@ class InMemoryMlflowBackend:
             "aliases": list(record.aliases),
         }
         return ExperimentRef(
-            backend=PRIMARY_BACKEND,
+            backend=self.backend_name,
             run_id=run_id,
             artifact_uri=artifact_uri,
             project=record.experiment_name,
@@ -127,6 +134,9 @@ class InMemoryMlflowBackend:
 
 class MlflowTrackingBackend:
     """Minimal MLflow tracking backend wrapper for governed registry sync."""
+
+    backend_name = PRIMARY_BACKEND
+    tracking_version = MLFLOW_VERSION_PIN
 
     def __init__(self, tracking_uri: str | None = None):
         self.tracking_uri = tracking_uri or os.environ.get(TRACKING_URI_ENV) or "http://localhost:5000"
@@ -158,7 +168,7 @@ class MlflowTrackingBackend:
             artifact_uri = run.info.artifact_uri
 
         return ExperimentRef(
-            backend=PRIMARY_BACKEND,
+            backend=self.backend_name,
             run_id=run_id,
             artifact_uri=artifact_uri,
             project=record.experiment_name,
@@ -167,15 +177,93 @@ class MlflowTrackingBackend:
         )
 
 
+class OfflineWandbPrepBackend:
+    """Prep-only offline W&B scaffold used for deferred dry-run coverage."""
+
+    backend_name = "wandb"
+    tracking_version = WANDB_PREP_VERSION
+
+    def __init__(self, mode: str = "offline"):
+        normalized_mode = mode.strip().lower() or "offline"
+        if normalized_mode not in ("offline", "dryrun"):
+            raise ExperimentSyncError(
+                f"Unsupported W&B prep mode: {mode!r}. Supported modes: ('offline', 'dryrun')."
+            )
+        self.mode = normalized_mode
+        self.runs: dict[str, dict[str, Any]] = {}
+
+    def record(self, record: ExperimentRecord) -> ExperimentRef:
+        run_id = f"wandb-prep-{uuid.uuid4().hex[:12]}"
+        artifact_uri = f"wandb://{self.mode}/{record.experiment_name}/{run_id}/artifacts"
+        self.runs[run_id] = {
+            "experiment_name": record.experiment_name,
+            "run_name": record.run_name,
+            "mode": self.mode,
+            "tags": copy.deepcopy(record.tags),
+            "metrics": copy.deepcopy(record.metrics),
+            "artifacts": copy.deepcopy(record.artifacts),
+            "aliases": list(record.aliases),
+        }
+        return ExperimentRef(
+            backend=self.backend_name,
+            run_id=run_id,
+            artifact_uri=artifact_uri,
+            project=record.experiment_name,
+            experiment_name=record.experiment_name,
+            aliases=record.aliases,
+        )
+
+
+def build_backend(
+    backend_name: str,
+    *,
+    tracking_uri: str | None = None,
+    wandb_mode: str = "offline",
+) -> ExperimentBackend:
+    normalized = backend_name.strip().lower()
+    if normalized == PRIMARY_BACKEND:
+        return MlflowTrackingBackend(tracking_uri=tracking_uri)
+    if normalized == "wandb":
+        return OfflineWandbPrepBackend(mode=wandb_mode)
+    raise ExperimentSyncError(f"Unsupported experiment backend: {backend_name!r}")
+
+
 class RegistryExperimentAdapter:
-    """Maps governed registry entries into MLflow experiment records."""
+    """Maps governed registry entries into experiment backend records."""
 
     def __init__(self, backend: ExperimentBackend | None = None):
         self.backend = backend or InMemoryMlflowBackend()
 
     @classmethod
     def from_tracking_uri(cls, tracking_uri: str | None = None) -> "RegistryExperimentAdapter":
-        return cls(backend=MlflowTrackingBackend(tracking_uri=tracking_uri))
+        return cls(backend=build_backend(PRIMARY_BACKEND, tracking_uri=tracking_uri))
+
+    @classmethod
+    def from_backend_name(
+        cls,
+        backend_name: str,
+        *,
+        tracking_uri: str | None = None,
+        wandb_mode: str = "offline",
+    ) -> "RegistryExperimentAdapter":
+        return cls(
+            backend=build_backend(
+                backend_name,
+                tracking_uri=tracking_uri,
+                wandb_mode=wandb_mode,
+            )
+        )
+
+    @classmethod
+    def from_env(cls, tracking_uri: str | None = None) -> "RegistryExperimentAdapter":
+        from config import selected_backend, selected_wandb_mode
+
+        backend_name = selected_backend()
+        return cls.from_backend_name(
+            backend_name,
+            tracking_uri=tracking_uri,
+            wandb_mode=selected_wandb_mode(),
+        )
 
     def build_record(self, entry: Mapping[str, Any]) -> ExperimentRecord:
         normalized = self._normalize_entry(entry)
@@ -256,8 +344,14 @@ class RegistryExperimentAdapter:
             "pantheon.storage_path": storage_ref["path"],
             "pantheon.lineage": lineage,
             "pantheon.aliases": list(aliases),
-            "pantheon.mlflow.version_pin": MLFLOW_VERSION_PIN,
+            "pantheon.experiment_backend": self.backend.backend_name,
+            "pantheon.experiment_backend_version": self.backend.tracking_version,
         }
+        if self.backend.backend_name == PRIMARY_BACKEND:
+            base_tags["pantheon.mlflow.version_pin"] = MLFLOW_VERSION_PIN
+        if self.backend.backend_name == "wandb":
+            base_tags["pantheon.wandb.prep_only"] = True
+            base_tags["pantheon.wandb.mode"] = getattr(self.backend, "mode", "offline")
 
         optional_fields = {
             "pantheon.producer_run_id": entry.get("producer_run_id"),
@@ -276,8 +370,8 @@ class RegistryExperimentAdapter:
 
     def _build_artifact_handoff(self, entry: Mapping[str, Any], aliases: tuple[str, ...]) -> dict[str, Any]:
         return {
-            "backend": PRIMARY_BACKEND,
-            "tracking_version": MLFLOW_VERSION_PIN,
+            "backend": self.backend.backend_name,
+            "tracking_version": self.backend.tracking_version,
             "registry_id": entry["registry_id"],
             "strategy_id": entry["strategy_id"],
             "artifact_type": entry["artifact_type"],

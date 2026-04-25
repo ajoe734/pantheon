@@ -1,27 +1,58 @@
 """Experiment backend configuration.
 
-EXPERIMENT_BACKEND selects which tracking backend is active.
-Currently only "mlflow" is implemented. "wandb" is reserved for future activation
-once the following gate conditions are met:
-  - MLflow has ≥30 days operational history
-  - An explicit operator preference is documented
-  - RegistryExperimentAdapter is generalized to accept non-MLflow backends
-  - Canonical artifact_state / deployment_stage migration is landed in the experiment bridge
+EXPERIMENT_BACKEND defaults to "mlflow".
 
-See services/registry/experiments/WANDB_ACTIVATION.md for the full activation gate.
-See services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §5 for the consolidated status.
+"wandb" is now selectable only for the 2026-04-25 deferred-prep exception and
+remains guarded by an explicit feature flag plus offline-only mode. It does not
+change the default backend and does not satisfy the W&B activation gate.
+
+See services/registry/experiments/WANDB_ACTIVATION.md for the full gate.
 """
 
 import os
 
-EXPERIMENT_BACKEND: str = os.getenv("EXPERIMENT_BACKEND", "mlflow")
+EXPERIMENT_BACKEND: str = (os.getenv("EXPERIMENT_BACKEND", "mlflow").strip().lower() or "mlflow")
+WANDB_DEFERRED_PREP_FLAG = "PANTHEON_ENABLE_WANDB_DEFERRED_PREP"
+WANDB_MODE_ENV = "PANTHEON_WANDB_MODE"
 
-_SUPPORTED_BACKENDS = ("mlflow",)
-# "wandb" is intentionally not in _SUPPORTED_BACKENDS until the activation gate is passed.
+_SUPPORTED_BACKENDS = ("mlflow", "wandb")
+_SUPPORTED_WANDB_MODES = ("offline", "dryrun")
 
-if EXPERIMENT_BACKEND not in _SUPPORTED_BACKENDS:
-    raise EnvironmentError(
-        f"EXPERIMENT_BACKEND={EXPERIMENT_BACKEND!r} is not yet supported. "
-        f"Supported backends: {_SUPPORTED_BACKENDS}. "
-        "W&B activation requires completing the gate in WANDB_ACTIVATION.md."
-    )
+
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_wandb_deferred_prep_enabled() -> bool:
+    return _is_truthy(os.getenv(WANDB_DEFERRED_PREP_FLAG))
+
+
+def selected_wandb_mode(default: str = "offline") -> str:
+    mode = os.getenv(WANDB_MODE_ENV, default).strip().lower() or default
+    if mode not in _SUPPORTED_WANDB_MODES:
+        raise EnvironmentError(
+            f"{WANDB_MODE_ENV}={mode!r} is not supported. "
+            f"Supported modes: {_SUPPORTED_WANDB_MODES}. "
+            "W&B deferred prep stays offline-only."
+        )
+    return mode
+
+
+def selected_backend(default: str = "mlflow") -> str:
+    backend = os.getenv("EXPERIMENT_BACKEND", default).strip().lower() or default
+    if backend not in _SUPPORTED_BACKENDS:
+        raise EnvironmentError(
+            f"EXPERIMENT_BACKEND={backend!r} is not supported. "
+            f"Supported backends: {_SUPPORTED_BACKENDS}."
+        )
+    if backend == "wandb" and not is_wandb_deferred_prep_enabled():
+        raise EnvironmentError(
+            "EXPERIMENT_BACKEND='wandb' is reserved for deferred prep only. "
+            f"Set {WANDB_DEFERRED_PREP_FLAG}=1 to opt into the offline scaffold."
+        )
+    if backend == "wandb":
+        selected_wandb_mode()
+    return backend
+
+
+selected_backend(EXPERIMENT_BACKEND)

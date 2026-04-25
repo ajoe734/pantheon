@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import argparse
 
-from adapter import InMemoryMlflowBackend, RegistryExperimentAdapter
+from adapter import InMemoryMlflowBackend, OfflineWandbPrepBackend, RegistryExperimentAdapter
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LP-003 registry-to-experiment smoke test")
     parser.add_argument(
         "--backend",
-        choices=("memory", "mlflow"),
+        choices=("memory", "mlflow", "wandb"),
         default="memory",
-        help="Use the in-memory test backend or a real MLflow tracking server.",
+        help="Use the in-memory MLflow test backend, a real MLflow tracking server, or the offline W&B prep scaffold.",
     )
     parser.add_argument(
         "--tracking-uri",
@@ -26,6 +26,9 @@ def main() -> None:
     if args.backend == "mlflow":
         adapter = RegistryExperimentAdapter.from_tracking_uri(tracking_uri=args.tracking_uri)
         backend = None
+    elif args.backend == "wandb":
+        backend = OfflineWandbPrepBackend()
+        adapter = RegistryExperimentAdapter(backend=backend)
     else:
         backend = InMemoryMlflowBackend()
         adapter = RegistryExperimentAdapter(backend=backend)
@@ -67,8 +70,15 @@ def main() -> None:
         assert recorded_run["tags"]["pantheon.lifecycle_state"] == "live"
         assert recorded_run["aliases"] == ["live"]
         assert recorded_run["artifacts"]["artifact_handoff.json"]["storage_ref"]["path"].endswith("/artifact.bin")
+        if args.backend == "wandb":
+            assert recorded_run["mode"] == "offline"
+            assert recorded_run["tags"]["pantheon.experiment_backend"] == "wandb"
+            assert recorded_run["tags"]["pantheon.wandb.prep_only"] == "true"
+        else:
+            assert recorded_run["tags"]["pantheon.experiment_backend"] == "mlflow"
 
-    assert result.promoted_metadata["experiment_refs"][0]["backend"] == "mlflow"
+    expected_backend = "wandb" if args.backend == "wandb" else "mlflow"
+    assert result.promoted_metadata["experiment_refs"][0]["backend"] == expected_backend
     assert result.promoted_metadata["rollback"]["target_version"] == "1.9.0"
 
     print(f"LP-003 smoke test passed with backend={args.backend}: registry metadata mapped into experiment metadata.")

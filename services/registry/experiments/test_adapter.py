@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
-from adapter import InMemoryMlflowBackend, RegistryExperimentAdapter, ExperimentSyncError
+from adapter import (
+    ExperimentSyncError,
+    InMemoryMlflowBackend,
+    OfflineWandbPrepBackend,
+    RegistryExperimentAdapter,
+)
+from config import selected_backend, selected_wandb_mode
 
 
 def build_registry_entry(lifecycle_state: str = "paper") -> dict:
@@ -53,6 +61,8 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
         self.assertEqual(record.run_name, "1.2.3:paper")
         self.assertEqual(record.tags["pantheon.registry_id"], "reg-strat-001-1.2.3")
         self.assertEqual(record.tags["pantheon.lifecycle_state"], "paper")
+        self.assertEqual(record.tags["pantheon.experiment_backend"], "mlflow")
+        self.assertEqual(record.tags["pantheon.experiment_backend_version"], "3.10.1")
         self.assertEqual(record.tags["pantheon.aliases"], "[\"paper\"]")
         self.assertEqual(record.metrics["sharpe_ratio"], 1.34)
         self.assertEqual(
@@ -63,6 +73,8 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
             record.artifacts["artifact_handoff.json"]["storage_ref"]["path"],
             "object://pantheon/registry/strat-001/1.2.3/artifact.bin",
         )
+        self.assertEqual(record.artifacts["artifact_handoff.json"]["backend"], "mlflow")
+        self.assertEqual(record.artifacts["artifact_handoff.json"]["tracking_version"], "3.10.1")
 
     def test_sync_registry_entry_returns_promoted_metadata_with_experiment_ref(self):
         backend = InMemoryMlflowBackend()
@@ -97,6 +109,40 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
         self.assertEqual(result.promoted_metadata["rollback"]["target_registry_id"], "reg-strat-001-1.2.2")
         self.assertEqual(result.promoted_metadata["rollback"]["target_version"], "1.2.2")
         self.assertEqual(result.promoted_metadata["experiment_refs"][0]["aliases"], ["live"])
+
+    def test_wandb_prep_backend_preserves_promoted_metadata_shape(self):
+        backend = OfflineWandbPrepBackend(mode="offline")
+        adapter = RegistryExperimentAdapter(backend=backend)
+
+        result = adapter.sync_registry_entry(build_registry_entry())
+
+        self.assertEqual(result.experiment_ref.backend, "wandb")
+        self.assertEqual(result.record.tags["pantheon.experiment_backend"], "wandb")
+        self.assertEqual(result.record.tags["pantheon.wandb.prep_only"], "true")
+        self.assertEqual(result.record.artifacts["artifact_handoff.json"]["backend"], "wandb")
+        self.assertEqual(result.promoted_metadata["promotion_state"], "paper")
+        self.assertEqual(result.promoted_metadata["experiment_refs"][0]["backend"], "wandb")
+        self.assertEqual(result.promoted_metadata["experiment_refs"][0]["aliases"], ["paper"])
+        self.assertIn(result.experiment_ref.run_id, backend.runs)
+
+    def test_selected_backend_rejects_wandb_without_feature_flag(self):
+        with patch.dict(os.environ, {"EXPERIMENT_BACKEND": "wandb"}, clear=False):
+            with self.assertRaises(EnvironmentError):
+                selected_backend()
+
+    def test_selected_backend_accepts_wandb_with_deferred_prep_flag(self):
+        env = {
+            "EXPERIMENT_BACKEND": "wandb",
+            "PANTHEON_ENABLE_WANDB_DEFERRED_PREP": "1",
+            "PANTHEON_WANDB_MODE": "dryrun",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            self.assertEqual(selected_backend(), "wandb")
+            self.assertEqual(selected_wandb_mode(), "dryrun")
+            adapter = RegistryExperimentAdapter.from_env()
+
+        self.assertEqual(adapter.backend.backend_name, "wandb")
+        self.assertEqual(adapter.backend.tracking_version, "deferred-prep-offline")
 
 
 if __name__ == "__main__":
