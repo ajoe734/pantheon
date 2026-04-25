@@ -1,0 +1,48 @@
+{
+  "dataset_id": "dataset:quantlib-sample-001",
+  "source_dataset_refs": [
+    "dataset:governed-options-and-rates-001"
+  ],
+  "valuation_date": "2026-04-21",
+  "option_specs": [
+    {
+      "option_id": "opt-eur-call-sample-001",
+      "style": "european",
+      "option_type": "call",
+      "spot": 102.0,
+      "strike": 100.0,
+      "volatility": 0.22,
+      "risk_free_rate": 0.03,
+      "dividend_yield": 0.01,
+      "maturity_days": 90,
+      "quantity": 10
+    },
+    {
+      "option_id": "opt-am-put-sample-001",
+      "style": "american",
+      "option_type": "put",
+      "spot": 98.0,
+      "strike": 100.0,
+      "volatility": 0.25,
+      "risk_free_rate": 0.028,
+      "dividend_yield": 0.0,
+      "maturity_days": 180,
+      "quantity": 5
+    }
+  ],
+  "bond_specs": [
+    {
+      "instrument_id": "bond-ust-2y-sample-001",
+      "face_value": 1000.0,
+      "coupon_rate": 0.04,
+      "market_rate": 0.035,
+      "maturity_years": 2,
+      "payment_frequency": 2
+    }
+  ],
+  "metadata": {
+    "governed": true,
+    "intended_use": "research_only_derivatives_and_fixed_income_diagnostics",
+    "source": "quantlib_worker_sample"
+  }
+}
