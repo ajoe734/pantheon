@@ -298,8 +298,8 @@ services:
 
   persona:
     build:
-      context: services/control-plane/persona
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/control-plane/persona/Dockerfile
     environment:
       PORT: "8002"
       PANTHEON_BFF_URL: http://operator-bff:8001

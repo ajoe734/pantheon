@@ -9,6 +9,7 @@ __pycache__/
 .orchestrator/backups/
 .orchestrator/logs/
 .orchestrator/planning-state.json
+.orchestrator/planning-state.lock
 .orchestrator/approval-queue.json
 .orchestrator/approval-queue.lock
 .orchestrator/event-queue.jsonl
@@ -31,4 +32,5 @@ repo_tree.txt
 archived
 *.Zone.Identifier
 *:Zone.Identifier
+.venv-*/
 docs/commit-plan-uncommitted-worktree-*.md

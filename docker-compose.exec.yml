@@ -41,6 +41,8 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   broker-adapter:
     build:
@@ -75,6 +77,8 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   exchange-adapter:
     build:
@@ -109,6 +113,8 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   pantheon-paper-runtime:
     build:
@@ -127,6 +133,7 @@ services:
       PANTHEON_SESSION_ID: ${PANTHEON_SESSION_ID:-session-paper-runtime}
       PANTHEON_TRACE_ID: ${PANTHEON_TRACE_ID:-trace-paper-runtime}
       PANTHEON_REQUEST_ID: ${PANTHEON_REQUEST_ID:-request-paper-runtime}
+      PANTHEON_TELEMETRY_URL: ${PANTHEON_TELEMETRY_URL:-}
       SIGNAL_STORE_URL: ${SIGNAL_STORE_URL:-redis://signal-store:6379}
       PANTHEON_SIGNAL_QUEUE_KEY: ${PANTHEON_SIGNAL_QUEUE_KEY:-pantheon:signals:pending}
       PANTHEON_BROKER_ADAPTER_URL: http://broker-adapter:8097
@@ -150,6 +157,8 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   pantheon-lean-live:
     profiles: ["live"]
@@ -170,6 +179,7 @@ services:
       PANTHEON_SESSION_ID: ${PANTHEON_SESSION_ID:-session-live-runtime}
       PANTHEON_TRACE_ID: ${PANTHEON_TRACE_ID:-trace-live-runtime}
       PANTHEON_REQUEST_ID: ${PANTHEON_REQUEST_ID:-request-live-runtime}
+      PANTHEON_TELEMETRY_URL: ${PANTHEON_TELEMETRY_URL:-}
       PANTHEON_REQUIRED_SECRET_KEYS: BROKER_API_KEY,BROKER_API_SECRET,EXCHANGE_API_KEY,EXCHANGE_API_SECRET
       PANTHEON_SECRETS_OPTIONAL: "false"
     depends_on:
@@ -187,6 +197,8 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   runtime-data:

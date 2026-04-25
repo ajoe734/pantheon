@@ -79,6 +79,68 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             self.assertEqual(payload["task_id"], "APP-003-DATASOURCE-OPS-001")
             self.assertEqual(payload["providers"]["tej"]["dataset_code"], "TWN/APRCD1")
 
+    def test_emit_human_gate_packet_writes_packetized_trace_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            checklist_path = tmp / "operator-checklist.json"
+            datasource_summary_path = tmp / "datasource-summary.json"
+            plan_path = tmp / "canary-deployment-plan.json"
+            drill_summary_path = tmp / "rollback-drill-summary.json"
+            output_dir = tmp / "packet"
+
+            checklist_path.write_text(
+                json.dumps({"status": "pass", "check_health": True}),
+                encoding="utf-8",
+            )
+            datasource_summary_path.write_text(
+                json.dumps({"status": "pass", "providers": ["ibkr", "kraken", "shioaji", "tej"]}),
+                encoding="utf-8",
+            )
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "target_stage": "canary",
+                        "scale": {"capital_scale_pct": 5.0, "gross_scale_pct": 25.0},
+                        "rollback": {"action_type": "pause_then_replace"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            drill_summary_path.write_text(
+                json.dumps(
+                    {
+                        "status": "executed",
+                        "replacement_binding_id": "rb-replacement-001",
+                        "kill_switch_safe_mode": "paused",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            args = type(
+                "Args",
+                (),
+                {
+                    "checklist_json": str(checklist_path),
+                    "datasource_summary_json": str(datasource_summary_path),
+                    "plan_json": str(plan_path),
+                    "drill_summary_json": str(drill_summary_path),
+                    "dual_vm_evidence_dir": str(tmp),
+                    "event_trace_status": "packetized",
+                    "event_trace_note": "Trace query evidence remains packetized pending a replay-clean projection capture.",
+                    "output_dir": str(output_dir),
+                },
+            )
+            exit_code = readiness.command_emit_human_gate_packet(args)
+
+            self.assertEqual(exit_code, 0)
+            packet = json.loads((output_dir / "human-gate-packet.json").read_text(encoding="utf-8"))
+            summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(packet["status"], "ready_for_review")
+            self.assertEqual(packet["event_trace_read_model"]["status"], "packetized")
+            self.assertEqual(summary["event_trace_status"], "packetized")
+            self.assertEqual(packet["bundle"]["canary_plan"]["target_stage"], "canary")
+
 
 if __name__ == "__main__":
     unittest.main()
