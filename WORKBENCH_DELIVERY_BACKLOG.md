@@ -1,6 +1,6 @@
 # Workbench Delivery Backlog
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 Status: canonical module-level backlog for remaining product and workbench delivery
 Tier: L2 Planning & Execution
 Scope: remaining workbench modules, truthful delivery gates, and the order required to close productization gaps
@@ -46,6 +46,11 @@ These surfaces are not part of the remaining backlog:
 - `PKT-013` Operator Home Dashboard
 - `PKT-014` Paper / Live Drift
 
+Outside this workbench backlog:
+
+- `Settings` is now Pantheon BFF-backed via `/api/v1/settings*` and should be treated as
+  config-domain product refinement, not as a remaining workbench module gap
+
 ## 3. Remaining Backlog
 
 The reviewed Operator Console Wave 2 and governance follow-on packet loops are no
@@ -57,8 +62,8 @@ canonical closeout bookkeeping only and is tracked separately in
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `EW-04 Inspiration Graph` | loop-complete — inspiration route live and current frontend loop closed | route spec, composed object, `meta.surfaces.inspiration`, handoff bundle, and the accepted frontend feedback chain are aligned with the live BFF inspiration route for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later inspiration-graph revision or regression triggers a new delivery loop |
-| `EW-05 Mutation Review` | loop-complete — mutation-review route and current frontend loop closed | mutation-review projection, command vocabulary, authority signals, handoff bundle, and the accepted frontend feedback chain are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later mutation-review revision or regression triggers a new delivery loop |
+| `EW-04 Inspiration Graph` | route-live in Pantheon, and the current front default branch now mounts the live inspiration graph surface | no new Pantheon BFF implementation gap remains for this slice; the blocked-shell realignment lane is no longer the truthful residual after the front default branch shipped the live route | reopen only if a later GitHub-visible review packet finds a contract-specific regression, replay-clean publication issue, or front follow-up blocker |
+| `EW-05 Mutation Review` | route-live in Pantheon, and the current front default branch now mounts the live mutation review surface | no new Pantheon BFF implementation gap remains for this slice; the blocked-shell realignment lane is no longer the truthful residual after the front default branch shipped the live route and command-authority flow | reopen only if a later GitHub-visible review packet finds a contract-specific regression, replay-clean publication issue, or front follow-up blocker |
 
 ### Research Workbench
 
@@ -88,18 +93,18 @@ module-local handoff packets.
 
 ### Consultation Workbench
 
-Overview packet note: `PKT-consultation-workbench` now publishes a truthful overview route and handoff bundle. The module backlog below only remains open for still-active frontend activations and packet-family sync against the now-live `CW-04` routes.
+Overview packet note: `PKT-consultation-workbench` now publishes a truthful overview route and handoff bundle. The module backlog below must stay honest about cross-repo reality: Pantheon routes are live, and the current front default branch now mounts live request / committee / memo surfaces. Remaining work, where present, is closeout / republish / truth-sync follow-up rather than blocked-shell realignment.
 
 Route-live activation note: `APP-003-ROUTE-LIVE-FRONTEND-001` is archive-done
-for `CW-02`. That module no longer remains on this Pantheon backlog purely
-because front-end activation proceeds downstream from the published transcript
-handoff packet.
+for `CW-02`. That transcript module is closed for the current wave. `CW-01`,
+`CW-03`, and `CW-04` are also now live on the current front default branch, so
+they should no longer be read as blocked-shell realignment residuals.
 
 | Module | Current state | Pantheon-owned gap | Next truthful gate |
 |---|---|---|---|
-| `CW-01 Consult Request` | loop-complete — request routes live and current frontend loop closed | Pantheon's create/list/detail/cancel route family, handoff bundle, and accepted frontend feedback chain are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later consult-request revision or regression triggers a new delivery loop |
-| `CW-03 Committee Board` | loop-complete — committee routes live and current frontend loop closed | committee list/detail routes, sponsor-decision authority, transcript-linked projection, and the accepted frontend feedback chain are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later committee-board revision, transcript dependency change, or regression triggers a new delivery loop |
-| `CW-04 Red-team Memo` | route-live — memo list/detail routes and the module-local frontend handoff bundle are published | memo lifecycle, session-to-memo mapping, evidence links, governance-review initiation gating, and the published handoff bundle are aligned for the current wave; remaining follow-up is frontend activation / replay-clean publication rather than missing BFF work | activate the Lovable UI task against the published live route family; reopen Pantheon implementation only if a UI-facing contract gap appears |
+| `CW-01 Consult Request` | route-live in Pantheon, and the current front default branch now mounts the live request list/detail flow | no new Pantheon BFF implementation gap remains for this slice; any remaining work should be interpreted as closeout / republish / truth-sync follow-up, not blocked-shell realignment | reopen only if a later GitHub-visible review packet finds a contract-specific regression, replay-clean publication issue, or front follow-up blocker |
+| `CW-03 Committee Board` | route-live in Pantheon, and the current front default branch now mounts the live committee board/detail flow | no new Pantheon BFF implementation gap remains for this slice; any remaining work should be interpreted as closeout / republish / truth-sync follow-up, not blocked-shell realignment | reopen only if a later GitHub-visible review packet finds a contract-specific regression, replay-clean publication issue, or front follow-up blocker |
+| `CW-04 Red-team Memo` | route-live in Pantheon, and the current front default branch now mounts the live memo list/detail flow | memo lifecycle, session-to-memo mapping, evidence links, and governance-review initiation gating are live in Pantheon; any remaining work should be interpreted as closeout / republish / truth-sync follow-up, not blocked-shell realignment | reopen only if a later GitHub-visible review packet finds a contract-specific regression, replay-clean publication issue, or front follow-up blocker |
 
 ### Trainer Workbench
 
@@ -117,7 +122,7 @@ already published module-local handoff packets.
 Use this order unless a narrower canonical doc says otherwise:
 
 1. finish canonical closeout bookkeeping tasks in `ai-status.json` when a reviewed loop still needs a record-layer closure sync
-2. finish `EW-04` before `EW-05`
+2. if a later Evolution reopen is required, finish `EW-04` before `EW-05`
 3. for Research, Knowledge, Consultation, and Trainer, land identity and lifecycle modules first, then read aggregates, then mutation or replay surfaces
 
 ## 5. Relationship To Other Canonical Files

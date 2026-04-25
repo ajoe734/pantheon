@@ -6,6 +6,7 @@ Source:
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
 - `docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md`
 - `docs/reviews/Pantheon_Response_to_System_Design_Followup_Questions.md`
+- `docs/reviews/Pantheon_Response_to_Architecture_Blockers_Decision_Package.md`
 
 ## Purpose
 
@@ -14,6 +15,21 @@ truth drifted across backlog, SA, packet family, and BFF overviews.
 
 Per the current conventions draft, this file outranks derived readiness wording
 in packet family and SA docs until superseded by a newer ratification record.
+
+## 2026-04-22 harmonization note
+
+`Pantheon_Response_to_Architecture_Blockers_Decision_Package.md` answers the
+remaining cross-cutting blocker questions in substance, but its module-level
+`blocked` snapshot does not automatically outrank later ratified contract text
+or current repo implementation truth.
+
+When conflicts exist:
+
+1. accept the response's cross-cutting decisions
+2. keep module readiness aligned with this ratification file plus current
+   module-contract / code truth
+3. do not demote already-ratified or route-live modules back into
+   architecture-only status
 
 ## Ratified modules
 

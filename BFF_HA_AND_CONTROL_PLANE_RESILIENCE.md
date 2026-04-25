@@ -86,6 +86,8 @@ BFF 不負責：
 - 只禁用受影響工作台
 - 其他工作台可繼續服務
 - degraded 狀態必須由 backend / BFF 明確標示來源與可信度，不能由 UI 自行發明 snapshot/default fallback 當正常資料
+- BFF 正常整合路徑不得以本地 seed、snapshot、或隱性 localhost backend 預設假裝 backend 已就緒
+- command-submission path 也必須指向明確配置的 backend API；不得以環境別名或隱性 fallback 假裝 governance/control backend 已可用
 
 ## 5.2 BFF total outage
 若 BFF 全部不可用：

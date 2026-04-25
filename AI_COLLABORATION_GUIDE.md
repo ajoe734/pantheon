@@ -1,6 +1,6 @@
 # AI Collaboration Guide
 
-Last updated: 2026-04-09
+Last updated: 2026-04-18
 Status: canonical collaboration rules for the Pantheon project
 
 ## 0. Repository Architecture (2026-04-04 — migration complete)
@@ -37,25 +37,32 @@ git submodule update --init --recursive
 Read these in order before starting work:
 
 1. `AI_COLLABORATION_GUIDE.md`
-2. `current-work.md`
-3. `ai-status.json`
-4. `docs/02-architecture/consensus/phase1/README.md` when `discussion_planning` is active
-5. `docs/02-architecture/consensus/phase1/planning-session.json` when `discussion_planning` is active
+2. `ai-status.json`
+3. `current-work.md` as a human summary only
+4. the active planning session README named by `.orchestrator/planning-state.json` when `discussion_planning` is active
+5. the active `planning-session.json` named by `.orchestrator/planning-state.json` when `discussion_planning` is active
 6. `TARGET_ARCHITECTURE.md`
 7. `CANONICAL_DOCUMENT_MAP.md`
-8. `ROADMAP.md`
-9. `DEVELOPMENT_WORKBREAKDOWN.md`
-10. the L1 policy file for the topic you are touching
-11. `OSS_INTEGRATION_CHECKLIST.md`
-12. L3 supporting docs only when you need rationale or migration history
+8. `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`
+9. `ROADMAP.md`
+10. `DEVELOPMENT_WORKBREAKDOWN.md`
+11. `WORKBENCH_DELIVERY_BACKLOG.md`
+12. `DELIVERY_CLOSURE_AND_LOOP_STATES.md`
+13. `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
+14. the L1 policy file for the topic you are touching
+15. `OSS_INTEGRATION_CHECKLIST.md`
+16. L3 supporting docs only when you need rationale or migration history
 
-Canonical truth now uses four layers:
+Canonical truth now uses five layers:
 
 ### L0 Collaboration & State
 
 - `AI_COLLABORATION_GUIDE.md`: stable collaboration rules and command usage
 - `ai-status.json`: machine-readable live task state, ownership, blockers, handoffs
 - `ai-activity-log.jsonl`: append-only activity history
+
+### L0.5 Derived Narrative
+
 - `current-work.md`: generated human-readable sprint snapshot
 
 ### L1 Platform Architecture & Policy
@@ -80,11 +87,19 @@ Canonical truth now uses four layers:
 
 ### L2 Planning & Execution
 
-- `docs/02-architecture/consensus/phase1/README.md`: discussion planning operating model and baton loop
-- `docs/02-architecture/consensus/phase1/planning-session.json`: machine-readable planning session state
+- `CANONICAL_DOCUMENT_MAP.md`: canonical routing and precedence
+- `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`: blueprint-vs-record governance rules
 - `ROADMAP.md`: phased program plan and critical path
 - `DEVELOPMENT_WORKBREAKDOWN.md`: full platform backlog and task decomposition
+- `WORKBENCH_DELIVERY_BACKLOG.md`: remaining module-level productization backlog
+- `DELIVERY_CLOSURE_AND_LOOP_STATES.md`: truthful closure semantics for packet loops
+- `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`: evidence ladder for runtime and system proof claims
 - `OSS_INTEGRATION_CHECKLIST.md`: upstream OSS integration evidence checklist
+
+Planning sessions remain working records, even when active:
+
+- the active planning session README named by `.orchestrator/planning-state.json`
+- the active `planning-session.json` named by `.orchestrator/planning-state.json`
 
 ### L3 Supporting Design & Migration
 
@@ -97,10 +112,12 @@ Canonical truth now uses four layers:
 Layer rules:
 
 - L0 state files coordinate work and do not define product semantics by themselves.
+- L0.5 derived files help humans navigate but never outrank machine-readable state.
 - L1 defines current canonical architecture and policy.
 - L2 may sequence work but must not override L1 semantics.
 - L3 may explain or motivate decisions but does not override L1/L2.
 - `CANONICAL_DOCUMENT_MAP.md` is the lookup table when two docs seem close in scope.
+- planning sessions, review docs, and execution artifacts are records unless explicitly promoted.
 
 ### State Placement Rules
 
@@ -220,6 +237,18 @@ Use it before materializing execution tasks when we still need written consensus
 - delivery order / wave order
 - task slicing and reviewer assignment
 
+Planning mode now follows two stages:
+
+1. `document_reconciliation`
+2. `execution_planning`
+
+That means the session must first identify whether canonical blueprint or planning docs are insufficient, and either:
+
+- update the canonical docs
+- or explicitly conclude that no canonical doc change is needed
+
+Only then may the session move to final human approval and execution materialization.
+
 Canonical planning workspace:
 
 - `docs/02-architecture/consensus/phase1/README.md`
@@ -235,6 +264,7 @@ Rules:
 - reviewers write cited comments in the current round file instead of directly rewriting the shared draft
 - `planning-session.json` is the machine-readable source of truth for planning state
 - `.orchestrator/planning-state.json` is derived for dashboard rendering
+- document reconciliation must be completed before `ready_for_human`, `human-gate approved`, or `materialize`
 - execution tasks still live in `ai-status.json`; planning drafts should not be inserted there prematurely
 
 Typical flow:
