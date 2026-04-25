@@ -102,7 +102,7 @@ def build_polygon_raw_dataset(
         metadata_json={
             "provider": vendor,
             "dataset_type": dataset_type,
-            "governed_role": "us_research_grade_primary_candidate",
+            "governed_role": "us_research_grade_primary",
         },
     )
 
@@ -132,6 +132,7 @@ def build_us_normalized_dataset(
             "provider": provider,
             "market_boundary": "US",
             "symbol_canonical_suffix": "US",
+            "source_role": "primary_research_grade",
         },
     )
 

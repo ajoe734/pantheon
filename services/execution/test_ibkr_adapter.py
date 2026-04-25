@@ -53,6 +53,9 @@ class TestIBKRAdapter(unittest.TestCase):
         self.assertEqual(payload["marketDataType"], 3)
         self.assertTrue(payload["snapshot"])
         self.assertTrue(payload["readonly"])
+        self.assertEqual(payload["provider"], "IBKR market data")
+        self.assertEqual(payload["sourceClass"], "broker_execution")
+        self.assertEqual(payload["boundaryRole"], "execution_sync_fallback")
 
     def test_normalize_quote_maps_numeric_fields(self):
         quote = self.adapter.normalize_quote(
@@ -74,6 +77,9 @@ class TestIBKRAdapter(unittest.TestCase):
         self.assertEqual(quote.last, 209.13)
         self.assertEqual(quote.bid_size, 4)
         self.assertEqual(quote.volume, 18000421)
+        self.assertEqual(quote.provider, "IBKR market data")
+        self.assertEqual(quote.source_class, "broker_execution")
+        self.assertEqual(quote.boundary_role, "execution_sync_fallback")
 
 
 class TestUSLeanSymbolParsing(unittest.TestCase):

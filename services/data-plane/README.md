@@ -48,10 +48,16 @@ Six canonical source classes are defined per `DATA_SOURCE_SCOPE_MATRIX.md`:
 - Distinguishes regular sessions, early closes, and holidays.
 - Holiday sessions may have empty `session_open` / `session_close` values.
 
+### Taiwan Normalization Pipeline
+- `services/data-plane/taiwan_reference.py` canonicalizes Taiwan venue aliases into `TWSE` / `TPEx` and emits `SecurityMaster` rows with explicit `market_segment` metadata (`listed` vs `otc`).
+- Shioaji quote snapshots stay on the `broker_execution` boundary as `RawDataset` inputs; TWSE / TPEx listings and MOPS disclosures remain `official_reference`; TEJ remains `research_grade`.
+- The normalized Taiwan dataset records the replay inputs explicitly through `symbol_mapping_version`, `calendar_version`, `disclosure_join_version`, and `fundamentals_join_version`.
+- `join_tw_quote_with_reference(...)` is the canonical join helper for binding Shioaji quote rows to official listings plus MOPS / TEJ enrichment without erasing source boundaries.
+
 ## Verification
 
 ```bash
-# Unit tests (37 tests)
+# Unit tests (47 tests)
 python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py' -v
 
 # Smoke test (47 checks, including jsonschema validation)

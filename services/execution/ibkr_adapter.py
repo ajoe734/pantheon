@@ -166,6 +166,9 @@ class IBKRQuoteSnapshot:
     close: Optional[float] = None
     volume: Optional[int] = None
     market_data_type: Optional[int] = None
+    provider: str = "IBKR market data"
+    source_class: str = "broker_execution"
+    boundary_role: str = "execution_sync_fallback"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -219,6 +222,9 @@ class IBKRAdapter:
         payload = request.to_payload()
         payload["marketDataType"] = self.config.market_data_type
         payload["readonly"] = self.config.readonly_market_data
+        payload["provider"] = "IBKR market data"
+        payload["sourceClass"] = "broker_execution"
+        payload["boundaryRole"] = "execution_sync_fallback"
         return payload
 
     def normalize_quote(self, payload: dict[str, Any], symbol: str, venue: Optional[str] = None) -> IBKRQuoteSnapshot:
@@ -237,6 +243,9 @@ class IBKRAdapter:
             close=_to_float(payload.get("close")),
             volume=_to_int(payload.get("volume")),
             market_data_type=_to_int(payload.get("marketDataType") or self.config.market_data_type),
+            provider=str(payload.get("provider") or "IBKR market data"),
+            source_class="broker_execution",
+            boundary_role="execution_sync_fallback",
         )
 
 

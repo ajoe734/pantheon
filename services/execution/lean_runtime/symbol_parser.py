@@ -27,7 +27,8 @@ _MARKET_MAP: dict[str, tuple[str, str]] = {
     "FX":           ("Market.Oanda",          "SecurityType.Forex"),
     "COINBASE":     ("Market.Coinbase",       "SecurityType.Crypto"),
     "BINANCE":      ("Market.Binance",        "SecurityType.Crypto"),
-    "CRYPTO":       ("Market.Coinbase",       "SecurityType.Crypto"),   # default crypto exchange
+    "KRAKEN":       ("Market.Kraken",         "SecurityType.Crypto"),
+    "CRYPTO":       ("Market.Kraken",         "SecurityType.Crypto"),   # canonical crypto venue default
 }
 
 # Crypto pairs that lack a dot separator — identified by known quote currencies
@@ -56,7 +57,8 @@ def parse(symbol_str: str) -> ParsedSymbol:
     Examples:
         "AAPL.US"       → ticker=AAPL, Market.USA, SecurityType.Equity
         "EURUSD.FX"     → ticker=EURUSD, Market.Oanda, SecurityType.Forex
-        "BTCUSDT"       → ticker=BTCUSDT, Market.Coinbase, SecurityType.Crypto
+        "BTCUSD.KRAKEN" → ticker=BTCUSD, Market.Kraken, SecurityType.Crypto
+        "BTCUSDT"       → ticker=BTCUSDT, Market.Kraken, SecurityType.Crypto
         Taiwan venue codes are intentionally excluded here. Taiwan execution
         uses the Shioaji adapter boundary rather than LEAN Symbol.Create().
     """
@@ -81,7 +83,7 @@ def parse(symbol_str: str) -> ParsedSymbol:
             # Preserve original casing for LEAN (e.g. "BTCUSDT" not "BTCUSD T")
             return ParsedSymbol(
                 ticker=s,
-                lean_market="Market.Binance",
+                lean_market="Market.Kraken",
                 lean_security_type="SecurityType.Crypto",
                 raw=symbol_str,
             )
