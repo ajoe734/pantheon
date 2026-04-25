@@ -35,23 +35,29 @@ DatasetVersion  ← frozen lineage snapshot (unit of replay)
 ```
 
 ### Source Classes
-Six source classes are defined per the blueprint gap review:
-- `market` — price, volume, order book data
-- `fundamental` — earnings, financials, ratios
-- `event` — news, announcements, economic calendars
-- `alternative` — sentiment, web traffic, satellite
-- `execution_internal` — fills, slippage, PnL (internal telemetry)
-- `human_feedback` — trader approvals, edits, rejections
+Six canonical source classes are defined per `DATA_SOURCE_SCOPE_MATRIX.md`:
+- `official_reference` — listings, calendars, corporate actions, disclosures
+- `broker_execution` — broker-aligned execution-sync bars, fills, symbol mapping
+- `research_grade` — historical market data, fundamentals, event enrichment
+- `derivative_analytics` — options chains, IV, greeks, futures term structure
+- `crypto_analytics` — funding, open interest, liquidations, on-chain adjuncts
+- `internal_can` — normalized internal canonical datasets only
 
 ### Market Calendar
 - Supports per-market timezone management.
 - Distinguishes regular sessions, early closes, and holidays.
 - Holiday sessions may have empty `session_open` / `session_close` values.
 
+### Taiwan Normalization Pipeline
+- `services/data-plane/taiwan_reference.py` canonicalizes Taiwan venue aliases into `TWSE` / `TPEx` and emits `SecurityMaster` rows with explicit `market_segment` metadata (`listed` vs `otc`).
+- Shioaji quote snapshots stay on the `broker_execution` boundary as `RawDataset` inputs; TWSE / TPEx listings and MOPS disclosures remain `official_reference`; TEJ remains `research_grade`.
+- The normalized Taiwan dataset records the replay inputs explicitly through `symbol_mapping_version`, `calendar_version`, `disclosure_join_version`, and `fundamentals_join_version`.
+- `join_tw_quote_with_reference(...)` is the canonical join helper for binding Shioaji quote rows to official listings plus MOPS / TEJ enrichment without erasing source boundaries.
+
 ## Verification
 
 ```bash
-# Unit tests (37 tests)
+# Unit tests (47 tests)
 python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py' -v
 
 # Smoke test (47 checks, including jsonschema validation)
