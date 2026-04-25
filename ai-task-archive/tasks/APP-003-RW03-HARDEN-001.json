@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RW03-HARDEN-001",
+  "archived_at": "2026-04-23T06:09:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RW03-HARDEN-001",
+    "title": "Harden RW-03 production reads away from local snapshot fallback",
+    "summary_zh": "把 RW-03 的分析讀模型改成 service-backed truth 優先，避免 production path 仍靠 seeded snapshot 撐住。",
+    "phase": "Execution / Research Workbench Hardening",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-RW01-HARDEN-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_rw03_analyze_contract.py"
+    ],
+    "acceptance": [
+      "RW-03 production reads prefer service backed truth",
+      "RW-03 normal path no longer needs local snapshot fallback",
+      "Contract and regression tests cover fresh degraded and unavailable states"
+    ],
+    "next": "Checkpoint: RW-03 analysis list/detail now require service-backed truth with no snapshot or local fallback on production reads; regression coverage for fresh, seeded-detail-miss, and unavailable surfaces passed (14 RW-03/RW-01 tests, plus 5 adjacent RW-02/bootstrap checks).",
+    "last_update": "2026-04-23T06:09:08Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "services/control-plane/bff/main.py:7543-7547 與 :7600-7608 已將 RW-03 list/detail 的 include_snapshot_fallback 與 include_local_fallback 同時關閉，read_store.py:6622-6692 的 list/get 與 :7203-7222、:4703-4730 的 dataset_source 都正確透傳旗標，CanonicalSnapshotAdapter._load_dataset 也尊重 include_snapshot_fallback；test_rw03_analyze_contract.py 已新增 service-backed (fresh)、seeded-detail 404、unavailable list 三條 regression，並沿用 RW-01 的 surface 語義；本機重跑 pytest -q test_rw03_analyze_contract.py + test_rw01_research_ticket_contract.py 14 passed，附帶跑 RW-02 search 與 read_store_bootstrap_snapshot 5 passed 也未受波及",
+      "後續觀察：因為 production path 已硬關 fallback，'degraded' surface 在 /api/v1/research/analysis 結構上不再可達；若未來要保留 degraded telemetry，需改在 read_store 層獨立暴露而非靠 endpoint 旗標",
+      "後續觀察：本批 working tree 還夾帶大量非 RW-03 相關的 ServiceBackedReadAdapter 註冊與 _read_dataset_records flag wiring，建議 owner finalize 時把 RW-03-HARDEN commit 與其他 surface 的擴張改動切開，確保 git 可追蹤"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T06:09:08Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "e2b5114efc90d8136e9a4ddf5bcf2f6362d446bb",
+      "commit_subject": "APP-003-RW03-HARDEN-001 harden RW-03 reads away from snapshot fallback",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-RW03-HARDEN-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1169,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RW03-HARDEN-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned APP-003-RW03-HARDEN-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-22T05:43:08Z",
+      "resolved_at": "2026-04-22T12:35:25Z"
+    },
+    {
+      "task_id": "APP-003-RW03-HARDEN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-03 production list/detail now disable snapshot and local fallback, so only service-backed analysis truth serves the normal path. Added regression coverage for seeded-detail 404 and list unavailable when no service truth exists; targeted RW01/RW03 contract tests pass (14 passed).",
+      "status": "done",
+      "created_at": "2026-04-23T05:49:48Z",
+      "resolved_at": "2026-04-23T05:55:35Z"
+    },
+    {
+      "task_id": "APP-003-RW03-HARDEN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-03 production list/detail confirmed to require service-backed truth; regression coverage for fresh and unavailable surfaces is in place and 14 targeted contract tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-23T05:55:35Z",
+      "resolved_at": "2026-04-23T06:09:08Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "APP-003-RW03-HARDEN-001",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Paused RW-03 hardening until RW-01 review completes and restores the declared dependency ordering.",
+      "status": "resolved",
+      "created_at": "2026-04-23T01:57:33Z",
+      "resolved_at": "2026-04-23T05:49:48Z"
+    }
+  ]
+}

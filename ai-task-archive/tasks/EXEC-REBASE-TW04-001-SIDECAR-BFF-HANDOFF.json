@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-20T13:36:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare EXEC-REBASE-TW04-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 EXEC-REBASE-TW04-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-REBASE-TW04-001/EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF handoff packet and archived it for parent absorption. Support artifact only; parent owner can absorb the packet into EXEC-REBASE-TW04-001 canonical handoff refresh.",
+    "last_update": "2026-04-20T13:36:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-REBASE-TW04-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 審查通過：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）缺失的 handoff dir、兩個 request templates (bff-gap / ui-done) 確認不存在；（3）screen_id drift（screen-teaching-replay vs screen-trainer-teaching-replay）已正確標記；（4）BFF query/command matrix 與 docs/bff/TW-04-teaching-replay.md 完全吻合；（5）operator journey 與 screen spec + BFF authority rules 一致。Packet 可作為 parent EXEC-REBASE-TW04-001 的吸收指引。"
+    ],
+    "review_file": "support/sidecars/EXEC-REBASE-TW04-001/EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T13:36:31Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "78f022e787b08787d1e3feebd79794a51780e270",
+      "commit_subject": "EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF: finalize BFF handoff packet for parent absorption",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 857,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Prepared support/sidecars/EXEC-REBASE-TW04-001/EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF.md with TW-04 repo truth snapshot, BFF query/command matrix, operator journey, missing handoff/template inventory, and parent absorption checklist for the canonical handoff refresh.",
+      "status": "done",
+      "created_at": "2026-04-20T13:20:20Z",
+      "resolved_at": "2026-04-20T13:24:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar BFF handoff packet passes review: gap inventory accurate, screen_id drift correctly flagged, BFF matrix aligned with published contract. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-20T13:24:29Z",
+      "resolved_at": "2026-04-20T13:36:31Z"
+    }
+  ],
+  "blockers": []
+}

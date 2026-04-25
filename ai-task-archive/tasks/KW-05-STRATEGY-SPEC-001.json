@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "KW-05-STRATEGY-SPEC-001",
+  "archived_at": "2026-04-19T21:27:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "KW-05-STRATEGY-SPEC-001",
+    "title": "Publish Strategy Spec versioning and compare contract",
+    "summary_zh": "為 KW-05 補齊 strategy spec list/detail、versioning lifecycle、citation panel 與 diff contract，讓 spec viewer 可 truthful 交付。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "KW-03-EVIDENCE-001",
+      "KW-04-INSIGHT-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "strategy spec list and detail routes are published",
+      "versioning and lifecycle semantics are explicit",
+      "diff and citation behavior are backend owned"
+    ],
+    "next": "KW-05 strategy spec contract finalized and closed. Artifacts committed: docs/bff/KW-05-strategy-spec.md (4 routes: list, versioned detail, version history, compare), docs/examples/KW-05-strategy-spec.json, PACKET_FAMILY.md KW-05 section updated. All acceptance criteria met.",
+    "last_update": "2026-04-19T21:27:18Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "- 已核對 docs/bff/KW-05-strategy-spec.md、docs/examples/KW-05-strategy-spec.json 與 PACKET_FAMILY.md；list/detail/versions/compare 四條 read contract、versioning/lifecycle、citation bundle、allowedActions 與 backend-owned diff 均齊備。|- 補正 `version=current` 對 deprecated family 的語義，避免 current selector 在退役 spec 上產生不 truthful 的 detail 解讀。|- compare example 已移除 `unchanged` 項並與 `field_diffs` 定義對齊；前端只渲染 backend-composed changed fields。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T21:27:18Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "85bf566bd42d753c63387f98319eb86118ab0c93",
+      "commit_subject": "KW-05-STRATEGY-SPEC-001 finalize: record done transition",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Publish strategy spec BFF contract": "list, versioned detail, version history,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "KW-05-STRATEGY-SPEC-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 763,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "KW-05-STRATEGY-SPEC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:30:48Z",
+      "resolved_at": "2026-04-19T20:31:52Z"
+    },
+    {
+      "task_id": "KW-05-STRATEGY-SPEC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Strategy spec BFF contract complete. Please review: docs/bff/KW-05-strategy-spec.md (4 routes: list, versioned detail, version history, compare; versioning/lifecycle; citation bundle; allowedActions; non-goals), docs/examples/KW-05-strategy-spec.json (all 4 payload examples), and PACKET_FAMILY.md KW-05 section (backend gaps resolved, readiness gate true). All acceptance criteria should be met: spec list and detail routes published, versioning/lifecycle semantics explicit, diff and citation behavior backend-owned.",
+      "status": "done",
+      "created_at": "2026-04-19T21:22:27Z",
+      "resolved_at": "2026-04-19T21:25:15Z"
+    },
+    {
+      "task_id": "KW-05-STRATEGY-SPEC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Contract and examples are now internally consistent; owner should finalize KW-05 to done.",
+      "status": "done",
+      "created_at": "2026-04-19T21:25:15Z",
+      "resolved_at": "2026-04-19T21:27:18Z"
+    }
+  ],
+  "blockers": []
+}

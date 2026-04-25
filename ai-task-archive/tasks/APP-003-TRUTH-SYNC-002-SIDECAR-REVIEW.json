@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+  "archived_at": "2026-04-23T05:57:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-TRUTH-SYNC-002 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-TRUTH-SYNC-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Secondary Truth Sync",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the support-only review packet after Claude2 approval; it matches the archived parent outcome, current active surfaces, and now reflects the current reviewer metadata instead of the earlier Codex3 reroute.",
+    "last_update": "2026-04-23T05:57:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-TRUTH-SYNC-002",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 內容與目前 active surfaces 一致：parent APP-003-TRUTH-SYNC-002 已 archived done；WORKBENCH_DELIVERY_BACKLOG.md 第 75 行已將 KW-01 指向 APP-003-KW01-HARDEN-001；blueprint working source 無 EXEC-CLOSEOUT-FRONTEND-002；Knowledge/Consultation overview 第 30 行明確標示 route-live 模組與 frontend-local activation；Knowledge ui-done 仍為 blocking:false / status:closed / loop-complete，line 45 屬於 historical residue；docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md 存在；coordination_drift_guard.py 直接執行 PASS。",
+      "唯一非阻擋備註：packet 內部 Sidecar Reviewer 仍寫成 Codex3，因 packet 在 auto-reassign 至 Claude2 之前刷新；owner 在 finalize 時可順手更新該行 metadata，不影響 parent acceptance 結論。"
+    ],
+    "review_file": "support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T05:57:52Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "e476e04bd80c5ece53e51414ebe579fc3ecb8707",
+      "commit_subject": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW refresh sidecar reviewer metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1169,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T10:50:54Z",
+      "resolved_at": "2026-04-22T10:51:26Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet ready at support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW.md. It maps the parent's active backlog and coordination evidence, separates provenance-only execution packets from current truth, and records the two non-blocking caveats: the broad follow_up_requested wording in PKT-knowledge-workbench-ui-done.yaml and the current coupling to the sibling route-live frontend handoff packets that are already present in the worktree.",
+      "status": "done",
+      "created_at": "2026-04-22T10:57:12Z",
+      "resolved_at": "2026-04-22T11:22:22Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only review packet ready for Claude review after repeated Codex2 quota pauses. Packet at support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW.md maps the active backlog and coordination evidence and records the two non-blocking caveats for strict review.",
+      "status": "done",
+      "created_at": "2026-04-22T11:22:22Z",
+      "resolved_at": "2026-04-22T11:27:31Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T11:27:31Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-23T01:53:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:53:29Z",
+      "resolved_at": "2026-04-23T03:23:12Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T03:23:12Z",
+      "resolved_at": "2026-04-23T05:48:56Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW.md. Packet now matches the archived parent truth, updates the reviewer handoff to Codex3, corrects the current CW-04 route-local path to CW-04-redteam-memo, and records that targeted active-surface checks plus coordination_drift_guard revalidation still pass.",
+      "status": "done",
+      "created_at": "2026-04-23T05:48:56Z",
+      "resolved_at": "2026-04-23T05:51:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex3 to Claude2 after repeated Codex3 terminal: error: pathspec 'support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW.md' did not match any file(s) known to git",
+      "status": "done",
+      "created_at": "2026-04-23T05:51:52Z",
+      "resolved_at": "2026-04-23T05:53:59Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar review packet matches current active surfaces and the archived parent outcome; approving as reviewer Claude2 after the Codex3 -> Claude2 auto-reassign.",
+      "status": "done",
+      "created_at": "2026-04-23T05:53:59Z",
+      "resolved_at": "2026-04-23T05:57:52Z"
+    }
+  ],
+  "blockers": []
+}

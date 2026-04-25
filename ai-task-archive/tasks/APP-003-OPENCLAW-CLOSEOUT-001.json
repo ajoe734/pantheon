@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+  "archived_at": "2026-04-24T19:11:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-OPENCLAW-CLOSEOUT-001",
+    "title": "Finish OpenClaw runtime-adoption and EP5 operator packet closeout",
+    "summary_zh": "在 human gate 前收斂 OpenClaw/EP5 的 repo-authoritative operator packet、event-trace gap 與 final canary prep。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-DATASOURCE-US-001",
+      "APP-003-DATASOURCE-OPS-001"
+    ],
+    "artifacts": [
+      "docs/deployment/ep5-canary-ready/",
+      "scripts/run_ep5_canary_readiness.py",
+      "services/telemetry/"
+    ],
+    "acceptance": [
+      "EP5 operator packet is fully repo-authoritative",
+      "Event-trace read-model gap is either closed or explicitly packetized",
+      "Human gate input bundle is complete and replay-clean before real canary approval"
+    ],
+    "next": "Owner finalized the approved OpenClaw closeout packet. Repo-authoritative EP5 operator packet, replayable human-gate input bundle, and kraken-adapter script-entry fix are committed at 79430a9; event-trace status remains truthfully packetized pending a later replay-clean capture.",
+    "last_update": "2026-04-24T19:11:07Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已重跑 operator checklist、datasource smoke、canary plan、human-gate packet 與 kraken adapter 測試；引用 dual-VM 已執行 rollback 證據時，新的 human-gate manifest 會正確回到 ready_for_review。",
+      "審查中同步修正 docs/deployment/ep5-canary-ready/README.md，明確區分本地 dry-run rollback rehearsal 與正式 human-gate packet 的 executed rollback 證據需求；event-trace 狀態仍 truthfully 維持 packetized，未被過度宣稱為 closed。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-openclaw-closeout-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:11:07Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "79430a91bde1390eb4a0f21447b2719cec38e8bb",
+      "commit_subject": "APP-003-OPENCLAW-CLOSEOUT-001 finalize repo-authoritative closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-OPENCLAW-CLOSEOUT-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1183,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Fixed the run_ep5_canary_readiness.py replay regression by making services/execution/kraken_adapter.py support direct script imports, regenerated the EP5 human-gate input bundle at docs/deployment/evidence/ep5-human-gate-input/20260424T185046Z/, and updated docs/deployment/app-003-openclaw-closeout-packet.md to point at the repo-local manifest and datasource smoke summary. Verified on 2026-04-24: run-operator-checklist, run-datasource-smoke, emit-canary-plan, emit-human-gate-packet all succeed, and pytest services/execution/test_kraken_adapter.py passes (10 tests). Event-trace status remains truthfully packetized, not closed.",
+      "status": "done",
+      "created_at": "2026-04-24T18:52:04Z",
+      "resolved_at": "2026-04-24T19:08:42Z"
+    },
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved after replaying the readiness flow, aligning the README with the executed-rollback requirement, and confirming the closeout packet keeps the event-trace gap truthfully packetized. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T19:08:42Z",
+      "resolved_at": "2026-04-24T19:11:07Z"
+    }
+  ],
+  "blockers": []
+}

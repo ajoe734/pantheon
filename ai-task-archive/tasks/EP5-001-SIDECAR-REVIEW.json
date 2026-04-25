@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "EP5-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-22T15:52:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-001-SIDECAR-REVIEW",
+    "title": "Prepare EP5-001 review packet and evidence summary",
+    "summary_zh": "平行支援 EP5-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Proof Follow-on",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EP5-001/EP5-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved EP5 sidecar review packet. The packet remains a support-only reviewer context bundle for the parent EP5 prerequisite path, with non-blocking caveats preserved and no canonical/runtime truth changed by this slice.",
+    "last_update": "2026-04-22T15:52:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EP5-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 與 parent EP5-001 prerequisite bundle 的實際 repo 狀態一致：已重跑 py_compile、run-operator-checklist --allow-empty-secrets、emit-canary-plan、run-rollback-drill --dry-run、以及 no-flag checklist fail-as-expected，結果都符合 packet 第 3 節的表格。",
+      "保留 packet 自陳的 3 個非阻斷 caveat：example env 須搭配 --allow-empty-secrets、未在本 sidecar 重跑 --check-health、歷史 planning/support header 仍有舊 owner/status 快照。",
+      "Sidecar 維持在 support artifact 範疇，未動 L1、parent runtime 實作或 parent bundle；EP5 proof 依然明確 deferred 至後續 canary/live 工作。"
+    ],
+    "review_file": "support/sidecars/EP5-001/EP5-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:52:52Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "fe42844c475f0aa07438a5ea7ec3604b3124ba8e",
+      "commit_subject": "EP5-001-SIDECAR-REVIEW finalize approved review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EP5-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1157,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T10:34:36Z",
+      "resolved_at": "2026-04-22T10:38:42Z"
+    },
+    {
+      "task_id": "EP5-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet ready at support/sidecars/EP5-001/EP5-001-SIDECAR-REVIEW.md. It maps the parent EP5 prerequisite bundle to the current review truth, reruns py_compile plus checklist/plan/rollback dry-run evidence, and records the non-blocking caveats: example env support runs need --allow-empty-secrets, live --check-health was not rerun here, and older planning/support headers still show historical owner-status snapshots.",
+      "status": "done",
+      "created_at": "2026-04-22T10:44:28Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "EP5-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet ready at support/sidecars/EP5-001/EP5-001-SIDECAR-REVIEW.md. It maps the parent EP5 prerequisite bundle to the current review truth, reruns py_compile plus checklist/plan/rollback dry-run evidence, and records the non-blocking caveats: example env support runs need --allow-empty-secrets, live --check-health was not rerun here, and older planning/support headers still show historical owner-status snapshots.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:49:47Z"
+    },
+    {
+      "task_id": "EP5-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer verified packet claims against the current worktree: 4 artifact files present, py_compile clean, checklist (--allow-empty-secrets) pass, emit-canary-plan produces canary/5.0/25.0/pause_then_replace, rollback --dry-run prepared, no-flag checklist fails as expected; caveats are scope reminders, not blockers.",
+      "status": "done",
+      "created_at": "2026-04-22T15:49:47Z",
+      "resolved_at": "2026-04-22T15:52:52Z"
+    }
+  ],
+  "blockers": []
+}

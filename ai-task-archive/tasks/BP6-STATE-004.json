@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "BP6-STATE-004",
+  "archived_at": "2026-04-17T09:22:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-STATE-004",
+    "title": "Complete GCP environment bootstrap operator follow-up: DB users and Secret Manager secret versions",
+    "summary_zh": "執行 BP5-GCP-002 歸檔備注中的 operator follow-up：建立 DB users、secret versions，留下執行確認記錄",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "docs/gcp-bootstrap-confirmation.md"
+    ],
+    "acceptance": [
+      "DB users 已建立",
+      "Secret Manager secret versions 已建立",
+      "執行記錄已 commit 到 repo"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "docs/gcp-bootstrap-confirmation.md complete: DB user creation commands, Secret Manager version injection for all 12 secrets, per-secret IAM verification with semicolon normalization. All review cycles passed (Codex). BP6-STATE-004 closed.",
+    "last_update": "2026-04-17T09:22:49Z",
+    "review_notes_zh": [
+      "Step 3 已修正 gcloud value() 的分號分隔問題",
+      "Pass 2 現在會逐行比對 multi-member secrets，review 通過"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T09:22:49Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6989bf16673cba2e06d5c07fb2931e5916bcc8af",
+      "commit_subject": "BP6-STATE-004: finalize operator follow-up confirmation document",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP6-STATE-004",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 387,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:46:56Z",
+      "resolved_at": "2026-04-17T08:47:44Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Artifact docs/gcp-bootstrap-confirmation.md created and committed (f71a75c). Documents DB user creation commands for both dev/sandbox Cloud SQL instances and Secret Manager version injection for all 12 environment secrets, with verification queries and acceptance checklist. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-17T08:49:27Z",
+      "resolved_at": "2026-04-17T08:52:18Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: docs/gcp-bootstrap-confirmation.md Step 3 currently verifies project-level IAM via gcloud projects get-iam-policy, but scripts/gcp_nonprod_foundation.sh grants roles/secretmanager.secretAccessor on each secret with gcloud secrets add-iam-policy-binding. Replace Step 3 with per-secret Secret Manager IAM verification that matches the coverage matrix, then re-handoff for review.",
+      "status": "done",
+      "created_at": "2026-04-17T08:52:18Z",
+      "resolved_at": "2026-04-17T08:52:18Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Step 3 replaced: now uses gcloud secrets get-iam-policy per-secret with a pass/fail loop matching the coverage matrix. Commit f04adfd. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T08:54:32Z",
+      "resolved_at": "2026-04-17T09:08:08Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: docs/gcp-bootstrap-confirmation.md Step 3 now checks per-secret IAM, but the loop only proves required secretAccessor members are present. It still does not fail on unexpected extra members, so it cannot support the current 'matches the coverage matrix exactly / no more, no fewer' claim. Update the verification to compare the full per-secret member set against the matrix and fail on extras, then re-handoff for review.",
+      "status": "done",
+      "created_at": "2026-04-17T09:08:08Z",
+      "resolved_at": "2026-04-17T09:08:08Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Step 3 now performs two passes per secret: (1) fail on missing required members, (2) fail on unexpected extra members. Both passes must pass for a clean run. Commit 2fcf588. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T09:11:19Z",
+      "resolved_at": "2026-04-17T09:16:27Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: docs/gcp-bootstrap-confirmation.md Step 3 still parses secretAccessor members incorrectly. gcloud --format='value(...)' uses ';' as the default delimiter for list values, so ACTUAL_MEMBERS can be a single semicolon-separated line. The current extra-member pass reads that whole line as one member, which will misclassify multi-member secrets like postgres-url and openclaw-api-token. Normalize the output to one member per line before comparing full sets, then re-handoff for review.",
+      "status": "done",
+      "created_at": "2026-04-17T09:16:27Z",
+      "resolved_at": "2026-04-17T09:16:27Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Step 3 semicolon normalization fixed: tr ';' '\\n' added to gcloud pipeline before sort. Pass 2 now iterates one member per line for all secrets including multi-member ones (postgres-url, openclaw-api-token). Commit 02e437f. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T09:17:35Z",
+      "resolved_at": "2026-04-17T09:20:55Z"
+    },
+    {
+      "task_id": "BP6-STATE-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Step 3 semicolon normalization verified. Pass 2 now compares one secretAccessor member per line for multi-member secrets. Owner should finalize BP6-STATE-004.",
+      "status": "done",
+      "created_at": "2026-04-17T09:20:55Z",
+      "resolved_at": "2026-04-17T09:22:50Z"
+    }
+  ],
+  "blockers": []
+}

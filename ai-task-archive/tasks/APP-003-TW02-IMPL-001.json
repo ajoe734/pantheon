@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TW02-IMPL-001",
+  "archived_at": "2026-04-22T15:10:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TW02-IMPL-001",
+    "title": "Implement TW-02 Parameter Controls route family",
+    "summary_zh": "補上已 ratified 但尚未落地的 TW-02 control-state 與 patch route family，讓 trainer workbench 不再缺核心 mutation surface。",
+    "phase": "Execution / Trainer Workbench Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "docs/bff/TW-02-parameter-controls.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "Trainer control state route is implemented",
+      "Patch route enforces the ratified diff semantics",
+      "Tests cover authority validation and rejected patch responses"
+    ],
+    "next": "Owner finalized TW-02 after approved review. Commit 0b26260 records the trainer controls GET/PATCH route family, trainer_controls fallback seed/backfill, route-live contract doc update, reviewer artifact, and contract regression coverage. Verification: python3 -m pytest services/control-plane/bff/test_tw02_parameter_controls_contract.py -q -> 5 passed.",
+    "last_update": "2026-04-22T15:10:47Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：TW-02 controls GET + patch 路由已依 ratified contract 落地於 services/control-plane/bff/main.py:5707,5726；accepted 分支回傳 diff.updated_controls[]（field/before/after/validation_status），rejected 分支回傳 field_errors[]+rejected_changes[]+current_controls[]，無靜默 clipping。",
+      "Authority guard 完整：status!=active 回 409 INVALID_STATE，canPatchControls=false 回 409 PRECONDITION_NOT_MET，且 payload shape 校驗拒絕 unknown fields／duplicate parameter_key／空 patches[]。",
+      "Contract tests 5 項 (test_tw02_parameter_controls_contract.py) 本機 pytest 全部通過；覆蓋 GET degraded surface、accepted patch 持久化、exceeds_allowed_range rejected、canPatchControls=false 及 non-active status。",
+      "Non-blocking follow-up：frontend handoff bundle (docs/pantheon-handoffs/TW-02-parameter-controls/) 與 family-level 文件舊用語 (valid/applied、updated_controls[]、previous_value/new_value) 的 truth-sync 仍屬後續 slice，不阻擋本 route-family 實作驗收。"
+    ],
+    "review_file": "docs/reviews/2026-04-22-app-003-tw02-impl-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:10:47Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "0b262606246506657ef51c7e6b9f4f032b51030a",
+      "commit_subject": "APP-003-TW02-IMPL-001 implement TW-02 parameter controls route family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-TW02-IMPL-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1072,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T06:01:15Z",
+      "resolved_at": "2026-04-22T06:35:20Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T06:36:50Z",
+      "resolved_at": "2026-04-22T06:37:14Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:35:20Z",
+      "resolved_at": "2026-04-22T07:37:09Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:42:09Z",
+      "resolved_at": "2026-04-22T07:45:52Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:45:52Z",
+      "resolved_at": "2026-04-22T07:48:48Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "TW-02 controls GET/patch routes are live with degraded authority gating and ratified rejected-shape handling. Added dedicated contract tests; TW-02 tests pass, and adjacent trainer tests pass except for the pre-existing TW-03 pending-preview test that still returns preview_unavailable in the current worktree.",
+      "status": "done",
+      "created_at": "2026-04-22T08:03:32Z",
+      "resolved_at": "2026-04-22T14:02:09Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer rebalanced to Claude so the review queue can keep moving while Codex2 and Gemini are quota-constrained. Please continue review from the current task state and artifacts.",
+      "status": "done",
+      "created_at": "2026-04-22T14:02:09Z",
+      "resolved_at": "2026-04-22T14:02:23Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:02:23Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T14:57:30Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: TW-02 controls GET + patch routes meet the ratified contract; 5 contract tests pass; authority + rejection paths verified. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T14:57:30Z",
+      "resolved_at": "2026-04-22T15:10:47Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-20T01:15:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare LUV-REACTIVATE-KW01-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 LUV-REACTIVATE-KW01-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/LUV-REACTIVATE-KW01-001/LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalize: sidecar acceptance packet complete, review approved by Codex, closing to done.",
+    "last_update": "2026-04-20T01:15:02Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LUV-REACTIVATE-KW01-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 acceptance packet、archive snapshot、KW-01 review record、contract-ready / lovable-ui-task / lovable-prompt 與 BFF route anchor。內容維持 support-only 邊界，三項 acceptance criteria 與 dependency map 皆可追溯，足以交回 owner 正式關閉 sidecar。"
+    ],
+    "review_file": "support/sidecars/LUV-REACTIVATE-KW01-001/LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:15:02Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "75cc74137463a303c6cde567d1e55748ff5abe2e",
+      "commit_subject": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE finalize: close approved KW-01 reactivation acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 780,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T00:38:16Z",
+      "resolved_at": "2026-04-20T00:39:06Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:40:32Z",
+      "resolved_at": "2026-04-20T00:40:53Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:53:11Z",
+      "resolved_at": "2026-04-20T00:54:05Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:59:45Z",
+      "resolved_at": "2026-04-20T01:00:51Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete at support/sidecars/LUV-REACTIVATE-KW01-001/LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE.md. All 3 parent acceptance criteria verified; dependency map covers both KW-01 browse/detail surfaces and PKT-016 cross-check; only support artifact created, no canonical truth modified. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-20T01:09:23Z",
+      "resolved_at": "2026-04-20T01:11:25Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: sidecar acceptance packet is support-only, accurately reflects the archived KW-01 parent outcome, and provides sufficient traceable evidence for all three acceptance criteria. Owner should finalize this sidecar to done.",
+      "status": "done",
+      "created_at": "2026-04-20T01:11:25Z",
+      "resolved_at": "2026-04-20T01:15:02Z"
+    }
+  ],
+  "blockers": []
+}

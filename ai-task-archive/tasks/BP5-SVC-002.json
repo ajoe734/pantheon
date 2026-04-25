@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-002",
+  "archived_at": "2026-04-15T18:59:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-002",
+    "title": "Realize the registry artifact-state and deployment-stage split API",
+    "summary_zh": "把 registry 的 artifact_state 與 deployment_stage 分離語義落成真實 API、schema、storage 與 smoke test，不再只停在 contract。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-001"
+    ],
+    "artifacts": [
+      "services/registry/",
+      "TARGET_ARCHITECTURE.md",
+      "PAPER_CANARY_LIVE_POLICY.md"
+    ],
+    "acceptance": [
+      "registry service surfaces expose artifact state separately from deployment stage",
+      "read/write schemas, storage projection, and smoke tests all use the split model"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: split API (artifact_state vs deployment_stage) implemented; smoke_test 40/40; committed 7e7cff4.",
+    "last_update": "2026-04-15T18:59:42Z",
+    "review_notes_zh": [
+      "已重跑 40 個 smoke 與 38 個 pytest；404/400 錯誤映射與四條 API 回歸路徑都已驗證通過，split model 與 canonical contract 對齊。"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-002-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T18:59:42Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "7e7cff4385626c31dcb56984cd6774616df665bc",
+      "commit_subject": "BP5-SVC-002: realize registry artifact-state and deployment-stage split API",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Implement the split model": "artifact_state is the governed lifecycle,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-002",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 53,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T16:12:00Z",
+      "resolved_at": "2026-04-15T16:12:16Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T16:21:27Z",
+      "resolved_at": "2026-04-15T16:21:47Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Implementation complete. 34/34 smoke tests pass (python3 services/registry/smoke_test.py). Key acceptance criteria met: (1) artifact_state and deployment_stage exposed separately on all read endpoints; (2) schemas, storage projection, and smoke tests all use the split model. FastAPI integration tests in test_service.py cover forbidden transitions, split-semantics key test, and deployment-view composition. Ready for Qwen review.",
+      "status": "done",
+      "created_at": "2026-04-15T16:35:29Z",
+      "resolved_at": "2026-04-15T16:39:25Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-15T16:39:25Z",
+      "resolved_at": "2026-04-15T16:52:51Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: register() must reject approved/retired creation, and deployment-view must report the actually deployed approved artifact instead of blindly reading the latest approved entry. See .coordination/reviews/BP5-SVC-002-review.md.",
+      "status": "done",
+      "created_at": "2026-04-15T16:52:51Z",
+      "resolved_at": "2026-04-15T16:52:51Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both review findings fixed. register() now gates approved/retired states. resolve_deployment_view() now projects deployment stage from the actually deployed approved entry, not the latest approved. 40 smoke tests pass. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-15T17:08:07Z",
+      "resolved_at": "2026-04-15T17:26:43Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review found one remaining API error-mapping bug; see .coordination/reviews/BP5-SVC-002-review.md. advance_state() reports missing entries as 400, and update_deployment_summary() reports validation failures as 404.",
+      "status": "done",
+      "created_at": "2026-04-15T17:26:43Z",
+      "resolved_at": "2026-04-15T17:26:43Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both review findings fully addressed: RegistryNotFoundError subclass added; advance_state() returns 404 (missing) / 400 (bad transition); update_deployment_summary() returns 404 (missing) / 400 (unapproved validation). 4 new API-level regression tests added covering all error paths. 40 smoke + 38 pytest all pass.",
+      "status": "done",
+      "created_at": "2026-04-15T17:30:35Z",
+      "resolved_at": "2026-04-15T17:38:27Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved: missing-entry and validation error mapping verified end-to-end; owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-15T17:38:27Z",
+      "resolved_at": "2026-04-15T18:40:19Z"
+    },
+    {
+      "task_id": "BP5-SVC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Restoring review_approved: status was incorrectly downgraded by progress call. Prior Codex approval with review_notes_zh is evidence. Proceeding to finalize.",
+      "status": "done",
+      "created_at": "2026-04-15T18:41:03Z",
+      "resolved_at": "2026-04-15T18:59:42Z"
+    }
+  ],
+  "blockers": []
+}

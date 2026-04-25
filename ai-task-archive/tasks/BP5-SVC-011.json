@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-011",
+  "archived_at": "2026-04-15T22:57:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-011",
+    "title": "Realize incident and postmortem evidence services",
+    "summary_zh": "把 incident/postmortem backbone object 與 evidence linkage 落成真實 service、read path、operator payload 與 referential integrity enforcement。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-009",
+      "BP5-SVC-010"
+    ],
+    "artifacts": [
+      "services/incidents/",
+      "services/postmortems/",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
+    ],
+    "acceptance": [
+      "incident and postmortem records are available through real service endpoints with evidence linkage",
+      "runtime binding, telemetry, and lineage references are enforced as canonical foreign references"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved task after commit 1c6c742 and 52 task-scope tests passing.",
+    "last_update": "2026-04-15T22:57:27Z",
+    "review_notes_zh": [
+      "審查通過：46/46 路由測試全部通過",
+      "canonical reference validation 強制拒絕非正規 binding/telemetry/lineage refs，行為正確",
+      "operator payload 涵蓋完整 evidence 欄位與 postmortem 連結，無跨服務 join 需求",
+      "referential integrity (incident 必須存在、evidence 欄位必須一致) 在 postmortem 建立時正確執行",
+      "返回 owner (Codex) 進行最終收尾"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-011-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T22:57:27Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1c6c7427a2eecc5cd11673fc7d2a5b054aff69f0",
+      "commit_subject": "BP5-SVC-011: realize incident and postmortem evidence services",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-011",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 79,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:29:09Z",
+      "resolved_at": "2026-04-15T22:29:34Z"
+    },
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:30:03Z",
+      "resolved_at": "2026-04-15T22:30:32Z"
+    },
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:32:20Z",
+      "resolved_at": "2026-04-15T22:33:02Z"
+    },
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:36:06Z",
+      "resolved_at": "2026-04-15T22:36:48Z"
+    },
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:40:08Z",
+      "resolved_at": "2026-04-15T22:40:55Z"
+    },
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "BP5-SVC-011 is ready for review: incident creation now rejects non-canonical RuntimeBinding/telemetry/lineage refs, postmortem operator payload route is live, and targeted unit plus route tests passed.",
+      "status": "done",
+      "created_at": "2026-04-15T22:51:14Z",
+      "resolved_at": "2026-04-15T22:53:37Z"
+    },
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: 46/46 tests pass, canonical reference enforcement correct, operator payloads complete, referential integrity enforced — returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T22:53:37Z",
+      "resolved_at": "2026-04-15T22:54:19Z"
+    },
+    {
+      "task_id": "BP5-SVC-011",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restored approved state after owner final checks and task-specific commit 1c6c742.",
+      "status": "done",
+      "created_at": "2026-04-15T22:57:15Z",
+      "resolved_at": "2026-04-15T22:57:27Z"
+    }
+  ],
+  "blockers": []
+}

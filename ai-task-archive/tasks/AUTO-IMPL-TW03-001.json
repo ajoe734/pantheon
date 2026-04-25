@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-TW03-001",
+  "archived_at": "2026-04-20T04:59:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-TW03-001",
+    "title": "Implement TW-03 before after compare preview routes",
+    "summary_zh": "把 TW-03 before after compare 的 preview route family 做成 live BFF truth，補上 preview_unavailable degraded branch。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "docs/bff/TW-03-before-after-compare.md",
+      "docs/screens/TW-03-before-after-compare.md"
+    ],
+    "acceptance": [
+      "TW-03 preview route 已實作",
+      "preview_unavailable 行為 truthfully 呈現",
+      "測試涵蓋 degraded branch"
+    ],
+    "next": "Owner finalized approved task after landing TW-03 preview routes, degraded preview_unavailable branch, contract coverage, and frontend handoff packet.",
+    "last_update": "2026-04-20T04:59:30Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T04:59:30Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "53a1d2d91517c3da3fd29be630a604270132c00e",
+      "commit_subject": "AUTO-IMPL-TW03-001 implement TW-03 trainer preview routes",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AUTO-IMPL-TW03-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 801,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-TW03-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned AUTO-IMPL-TW03-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:10:05Z",
+      "resolved_at": "2026-04-20T03:10:23Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:10:23Z",
+      "resolved_at": "2026-04-20T04:15:55Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented TW-03 trainer preview GET/POST routes, trainer preview read-store projection/persistence, preview_unavailable degraded branch, and contract tests. Verified with pytest on TW-03 and TW-01 trainer slices.",
+      "status": "done",
+      "created_at": "2026-04-20T04:37:38Z",
+      "resolved_at": "2026-04-20T04:56:29Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review passed: 4/4 contract tests pass. GET/POST preview routes, preview_unavailable degraded branch, polling contract (3000ms/45000ms), warning hierarchy sort, canRefreshPreview guards, and deadline-expiry resolution all satisfy TW-03 BFF spec.",
+      "status": "done",
+      "created_at": "2026-04-20T04:56:29Z",
+      "resolved_at": "2026-04-20T04:59:30Z"
+    }
+  ],
+  "blockers": []
+}

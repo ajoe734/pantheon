@@ -1,0 +1,4495 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-21T15:22:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare EXEC-REBASE-EW04-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 EXEC-REBASE-EW04-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-REBASE-EW04-001/EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar. Support-only EW-04 BFF/frontend handoff packet is complete and archived for parent-lane absorption; no canonical/runtime changes were made.",
+    "last_update": "2026-04-21T15:22:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-REBASE-EW04-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：Packet 為純 support artifact，未修改 canonical truth",
+      "EW-04 BFF route GET /api/v1/lineage/inspiration/{artifact_id} 已在 main.py:8809 實作，contract-ready 為 live，UI task 為 ready，前端 loop 已 closed",
+      "正確區分 EW-04 命名（active dispatch）與 PKT-003 mirror（historical loop record）",
+      "三個 DRIFT 項目在驗證時已被後續工作修復，不影響 packet 有效性",
+      "Packet 可作為 parent-lane 吸收指南使用"
+    ],
+    "review_file": "support/sidecars/EXEC-REBASE-EW04-001/EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T15:22:19Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 979,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:45:03Z",
+      "resolved_at": "2026-04-20T12:46:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:48:52Z",
+      "resolved_at": "2026-04-20T12:49:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:18:08Z",
+      "resolved_at": "2026-04-20T13:19:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:29:44Z",
+      "resolved_at": "2026-04-20T13:30:59Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:55:28Z",
+      "resolved_at": "2026-04-20T14:56:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:00:26Z",
+      "resolved_at": "2026-04-20T15:01:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:23:16Z",
+      "resolved_at": "2026-04-20T15:24:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:26:44Z",
+      "resolved_at": "2026-04-20T15:28:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:00:46Z",
+      "resolved_at": "2026-04-20T16:04:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:05:48Z",
+      "resolved_at": "2026-04-20T16:06:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:35:35Z",
+      "resolved_at": "2026-04-20T16:36:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:39:19Z",
+      "resolved_at": "2026-04-20T16:39:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:39:09Z",
+      "resolved_at": "2026-04-20T23:40:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:45:22Z",
+      "resolved_at": "2026-04-20T23:48:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:14:25Z",
+      "resolved_at": "2026-04-21T00:15:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:18:56Z",
+      "resolved_at": "2026-04-21T00:19:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:27:48Z",
+      "resolved_at": "2026-04-21T00:28:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:32:44Z",
+      "resolved_at": "2026-04-21T00:33:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:49:03Z",
+      "resolved_at": "2026-04-21T00:53:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:55:34Z",
+      "resolved_at": "2026-04-21T00:55:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:11:42Z",
+      "resolved_at": "2026-04-21T01:12:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:16:05Z",
+      "resolved_at": "2026-04-21T01:17:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:17:23Z",
+      "resolved_at": "2026-04-21T01:20:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T02:48:30Z",
+      "resolved_at": "2026-04-21T02:58:50Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:00:06Z",
+      "resolved_at": "2026-04-21T03:06:43Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:06:43Z",
+      "resolved_at": "2026-04-21T03:07:48Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet landed at support/sidecars/EXEC-REBASE-EW04-001/EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF.md. It shows EW-04 is route-live with no open BFF gap, records the closed PKT-003 ui-done/frontend-feedback loop, and isolates the few remaining stale narrative items for parent-lane absorption only.",
+      "status": "done",
+      "created_at": "2026-04-21T03:12:27Z",
+      "resolved_at": "2026-04-21T03:13:08Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet landed at support/sidecars/EXEC-REBASE-EW04-001/EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF.md. It shows EW-04 is route-live with no open BFF gap, records the closed PKT-003 ui-done/frontend-feedback loop, and isolates the remaining stale narrative items for parent-lane absorption only.",
+      "status": "done",
+      "created_at": "2026-04-21T03:13:08Z",
+      "resolved_at": "2026-04-21T03:15:51Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:15:51Z",
+      "resolved_at": "2026-04-21T03:16:56Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:16:56Z",
+      "resolved_at": "2026-04-21T03:18:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:18:36Z",
+      "resolved_at": "2026-04-21T03:20:31Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:20:31Z",
+      "resolved_at": "2026-04-21T03:22:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:22:00Z",
+      "resolved_at": "2026-04-21T03:25:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:25:16Z",
+      "resolved_at": "2026-04-21T03:28:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:28:35Z",
+      "resolved_at": "2026-04-21T03:30:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:30:01Z",
+      "resolved_at": "2026-04-21T03:32:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:32:10Z",
+      "resolved_at": "2026-04-21T03:33:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:33:29Z",
+      "resolved_at": "2026-04-21T03:35:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:35:06Z",
+      "resolved_at": "2026-04-21T03:36:32Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:36:32Z",
+      "resolved_at": "2026-04-21T03:39:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:39:37Z",
+      "resolved_at": "2026-04-21T03:40:43Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:40:43Z",
+      "resolved_at": "2026-04-21T03:42:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:42:10Z",
+      "resolved_at": "2026-04-21T03:43:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:43:36Z",
+      "resolved_at": "2026-04-21T03:44:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:44:40Z",
+      "resolved_at": "2026-04-21T03:46:43Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:46:43Z",
+      "resolved_at": "2026-04-21T03:47:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:47:44Z",
+      "resolved_at": "2026-04-21T03:49:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:49:10Z",
+      "resolved_at": "2026-04-21T03:51:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:51:09Z",
+      "resolved_at": "2026-04-21T03:52:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:52:54Z",
+      "resolved_at": "2026-04-21T03:53:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:53:58Z",
+      "resolved_at": "2026-04-21T03:55:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:55:04Z",
+      "resolved_at": "2026-04-21T03:58:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:58:15Z",
+      "resolved_at": "2026-04-21T03:59:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:59:33Z",
+      "resolved_at": "2026-04-21T04:00:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:00:40Z",
+      "resolved_at": "2026-04-21T04:03:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:03:47Z",
+      "resolved_at": "2026-04-21T04:05:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:05:03Z",
+      "resolved_at": "2026-04-21T04:06:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:06:27Z",
+      "resolved_at": "2026-04-21T04:09:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:09:21Z",
+      "resolved_at": "2026-04-21T04:10:31Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:10:31Z",
+      "resolved_at": "2026-04-21T04:11:42Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:11:42Z",
+      "resolved_at": "2026-04-21T04:12:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:12:57Z",
+      "resolved_at": "2026-04-21T04:15:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:15:23Z",
+      "resolved_at": "2026-04-21T04:16:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:16:52Z",
+      "resolved_at": "2026-04-21T04:18:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:18:11Z",
+      "resolved_at": "2026-04-21T04:20:19Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:20:19Z",
+      "resolved_at": "2026-04-21T04:21:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:21:22Z",
+      "resolved_at": "2026-04-21T04:22:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:22:44Z",
+      "resolved_at": "2026-04-21T04:26:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:26:16Z",
+      "resolved_at": "2026-04-21T04:27:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:27:53Z",
+      "resolved_at": "2026-04-21T04:29:12Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:29:12Z",
+      "resolved_at": "2026-04-21T04:30:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:30:18Z",
+      "resolved_at": "2026-04-21T04:31:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:31:39Z",
+      "resolved_at": "2026-04-21T04:32:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:32:46Z",
+      "resolved_at": "2026-04-21T04:34:07Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:34:07Z",
+      "resolved_at": "2026-04-21T04:36:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:36:10Z",
+      "resolved_at": "2026-04-21T04:37:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:37:11Z",
+      "resolved_at": "2026-04-21T04:39:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:39:54Z",
+      "resolved_at": "2026-04-21T04:42:05Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:42:05Z",
+      "resolved_at": "2026-04-21T04:43:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:43:21Z",
+      "resolved_at": "2026-04-21T04:44:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:44:21Z",
+      "resolved_at": "2026-04-21T04:45:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:45:28Z",
+      "resolved_at": "2026-04-21T04:46:51Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:46:51Z",
+      "resolved_at": "2026-04-21T04:47:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:47:58Z",
+      "resolved_at": "2026-04-21T04:48:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:48:58Z",
+      "resolved_at": "2026-04-21T04:51:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:51:03Z",
+      "resolved_at": "2026-04-21T04:52:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:52:18Z",
+      "resolved_at": "2026-04-21T04:53:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:53:28Z",
+      "resolved_at": "2026-04-21T04:55:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:55:21Z",
+      "resolved_at": "2026-04-21T04:56:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:56:54Z",
+      "resolved_at": "2026-04-21T04:57:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:57:58Z",
+      "resolved_at": "2026-04-21T04:59:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:59:03Z",
+      "resolved_at": "2026-04-21T05:00:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:00:15Z",
+      "resolved_at": "2026-04-21T05:01:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:01:20Z",
+      "resolved_at": "2026-04-21T05:04:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:04:01Z",
+      "resolved_at": "2026-04-21T05:05:12Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:05:12Z",
+      "resolved_at": "2026-04-21T05:06:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:06:35Z",
+      "resolved_at": "2026-04-21T05:07:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:07:55Z",
+      "resolved_at": "2026-04-21T05:09:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:09:02Z",
+      "resolved_at": "2026-04-21T05:10:07Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:10:07Z",
+      "resolved_at": "2026-04-21T05:15:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:15:02Z",
+      "resolved_at": "2026-04-21T05:16:41Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:16:41Z",
+      "resolved_at": "2026-04-21T05:17:48Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:17:48Z",
+      "resolved_at": "2026-04-21T05:19:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:19:06Z",
+      "resolved_at": "2026-04-21T05:20:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:20:06Z",
+      "resolved_at": "2026-04-21T05:21:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:21:22Z",
+      "resolved_at": "2026-04-21T05:22:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:22:27Z",
+      "resolved_at": "2026-04-21T05:23:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:23:44Z",
+      "resolved_at": "2026-04-21T05:24:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:24:53Z",
+      "resolved_at": "2026-04-21T05:27:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:27:23Z",
+      "resolved_at": "2026-04-21T05:29:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:29:58Z",
+      "resolved_at": "2026-04-21T05:31:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:31:06Z",
+      "resolved_at": "2026-04-21T05:32:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:32:13Z",
+      "resolved_at": "2026-04-21T05:33:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:33:23Z",
+      "resolved_at": "2026-04-21T05:35:24Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:35:24Z",
+      "resolved_at": "2026-04-21T05:36:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:36:45Z",
+      "resolved_at": "2026-04-21T05:37:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:37:45Z",
+      "resolved_at": "2026-04-21T05:40:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:40:02Z",
+      "resolved_at": "2026-04-21T05:41:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:41:36Z",
+      "resolved_at": "2026-04-21T05:42:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:42:36Z",
+      "resolved_at": "2026-04-21T05:47:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:47:45Z",
+      "resolved_at": "2026-04-21T05:48:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:48:54Z",
+      "resolved_at": "2026-04-21T05:49:51Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:49:51Z",
+      "resolved_at": "2026-04-21T05:52:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:52:02Z",
+      "resolved_at": "2026-04-21T05:53:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:53:34Z",
+      "resolved_at": "2026-04-21T05:54:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:54:52Z",
+      "resolved_at": "2026-04-21T05:55:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:55:58Z",
+      "resolved_at": "2026-04-21T05:56:59Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:56:59Z",
+      "resolved_at": "2026-04-21T05:58:51Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:58:51Z",
+      "resolved_at": "2026-04-21T05:59:49Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:59:49Z",
+      "resolved_at": "2026-04-21T06:03:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:03:38Z",
+      "resolved_at": "2026-04-21T06:05:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:05:02Z",
+      "resolved_at": "2026-04-21T06:06:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:06:20Z",
+      "resolved_at": "2026-04-21T06:07:42Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:07:42Z",
+      "resolved_at": "2026-04-21T06:08:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:08:45Z",
+      "resolved_at": "2026-04-21T06:09:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:09:52Z",
+      "resolved_at": "2026-04-21T06:11:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:11:28Z",
+      "resolved_at": "2026-04-21T06:12:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:12:35Z",
+      "resolved_at": "2026-04-21T06:13:42Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:13:42Z",
+      "resolved_at": "2026-04-21T06:17:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:17:21Z",
+      "resolved_at": "2026-04-21T06:19:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:19:15Z",
+      "resolved_at": "2026-04-21T06:20:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:20:35Z",
+      "resolved_at": "2026-04-21T06:21:50Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:21:50Z",
+      "resolved_at": "2026-04-21T06:23:07Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:23:07Z",
+      "resolved_at": "2026-04-21T06:24:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:24:25Z",
+      "resolved_at": "2026-04-21T06:25:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:25:37Z",
+      "resolved_at": "2026-04-21T06:28:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:28:33Z",
+      "resolved_at": "2026-04-21T06:29:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:29:55Z",
+      "resolved_at": "2026-04-21T06:31:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:31:01Z",
+      "resolved_at": "2026-04-21T06:32:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:32:23Z",
+      "resolved_at": "2026-04-21T06:36:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:36:15Z",
+      "resolved_at": "2026-04-21T06:36:50Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:36:50Z",
+      "resolved_at": "2026-04-21T06:39:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:39:11Z",
+      "resolved_at": "2026-04-21T06:41:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:41:02Z",
+      "resolved_at": "2026-04-21T06:42:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:42:18Z",
+      "resolved_at": "2026-04-21T06:43:30Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:43:30Z",
+      "resolved_at": "2026-04-21T06:44:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:44:38Z",
+      "resolved_at": "2026-04-21T06:45:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:45:58Z",
+      "resolved_at": "2026-04-21T06:46:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:46:58Z",
+      "resolved_at": "2026-04-21T06:48:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:48:23Z",
+      "resolved_at": "2026-04-21T06:52:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:52:11Z",
+      "resolved_at": "2026-04-21T06:53:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:53:28Z",
+      "resolved_at": "2026-04-21T06:55:17Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:55:17Z",
+      "resolved_at": "2026-04-21T06:56:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:56:33Z",
+      "resolved_at": "2026-04-21T06:57:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:57:44Z",
+      "resolved_at": "2026-04-21T06:58:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:58:57Z",
+      "resolved_at": "2026-04-21T07:00:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:00:25Z",
+      "resolved_at": "2026-04-21T07:01:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:01:26Z",
+      "resolved_at": "2026-04-21T07:05:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:05:40Z",
+      "resolved_at": "2026-04-21T07:08:31Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:08:31Z",
+      "resolved_at": "2026-04-21T07:10:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:10:22Z",
+      "resolved_at": "2026-04-21T07:12:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:12:02Z",
+      "resolved_at": "2026-04-21T07:13:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:13:13Z",
+      "resolved_at": "2026-04-21T07:16:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:16:25Z",
+      "resolved_at": "2026-04-21T07:17:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:17:37Z",
+      "resolved_at": "2026-04-21T07:18:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:18:58Z",
+      "resolved_at": "2026-04-21T07:20:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:20:10Z",
+      "resolved_at": "2026-04-21T07:21:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:21:35Z",
+      "resolved_at": "2026-04-21T07:24:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:24:28Z",
+      "resolved_at": "2026-04-21T07:25:31Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:25:31Z",
+      "resolved_at": "2026-04-21T07:27:14Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:27:14Z",
+      "resolved_at": "2026-04-21T07:29:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:29:04Z",
+      "resolved_at": "2026-04-21T07:30:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:30:34Z",
+      "resolved_at": "2026-04-21T07:31:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:31:33Z",
+      "resolved_at": "2026-04-21T07:32:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:32:53Z",
+      "resolved_at": "2026-04-21T07:34:12Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:34:12Z",
+      "resolved_at": "2026-04-21T07:36:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:36:10Z",
+      "resolved_at": "2026-04-21T07:38:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:38:53Z",
+      "resolved_at": "2026-04-21T07:42:42Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:42:42Z",
+      "resolved_at": "2026-04-21T07:44:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:44:16Z",
+      "resolved_at": "2026-04-21T07:46:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:46:10Z",
+      "resolved_at": "2026-04-21T07:47:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:47:35Z",
+      "resolved_at": "2026-04-21T07:48:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:48:47Z",
+      "resolved_at": "2026-04-21T07:49:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:49:55Z",
+      "resolved_at": "2026-04-21T07:51:30Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:51:30Z",
+      "resolved_at": "2026-04-21T07:53:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:53:53Z",
+      "resolved_at": "2026-04-21T07:56:31Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:56:31Z",
+      "resolved_at": "2026-04-21T07:57:56Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:57:56Z",
+      "resolved_at": "2026-04-21T07:59:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:59:09Z",
+      "resolved_at": "2026-04-21T08:00:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:00:18Z",
+      "resolved_at": "2026-04-21T08:01:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:01:37Z",
+      "resolved_at": "2026-04-21T08:02:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:02:47Z",
+      "resolved_at": "2026-04-21T08:05:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:05:26Z",
+      "resolved_at": "2026-04-21T08:06:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:06:35Z",
+      "resolved_at": "2026-04-21T08:07:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:07:53Z",
+      "resolved_at": "2026-04-21T08:09:24Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:09:24Z",
+      "resolved_at": "2026-04-21T08:11:50Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:11:50Z",
+      "resolved_at": "2026-04-21T08:12:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:12:53Z",
+      "resolved_at": "2026-04-21T08:14:50Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:14:50Z",
+      "resolved_at": "2026-04-21T08:17:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:17:45Z",
+      "resolved_at": "2026-04-21T08:19:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:19:11Z",
+      "resolved_at": "2026-04-21T08:20:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:20:11Z",
+      "resolved_at": "2026-04-21T08:21:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:21:37Z",
+      "resolved_at": "2026-04-21T08:22:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:22:46Z",
+      "resolved_at": "2026-04-21T08:24:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:24:01Z",
+      "resolved_at": "2026-04-21T08:25:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:25:38Z",
+      "resolved_at": "2026-04-21T08:30:05Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:30:05Z",
+      "resolved_at": "2026-04-21T08:32:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:32:11Z",
+      "resolved_at": "2026-04-21T08:33:19Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:33:19Z",
+      "resolved_at": "2026-04-21T08:34:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:34:37Z",
+      "resolved_at": "2026-04-21T08:36:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:36:11Z",
+      "resolved_at": "2026-04-21T08:37:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:37:22Z",
+      "resolved_at": "2026-04-21T08:38:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:38:47Z",
+      "resolved_at": "2026-04-21T08:42:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:42:25Z",
+      "resolved_at": "2026-04-21T08:43:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:43:53Z",
+      "resolved_at": "2026-04-21T08:45:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:45:04Z",
+      "resolved_at": "2026-04-21T08:46:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:46:22Z",
+      "resolved_at": "2026-04-21T08:47:41Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:47:41Z",
+      "resolved_at": "2026-04-21T08:48:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:48:52Z",
+      "resolved_at": "2026-04-21T08:49:59Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:49:59Z",
+      "resolved_at": "2026-04-21T08:53:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:53:20Z",
+      "resolved_at": "2026-04-21T08:55:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:55:23Z",
+      "resolved_at": "2026-04-21T08:56:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:56:37Z",
+      "resolved_at": "2026-04-21T08:58:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:58:11Z",
+      "resolved_at": "2026-04-21T08:59:12Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:59:12Z",
+      "resolved_at": "2026-04-21T09:00:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:00:16Z",
+      "resolved_at": "2026-04-21T09:01:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:01:35Z",
+      "resolved_at": "2026-04-21T09:02:59Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:02:59Z",
+      "resolved_at": "2026-04-21T09:04:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:04:10Z",
+      "resolved_at": "2026-04-21T09:06:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:06:53Z",
+      "resolved_at": "2026-04-21T09:07:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:07:55Z",
+      "resolved_at": "2026-04-21T09:09:05Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:09:05Z",
+      "resolved_at": "2026-04-21T09:10:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:10:40Z",
+      "resolved_at": "2026-04-21T09:11:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:11:40Z",
+      "resolved_at": "2026-04-21T09:14:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:14:44Z",
+      "resolved_at": "2026-04-21T09:15:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:15:45Z",
+      "resolved_at": "2026-04-21T09:18:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:18:21Z",
+      "resolved_at": "2026-04-21T09:20:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:20:09Z",
+      "resolved_at": "2026-04-21T09:21:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:21:11Z",
+      "resolved_at": "2026-04-21T09:22:30Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:22:30Z",
+      "resolved_at": "2026-04-21T09:23:32Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:23:32Z",
+      "resolved_at": "2026-04-21T09:24:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:24:53Z",
+      "resolved_at": "2026-04-21T09:25:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:25:52Z",
+      "resolved_at": "2026-04-21T09:27:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:27:11Z",
+      "resolved_at": "2026-04-21T09:31:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:31:20Z",
+      "resolved_at": "2026-04-21T09:32:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:32:27Z",
+      "resolved_at": "2026-04-21T09:33:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:33:57Z",
+      "resolved_at": "2026-04-21T09:35:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:35:11Z",
+      "resolved_at": "2026-04-21T09:36:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:36:20Z",
+      "resolved_at": "2026-04-21T09:37:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:37:23Z",
+      "resolved_at": "2026-04-21T09:38:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:38:46Z",
+      "resolved_at": "2026-04-21T09:39:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:39:53Z",
+      "resolved_at": "2026-04-21T09:41:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:41:04Z",
+      "resolved_at": "2026-04-21T09:44:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:44:25Z",
+      "resolved_at": "2026-04-21T09:46:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:46:45Z",
+      "resolved_at": "2026-04-21T09:47:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:47:57Z",
+      "resolved_at": "2026-04-21T09:49:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:49:10Z",
+      "resolved_at": "2026-04-21T09:50:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:50:16Z",
+      "resolved_at": "2026-04-21T09:52:05Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:52:05Z",
+      "resolved_at": "2026-04-21T09:53:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:53:20Z",
+      "resolved_at": "2026-04-21T09:56:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:56:02Z",
+      "resolved_at": "2026-04-21T09:57:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:57:27Z",
+      "resolved_at": "2026-04-21T09:58:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:58:40Z",
+      "resolved_at": "2026-04-21T10:00:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:00:02Z",
+      "resolved_at": "2026-04-21T10:02:32Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:02:32Z",
+      "resolved_at": "2026-04-21T10:03:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:03:53Z",
+      "resolved_at": "2026-04-21T10:05:50Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:05:50Z",
+      "resolved_at": "2026-04-21T10:08:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:08:18Z",
+      "resolved_at": "2026-04-21T10:09:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:09:22Z",
+      "resolved_at": "2026-04-21T10:10:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:10:34Z",
+      "resolved_at": "2026-04-21T10:12:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:12:34Z",
+      "resolved_at": "2026-04-21T10:13:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:13:55Z",
+      "resolved_at": "2026-04-21T10:15:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:15:23Z",
+      "resolved_at": "2026-04-21T10:16:31Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:16:31Z",
+      "resolved_at": "2026-04-21T10:17:40Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:17:40Z",
+      "resolved_at": "2026-04-21T10:19:30Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:19:30Z",
+      "resolved_at": "2026-04-21T10:21:24Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:21:24Z",
+      "resolved_at": "2026-04-21T10:22:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:22:33Z",
+      "resolved_at": "2026-04-21T10:23:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:23:52Z",
+      "resolved_at": "2026-04-21T10:25:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:25:10Z",
+      "resolved_at": "2026-04-21T10:26:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:26:10Z",
+      "resolved_at": "2026-04-21T10:27:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:27:18Z",
+      "resolved_at": "2026-04-21T10:29:17Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:29:17Z",
+      "resolved_at": "2026-04-21T10:30:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:30:25Z",
+      "resolved_at": "2026-04-21T10:33:30Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:33:30Z",
+      "resolved_at": "2026-04-21T10:34:41Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:34:41Z",
+      "resolved_at": "2026-04-21T10:35:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:35:45Z",
+      "resolved_at": "2026-04-21T10:37:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:37:03Z",
+      "resolved_at": "2026-04-21T10:38:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:38:02Z",
+      "resolved_at": "2026-04-21T10:39:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:39:10Z",
+      "resolved_at": "2026-04-21T10:40:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:40:28Z",
+      "resolved_at": "2026-04-21T10:41:48Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:41:48Z",
+      "resolved_at": "2026-04-21T10:42:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:42:58Z",
+      "resolved_at": "2026-04-21T10:44:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:44:15Z",
+      "resolved_at": "2026-04-21T10:45:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:45:28Z",
+      "resolved_at": "2026-04-21T10:46:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:46:27Z",
+      "resolved_at": "2026-04-21T10:49:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:49:04Z",
+      "resolved_at": "2026-04-21T10:50:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:50:03Z",
+      "resolved_at": "2026-04-21T10:51:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:51:28Z",
+      "resolved_at": "2026-04-21T10:52:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:52:46Z",
+      "resolved_at": "2026-04-21T10:53:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:53:44Z",
+      "resolved_at": "2026-04-21T10:54:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:54:53Z",
+      "resolved_at": "2026-04-21T10:56:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:56:18Z",
+      "resolved_at": "2026-04-21T10:57:19Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:57:19Z",
+      "resolved_at": "2026-04-21T10:59:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:59:01Z",
+      "resolved_at": "2026-04-21T11:00:14Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:00:14Z",
+      "resolved_at": "2026-04-21T11:02:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:02:09Z",
+      "resolved_at": "2026-04-21T11:03:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:03:27Z",
+      "resolved_at": "2026-04-21T11:04:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:04:54Z",
+      "resolved_at": "2026-04-21T11:06:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:06:04Z",
+      "resolved_at": "2026-04-21T11:07:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:07:13Z",
+      "resolved_at": "2026-04-21T11:08:19Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:08:19Z",
+      "resolved_at": "2026-04-21T11:09:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:09:28Z",
+      "resolved_at": "2026-04-21T11:10:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:10:37Z",
+      "resolved_at": "2026-04-21T11:12:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:12:29Z",
+      "resolved_at": "2026-04-21T11:12:59Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:12:59Z",
+      "resolved_at": "2026-04-21T11:15:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:15:01Z",
+      "resolved_at": "2026-04-21T11:16:07Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:16:07Z",
+      "resolved_at": "2026-04-21T11:17:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:17:33Z",
+      "resolved_at": "2026-04-21T11:19:19Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:19:19Z",
+      "resolved_at": "2026-04-21T11:20:41Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:20:41Z",
+      "resolved_at": "2026-04-21T11:21:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:21:52Z",
+      "resolved_at": "2026-04-21T11:23:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:23:47Z",
+      "resolved_at": "2026-04-21T11:24:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:24:16Z",
+      "resolved_at": "2026-04-21T11:26:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:26:01Z",
+      "resolved_at": "2026-04-21T11:27:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:27:13Z",
+      "resolved_at": "2026-04-21T11:28:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:28:46Z",
+      "resolved_at": "2026-04-21T11:29:48Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:29:48Z",
+      "resolved_at": "2026-04-21T11:31:32Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:31:32Z",
+      "resolved_at": "2026-04-21T11:32:43Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:32:43Z",
+      "resolved_at": "2026-04-21T11:36:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:36:02Z",
+      "resolved_at": "2026-04-21T11:37:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:37:00Z",
+      "resolved_at": "2026-04-21T11:38:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:38:25Z",
+      "resolved_at": "2026-04-21T11:39:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:39:27Z",
+      "resolved_at": "2026-04-21T11:41:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:41:09Z",
+      "resolved_at": "2026-04-21T11:42:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:42:21Z",
+      "resolved_at": "2026-04-21T11:43:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:43:38Z",
+      "resolved_at": "2026-04-21T11:44:48Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:44:48Z",
+      "resolved_at": "2026-04-21T11:46:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:46:44Z",
+      "resolved_at": "2026-04-21T11:47:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:47:13Z",
+      "resolved_at": "2026-04-21T11:49:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:49:06Z",
+      "resolved_at": "2026-04-21T11:50:17Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:50:17Z",
+      "resolved_at": "2026-04-21T11:51:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:51:45Z",
+      "resolved_at": "2026-04-21T11:52:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:52:54Z",
+      "resolved_at": "2026-04-21T11:53:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:53:53Z",
+      "resolved_at": "2026-04-21T11:55:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:55:02Z",
+      "resolved_at": "2026-04-21T11:56:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:56:27Z",
+      "resolved_at": "2026-04-21T11:57:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:57:36Z",
+      "resolved_at": "2026-04-21T11:58:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:58:36Z",
+      "resolved_at": "2026-04-21T11:59:56Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:59:56Z",
+      "resolved_at": "2026-04-21T12:01:05Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:01:05Z",
+      "resolved_at": "2026-04-21T12:02:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:02:11Z",
+      "resolved_at": "2026-04-21T12:03:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:03:28Z",
+      "resolved_at": "2026-04-21T12:04:49Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:04:49Z",
+      "resolved_at": "2026-04-21T12:07:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:07:06Z",
+      "resolved_at": "2026-04-21T12:08:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:08:04Z",
+      "resolved_at": "2026-04-21T12:09:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:09:21Z",
+      "resolved_at": "2026-04-21T12:10:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:10:29Z",
+      "resolved_at": "2026-04-21T12:11:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:11:54Z",
+      "resolved_at": "2026-04-21T12:12:56Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:12:56Z",
+      "resolved_at": "2026-04-21T12:14:50Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:14:50Z",
+      "resolved_at": "2026-04-21T12:16:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:16:00Z",
+      "resolved_at": "2026-04-21T12:17:12Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:17:12Z",
+      "resolved_at": "2026-04-21T12:18:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:18:20Z",
+      "resolved_at": "2026-04-21T12:19:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:19:46Z",
+      "resolved_at": "2026-04-21T12:21:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:21:28Z",
+      "resolved_at": "2026-04-21T12:23:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:23:33Z",
+      "resolved_at": "2026-04-21T12:24:07Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:24:07Z",
+      "resolved_at": "2026-04-21T12:25:52Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:25:52Z",
+      "resolved_at": "2026-04-21T12:26:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:26:21Z",
+      "resolved_at": "2026-04-21T12:28:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:28:18Z",
+      "resolved_at": "2026-04-21T12:29:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:29:33Z",
+      "resolved_at": "2026-04-21T12:30:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:30:38Z",
+      "resolved_at": "2026-04-21T12:31:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:31:57Z",
+      "resolved_at": "2026-04-21T12:33:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:33:10Z",
+      "resolved_at": "2026-04-21T12:34:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:34:22Z",
+      "resolved_at": "2026-04-21T12:36:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:36:21Z",
+      "resolved_at": "2026-04-21T12:37:44Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:37:44Z",
+      "resolved_at": "2026-04-21T12:39:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:39:45Z",
+      "resolved_at": "2026-04-21T12:40:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:40:55Z",
+      "resolved_at": "2026-04-21T12:42:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:42:53Z",
+      "resolved_at": "2026-04-21T12:44:07Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:44:07Z",
+      "resolved_at": "2026-04-21T12:45:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:45:11Z",
+      "resolved_at": "2026-04-21T12:46:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:46:29Z",
+      "resolved_at": "2026-04-21T12:47:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:47:29Z",
+      "resolved_at": "2026-04-21T12:48:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:48:39Z",
+      "resolved_at": "2026-04-21T12:50:08Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:50:08Z",
+      "resolved_at": "2026-04-21T12:51:56Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:51:56Z",
+      "resolved_at": "2026-04-21T12:54:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:54:13Z",
+      "resolved_at": "2026-04-21T12:55:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:55:37Z",
+      "resolved_at": "2026-04-21T12:57:27Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:57:27Z",
+      "resolved_at": "2026-04-21T12:58:32Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:58:32Z",
+      "resolved_at": "2026-04-21T12:59:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:59:57Z",
+      "resolved_at": "2026-04-21T13:01:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:01:06Z",
+      "resolved_at": "2026-04-21T13:02:17Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:02:17Z",
+      "resolved_at": "2026-04-21T13:03:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:03:29Z",
+      "resolved_at": "2026-04-21T13:06:20Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:06:20Z",
+      "resolved_at": "2026-04-21T13:07:24Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:07:24Z",
+      "resolved_at": "2026-04-21T13:08:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:08:33Z",
+      "resolved_at": "2026-04-21T13:09:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:09:39Z",
+      "resolved_at": "2026-04-21T13:12:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:12:11Z",
+      "resolved_at": "2026-04-21T13:13:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:13:21Z",
+      "resolved_at": "2026-04-21T13:14:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:14:23Z",
+      "resolved_at": "2026-04-21T13:15:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:15:47Z",
+      "resolved_at": "2026-04-21T13:17:05Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:17:05Z",
+      "resolved_at": "2026-04-21T13:19:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:19:16Z",
+      "resolved_at": "2026-04-21T13:20:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:20:37Z",
+      "resolved_at": "2026-04-21T13:21:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:21:46Z",
+      "resolved_at": "2026-04-21T13:23:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:23:16Z",
+      "resolved_at": "2026-04-21T13:24:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:24:26Z",
+      "resolved_at": "2026-04-21T13:25:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:25:36Z",
+      "resolved_at": "2026-04-21T13:26:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:26:58Z",
+      "resolved_at": "2026-04-21T13:29:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:29:47Z",
+      "resolved_at": "2026-04-21T13:31:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:31:04Z",
+      "resolved_at": "2026-04-21T13:32:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:32:26Z",
+      "resolved_at": "2026-04-21T13:33:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:33:35Z",
+      "resolved_at": "2026-04-21T13:35:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:35:35Z",
+      "resolved_at": "2026-04-21T13:36:36Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:36:36Z",
+      "resolved_at": "2026-04-21T13:37:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:37:39Z",
+      "resolved_at": "2026-04-21T13:39:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:39:06Z",
+      "resolved_at": "2026-04-21T13:40:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:40:10Z",
+      "resolved_at": "2026-04-21T13:41:25Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:41:25Z",
+      "resolved_at": "2026-04-21T13:45:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:45:04Z",
+      "resolved_at": "2026-04-21T13:46:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:46:04Z",
+      "resolved_at": "2026-04-21T13:47:59Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:47:59Z",
+      "resolved_at": "2026-04-21T13:49:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:49:11Z",
+      "resolved_at": "2026-04-21T13:50:13Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:50:13Z",
+      "resolved_at": "2026-04-21T13:51:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:51:21Z",
+      "resolved_at": "2026-04-21T13:53:17Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:53:17Z",
+      "resolved_at": "2026-04-21T13:54:31Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:54:31Z",
+      "resolved_at": "2026-04-21T13:55:46Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:55:46Z",
+      "resolved_at": "2026-04-21T13:56:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:56:53Z",
+      "resolved_at": "2026-04-21T14:00:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:00:01Z",
+      "resolved_at": "2026-04-21T14:01:12Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:01:12Z",
+      "resolved_at": "2026-04-21T14:02:30Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:02:30Z",
+      "resolved_at": "2026-04-21T14:03:41Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:03:41Z",
+      "resolved_at": "2026-04-21T14:04:55Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:04:55Z",
+      "resolved_at": "2026-04-21T14:06:15Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:06:15Z",
+      "resolved_at": "2026-04-21T14:07:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:07:16Z",
+      "resolved_at": "2026-04-21T14:08:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:08:34Z",
+      "resolved_at": "2026-04-21T14:09:42Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:09:42Z",
+      "resolved_at": "2026-04-21T14:11:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:11:00Z",
+      "resolved_at": "2026-04-21T14:12:08Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:12:08Z",
+      "resolved_at": "2026-04-21T14:13:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:13:21Z",
+      "resolved_at": "2026-04-21T14:15:47Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:15:47Z",
+      "resolved_at": "2026-04-21T14:18:43Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:18:43Z",
+      "resolved_at": "2026-04-21T14:20:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:20:04Z",
+      "resolved_at": "2026-04-21T14:21:29Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:21:29Z",
+      "resolved_at": "2026-04-21T14:23:01Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:23:01Z",
+      "resolved_at": "2026-04-21T14:24:11Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:24:11Z",
+      "resolved_at": "2026-04-21T14:25:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:25:39Z",
+      "resolved_at": "2026-04-21T14:26:54Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:26:54Z",
+      "resolved_at": "2026-04-21T14:28:10Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:28:10Z",
+      "resolved_at": "2026-04-21T14:30:51Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:30:51Z",
+      "resolved_at": "2026-04-21T14:32:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:32:53Z",
+      "resolved_at": "2026-04-21T14:34:14Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:34:14Z",
+      "resolved_at": "2026-04-21T14:35:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:35:26Z",
+      "resolved_at": "2026-04-21T14:36:41Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:36:41Z",
+      "resolved_at": "2026-04-21T14:38:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:38:33Z",
+      "resolved_at": "2026-04-21T14:39:42Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:39:42Z",
+      "resolved_at": "2026-04-21T14:42:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:42:00Z",
+      "resolved_at": "2026-04-21T14:43:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:43:16Z",
+      "resolved_at": "2026-04-21T14:44:45Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:44:45Z",
+      "resolved_at": "2026-04-21T14:46:35Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:46:35Z",
+      "resolved_at": "2026-04-21T14:48:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:48:00Z",
+      "resolved_at": "2026-04-21T14:49:09Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:49:09Z",
+      "resolved_at": "2026-04-21T14:50:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:50:58Z",
+      "resolved_at": "2026-04-21T14:52:33Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:52:33Z",
+      "resolved_at": "2026-04-21T14:55:05Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:55:05Z",
+      "resolved_at": "2026-04-21T14:56:22Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:56:22Z",
+      "resolved_at": "2026-04-21T14:57:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:57:53Z",
+      "resolved_at": "2026-04-21T14:59:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:59:03Z",
+      "resolved_at": "2026-04-21T15:00:04Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:00:04Z",
+      "resolved_at": "2026-04-21T15:01:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:01:38Z",
+      "resolved_at": "2026-04-21T15:03:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:03:53Z",
+      "resolved_at": "2026-04-21T15:06:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:06:38Z",
+      "resolved_at": "2026-04-21T15:07:58Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:07:58Z",
+      "resolved_at": "2026-04-21T15:09:18Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:09:18Z",
+      "resolved_at": "2026-04-21T15:10:19Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:10:19Z",
+      "resolved_at": "2026-04-21T15:11:48Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:11:48Z",
+      "resolved_at": "2026-04-21T15:12:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:12:57Z",
+      "resolved_at": "2026-04-21T15:14:12Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T15:14:12Z",
+      "resolved_at": "2026-04-21T15:17:53Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-EW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review approved. Packet is support-only, EW-04 route-live evidence is sufficient, dispatch truth distinction is clear. All three DRIFT items appear resolved in current repo. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T15:17:53Z",
+      "resolved_at": "2026-04-21T15:22:19Z"
+    }
+  ],
+  "blockers": []
+}

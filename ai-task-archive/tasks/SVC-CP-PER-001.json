@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "SVC-CP-PER-001",
+  "archived_at": "2026-04-17T16:11:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CP-PER-001",
+    "title": "Wire control-plane/persona into docker-compose",
+    "summary_zh": "將 control-plane/persona 加入 docker-compose.yml：補 compose entry（build context=services/control-plane/persona/Dockerfile 已存在）、PORT env、depends_on（operator-bff/registry）、healthcheck。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "[\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"docker compose up persona 後 healthcheck 通過\"",
+      "\"persona service 出現在 docker-compose.yml\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Checkpoint: reviewer-approved persona compose wiring remains aligned in docker-compose.yml with service-local build context, PORT 8002, healthy dependencies, /health check, and host port 18002; task closed.",
+    "last_update": "2026-04-17T16:11:07Z",
+    "review_notes_zh": [
+      "審查通過：compose entry 正確，build context 指向 services/control-plane/persona，Dockerfile/requirements.txt 均在 build context 內，PORT/depends_on/healthcheck/host port 18002 全部符合規格，docker compose config 驗證通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T16:11:07Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 457,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CP-PER-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "persona service entry added to docker-compose.yml. Build: services/control-plane/persona/Dockerfile, PORT=8002, depends_on operator-bff+registry, healthcheck GET /health, host port 18002. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-17T15:14:49Z",
+      "resolved_at": "2026-04-17T15:46:45Z"
+    },
+    {
+      "task_id": "SVC-CP-PER-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: `docker compose build persona` fails because compose uses `build.context: .` with `services/control-plane/persona/Dockerfile`, but that Dockerfile is written for a service-local context (`COPY requirements.txt .`, `COPY . .`, `CMD uvicorn main:app`). There is no repo-root `requirements.txt`, so the build stops at `COPY requirements.txt .`; under repo-root context `main.py` is also not at image root. Align the build context to `services/control-plane/persona` or rewrite the Dockerfile for repo-root paths, then resubmit for review.",
+      "status": "done",
+      "created_at": "2026-04-17T15:46:45Z",
+      "resolved_at": "2026-04-17T15:46:45Z"
+    },
+    {
+      "task_id": "SVC-CP-PER-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T15:46:48Z",
+      "resolved_at": "2026-04-17T15:46:48Z"
+    },
+    {
+      "task_id": "SVC-CP-PER-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Persona service wiring is ready for review: compose entry present with PORT/env, depends_on on operator-bff and registry, healthcheck on /health, host port 18002, and build context corrected to services/control-plane/persona so the Dockerfile resolves its local requirements.txt. docker compose config passes.",
+      "status": "done",
+      "created_at": "2026-04-17T15:57:08Z",
+      "resolved_at": "2026-04-17T16:09:12Z"
+    },
+    {
+      "task_id": "SVC-CP-PER-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: persona compose entry is correct — build context, PORT, depends_on, healthcheck, and host port 18002 all verified.",
+      "status": "done",
+      "created_at": "2026-04-17T16:09:12Z",
+      "resolved_at": "2026-04-17T16:11:07Z"
+    }
+  ],
+  "blockers": []
+}

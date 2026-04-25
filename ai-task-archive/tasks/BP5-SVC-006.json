@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-006",
+  "archived_at": "2026-04-15T19:02:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-006",
+    "title": "Realize the capital-pool and persona-binding service boundary",
+    "summary_zh": "把 capital_pool 與 PersonaCapitalBinding 的 canonical semantics 落成可部署 service、write ownership 與 binding read paths。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-004"
+    ],
+    "artifacts": [
+      "services/capital/",
+      "PERSONA_RUNTIME_MODEL.md",
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md"
+    ],
+    "acceptance": [
+      "capital pool and binding writes flow through a dedicated governed service boundary",
+      "single-pool runtime rule and binding ownership are enforced through service logic and tests"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized after Claude review approval: committed capital service boundary in b2bc185, reran governance pytest (63 passed), smoke_test_capital_pool.py (70/70), and compileall on services/capital. FastAPI-backed service smoke/unit tests remain environment-blocked in this shell because fastapi is unavailable.",
+    "last_update": "2026-04-15T19:02:02Z",
+    "review_notes_zh": [
+      "審查通過：services/capital/ 正確實現了 CapitalPool/PersonaCapitalBinding 的 governed service boundary",
+      "write-authority 矩陣（capital.admin / persona.admin）與 _authorize() 執行邏輯一致",
+      "binding admissibility 同時考慮 role ceiling、effective window、allowed_deployment_scope、pool status，符合 L1 決議 11",
+      "single-live-owner rule 在 governance 層強制執行並有端對端測試覆蓋",
+      "L1 文件（BINDING_AND_DEPLOYMENT_SEMANTICS.md decision 10/11、PERSONA_RUNTIME_MODEL.md）已更新",
+      "smoke_test_capital_pool.py 70/70 通過；FastAPI service tests 結構正確，FastAPI 環境缺失為已知外部限制"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T19:02:02Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "b2bc185d3416b7fd772087359fa73c5f6d6da2ce",
+      "commit_subject": "BP5-SVC-006: finalize capital service boundary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-006",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 47,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:11:38Z",
+      "resolved_at": "2026-04-15T18:11:54Z"
+    },
+    {
+      "task_id": "BP5-SVC-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:39:30Z",
+      "resolved_at": "2026-04-15T18:39:52Z"
+    },
+    {
+      "task_id": "BP5-SVC-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:40:20Z",
+      "resolved_at": "2026-04-15T18:40:43Z"
+    },
+    {
+      "task_id": "BP5-SVC-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:40:51Z",
+      "resolved_at": "2026-04-15T18:41:14Z"
+    },
+    {
+      "task_id": "BP5-SVC-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:41:22Z",
+      "resolved_at": "2026-04-15T18:41:44Z"
+    },
+    {
+      "task_id": "BP5-SVC-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented services/capital as the canonical CapitalPool/PersonaCapitalBinding service boundary, tightened binding admissibility semantics (role ceiling + effective window), and updated the L1 docs. Verified with governance pytest (63 passed), smoke_test_capital_pool.py (70/70), and py_compile on services/capital; service-level FastAPI tests/smoke are still blocked in this shell because fastapi/pip/ensurepip are unavailable.",
+      "status": "done",
+      "created_at": "2026-04-15T18:56:44Z",
+      "resolved_at": "2026-04-15T18:58:34Z"
+    },
+    {
+      "task_id": "BP5-SVC-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: capital service boundary is complete and correct. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T18:58:34Z",
+      "resolved_at": "2026-04-15T19:02:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "RW-05-ARTIFACT-COMPARE-001",
+  "archived_at": "2026-04-19T20:34:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RW-05-ARTIFACT-COMPARE-001",
+    "title": "Publish Artifact Registry and backend-owned compare contract",
+    "summary_zh": "為 RW-05 補齊 artifact list/detail、versioning semantics 與 compare diff route，讓 artifact compare 不再靠前端比 JSON。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "RW-04-EXPERIMENT-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "artifact registry and detail routes are published",
+      "versioning semantics are explicit",
+      "compare output is backend owned"
+    ],
+    "next": "Owner finalized approved task: B5 review passed, all three acceptance criteria met — artifact list/detail/compare routes, versioning/ancestry semantics, and backend-owned diff shape locked in docs/bff/RW-05-artifact-compare.md and docs/examples/RW-05-artifact-compare.json.",
+    "last_update": "2026-04-19T20:34:10Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已依 B5 核對 docs/bff/RW-05-artifact-compare.md 與 docs/examples/RW-05-artifact-compare.json：三項 acceptance 皆成立，artifact list/detail/compare 三條 route、versioning/ancestry semantics、以及 backend-owned diff shape 均已明確鎖定。",
+      "Review 中修正一處會影響實作判讀的文件矛盾：example list 範例原先以 status=sealed 查詢卻回傳 superseded，現已改為 ticket 下所有版本查詢。",
+      "另外將 PACKET_FAMILY.md 的 compare 摘要文案對齊正式 schema，明確寫成 field_pairs[].change_label 與 field_pairs[].delta_magnitude，避免被誤讀成頂層欄位。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:34:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "137f846a5c4e6c4ae56d7e301d61fc8604dfdae4",
+      "commit_subject": "RW-05-ARTIFACT-COMPARE-001: publish Artifact Registry and backend-owned compare contract",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "All three acceptance criteria verified": "routes published, versioning",
+        "LLM-Agent": "Claude",
+        "Task-ID": "RW-05-ARTIFACT-COMPARE-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 758,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RW-05-ARTIFACT-COMPARE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:15:14Z",
+      "resolved_at": "2026-04-19T20:15:35Z"
+    },
+    {
+      "task_id": "RW-05-ARTIFACT-COMPARE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three acceptance criteria met. Please review docs/bff/RW-05-artifact-compare.md and docs/examples/RW-05-artifact-compare.json against the gap matrix requirements at docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md section B5.",
+      "status": "done",
+      "created_at": "2026-04-19T20:26:16Z",
+      "resolved_at": "2026-04-19T20:32:45Z"
+    },
+    {
+      "task_id": "RW-05-ARTIFACT-COMPARE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "B5 review passed; contract and example payload are aligned. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T20:32:45Z",
+      "resolved_at": "2026-04-19T20:34:11Z"
+    }
+  ],
+  "blockers": []
+}

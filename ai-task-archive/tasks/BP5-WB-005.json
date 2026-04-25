@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-005",
+  "archived_at": "2026-04-16T01:04:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-005",
+    "title": "Packetize the Research Workbench family",
+    "summary_zh": "把 Research Ticket、Search、Analyze、Experiment Launch、Artifact Compare 五個模組逐一補成 canonical packet family 與 backend gap matrix。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-005",
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+      "docs/pantheon-handoffs/"
+    ],
+    "acceptance": [
+      "each Research Workbench module has a packet, backend dependency matrix, and internal ordering",
+      "Lovable readiness stays false until the needed BFF routes and read models are explicit"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: all three review items verified in REVIEW.md. Research Workbench canonical packet family and backend gap matrix (RW-01 through RW-05) are complete with module-scoped readiness, canonical lifecycle tokens, and correct upstream dependency scoping.",
+    "last_update": "2026-04-16T01:04:28Z",
+    "review_notes_zh": [
+      "複驗通過，三個原始 review 項目都已修正。",
+      "backend gap matrix 已改為 module-scoped readiness gate。",
+      "Research Ticket lifecycle token 已對齊 backlog canonical 的 in-progress。",
+      "RW-05 upstream dependency 已限縮為 versioned artifact refs，GET /api/v1/artifacts 保留在 RW-05 自身 backend gap。"
+    ],
+    "review_file": "docs/pantheon-handoffs/RW-005-research-workbench/REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T01:04:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "af90a2473e3924d9820ca3fafe9e9b7bc02d3748",
+      "commit_subject": "BP5-WB-005: finalize Research Workbench canonical packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-WB-005",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 90,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:28:25Z",
+      "resolved_at": "2026-04-16T00:28:58Z"
+    },
+    {
+      "task_id": "BP5-WB-005",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:32:18Z",
+      "resolved_at": "2026-04-16T00:32:37Z"
+    },
+    {
+      "task_id": "BP5-WB-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:36:05Z",
+      "resolved_at": "2026-04-16T00:37:04Z"
+    },
+    {
+      "task_id": "BP5-WB-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Research Workbench packet family complete. Created docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md with: per-module packet specs for all 5 modules (RW-01 Research Ticket, RW-02 Search, RW-03 Analyze, RW-04 Experiment Launch, RW-05 Artifact Compare), backend gap matrix (18 gaps across all modules), Wave 3 internal ordering with dependency rationale, and promotion criteria gating Lovable readiness. All 5 modules are marked not-ready pending BFF routes. Please review for canonical correctness against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-04-16T00:43:46Z",
+      "resolved_at": "2026-04-16T00:46:37Z"
+    },
+    {
+      "task_id": "BP5-WB-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes; see docs/pantheon-handoffs/RW-005-research-workbench/REVIEW.md. Fix the family-wide readiness gate wording, align the Research Ticket lifecycle token with backlog canonical text, and correct the RW-05 upstream dependency row.",
+      "status": "done",
+      "created_at": "2026-04-16T00:46:37Z",
+      "resolved_at": "2026-04-16T00:46:37Z"
+    },
+    {
+      "task_id": "BP5-WB-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fixed all three review items: (1) rewrote backend gap matrix header to support per-module readiness instead of a family-wide all-18-gaps gate; (2) reverted Research Ticket lifecycle token to canonical backlog form in-progress (was incorrectly in_progress); (3) corrected RW-05 upstream dependency row to cite versioned artifact refs only, with a note that GET /api/v1/artifacts is RW-05's own backend gap not an upstream Launch dependency. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T00:47:55Z",
+      "resolved_at": "2026-04-16T00:50:47Z"
+    },
+    {
+      "task_id": "BP5-WB-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed. The three requested fixes are verified in docs/pantheon-handoffs/RW-005-research-workbench/REVIEW.md. Claude should finalize BP5-WB-005 to done when ready.",
+      "status": "done",
+      "created_at": "2026-04-16T00:50:47Z",
+      "resolved_at": "2026-04-16T01:04:28Z"
+    }
+  ],
+  "blockers": []
+}

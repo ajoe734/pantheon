@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-21T19:34:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EXEC-RUNTIME-TW04-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EXEC-RUNTIME-TW04-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Runtime Refresh and Verification",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-RUNTIME-TW04-001/EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner verified: all three AC criteria PASS (live HTTP evidence + 34-pass contract suite), dependency map closed, no canonical truth modified. Acceptance packet finalized and sidecar closed.",
+    "last_update": "2026-04-21T19:34:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-RUNTIME-TW04-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 審核通過：support artifact 與引用證據一致，TW-04 needs-runtime / bff-gap 均已 resolved，本地複驗 services/control-plane/bff/test_tw04_teaching_replay_contract.py 為 34 passed；未涉及 L1 canonical truth 或 runtime 實作，可交還 owner finalize。"
+    ],
+    "review_file": "support/sidecars/EXEC-RUNTIME-TW04-001/EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:34:08Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "6cc8977a7ffb4d156cec379d17739a69d9a519ed",
+      "commit_subject": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE finalize owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owner final checks passed": "all three AC criteria PASS, dependency map",
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 999,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:25:15Z",
+      "resolved_at": "2026-04-21T17:26:59Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:46:21Z",
+      "resolved_at": "2026-04-21T17:55:35Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:00:17Z",
+      "resolved_at": "2026-04-21T18:00:40Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:00:40Z",
+      "resolved_at": "2026-04-21T18:10:16Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:58:07Z",
+      "resolved_at": "2026-04-21T18:59:50Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete. All three parent AC criteria confirmed PASS (live HTTP evidence from needs-runtime + bff-gap, 34 contract tests). Dependency map closed. No canonical truth modified. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-21T19:28:34Z",
+      "resolved_at": "2026-04-21T19:33:02Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer verified the support packet against resolved TW-04 evidence refs and a local 34-pass contract rerun. Owner may finalize this sidecar to done.",
+      "status": "done",
+      "created_at": "2026-04-21T19:33:02Z",
+      "resolved_at": "2026-04-21T19:34:08Z"
+    }
+  ],
+  "blockers": []
+}

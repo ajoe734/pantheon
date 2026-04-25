@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+  "archived_at": "2026-04-18T04:11:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-008-SIDECAR-REVIEW",
+    "title": "Prepare DEPLOY-008 review packet and evidence summary",
+    "summary_zh": "平行支援 DEPLOY-008，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DEPLOY-007"
+    ],
+    "artifacts": [
+      "support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar. Review packet now reflects the Claude-approved disposition, remains support-only, and keeps DEPLOY-008 archived done without changing canonical truth.",
+    "last_update": "2026-04-18T04:11:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEPLOY-008",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "review packet 與 DEPLOY-008 archive 及現行 repo 一致；三份 VM-2 artifact（docker-compose.exec.yml、env/prod-exec.env.example、docs/deployment/exec-vm-secrets-guide.md）均存在且與封包描述相符；/__health__ endpoint 確認；acceptance companion 正確標示為歷史性 pre-implementation 記錄；scope 限制符合 sidecar 規則，未修改任何 canonical truth"
+    ],
+    "review_file": "support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T04:11:38Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1afa550de007b4c8807c31d8ab550f8e3b08874e",
+      "commit_subject": "DEPLOY-008-SIDECAR-REVIEW: finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEPLOY-008-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 492,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:11:13Z",
+      "resolved_at": "2026-04-18T00:12:27Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:16:56Z",
+      "resolved_at": "2026-04-18T00:17:53Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:19:19Z",
+      "resolved_at": "2026-04-18T00:30:48Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:33:01Z",
+      "resolved_at": "2026-04-18T00:34:07Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:35:48Z",
+      "resolved_at": "2026-04-18T00:36:14Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:36:57Z",
+      "resolved_at": "2026-04-18T00:37:39Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T00:39:52Z",
+      "resolved_at": "2026-04-18T00:40:21Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet prepared at support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-REVIEW.md. It packages the archived done truth for DEPLOY-008, re-validates the current VM-2 execution-plane artifacts, and explicitly marks the older acceptance companion as historical pre-implementation context rather than current truth.",
+      "status": "done",
+      "created_at": "2026-04-18T00:44:09Z",
+      "resolved_at": "2026-04-18T00:46:16Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex2 to Qwen after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-18T00:46:16Z",
+      "resolved_at": "2026-04-18T00:47:08Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-18T00:47:08Z",
+      "resolved_at": "2026-04-18T04:07:56Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet verified: DEPLOY-008 is archived done at commit 824ca7c, all three VM-2 artifacts exist and match archived review rationale, older acceptance companion correctly documented as historical pre-implementation context, support-only scope respected throughout.",
+      "status": "done",
+      "created_at": "2026-04-18T04:07:56Z",
+      "resolved_at": "2026-04-18T04:11:38Z"
+    }
+  ],
+  "blockers": []
+}

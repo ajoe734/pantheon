@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-TW03-001",
+  "archived_at": "2026-04-21T19:49:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-TW03-001",
+    "title": "Refresh TW-03 before-after compare frontend handoff and coordination bundle",
+    "summary_zh": "補齊 TW-03 before-after compare 的前端 handoff / coordination bundle，讓 preview route family 的 live truth 能被前端 lane 接手。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/TW-03-before-after-compare.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md"
+    ],
+    "acceptance": [
+      "TW-03 frontend handoff bundle 補齊",
+      "preview_unavailable degraded semantics 在前端 handoff 中正確表達",
+      "coordination / backlog truth 同步完成"
+    ],
+    "next": "Owner finalized the approved TW-03 handoff rebaseline. Backlog truth now marks TW-03 route-live and frontend handoff active; frontend lane may proceed with EXEC-FRONT-TW03-001.",
+    "last_update": "2026-04-21T19:49:43Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過｜backlog TW-03 row 修正為 route-live — frontend handoff active",
+      "DRIFT-TW03-001 backlog wording 修正（bundle 已存在，next gate 改為 activate UI task）",
+      "DRIFT-TW03-002 example metadata 更新為 route-live",
+      "CAVEAT-TW03-003 time-sensitive pending proof 已記錄，不 blocking",
+      "前端 lane 可解鎖執行 EXEC-FRONT-TW03-001"
+    ],
+    "review_file": "docs/reviews/EXEC-REBASE-TW03-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:49:43Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "46eb1ff38d161d60b3f6b5716403d43fa8e81a51",
+      "commit_subject": "EXEC-REBASE-TW03-001 finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-REBASE-TW03-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 989,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:20:03Z",
+      "resolved_at": "2026-04-20T12:31:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:38:37Z",
+      "resolved_at": "2026-04-20T23:43:00Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:16:50Z",
+      "resolved_at": "2026-04-21T00:35:21Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:48:03Z",
+      "resolved_at": "2026-04-21T00:50:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:50:23Z",
+      "resolved_at": "2026-04-21T01:56:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Copilot",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:43:40Z",
+      "resolved_at": "2026-04-21T05:45:06Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "TW-03 frontend handoff bundle, coordination templates, screen spec, trainer packet family, and frontend SA are rebaselined to route-live truth. Please review the new TW-03 handoff artifacts and doc sync.",
+      "status": "done",
+      "created_at": "2026-04-21T06:27:25Z",
+      "resolved_at": "2026-04-21T17:25:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T17:25:26Z",
+      "resolved_at": "2026-04-21T17:29:56Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW03-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: both wording drifts corrected in this pass; all acceptance criteria met. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T17:29:56Z",
+      "resolved_at": "2026-04-21T19:49:43Z"
+    }
+  ],
+  "blockers": []
+}

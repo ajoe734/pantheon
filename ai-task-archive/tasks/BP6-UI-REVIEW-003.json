@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "BP6-UI-REVIEW-003",
+  "archived_at": "2026-04-17T04:05:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-UI-REVIEW-003",
+    "title": "Integrate PKT-004-persona-drilldowns ui-done return and close the Pantheon review loop",
+    "summary_zh": "整合 PKT-004-persona-drilldowns ui-done 返回，完成 Pantheon review 與 loop 關閉",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/PKT-004-persona-drilldowns-lovable-ui-task.yaml",
+      ".coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml"
+    ],
+    "acceptance": [
+      "PKT-004-persona-drilldowns lovable-ui-task status 更新為 loop-complete",
+      "整合記錄已 commit"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: PKT-004 persona-drilldowns ui-done loop closed. All review findings resolved (BFF auth header, error-envelope parsing, frontend-feedback request, replayable commit 2398427). Pantheon loop complete.",
+    "last_update": "2026-04-17T04:05:12Z",
+    "review_notes_zh": [
+      "已重新核對 front repo 的 ui-done 與 replayable commit 2398427：source_commit 已更新為 2398427980ea98a66c5fe23547f021d8efa3a53f；frontend-feedback request 已補齊；shared bffClient 已為 GET/POST 帶入 Authorization Bearer token，且錯誤解析已對齊 detail.error.{code,message,details}；Persona catalog / session list 仍以 query params 呼叫 BFF，未在本次 changed files 中引入 raw fetch 或 demo provider。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T04:05:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "fdea4d6eec0e2319424545f1d622e85acfc082c6",
+      "commit_subject": "BP6-UI-REVIEW-003: close PKT-004 persona-drilldowns Pantheon review loop",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "PKT-004 ui-done loop finalized": "BFF auth header, error-envelope parsing,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP6-UI-REVIEW-003",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 332,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-UI-REVIEW-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Created .coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml and updated lovable-ui-task status to loop-complete. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-17T03:32:12Z",
+      "resolved_at": "2026-04-17T03:40:50Z"
+    },
+    {
+      "task_id": "BP6-UI-REVIEW-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review failed. See .coordination/reviews/BP6-UI-REVIEW-003-review.md and docs/pantheon-delivery/PKT-004-persona-drilldowns/DELIVERY_NOTE.md. Republish PKT-004 from a replayable commit, publish the paired frontend-feedback request, and fix shared BFF client Authorization/error-envelope handling before returning to review.",
+      "status": "done",
+      "created_at": "2026-04-17T03:40:50Z",
+      "resolved_at": "2026-04-17T03:40:50Z"
+    },
+    {
+      "task_id": "BP6-UI-REVIEW-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 4 review findings resolved: BFF client now sends Authorization Bearer header (from localStorage), error envelope parsing aligned to Pantheon detail.error.{code,message,details}, missing frontend-feedback request created, and all PKT-004 files committed to replayable commit 2398427 in front repo. ui-done source_commit updated accordingly. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T03:44:17Z",
+      "resolved_at": "2026-04-17T04:02:37Z"
+    },
+    {
+      "task_id": "BP6-UI-REVIEW-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed. ui-done now points at replayable commit 2398427, feedback handoff exists, bffClient auth/error-envelope fixes are present, and persona drilldown filters still go through BFF query params. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-17T04:02:37Z",
+      "resolved_at": "2026-04-17T04:05:12Z"
+    }
+  ],
+  "blockers": []
+}

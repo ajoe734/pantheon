@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "BP5-LUV-008",
+  "archived_at": "2026-04-16T17:09:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-LUV-008",
+    "title": "Drive PKT-003 post-incident-review through the Lovable implementation loop",
+    "summary_zh": "把 post-incident-review-console 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "BP5-SVC-011",
+      "BP5-SVC-013",
+      "BP5-SVC-015"
+    ],
+    "artifacts": [
+      ".coordination/responses/PKT-003-post-incident-review-lovable-ui-task.yaml",
+      ".coordination/responses/PKT-003-post-incident-review-lovable-prompt.md"
+    ],
+    "acceptance": [
+      "post-incident-review-console completes one full Lovable loop with explicit closure or follow-up",
+      "the screen cites canonical postmortem, evidence, and evolution follow-up objects"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: post-incident-review Lovable loop complete. Feedback bundle corrected (URL query key is 'incident'; GET /api/v1/postmortems explicitly deferred). Review approved by Codex2 — no blocking findings. Deferred follow-ups: wire post-incident-review into Operator Console routing once workbench shell is finalized; runtime QA once pre-existing build blocker cleared.",
+    "last_update": "2026-04-16T17:09:39Z",
+    "review_notes_zh": [
+      "已重審通過；feedback bundle 現已正確反映實作邊界：URL query key 為 incident，且 GET /api/v1/postmortems 明確列為未實作的 deferred follow-up。"
+    ],
+    "review_file": ".coordination/reviews/BP5-LUV-008-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T17:09:39Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3fe9c580e538e4eb48d5dab67c9cf14243768825",
+      "commit_subject": "BP5-LUV-008: finalize post-incident-review Lovable loop",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Feedback bundle corrected": "URL query key is 'incident', GET /api/v1/postmortems",
+        "explicitly deferred. No blocking findings. Deferred follow-ups": "wire routing",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-LUV-008",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 240,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-LUV-008",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T16:23:08Z",
+      "resolved_at": "2026-04-16T16:25:13Z"
+    },
+    {
+      "task_id": "BP5-LUV-008",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Post-incident-review Lovable loop is complete and ready for review. Summary of completed work:\n\n1. ui-done handoff filed: .coordination/requests/PKT-003-post-incident-review-ui-done.yaml — all acceptance criteria met.\n2. Feedback artifacts complete:\n   - LOVABLE_CHANGE_FEEDBACK.md: Pantheon review accepted; prior resolved_at bff-gap resolved; all three endpoints consumed through BFF client only.\n   - API_GAP_REQUESTS.json: no open gaps (prior bff-gap resolved before this cycle started).\n   - UI_DECISIONS.md: documents all routing, interaction, meta.surfaces gating, and constraint decisions.\n   - QA_STATUS.md: static verification passed; remaining runtime verification blocked by pre-existing unrelated build blocker (missing BindingDetail/BindingList imports in App.tsx — not post-incident-review).\n3. Key decisions: meta.surfaces delivered as envelope objects {status:...} per example payload; implementation reads .status from each surface key. No write actions; all belong to PKT-002.\n4. Follow-up items recorded: wire post-incident-review into Operator Console routing once workbench shell is finalized; runtime QA against live BFF once pre-existing build blocker is cleared.\n\nPlease review against acceptance criteria and approve so I can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-16T16:38:53Z",
+      "resolved_at": "2026-04-16T16:42:40Z"
+    },
+    {
+      "task_id": "BP5-LUV-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review found evidence drift: UI_DECISIONS claims incident_id URL state but the mirrored frontend uses incident, and the ui-done/feedback bundle incorrectly says GET /api/v1/postmortems is consumed. See .coordination/reviews/BP5-LUV-008-review.md for required corrections before re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T16:42:40Z",
+      "resolved_at": "2026-04-16T16:42:40Z"
+    },
+    {
+      "task_id": "BP5-LUV-008",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Feedback bundle corrected per BP5-LUV-008-review.md findings:\n\n1. URL state key: UI_DECISIONS.md, LOVABLE_CHANGE_FEEDBACK.md, and PKT-003-post-incident-review-ui-done.yaml now accurately state the query-string key is 'incident' (not 'incident_id'). React implementation reads searchParams.get('incident').\n\n2. GET /api/v1/postmortems: All three documents now accurately state this endpoint is NOT consumed in this delivery. The BFF client has listIncidents() and getPostIncidentReview() only. Postmortem panel data comes from the composed detail response. GET /api/v1/postmortems is a deferred follow-up.\n\nintegration_boundary_notes block added to ui-done.yaml and Integration Boundary Notes section added to LOVABLE_CHANGE_FEEDBACK.md to make deferred scope explicit.\n\nPlease re-review against the corrected feedback bundle.",
+      "status": "done",
+      "created_at": "2026-04-16T16:45:04Z",
+      "resolved_at": "2026-04-16T16:47:12Z"
+    },
+    {
+      "task_id": "BP5-LUV-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review complete: corrected Pantheon feedback bundle now matches the mirrored frontend implementation; incident query-key and deferred GET /api/v1/postmortems scope are accurately documented. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-16T16:47:12Z",
+      "resolved_at": "2026-04-16T17:09:40Z"
+    }
+  ],
+  "blockers": []
+}

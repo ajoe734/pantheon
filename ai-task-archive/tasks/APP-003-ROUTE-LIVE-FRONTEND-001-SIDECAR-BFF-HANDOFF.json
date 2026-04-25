@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-22T15:34:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-003-ROUTE-LIVE-FRONTEND-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-003-ROUTE-LIVE-FRONTEND-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Route-live Frontend Activation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-001/APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF handoff packet. Support-only scope preserved; reviewer-approved packet remains the canonical handoff artifact for parent closeout.",
+    "last_update": "2026-04-22T15:34:51Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-ROUTE-LIVE-FRONTEND-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 支援包驗證通過：referenced canonical files 全部存在，targeted BFF tests 25 passed (pkt015、pkt016、cw02、kw04、kw05)，artifact 僅落在 support/sidecars/，未修改 L1 canonical truth",
+      "Section 7 reviewer checklist 五項已在 packet 內部完整回應：support-only framing、CW-02/KW-04/KW-05 closed Pantheon-side route gap、指向既有 module-local FRONTEND_CHANGE_SPEC、保留 CW-04 分離邊界、剩餘工作歸為 front-owned UI activation",
+      "Suggested parent-task interpretation (§8) 可作為 parent APP-003-ROUTE-LIVE-FRONTEND-001 closeout 的安全敘述，不會把 CW-04 殘留折進本包"
+    ],
+    "review_file": "support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-001/APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:34:51Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "c4cdc92359bd7c6acc8376183d91fb804184f831",
+      "commit_subject": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF finalize approved support handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1155,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T10:00:16Z",
+      "resolved_at": "2026-04-22T10:05:19Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only route-live handoff packet is ready: CW-02, KW-04, and KW-05 are framed as closed Pantheon-side BFF gaps, the existing module-local frontend specs are the canonical dispatch packets, targeted route/workbench tests re-verified at 25 passed, and the remaining residual stays isolated to front-owned activation plus separate CW-04 handoff work.",
+      "status": "done",
+      "created_at": "2026-04-22T10:10:53Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only route-live handoff packet is ready: CW-02, KW-04, and KW-05 are framed as closed Pantheon-side BFF gaps, the existing module-local frontend specs are the canonical dispatch packets, targeted route/workbench tests re-verified at 25 passed, and the remaining residual stays isolated to front-owned activation plus separate CW-04 handoff work.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:33:05Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: support-only BFF handoff packet; 25 BFF tests pass; canonical truth untouched; returning to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-04-22T15:33:05Z",
+      "resolved_at": "2026-04-22T15:34:51Z"
+    }
+  ],
+  "blockers": []
+}

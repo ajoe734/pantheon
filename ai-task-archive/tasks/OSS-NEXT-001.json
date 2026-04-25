@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "task_id": "OSS-NEXT-001",
+  "archived_at": "2026-04-17T03:01:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-NEXT-001",
+    "title": "Realize the governed Qlib adapter and first supervised-alpha smoke path",
+    "summary_zh": "把 Qlib 從 criteria-defined 推進到真正可跑的 governed integration：完成資料處理 adapter、registry 相容輸出與單模型 smoke test。",
+    "phase": "Phase 6: OSS Ecosystem Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "services/learning/qlib/ACTIVATION_CRITERIA.md",
+      "services/research/qlib/",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+    ],
+    "acceptance": [
+      "a governed Qlib adapter exists with repo-local input and output boundaries",
+      "a LightGBM-first supervised alpha smoke test passes through the canonical artifact path"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved task: 13/13 unit tests pass, smoke assertions OK, stale 0.9.1 comment in QlibLightGBMBackend docstring corrected to 0.9.6 for full version-governance consistency. Governed adapter complete with GovernedQlibDataAdapter, StubLightGBMBackend, QlibLightGBMBackend; registry output artifact_state=draft, deployment_stage=none. Task closed.",
+    "last_update": "2026-04-17T03:01:15Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T03:01:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1401bc498500ee6d359b20341f4bc1ec75ac8c7e",
+      "commit_subject": "OSS-NEXT-001: fix stale pyqlib version comment in QlibLightGBMBackend docstring (0.9.1 -> 0.9.6)",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "OSS-NEXT-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 313,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Governed Qlib adapter complete: services/research/qlib/adapter/ built. GovernedQlibDataAdapter validates OHLCV input + lineage; StubLightGBMBackend for CI; QlibLightGBMBackend for production. Smoke test passes (13 unit tests OK, assertions OK, 2026-04-17). integrations/qlib/{integration,governance,smoke_test}.md created. OSS_INTEGRATION_CHECKLIST updated to smoke-tested. Registry output: artifact_state=draft, deployment_stage=none.",
+      "status": "done",
+      "created_at": "2026-04-17T02:28:11Z",
+      "resolved_at": "2026-04-17T02:31:34Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: Docker packaging/entrypoint is broken. services/research/qlib/Dockerfile copies only adapter/ and runs 'python -m adapter.worker', but worker.py lives at services/research/qlib/worker.py, so the image entrypoint fails with 'No module named adapter.worker'. Local stub smoke, unittest, and direct python3 services/research/qlib/worker.py all pass; fix the image packaging/entrypoint and rerun review handoff.",
+      "status": "done",
+      "created_at": "2026-04-17T02:31:34Z",
+      "resolved_at": "2026-04-17T02:31:34Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Dockerfile packaging fixed — COPY worker.py added and CMD updated to python worker.py. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T02:33:07Z",
+      "resolved_at": "2026-04-17T02:38:40Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rereview found blocking gaps: Docker image omits the worker fallback dataset and the shipped runtime still only uses the stub backend; see .orchestrator/reviews/OSS-NEXT-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-17T02:38:40Z",
+      "resolved_at": "2026-04-17T02:38:40Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three gaps fixed: (1) Dockerfile now COPY examples/ so fallback dataset exists in image; (2) requirements.txt adds lightgbm>=3.3.0 so real backend is installable; (3) worker.py reads QLIB_BACKEND=real to select QlibLightGBMBackend over StubLightGBMBackend. integration.md CMD and test-count corrected. 13 unit tests pass, worker.py stub-mode passes.",
+      "status": "done",
+      "created_at": "2026-04-17T02:40:44Z",
+      "resolved_at": "2026-04-17T02:44:17Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Real backend still blocked: services/research/qlib/requirements.txt pins pyqlib==0.9.1, which is not installable in reviewer validation; see .orchestrator/reviews/OSS-NEXT-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-17T02:44:17Z",
+      "resolved_at": "2026-04-17T02:44:17Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Re-review requested: pyqlib pin updated to >=0.9.6 so pip install now resolves. Redundant lightgbm doc line removed. 13 unit tests pass, stub smoke assertions OK.",
+      "status": "done",
+      "created_at": "2026-04-17T02:45:20Z",
+      "resolved_at": "2026-04-17T02:54:34Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: align Qlib version truth across requirements, QLIB_VERSION_PIN/metadata, and canonical evidence docs. See .orchestrator/reviews/OSS-NEXT-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-17T02:54:34Z",
+      "resolved_at": "2026-04-17T02:54:34Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Version-governance drift fixed: pyqlib==0.9.6 now consistent across requirements.txt, QLIB_VERSION_PIN, OSS_INTEGRATION_CHECKLIST.md, and integrations/qlib/integration.md. 13 unit tests OK. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T02:56:23Z",
+      "resolved_at": "2026-04-17T02:57:24Z"
+    },
+    {
+      "task_id": "OSS-NEXT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. 13/13 unit tests pass, smoke test passes — registry_id correct, artifact_state=draft, sha256 checksum generated, governance boundary verified (no direct LEAN/registry writes). pyqlib pin >=0.9.6 resolves cleanly. Owner to finalize and close.",
+      "status": "done",
+      "created_at": "2026-04-17T02:57:24Z",
+      "resolved_at": "2026-04-17T03:01:15Z"
+    }
+  ],
+  "blockers": []
+}

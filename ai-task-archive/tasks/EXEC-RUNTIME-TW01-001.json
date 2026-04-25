@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "EXEC-RUNTIME-TW01-001",
+  "archived_at": "2026-04-21T16:28:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-RUNTIME-TW01-001",
+    "title": "Refresh the active TW-01 runtime so trainer session routes are live over HTTP",
+    "summary_zh": "刷新 active operator-bff runtime，讓 TW-01 trainer session route family 對外 live HTTP 與 published contract 一致，解除 teaching dialog loop 的 runtime freshness blocker。",
+    "phase": "Execution / Runtime Refresh and Verification",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/requests/TW-01-teaching-dialog-needs-runtime.yaml",
+      ".coordination/responses/TW-01-teaching-dialog-frontend-feedback.yaml",
+      ".coordination/reviews/TW-01-teaching-dialog-review.md"
+    ],
+    "acceptance": [
+      "the active operator-bff runtime exposes the TW-01 create/list/detail/message route family over live HTTP||live runtime results match the published TW-01 session and message field shape||the TW-01 follow-up loop can close once front publication evidence is replayable"
+    ],
+    "next": "Owner closeout complete: reviewer-approved TW-01 runtime refresh is archived as done. Live HTTP verification on 127.0.0.1:18001/18011 cleared the trainer session route blocker, so the teaching-dialog runtime follow-up can close on recorded evidence.",
+    "last_update": "2026-04-21T16:28:42Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "reviewer 重新拉起目前 workspace 的 operator-bff runtime，並在 127.0.0.1:18001 獨立驗證 TW-01 create/list/detail/message live HTTP 路由族與 published field shape",
+      "fallback-disabled 的 127.0.0.1:18011 probe 回傳 truthful unavailable envelope；TW-01 runtime freshness blocker 已解除"
+    ],
+    "review_file": ".coordination/reviews/TW-01-teaching-dialog-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T16:28:42Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 985,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-RUNTIME-TW01-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:00:15Z",
+      "resolved_at": "2026-04-21T16:07:02Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW01-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:07:02Z",
+      "resolved_at": "2026-04-21T16:11:32Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:11:31Z",
+      "resolved_at": "2026-04-21T16:15:52Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Refreshed the active TW-01 runtime and updated .coordination/requests/TW-01-teaching-dialog-needs-runtime.yaml with live HTTP evidence. Verified 18001 now exposes POST/GET/GET/POST on /api/v1/trainer/sessions*, returns the published field shape with links.workbench_detail under /trainer/sessions/{session_id}, and confirmed an unavailable trainer_dialog envelope over HTTP via a controlled fallback-disabled probe on 18011. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-21T16:20:36Z",
+      "resolved_at": "2026-04-21T16:25:44Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer re-launched the current operator-bff runtime on 127.0.0.1:18001 and independently re-verified TW-01 create/list/detail/message plus a fallback-disabled unavailable probe over live HTTP. Runtime blocker cleared; approved for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-21T16:25:44Z",
+      "resolved_at": "2026-04-21T16:28:43Z"
+    }
+  ],
+  "blockers": []
+}

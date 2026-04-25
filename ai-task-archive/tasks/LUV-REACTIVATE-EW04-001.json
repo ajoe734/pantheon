@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-EW04-001",
+  "archived_at": "2026-04-20T01:29:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-EW04-001",
+    "title": "Re-activate inspiration-graph handoff for the front-end lane",
+    "summary_zh": "核對 inspiration graph 的 current lovable handoff 是否完整可用；若仍缺 contract artifact，就精確寫回缺口而不是讓前端猜。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/PKT-003-inspiration-graph-lovable-ui-task.yaml",
+      ".coordination/responses/PKT-003-inspiration-graph-lovable-prompt.md",
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md"
+    ],
+    "acceptance": [
+      "confirm inspiration-graph handoff is complete enough for front-end execution or state the exact missing artifact",
+      "refresh the exact next-step note for Lovable or record a precise blocker",
+      "leave a reviewable reactivation handoff tied to PKT-003-inspiration-graph"
+    ],
+    "next": "Owner finalized: PKT-003 inspiration-graph handoff bundle confirmed complete. Contract-ready naming chain closed, bff_route_live=false truthful, front-end lane ready for execution.",
+    "last_update": "2026-04-20T01:29:57Z",
+    "task_class": "frontlane_reactivation",
+    "auto_created_by": "lovable-reactivation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "PKT-003 命名鏈缺口已由 .coordination/responses/PKT-003-inspiration-graph-contract-ready.yaml 補齊，前端 handoff bundle 已完整可審。",
+      "Reviewer 另將 PKT-003 鏡像 lovable handoff 的 readiness 訊號對齊為 pending-bff，並驗證 services/control-plane/bff 尚無 GET /api/v1/lineage/inspiration/{artifact_id} live route，因此 bff_route_live=false 仍然 truthful。"
+    ],
+    "review_file": "docs/reviews/2026-04-20-luv-reactivate-ew04-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:29:57Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "31814355c7720a66c34cad2360a90361e1f3c782",
+      "commit_subject": "LUV-REACTIVATE-EW04-001 finalize: close approved EW-04 inspiration-graph reactivation handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "LUV-REACTIVATE-EW04-001",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 787,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:00:22Z",
+      "resolved_at": "2026-04-20T01:03:32Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:03:32Z",
+      "resolved_at": "2026-04-20T01:04:35Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:04:35Z",
+      "resolved_at": "2026-04-20T01:05:45Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:05:45Z",
+      "resolved_at": "2026-04-20T01:08:23Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:11:08Z",
+      "resolved_at": "2026-04-20T01:11:35Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:14:48Z",
+      "resolved_at": "2026-04-20T01:17:20Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:18:45Z",
+      "resolved_at": "2026-04-20T01:20:31Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Inspiration-graph reactivation audit done. All spec artifacts confirmed present and complete (BFF contract docs/bff/PKT-003-inspiration-graph.md, screen spec, example payload, FRONTEND_CHANGE_SPEC). Only gap: PKT-003-inspiration-graph-contract-ready.yaml was missing (listed as delivery_dependency in lovable-ui-task but only the EW-04-named variant existed). Created .coordination/responses/PKT-003-inspiration-graph-contract-ready.yaml to close the naming chain. No content gaps. BFF route not yet live — expected gate per acceptance criteria. Handoff bundle is now complete for front-end lane review.",
+      "status": "done",
+      "created_at": "2026-04-20T01:23:01Z",
+      "resolved_at": "2026-04-20T01:28:52Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-EW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: PKT-003 inspiration-graph handoff bundle is complete, the mirror artifacts now match the pending-BFF gate, and the owner can finalize this task when ready.",
+      "status": "done",
+      "created_at": "2026-04-20T01:28:52Z",
+      "resolved_at": "2026-04-20T01:29:57Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "AUTO-TEST-PERSONA-001",
+  "archived_at": "2026-04-20T06:31:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-TEST-PERSONA-001",
+    "title": "Add service path tests for control plane persona main",
+    "summary_zh": "為 control-plane persona main 補 service-path tests，把目前 stub 狀態測試化，為後續 productization 建立保護。",
+    "phase": "Execution / Auto Worker - Tests and Tech Debt",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "services/control-plane/persona/main.py"
+    ],
+    "acceptance": [
+      "persona main 有 service tests",
+      "stub 行為被明確固定",
+      "後續重構有保護"
+    ],
+    "next": "Owner finalized: all 10 service-path tests for control-plane persona main pass (3 subtests), stub contract pinned, refactor protection in place.",
+    "last_update": "2026-04-20T06:31:56Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "pytest services/control-plane/persona/test_main.py -v 通過，10 tests 與 3 個 subtests 全數成功",
+      "測試內容覆蓋 /health 與 /invoke 的 stub contract，與 task brief 列出的 acceptance 一致",
+      "未發現需要退回 owner 的缺口"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T06:31:56Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1b093b836046b3c7c742d21a21421fdf70f8415c",
+      "commit_subject": "AUTO-TEST-PERSONA-001: add persona main service-path tests",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "AUTO-TEST-PERSONA-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 825,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-TEST-PERSONA-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "10 tests pass in services/control-plane/persona/test_main.py covering /health (ok, service name, llm_backend field, env-var reflection) and /invoke stub path (200 response, fixed response text, intent=unknown, skill=null, 422 validation, channel variants, empty message). All acceptance criteria met — stub behaviour pinned, refactor protection in place.",
+      "status": "done",
+      "created_at": "2026-04-20T06:26:33Z",
+      "resolved_at": "2026-04-20T06:30:39Z"
+    },
+    {
+      "task_id": "AUTO-TEST-PERSONA-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: persona main service-path tests pass locally and pin the current stub contract; ready for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-20T06:30:39Z",
+      "resolved_at": "2026-04-20T06:31:56Z"
+    }
+  ],
+  "blockers": []
+}

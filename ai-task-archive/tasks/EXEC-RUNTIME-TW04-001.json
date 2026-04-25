@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "EXEC-RUNTIME-TW04-001",
+  "archived_at": "2026-04-21T18:22:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-RUNTIME-TW04-001",
+    "title": "Refresh the active TW-04 runtime and validate live replay route topology",
+    "summary_zh": "刷新 active operator-bff runtime，讓 TW-04 replay route family 對外 live HTTP，並驗證 replay/session links 與 evidence targets 會正確落到已部署 front routes。",
+    "phase": "Execution / Runtime Refresh and Verification",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/requests/TW-04-teaching-replay-needs-runtime.yaml",
+      ".coordination/responses/TW-04-teaching-replay-frontend-feedback.yaml",
+      ".coordination/reviews/TW-04-teaching-replay-review.md"
+    ],
+    "acceptance": [
+      "the active operator-bff runtime exposes the TW-04 replay route family over live HTTP||browser-facing replay/session links match the mounted front routes and evidence_ref targets resolve to deployed owner routes||live runtime truth preserves the published degraded and unavailable replay semantics"
+    ],
+    "next": "Owner finalizing approved TW-04 runtime-refresh task. All acceptance criteria verified: four TW-04 replay routes live on 127.0.0.1:18001, browser-facing replay/session links match front routes, evidence_ref resolves to /operator/paper-live-drift/runtime-042, contract suite passes 34 tests. Docs updated to route-live status. Closing EXEC-RUNTIME-TW04-001.",
+    "last_update": "2026-04-21T18:22:50Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已用 live HTTP 重驗 127.0.0.1:18001，TW-04 四條 replay 路由皆已掛載且 front-facing links 正確。",
+      "event.evidence_ref.url_pattern 已在 live runtime 上指向 /operator/paper-live-drift/runtime-042，TW-04 contract suite 通過 34 tests。"
+    ],
+    "review_file": ".coordination/reviews/TW-04-teaching-replay-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T18:22:50Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "b0975f50fb1b657c2ae95ae1a132e02b7474439b",
+      "commit_subject": "EXEC-RUNTIME-TW04-001 finalize approved TW-04 runtime refresh closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "routes confirmed live on 127.0.0.1": "18001, browser-facing replay/session",
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-RUNTIME-TW04-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 984,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:00:27Z",
+      "resolved_at": "2026-04-21T16:02:38Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:02:37Z",
+      "resolved_at": "2026-04-21T17:23:24Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "TW-04 runtime refresh complete. All 4 routes live at 127.0.0.1:18001, links match front router, 32 contract tests pass. Evidence route gap /telemetry/drawdown/:id documented in .coordination/requests/TW-04-teaching-replay-bff-gap.yaml per review instructions. Needs-runtime status updated to verified-with-gap. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-21T17:34:45Z",
+      "resolved_at": "2026-04-21T18:20:40Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Live TW-04 runtime revalidated on 127.0.0.1:18001: four replay routes are mounted, replay/session links match the front router, the telemetry evidence target now resolves to /operator/paper-live-drift/runtime-042, and the TW-04 contract suite passes with 34 tests. Owner may finalize.",
+      "status": "done",
+      "created_at": "2026-04-21T18:20:40Z",
+      "resolved_at": "2026-04-21T18:22:50Z"
+    }
+  ],
+  "blockers": []
+}

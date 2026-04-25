@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-004",
+  "archived_at": "2026-04-16T06:10:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-004",
+    "title": "Packetize Evolution Workbench follow-on surfaces",
+    "summary_zh": "把 inspiration 與 mutation review 這些 Evolution Workbench follow-on surfaces 補成 packet family，而不是只停在 backlog 名稱。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-012",
+      "BP5-SVC-013"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+      "docs/pantheon-handoffs/"
+    ],
+    "acceptance": [
+      "evolution follow-on screens cite canonical evolution, incident, and rollback objects",
+      "packet language exists for inspiration and mutation review instead of backlog-only placeholders"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized EW-004 packet family, reusable blocked Inspiration Graph draft artifacts, and reviewer sidecars in commit 6644a5c; review-approved acceptance is now closed as done.",
+    "last_update": "2026-04-16T06:10:05Z",
+    "review_notes_zh": [
+      "審查通過",
+      "EW-04/EW-05 的 gap 描述與程式碼一致；packet language 完整取代 backlog 佔位符；規則與 canonical policy 對齊；已核對 main.py 確認缺少的 BFF 路由"
+    ],
+    "review_file": "support/sidecars/BP5-WB-004/BP5-WB-004-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T06:10:05Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6644a5c5e91fb8ec00b6e5ccf2ffb1ff975195e9",
+      "commit_subject": "BP5-WB-004: finalize evolution workbench packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-WB-004",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 136,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-004",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T03:42:20Z",
+      "resolved_at": "2026-04-16T03:43:15Z"
+    },
+    {
+      "task_id": "BP5-WB-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Drafted docs/pantheon-handoffs/EW-004-evolution-workbench/PACKET_FAMILY.md. It consolidates EW-01..EW-05, absorbs the blocked PKT-003 inspiration draft, and anchors Mutation Review to canonical EvolutionDecision, IncidentCase, Postmortem, ApprovalDecision, and rollback semantics while keeping the operator mutation-review route and allowedActions signals explicitly missing.",
+      "status": "done",
+      "created_at": "2026-04-16T04:13:40Z",
+      "resolved_at": "2026-04-16T06:05:16Z"
+    },
+    {
+      "task_id": "BP5-WB-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: PACKET_FAMILY.md honestly documents EW-01..EW-05 readiness, accurately cites all canonical object anchors, and replaces backlog-only placeholders with complete packet language for EW-04 and EW-05. Gap tables and promotion criteria are specific and non-speculative. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-16T06:05:16Z",
+      "resolved_at": "2026-04-16T06:10:06Z"
+    }
+  ],
+  "blockers": []
+}

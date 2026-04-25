@@ -1,0 +1,1175 @@
+{
+  "version": 1,
+  "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+  "archived_at": "2026-04-16T14:23:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-LUV-003-SIDECAR-REVIEW",
+    "title": "Prepare BP5-LUV-003 review packet and evidence summary",
+    "summary_zh": "平行支援 BP5-LUV-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-011"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-LUV-003/BP5-LUV-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized review_approved sidecar. Review packet complete: both acceptance criteria MET, dependency map accurate (BP5-SVC-015 todo status correctly noted), artifact inventory verified, BP5-SVC-015 inaccuracy scoped to support-artifact only with no canonical impact. No canonical truth was modified.",
+    "last_update": "2026-04-16T14:23:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-LUV-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "review packet 已與 canonical reviewer 對齊；artifact inventory 抽查存在；BP5-SVC-015 實際為 todo 的不一致已正確標記為 support-artifact only。"
+    ],
+    "review_file": "support/sidecars/BP5-LUV-003/BP5-LUV-003-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T14:23:16Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "7ea632f41d0f7e425bd23e31d751049867348910",
+      "commit_subject": "BP5-LUV-003-SIDECAR-REVIEW: finalize sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "BP5-LUV-003-SIDECAR-REVIEW",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 215,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete. Evidence summary, acceptance criteria assessment, artifact inventory, and known SIDECAR-ACCEPTANCE inaccuracy (BP5-SVC-015 status) all documented. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-16T08:53:54Z",
+      "resolved_at": "2026-04-16T09:07:43Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:07:43Z",
+      "resolved_at": "2026-04-16T09:09:56Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:09:56Z",
+      "resolved_at": "2026-04-16T09:10:27Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:10:27Z",
+      "resolved_at": "2026-04-16T09:12:13Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:12:13Z",
+      "resolved_at": "2026-04-16T09:12:35Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:12:35Z",
+      "resolved_at": "2026-04-16T09:14:27Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:14:27Z",
+      "resolved_at": "2026-04-16T09:14:45Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:14:45Z",
+      "resolved_at": "2026-04-16T09:16:39Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:16:39Z",
+      "resolved_at": "2026-04-16T09:16:57Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:16:57Z",
+      "resolved_at": "2026-04-16T09:18:50Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:18:50Z",
+      "resolved_at": "2026-04-16T09:19:08Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:19:08Z",
+      "resolved_at": "2026-04-16T09:21:27Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:21:27Z",
+      "resolved_at": "2026-04-16T09:22:15Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:22:15Z",
+      "resolved_at": "2026-04-16T09:25:40Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:25:40Z",
+      "resolved_at": "2026-04-16T09:25:59Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:25:59Z",
+      "resolved_at": "2026-04-16T09:27:54Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:27:54Z",
+      "resolved_at": "2026-04-16T09:28:12Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:28:12Z",
+      "resolved_at": "2026-04-16T09:30:05Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:30:05Z",
+      "resolved_at": "2026-04-16T09:30:23Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:30:23Z",
+      "resolved_at": "2026-04-16T09:32:19Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:32:19Z",
+      "resolved_at": "2026-04-16T09:32:37Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:32:37Z",
+      "resolved_at": "2026-04-16T09:34:29Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:34:29Z",
+      "resolved_at": "2026-04-16T09:34:48Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:34:48Z",
+      "resolved_at": "2026-04-16T09:36:37Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:36:37Z",
+      "resolved_at": "2026-04-16T09:37:39Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:37:39Z",
+      "resolved_at": "2026-04-16T09:39:13Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:39:13Z",
+      "resolved_at": "2026-04-16T09:39:34Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:39:34Z",
+      "resolved_at": "2026-04-16T09:41:26Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:41:26Z",
+      "resolved_at": "2026-04-16T09:41:44Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:41:44Z",
+      "resolved_at": "2026-04-16T09:43:37Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:43:37Z",
+      "resolved_at": "2026-04-16T09:43:56Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:43:56Z",
+      "resolved_at": "2026-04-16T09:45:50Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:45:50Z",
+      "resolved_at": "2026-04-16T09:46:08Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:46:08Z",
+      "resolved_at": "2026-04-16T09:48:00Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:48:00Z",
+      "resolved_at": "2026-04-16T09:48:19Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:48:19Z",
+      "resolved_at": "2026-04-16T09:50:12Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:50:12Z",
+      "resolved_at": "2026-04-16T09:50:31Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:50:31Z",
+      "resolved_at": "2026-04-16T09:52:22Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:52:22Z",
+      "resolved_at": "2026-04-16T09:53:27Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:53:27Z",
+      "resolved_at": "2026-04-16T09:54:59Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:54:59Z",
+      "resolved_at": "2026-04-16T09:55:17Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:55:17Z",
+      "resolved_at": "2026-04-16T09:57:10Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:57:10Z",
+      "resolved_at": "2026-04-16T09:57:28Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:57:28Z",
+      "resolved_at": "2026-04-16T09:59:20Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T09:59:20Z",
+      "resolved_at": "2026-04-16T09:59:39Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T09:59:39Z",
+      "resolved_at": "2026-04-16T10:01:34Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:01:34Z",
+      "resolved_at": "2026-04-16T10:01:53Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:01:53Z",
+      "resolved_at": "2026-04-16T10:03:49Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:03:49Z",
+      "resolved_at": "2026-04-16T10:04:08Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:04:08Z",
+      "resolved_at": "2026-04-16T10:06:05Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:06:05Z",
+      "resolved_at": "2026-04-16T10:06:24Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:06:24Z",
+      "resolved_at": "2026-04-16T10:08:14Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:08:14Z",
+      "resolved_at": "2026-04-16T10:09:08Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:09:08Z",
+      "resolved_at": "2026-04-16T10:10:59Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:10:59Z",
+      "resolved_at": "2026-04-16T10:11:18Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:11:18Z",
+      "resolved_at": "2026-04-16T10:13:17Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:13:17Z",
+      "resolved_at": "2026-04-16T10:13:35Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:13:35Z",
+      "resolved_at": "2026-04-16T10:15:29Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:15:29Z",
+      "resolved_at": "2026-04-16T10:15:48Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:15:48Z",
+      "resolved_at": "2026-04-16T10:17:44Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:17:44Z",
+      "resolved_at": "2026-04-16T10:18:02Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:18:02Z",
+      "resolved_at": "2026-04-16T10:21:01Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:21:01Z",
+      "resolved_at": "2026-04-16T10:21:21Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:21:21Z",
+      "resolved_at": "2026-04-16T10:23:15Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:23:15Z",
+      "resolved_at": "2026-04-16T10:23:39Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:23:39Z",
+      "resolved_at": "2026-04-16T10:25:48Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:25:48Z",
+      "resolved_at": "2026-04-16T10:26:06Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:26:06Z",
+      "resolved_at": "2026-04-16T10:28:05Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:28:05Z",
+      "resolved_at": "2026-04-16T10:28:23Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:28:23Z",
+      "resolved_at": "2026-04-16T10:30:18Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:30:18Z",
+      "resolved_at": "2026-04-16T10:30:36Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:30:36Z",
+      "resolved_at": "2026-04-16T10:32:30Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:32:30Z",
+      "resolved_at": "2026-04-16T10:32:48Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:32:48Z",
+      "resolved_at": "2026-04-16T10:34:42Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:34:42Z",
+      "resolved_at": "2026-04-16T10:35:00Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:35:00Z",
+      "resolved_at": "2026-04-16T10:36:58Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:36:58Z",
+      "resolved_at": "2026-04-16T10:37:17Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:37:17Z",
+      "resolved_at": "2026-04-16T10:39:21Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:39:21Z",
+      "resolved_at": "2026-04-16T10:40:23Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:40:23Z",
+      "resolved_at": "2026-04-16T10:41:56Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:41:56Z",
+      "resolved_at": "2026-04-16T10:42:15Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:42:15Z",
+      "resolved_at": "2026-04-16T10:44:10Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:44:10Z",
+      "resolved_at": "2026-04-16T10:44:28Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:44:28Z",
+      "resolved_at": "2026-04-16T10:46:38Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:46:38Z",
+      "resolved_at": "2026-04-16T10:46:56Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:46:56Z",
+      "resolved_at": "2026-04-16T10:48:51Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:48:51Z",
+      "resolved_at": "2026-04-16T10:49:10Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:49:10Z",
+      "resolved_at": "2026-04-16T10:51:08Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:51:08Z",
+      "resolved_at": "2026-04-16T10:51:28Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:51:28Z",
+      "resolved_at": "2026-04-16T10:53:22Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:53:22Z",
+      "resolved_at": "2026-04-16T10:53:41Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:53:41Z",
+      "resolved_at": "2026-04-16T10:55:50Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:55:50Z",
+      "resolved_at": "2026-04-16T10:56:08Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:56:08Z",
+      "resolved_at": "2026-04-16T10:58:06Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T10:58:06Z",
+      "resolved_at": "2026-04-16T10:58:24Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T10:58:24Z",
+      "resolved_at": "2026-04-16T11:01:07Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:01:07Z",
+      "resolved_at": "2026-04-16T11:01:47Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:01:47Z",
+      "resolved_at": "2026-04-16T11:03:35Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:03:35Z",
+      "resolved_at": "2026-04-16T11:03:53Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:03:53Z",
+      "resolved_at": "2026-04-16T11:05:47Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:05:47Z",
+      "resolved_at": "2026-04-16T11:06:06Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:06:06Z",
+      "resolved_at": "2026-04-16T11:08:03Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:08:03Z",
+      "resolved_at": "2026-04-16T11:08:21Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:08:21Z",
+      "resolved_at": "2026-04-16T11:10:30Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:10:30Z",
+      "resolved_at": "2026-04-16T11:11:20Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:11:20Z",
+      "resolved_at": "2026-04-16T11:12:54Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:12:54Z",
+      "resolved_at": "2026-04-16T11:13:15Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:13:15Z",
+      "resolved_at": "2026-04-16T11:15:11Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:15:11Z",
+      "resolved_at": "2026-04-16T11:15:30Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:15:30Z",
+      "resolved_at": "2026-04-16T11:17:28Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:17:28Z",
+      "resolved_at": "2026-04-16T11:17:47Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:17:47Z",
+      "resolved_at": "2026-04-16T11:19:44Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:19:44Z",
+      "resolved_at": "2026-04-16T11:20:03Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:20:03Z",
+      "resolved_at": "2026-04-16T11:22:01Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:22:01Z",
+      "resolved_at": "2026-04-16T11:22:21Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:22:21Z",
+      "resolved_at": "2026-04-16T11:24:20Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:24:20Z",
+      "resolved_at": "2026-04-16T11:24:40Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:24:40Z",
+      "resolved_at": "2026-04-16T11:27:02Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:27:02Z",
+      "resolved_at": "2026-04-16T11:27:24Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:27:24Z",
+      "resolved_at": "2026-04-16T11:29:19Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T11:29:19Z",
+      "resolved_at": "2026-04-16T11:29:42Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex to Qwen after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:55 PM.",
+      "status": "done",
+      "created_at": "2026-04-16T11:29:42Z",
+      "resolved_at": "2026-04-16T14:11:32Z"
+    },
+    {
+      "task_id": "BP5-LUV-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review packet verified; support artifact reviewer corrected to Codex2; artifact inventory sampled and present; ready for Claude to finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-16T14:11:32Z",
+      "resolved_at": "2026-04-16T14:23:16Z"
+    }
+  ],
+  "blockers": []
+}

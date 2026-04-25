@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-21T16:47:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EXEC-CLOSEOUT-FRONTEND-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EXEC-CLOSEOUT-FRONTEND-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Loop Closeout",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: acceptance packet complete with correct metadata (Claude as owner), 26/4/3/1 loop classification verified against current-work.md, no canonical truth modified. Ready for parent owner (Copilot) to use as closeout checklist for EXEC-CLOSEOUT-FRONTEND-001.",
+    "last_update": "2026-04-21T16:47:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-CLOSEOUT-FRONTEND-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 已核對完成：26/4/3/1 分桶與 current-work closeout table 一致，且只涉及 support artifact。",
+      "已修正 packet 內過期 reviewer / handoff metadata，現在與 ai-status.json 與 task brief 的 Codex reviewer truth 一致。"
+    ],
+    "review_file": "support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T16:47:27Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "716bbdd06bff1dd2e6ccafdb2a2bb5339575bd23",
+      "commit_subject": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 990,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Acceptance packet added at support/sidecars/EXEC-CLOSEOUT-FRONTEND-001/EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE.md. Scope is classified into 26 fast-close rows, 4 disposition-check rows, 3 follow-up rows that must stay open, and 1 ui_done_reviewed row that stays out of batch.",
+      "status": "done",
+      "created_at": "2026-04-21T02:24:58Z",
+      "resolved_at": "2026-04-21T02:31:53Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T02:31:53Z",
+      "resolved_at": "2026-04-21T02:35:24Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar packet reviewed and approved. Classification matches current-work closeout truth, metadata is now aligned with the current Codex review assignment, and the task can return to Codex2 for final done closeout.",
+      "status": "done",
+      "created_at": "2026-04-21T02:35:24Z",
+      "resolved_at": "2026-04-21T02:39:14Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Codex2 to Qwen after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T02:39:14Z",
+      "resolved_at": "2026-04-21T02:40:49Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:40:49Z",
+      "resolved_at": "2026-04-21T02:42:16Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:42:16Z",
+      "resolved_at": "2026-04-21T02:44:42Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:44:42Z",
+      "resolved_at": "2026-04-21T02:46:12Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:46:12Z",
+      "resolved_at": "2026-04-21T02:50:59Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:50:59Z",
+      "resolved_at": "2026-04-21T02:52:49Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:52:49Z",
+      "resolved_at": "2026-04-21T02:53:43Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:53:43Z",
+      "resolved_at": "2026-04-21T02:55:20Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:55:20Z",
+      "resolved_at": "2026-04-21T02:56:42Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:56:42Z",
+      "resolved_at": "2026-04-21T02:58:39Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T02:58:40Z",
+      "resolved_at": "2026-04-21T03:01:13Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:01:14Z",
+      "resolved_at": "2026-04-21T03:06:18Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:06:19Z",
+      "resolved_at": "2026-04-21T03:18:45Z"
+    },
+    {
+      "task_id": "EXEC-CLOSEOUT-FRONTEND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T03:18:45Z",
+      "resolved_at": "2026-04-21T16:47:28Z"
+    }
+  ],
+  "blockers": []
+}

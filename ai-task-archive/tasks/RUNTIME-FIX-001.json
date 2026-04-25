@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "task_id": "RUNTIME-FIX-001",
+  "archived_at": "2026-04-18T06:52:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RUNTIME-FIX-001",
+    "title": "Restore incident test dataset to unblock PKT-002-incident-detail needs-runtime",
+    "summary_zh": "PKT-002-incident-detail 的 needs-runtime 封包狀態為 blocked：incidents dataset 不存在，BFF smoke test 中 main.read_store.dataset_source('incidents') 回傳 missing，導致 test_in02_incident_detail 和 test_composed_incident_response 拋 404。需補充測試資料或修復 data source 掛載。",
+    "phase": "Execution / Runtime Data Fix",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-FIX-001"
+    ],
+    "artifacts": [
+      ".coordination/requests/PKT-002-incident-detail-needs-runtime.yaml"
+    ],
+    "acceptance": [
+      "python3 -m pytest services/control-plane/bff/smoke_test_incident.py -q -k 'in02_incident_detail or composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions' 全部 pass",
+      "incidents dataset source 不再回傳 missing",
+      "needs-runtime 封包 status 更新為 resolved"
+    ],
+    "next": "Checkpoint: incident runtime dataset restored; targeted incident smoke tests passed; PKT-002 needs-runtime handoff resolved.",
+    "last_update": "2026-04-18T06:52:44Z",
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "所有驗收測試通過：smoke slice 5/5 pass、bootstrap snapshot 1/1 pass、incidents dataset source 回傳 service_store（非 missing）、PKT-002-incident-detail-needs-runtime.yaml status 為 resolved。實作正確，封包狀態一致，無需追蹤事項。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T06:52:44Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6c55d801eaaeaab7d309dae9c262c41a320dfe91",
+      "commit_subject": "RUNTIME-FIX-001: finalize incident runtime dataset restore",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "RUNTIME-FIX-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 547,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RUNTIME-FIX-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Verified incident runtime data recovery. Acceptance smoke slice passed: pytest services/control-plane/bff/smoke_test_incident.py -q -k 'in02_incident_detail or composed_incident_response or in05_kill_switch_status or in05_kill_switch_unavailable_disables_actions' => 5 passed. Bootstrap snapshot fallback test passed: pytest services/control-plane/bff/test_read_store_bootstrap_snapshot.py -q => 1 passed. main.read_store.dataset_source('incidents') now returns service_store, not missing. .coordination/requests/PKT-002-incident-detail-needs-runtime.yaml is already resolved; ready for review/approval.",
+      "status": "done",
+      "created_at": "2026-04-18T06:49:59Z",
+      "resolved_at": "2026-04-18T06:50:52Z"
+    },
+    {
+      "task_id": "RUNTIME-FIX-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-18T06:50:52Z",
+      "resolved_at": "2026-04-18T06:52:44Z"
+    }
+  ],
+  "blockers": []
+}

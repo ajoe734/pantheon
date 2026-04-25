@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "task_id": "EXEC-OSS-RL-001",
+  "archived_at": "2026-04-21T03:05:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-OSS-RL-001",
+    "title": "Advance the RL path activation decision into an execution-ready slice",
+    "summary_zh": "把 RL path activation decision 從現有 gate 文件推進成可執行 slice，明確界定第一條可落地 lane 與前置驗證。",
+    "phase": "Execution / OSS Next Wave",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/learning/rl/RL_PATH_APPROVAL_GATE.md",
+      "services/learning/rl/PATH_DEFINITION.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
+    ],
+    "acceptance": [
+      "RL first-lane scope 與 gate 條件明確化",
+      "execution-ready slice 不偷渡 architecture-expansion",
+      "留下可 review 的 activation decision / next-step evidence"
+    ],
+    "next": "Owner finalized approved RL activation slice. Gate and path docs now consistently keep RL closed for this wave, fix FinRL as the first reopen lane, and preserve RLlib plus Ray Tune as follow-on work only after FinRL smoke proof.",
+    "last_update": "2026-04-21T03:05:42Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "RL path 文件現在一致收斂為 FinRL-first 的 re-entry slice：本 wave 保持 closed、重開證據包明確、且 RLlib/Ray Tune 只在 FinRL smoke proof 之後才是 follow-on lane。",
+      "已補齊 PATH_DEFINITION.md 後半段殘留的 RLlib-first 舊敘述，避免 gate/path 文件對下一步產生雙重訊號。"
+    ],
+    "review_file": "docs/reviews/2026-04-21-exec-oss-rl-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T03:05:42Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "52e1035d345b7aad3bfb0806f215db58a4a5b5b1",
+      "commit_subject": "EXEC-OSS-RL-001: finalize approved RL activation slice",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Review-File": "docs/reviews/2026-04-21-exec-oss-rl-001-codex-review.md",
+        "Evidence-Commit": "3d17768e2c862e3b6fe90c299ca18cc3af05e55f",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-OSS-RL-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 931,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-OSS-RL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:28:17Z",
+      "resolved_at": "2026-04-20T14:21:50Z"
+    },
+    {
+      "task_id": "EXEC-OSS-RL-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T14:21:49Z",
+      "resolved_at": "2026-04-20T14:40:53Z"
+    },
+    {
+      "task_id": "EXEC-OSS-RL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:36:46Z",
+      "resolved_at": "2026-04-20T23:58:53Z"
+    },
+    {
+      "task_id": "EXEC-OSS-RL-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:58:53Z",
+      "resolved_at": "2026-04-21T02:30:20Z"
+    },
+    {
+      "task_id": "EXEC-OSS-RL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T02:33:51Z",
+      "resolved_at": "2026-04-21T02:35:09Z"
+    },
+    {
+      "task_id": "EXEC-OSS-RL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "RL path docs now converge on a reviewable execution slice: current wave remains closed, FinRL is the first future lane, reopen evidence is explicit, and RLlib/Ray Tune stays follow-on only after FinRL smoke proof.",
+      "status": "done",
+      "created_at": "2026-04-21T02:58:35Z",
+      "resolved_at": "2026-04-21T03:03:26Z"
+    },
+    {
+      "task_id": "EXEC-OSS-RL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved and returned to the owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T03:03:26Z",
+      "resolved_at": "2026-04-21T03:05:42Z"
+    }
+  ],
+  "blockers": []
+}

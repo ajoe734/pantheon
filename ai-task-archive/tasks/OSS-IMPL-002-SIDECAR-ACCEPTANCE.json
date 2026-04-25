@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T19:20:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OSS-IMPL-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 OSS-IMPL-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OSS-IMPL-002/OSS-IMPL-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the reviewed acceptance packet. Sidecar support artifact remains scoped to support/sidecars/OSS-IMPL-002/OSS-IMPL-002-SIDECAR-ACCEPTANCE.md, preserves the local 17 passed / 1 skipped evidence caveat, and is ready for the parent owner to absorb or archive as needed.",
+    "last_update": "2026-04-17T19:20:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-IMPL-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "acceptance packet 已對齊 parent `OSS-IMPL-002` 的 `review_approved` 狀態，並明確保留本地 workspace 只驗到 smoke test 通過與 pytest `17 passed, 1 skipped` 的事實。",
+      "封包不再把本地 stub/default-workspace 證據誤寫成無條件 parent approval 依據；它正確區分了本地證據、skip caveat 與 ai-status 已記錄的額外 live QuantLib rerun 基礎。",
+      "sidecar 範疇限制遵守，僅更新 support artifact，未觸及 canonical truth 或主要 runtime 實作。"
+    ],
+    "review_file": "support/sidecars/OSS-IMPL-002/OSS-IMPL-002-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T19:20:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 474,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:19:35Z",
+      "resolved_at": "2026-04-17T17:22:25Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:22:25Z",
+      "resolved_at": "2026-04-17T17:40:36Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:56:03Z",
+      "resolved_at": "2026-04-17T17:58:24Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:58:24Z",
+      "resolved_at": "2026-04-17T17:59:48Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:00:50Z",
+      "resolved_at": "2026-04-17T18:03:24Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:03:24Z",
+      "resolved_at": "2026-04-17T18:04:44Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:12:51Z",
+      "resolved_at": "2026-04-17T18:13:34Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet prepared at support/sidecars/OSS-IMPL-002/OSS-IMPL-002-SIDECAR-ACCEPTANCE.md. Fresh evidence reproduced from current repo snapshot: QuantLib smoke test passes, 17 unit tests pass, and checklist remains smoke-tested. Reviewer note: services/research/quantlib/ACTIVATION_CRITERIA.md still lists worker.py/examples as Gate 1 prerequisites, but those files are outside the materialized parent task scope and absent from the current implementation.",
+      "status": "done",
+      "created_at": "2026-04-17T18:15:18Z",
+      "resolved_at": "2026-04-17T18:49:19Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: the acceptance packet currently overstates parent readiness because it only records stub smoke/unit evidence. Parent OSS-IMPL-002 was reopened after finding QuantLibBackend American-option vega/rho mis-scaling at services/research/quantlib/adapter/quantlib_adapter.py:288-312. Update the packet so it reflects the blocker instead of recommending approval.",
+      "status": "done",
+      "created_at": "2026-04-17T18:49:19Z",
+      "resolved_at": "2026-04-17T18:49:19Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet refreshed at support/sidecars/OSS-IMPL-002/OSS-IMPL-002-SIDECAR-ACCEPTANCE.md. Corrected the stale parent-readiness claim by documenting the reopened American-option vega/rho blocker history, current parent fix claim, and fresh local evidence: smoke test passes, pytest now reports 17 passed and 1 skipped, and the new QuantLib-backed regression test was not reproduced live in this workspace because QuantLib is unavailable. Please review the packet as an accurate acceptance/dependency snapshot rather than an unconditional approval recommendation.",
+      "status": "done",
+      "created_at": "2026-04-17T18:53:21Z",
+      "resolved_at": "2026-04-17T19:16:49Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: acceptance packet now matches the parent review_approved state, preserves the local 17 passed / 1 skipped caveat, and cleanly separates default-workspace evidence from the broader QuantLib live-rerun basis already recorded for OSS-IMPL-002. Scope constraint respected. Returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-04-17T19:16:49Z",
+      "resolved_at": "2026-04-17T19:20:28Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "EXEC-RUNTIME-RW04-001",
+  "archived_at": "2026-04-21T19:21:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-RUNTIME-RW04-001",
+    "title": "Refresh the active RW-04 runtime so experiment routes are live over HTTP",
+    "summary_zh": "刷新 active operator-bff runtime，讓 /api/v1/experiments route family 對外 live HTTP，解除 RW-04 loop 的 runtime freshness blocker，並用 live probes 驗證 queued/running/degraded/unavailable semantics。",
+    "phase": "Execution / Runtime Refresh and Verification",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/requests/RW-04-experiment-launch-needs-runtime.yaml",
+      ".coordination/responses/RW-04-experiment-launch-frontend-feedback.yaml",
+      ".coordination/reviews/RW-04-experiment-launch-review.md"
+    ],
+    "acceptance": [
+      "the active operator-bff runtime exposes the full RW-04 /api/v1/experiments route family over live HTTP||live runtime returns the published queued",
+      "running",
+      "degraded",
+      "unavailable",
+      "and terminal semantics||the existing RW-04 front follow-up no longer waits on runtime freshness"
+    ],
+    "next": "Owner finalized: RW-04 runtime refresh accepted and closed. All 4 /api/v1/experiments* routes confirmed live on 18001 via live probes; pytest 21 passed; degraded/unavailable/queued/running/completed/failed/canceled/OBJECT_NOT_FOUND semantics verified. Frontend feedback can_close=true, loop_close_condition met. No API gaps remain. Deployed browser QA deferred as non-blocking follow-up.",
+    "last_update": "2026-04-21T19:21:36Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "重新驗證 RW-04 runtime acceptance：`python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py` 21 項通過；18001 live OpenAPI 仍公布四條 `/api/v1/experiments*` 路由；authenticated probes 確認 degraded list/detail、`404 OBJECT_NOT_FOUND`、以及 queued→canceled round-trip；另以臨時 18012 unavailable probe 驗證 truthful unavailable list/detail envelopes。主 task 可進入 review_approved，等待 owner 正式收尾。"
+    ],
+    "review_file": ".coordination/reviews/RW-04-experiment-launch-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:21:36Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "12be7b49848c20526a57664c237b58ad99ca8b3e",
+      "commit_subject": "EXEC-RUNTIME-RW04-001 finalize approved RW-04 runtime refresh closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Accept Codex-approved review": "RW-04 runtime refresh is done. All 4",
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-RUNTIME-RW04-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 996,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:09:22Z",
+      "resolved_at": "2026-04-21T17:35:05Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Runtime refresh complete: all 4 RW-04 routes live on 18001, authenticated probes confirm full semantics (degraded/unavailable/queued/running/completed/failed/canceled/OBJECT_NOT_FOUND). Coordination artifacts committed. Ready for formal review.",
+      "status": "done",
+      "created_at": "2026-04-21T17:40:23Z",
+      "resolved_at": "2026-04-21T17:54:14Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-21T17:54:14Z",
+      "resolved_at": "2026-04-21T19:14:32Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-04 runtime refresh revalidated over live HTTP; acceptance met and ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T19:14:32Z",
+      "resolved_at": "2026-04-21T19:21:36Z"
+    }
+  ],
+  "blockers": []
+}

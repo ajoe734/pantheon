@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-007",
+  "archived_at": "2026-04-17T23:42:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-007",
+    "title": "phase6-2026-04-16-oss-ecosystem-closure",
+    "summary_zh": "建立 docker-compose.control.yml，包含 VM-1 Control Plane 所有服務：BFF、persona、registry、lineage、promotion、capital、evolution、optimizer、feedback、evaluation、memory、telemetry、incidents、postmortems、postgres、nats、minio，加上對應 env.example 和健康檢查。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "DEPLOY-003",
+      "DEPLOY-004"
+    ],
+    "artifacts": [
+      "[\"docker-compose.control.yml\"",
+      "\"env/prod-control.env.example\"]"
+    ],
+    "acceptance": [
+      "[\"docker compose -f docker-compose.control.yml up 後 VM-1 所有服務 healthy\"",
+      "\"runtime-manager 不在此 compose 檔中\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized the approved VM-1 control-plane compose slice after validating docker compose config, service coverage, and degraded-mode exclusions.",
+    "last_update": "2026-04-17T23:42:36Z",
+    "review_notes_zh": [
+      "docker-compose.control.yml 包含全部 17 個 VM-1 控制面服務（BFF/persona/registry/lineage-read/promotion/capital/evolution/optimizer-svc/telemetry/incidents/postmortems/evaluation/feedback/memory + postgres/nats/minio），依賴鏈正確、所有服務有 healthcheck、12 個 volumes 均已宣告使用",
+      "runtime-manager 確認不在 compose 檔中，符合驗收條件",
+      "env/prod-control.env.example 覆蓋所有 compose 變數，port range 使用 34xxx/35xxx/38xxx/39xxx 獨立區段",
+      "微小觀察：telemetry 中 LINEAGE_READ_CORPUS_PATH 指向未 mount 的 /workspace 路徑，不影響健康檢查，可後續修正"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T23:42:36Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "87314826544902d640a9fa19c49a732330683bb3",
+      "commit_subject": "DEPLOY-007: record finalize metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEPLOY-007",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 483,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-007",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review: added docker-compose.control.yml and env/prod-control.env.example; validated docker compose config and a full up/down cycle with 17 services healthy while runtime-manager stayed excluded.",
+      "status": "done",
+      "created_at": "2026-04-17T23:32:12Z",
+      "resolved_at": "2026-04-17T23:36:21Z"
+    },
+    {
+      "task_id": "DEPLOY-007",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-17T23:36:21Z",
+      "resolved_at": "2026-04-17T23:38:05Z"
+    },
+    {
+      "task_id": "DEPLOY-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: docker-compose.control.yml 與 env/prod-control.env.example 符合全部驗收標準，runtime-manager 已排除，17 個 VM-1 服務均有 healthcheck。返還 owner Codex 進行 done 收尾。",
+      "status": "done",
+      "created_at": "2026-04-17T23:38:05Z",
+      "resolved_at": "2026-04-17T23:42:36Z"
+    }
+  ],
+  "blockers": []
+}

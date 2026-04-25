@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "APP-003-FRONT-REALIGN-CONSULTATION-001",
+  "archived_at": "2026-04-24T05:40:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-FRONT-REALIGN-CONSULTATION-001",
+    "title": "Reopen CW-01, CW-03, and CW-04 against the current front default branch",
+    "summary_zh": "front-ai-trading-system 的 current default branch 仍把 consultation requests、committees、memos 掛在 blocked shell；重新開 frontend realignment lane，把 CW-01、CW-03、CW-04 從假性 loop_complete 拉回 truthful active work。",
+    "phase": "Execution / Frontend Realignment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md",
+      "../front-ai-trading-system/docs/lovable/2026-04-24-reopened-evolution-consultation-realignment-prompt.md"
+    ],
+    "acceptance": [
+      "CW-01, CW-03, and CW-04 no longer appear as fully closed when the current front default branch still mounts blocked shells",
+      "A truthful front-owned implementation lane exists for replacing the blocked request, committee, and memo pages with live-route UI",
+      "The reopened consultation realignment work is visible on the execution board"
+    ],
+    "next": "Owner finalized reopened consultation realignment lane. CW-01 / CW-03 / CW-04 remain truthfully active as route-live-in-Pantheon but blocked-shell-on-front-default-branch across WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md, and the front-repo Lovable prompt at ../front-ai-trading-system/docs/lovable/2026-04-24-reopened-evolution-consultation-realignment-prompt.md. Lovable packet stays self-contained for EW-04 / EW-05 plus the three consultation routes, and the reopened realignment work remains visible on the execution board. Closing task per reviewer approval.",
+    "last_update": "2026-04-24T05:40:58Z",
+    "task_class": "execution_candidate",
+    "auto_generated": true,
+    "auto_created_by": "2026-04-24-cross-repo-reopen-execution-packet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "四份 artifact 一致維持 reopened truth：WORKBENCH backlog 與 LOVABLE_MASTER_SA 都把 CW-01／CW-03／CW-04 定位為 route-live 但 front default branch 仍是 blocked shell；cross-repo reopen packet 已 materialize 此 lane；front repo 的 Lovable prompt 仍自包含 EW-04／EW-05 與 CW-01／CW-03／CW-04 所需 live routes 與 guardrails。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T05:40:58Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "95183605a358607ae797f85c8c2832e494d202d5",
+      "commit_subject": "APP-003-FRONT-REALIGN-CONSULTATION-001: finalize consultation realignment closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "APP-003-FRONT-REALIGN-CONSULTATION-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1218,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-FRONT-REALIGN-CONSULTATION-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reopened consultation realignment lane is in place. Please review four artifacts against the reopened truth: WORKBENCH_DELIVERY_BACKLOG.md Consultation Workbench rows (CW-01 / CW-03 / CW-04 each carrying the 'route-live in Pantheon, blocked shell on front default branch' framing); docs/pantheon-handoffs/LOVABLE_MASTER_SA.md module-summary line and section 6.7 table; docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md materialized-task table; and ../front-ai-trading-system/docs/lovable/2026-04-24-reopened-evolution-consultation-realignment-prompt.md (must keep CW-01 / CW-03 / CW-04 routes plus EW-04 / EW-05 self-contained for Lovable). Approve when these collectively make CW-01 / CW-03 / CW-04 visible as truthful active reopened work rather than fully closed loops.",
+      "status": "done",
+      "created_at": "2026-04-24T05:00:59Z",
+      "resolved_at": "2026-04-24T05:21:34Z"
+    },
+    {
+      "task_id": "APP-003-FRONT-REALIGN-CONSULTATION-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. The reopened consultation realignment truth is consistent across backlog, SA, reopen packet, and the front-repo Lovable prompt; CW-01 / CW-03 / CW-04 remain active front-default-branch realignment work, and the Lovable packet stays self-contained for EW-04 / EW-05 plus the consultation routes. Owner should finalize.",
+      "status": "done",
+      "created_at": "2026-04-24T05:21:34Z",
+      "resolved_at": "2026-04-24T05:40:58Z"
+    }
+  ],
+  "blockers": []
+}

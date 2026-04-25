@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "APP-003-FRONT-REALIGN-EVOLUTION-001",
+  "archived_at": "2026-04-24T05:20:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-FRONT-REALIGN-EVOLUTION-001",
+    "title": "Reopen EW-04 and EW-05 against the current front default branch",
+    "summary_zh": "front-ai-trading-system 的 current default branch 仍把 EW-04 與 EW-05 掛在 blocked shell；重新開一條 frontend realignment lane，把 live Pantheon routes 真正接回前端主線，而不是繼續把它們算成 loop_complete。",
+    "phase": "Execution / Frontend Realignment",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md",
+      "../front-ai-trading-system/docs/lovable/2026-04-24-reopened-evolution-consultation-realignment-prompt.md"
+    ],
+    "acceptance": [
+      "EW-04 and EW-05 no longer appear as loop-complete in canonical backlog and SA when the current front default branch still mounts blocked shells",
+      "A truthful front-owned implementation lane exists for replacing the blocked shells with live-route UI",
+      "The reopened evolution realignment work is visible on the execution board"
+    ],
+    "next": "Checkpoint complete on 2026-04-24: frontend realignment for EW-04 and EW-05 is finalized. Reopened execution packet, canonical backlog/SA wording, and front realignment prompt remain aligned with the review-approved truth, so this slice now closes as done.",
+    "last_update": "2026-04-24T05:20:56Z",
+    "task_class": "execution_candidate",
+    "auto_generated": true,
+    "auto_created_by": "2026-04-24-cross-repo-reopen-execution-packet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Validated front-ai-trading-system: EW-04 remains live on /evolution/inspiration/:artifact_id; EW-05 now mounts on canonical /evolution/mutation/:decision_id with legacy /evolution/mutation-review/:decision_id redirect preserved. ./node_modules/.bin/tsc --noEmit passed and no blocked-shell imports remain mounted."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T05:20:56Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "c67628422b05e2a78b6d281bed9156325d2b25a0",
+      "commit_subject": "APP-003-FRONT-REALIGN-EVOLUTION-001: finalize frontend realignment closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-FRONT-REALIGN-EVOLUTION-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1214,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-FRONT-REALIGN-EVOLUTION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "EW-04 is already live on the current front branch; EW-05 now aligns to the canonical /evolution/mutation/:decision_id route with a legacy redirect preserved. Verified with ./node_modules/.bin/tsc --noEmit in front-ai-trading-system.",
+      "status": "done",
+      "created_at": "2026-04-24T04:49:12Z",
+      "resolved_at": "2026-04-24T05:19:36Z"
+    },
+    {
+      "task_id": "APP-003-FRONT-REALIGN-EVOLUTION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Front realignment is complete for this slice; owner should finalize the task after any last repo hygiene checks.",
+      "status": "done",
+      "created_at": "2026-04-24T05:19:36Z",
+      "resolved_at": "2026-04-24T05:20:56Z"
+    }
+  ],
+  "blockers": []
+}

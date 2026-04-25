@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-20T01:15:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW",
+    "title": "Prepare LUV-REACTIVATE-KW01-001 review packet and evidence summary",
+    "summary_zh": "平行支援 LUV-REACTIVATE-KW01-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/LUV-REACTIVATE-KW01-001/LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved KW-01 sidecar review packet. Support-only evidence is archived and the helper lane is closed.",
+    "last_update": "2026-04-20T01:15:23Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LUV-REACTIVATE-KW01-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 sidecar review packet 與其引用的 archive snapshot、主 review record、三份 handoff artifact、BFF route anchor 與 contract test 檔案；內容與已封存的 KW-01 parent outcome 一致，且維持 support-only 邊界，足以交回 owner 正式收尾。"
+    ],
+    "review_file": "support/sidecars/LUV-REACTIVATE-KW01-001/LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:15:23Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1dac2c8b3a3bd26a3189352e9bce83e105032304",
+      "commit_subject": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW finalize: close approved KW-01 sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW",
+        "LLM-Agent": "Codex2",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 781,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:57:52Z",
+      "resolved_at": "2026-04-20T00:59:19Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:04:50Z",
+      "resolved_at": "2026-04-20T01:05:54Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/LUV-REACTIVATE-KW01-001/LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW.md. Packet stays within support-artifact scope and cites the archived parent snapshot, main review record, refreshed handoff YAMLs, BFF route anchors, and contract-test files.",
+      "status": "done",
+      "created_at": "2026-04-20T01:08:07Z",
+      "resolved_at": "2026-04-20T01:13:04Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: sidecar review packet matches the archived KW-01 parent outcome, stays within support-artifact scope, and gives sufficient traceable evidence for the closed reactivation loop. Owner should finalize this helper to done if a terminal closeout is still desired.",
+      "status": "done",
+      "created_at": "2026-04-20T01:13:04Z",
+      "resolved_at": "2026-04-20T01:15:23Z"
+    }
+  ],
+  "blockers": []
+}

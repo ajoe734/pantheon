@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-21T19:39:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+    "title": "Prepare EXEC-RUNTIME-RW04-001 review packet and evidence summary",
+    "summary_zh": "平行支援 EXEC-RUNTIME-RW04-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Runtime Refresh and Verification",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet; Codex spot-check confirmed evidence accuracy, scope compliance, and support-only boundary; task closed.",
+    "last_update": "2026-04-21T19:39:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-RUNTIME-RW04-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet spot-check 通過：RW-04 needs-runtime、review record、frontend-feedback 三份主證據與 packet 敘述一致；補正 parent scope boundary wording 後，archive closeout 與 support packet 已對齊。此 slice 維持 support-only 邊界，未涉及 L1 canonical truth、contract 真相或主要 runtime 實作，可交還 owner finalize。"
+    ],
+    "review_file": "support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:39:36Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "d26ebbc804e3e38e23fda31f6d8a990d9a2a1fab",
+      "commit_subject": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW finalize owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owner final checks passed": "sidecar review packet evidence summary",
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1000,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:47:58Z",
+      "resolved_at": "2026-04-21T17:50:02Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:50:02Z",
+      "resolved_at": "2026-04-21T17:52:18Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:53:38Z",
+      "resolved_at": "2026-04-21T17:54:03Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:54:03Z",
+      "resolved_at": "2026-04-21T17:55:46Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:13:51Z",
+      "resolved_at": "2026-04-21T18:31:39Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:31:38Z",
+      "resolved_at": "2026-04-21T18:34:49Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:58:22Z",
+      "resolved_at": "2026-04-21T19:00:04Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T19:19:09Z",
+      "resolved_at": "2026-04-21T19:20:29Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T19:23:24Z",
+      "resolved_at": "2026-04-21T19:28:44Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet and evidence summary ready. Packet covers all three parent acceptance criteria, primary coordination artifacts (needs-runtime, review record, frontend-feedback), and scope compliance. No canonical truth modified. Codex: please spot-check the three listed artifacts and approve if evidence claims are accurate.",
+      "status": "done",
+      "created_at": "2026-04-21T19:30:49Z",
+      "resolved_at": "2026-04-21T19:36:50Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar review packet approved after evidence spot-check. Primary artifacts match the packet, archived parent closeout remains accurate, and the support-only scope is preserved. Owner may finalize this sidecar task to done.",
+      "status": "done",
+      "created_at": "2026-04-21T19:36:50Z",
+      "resolved_at": "2026-04-21T19:39:36Z"
+    }
+  ],
+  "blockers": []
+}

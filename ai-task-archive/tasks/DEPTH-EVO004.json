@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "DEPTH-EVO004",
+  "archived_at": "2026-04-18T22:40:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPTH-EVO004",
+    "title": "Wire operational evolution orchestration paths (freeze/rollback/retrain/redeploy) - EVO-004",
+    "summary_zh": "DEVELOPMENT_WORKBREAKDOWN EVO-004：每個 evolution action path（freeze、rollback、retrain、redeploy）需有明確的 owner、threshold、cooldown 和 execution boundary。需核查 services/evolution/main.py 是否實作，或補充缺失邏輯。",
+    "phase": "Execution / Blueprint Depth",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/evolution/main.py",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+      "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+      "ROLLBACK_AND_POSITION_SEMANTICS.md"
+    ],
+    "acceptance": [
+      "freeze、rollback、retrain、redeploy 各有 API endpoint 且文件化 owner/threshold/cooldown",
+      "cooldown enforcement 有測試（重複觸發被拒）",
+      "EVO-004 正式關閉或在 DEVELOPMENT_WORKBREAKDOWN.md 標記 done"
+    ],
+    "next": "Owner finalized: all 3 review findings resolved (action-path naming, rollback binding guard, regression coverage), 50/50 tests pass (commit 3ef4bbe). EVO-004 closed.",
+    "last_update": "2026-04-18T22:40:34Z",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "無新增 review finding；已核對 action-paths key 與 EvolutionController.boundary_for() 對齊，rollback-followthrough 的 active_binding_id guard 符合 rollback policy，且 services/evolution/test_evolution_service.py 全檔 50 tests passed。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T22:40:34Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "eb5de06f1ecc109a7193b54a346c448ca02b41dc",
+      "commit_subject": "DEPTH-EVO004: finalize closure — owner sign-off",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Codex review approved 2026-04-18T06": "57:50Z.",
+        "Task-ID": "DEPTH-EVO004",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 648,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPTH-EVO004",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "EVO-004 implementation complete. Three gaps closed: (1) POST /api/evolution/proposals/{id}/rollback-followthrough — dedicated rollback follow-through endpoint with freeze_mode=rollback fixed; (2) POST /api/evolution/proposals/{id}/redeploy-followthrough — exposes controller.create_redeploy_followthrough() as HTTP endpoint with DispatchCommandResponse; (3) GET /api/evolution/action-paths — machine-readable routing matrix documenting owner/threshold/cooldown for all 4 action families (freeze, rollback, retrain, redeploy) per EVOLUTION_REVIEW_AND_THRESHOLDS.md §11.1. 8 new tests added: cooldown enforcement (2), action-paths endpoint (2), redeploy followthrough (2), rollback followthrough (2). All 47 tests pass. Please review against acceptance criteria: freeze/rollback/retrain/redeploy each have endpoints with documented owner/threshold/cooldown; cooldown enforcement tests pass.",
+      "status": "done",
+      "created_at": "2026-04-18T06:12:00Z",
+      "resolved_at": "2026-04-18T06:12:23Z"
+    },
+    {
+      "task_id": "DEPTH-EVO004",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-18T06:12:23Z",
+      "resolved_at": "2026-04-18T06:33:48Z"
+    },
+    {
+      "task_id": "DEPTH-EVO004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review blocked: redeploy-followthrough accepts executed freeze decisions, rollback-followthrough allows no-runtime/no-binding execution, and action-paths diverges from boundary_for. See .coordination/reviews/DEPTH-EVO004-review.md.",
+      "status": "done",
+      "created_at": "2026-04-18T06:33:48Z",
+      "resolved_at": "2026-04-18T06:33:48Z"
+    },
+    {
+      "task_id": "DEPTH-EVO004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 3 Codex review findings resolved. (1) freeze_paper_canary → freeze_non_live, freeze_live_no_runtime → freeze_live_no_active_runtime — path keys now match boundary_for() output exactly. (2) retrain_revalidate split into research_retrain + research_revalidate matching research_{action.value} convention. (3) Existing rollback test updated with active_binding_id; 3 regression tests added covering each finding. Commit: 3ef4bbe. 50/50 tests pass.",
+      "status": "done",
+      "created_at": "2026-04-18T06:55:59Z",
+      "resolved_at": "2026-04-18T06:57:50Z"
+    },
+    {
+      "task_id": "DEPTH-EVO004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: action-path naming, rollback binding guard, and regression coverage verified; owner should finalize to done when ready.",
+      "status": "done",
+      "created_at": "2026-04-18T06:57:50Z",
+      "resolved_at": "2026-04-18T22:40:34Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-TW01-001",
+  "archived_at": "2026-04-20T00:57:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-TW01-001",
+    "title": "Re-activate TW-01 teaching dialog handoff for the front-end lane",
+    "summary_zh": "核對 TW-01 teaching dialog 的 handoff bundle、mirror 與 current-work 狀態，讓 front-end lane 可重新接手。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/TW-01-teaching-dialog-contract-ready.yaml",
+      ".coordination/responses/TW-01-teaching-dialog-lovable-ui-task.yaml",
+      ".coordination/responses/TW-01-teaching-dialog-lovable-prompt.md"
+    ],
+    "acceptance": [
+      "verify contract-ready bundle still matches current architecture truth",
+      "refresh the exact next-step note for Lovable or record a precise blocker",
+      "leave a reviewable reactivation handoff tied to TW-01-teaching-dialog"
+    ],
+    "next": "Owner finalized approved task and closed it. TW-01 reactivation handoff remains blocked on the four trainer-session BFF routes going live.",
+    "last_update": "2026-04-20T00:57:51Z",
+    "task_class": "frontlane_reactivation",
+    "auto_created_by": "lovable-reactivation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已核對三份 TW-01 reactivation handoff artifact 與 review packet；bundle 完整、文件齊備，且 services/control-plane/bff/main.py 中確認 /api/v1/trainer/sessions 四條路由均未實作，Lovable lane 維持 blocked 判定正確。三項 acceptance criteria 全部 PASS。"
+    ],
+    "review_file": ".coordination/reviews/TW-01-teaching-dialog-reactivation.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T00:57:51Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c82706056a53deba169889dc91cb49476a335370",
+      "commit_subject": "LUV-REACTIVATE-TW01-001 finalize: close approved TW-01 reactivation handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LUV-REACTIVATE-TW01-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 775,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-TW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Reactivation handoff complete. TW-01 bundle and front mirror verified; pending-BFF gate remains correct because the four trainer-session routes are still not live. Review: .coordination/reviews/TW-01-teaching-dialog-reactivation.md",
+      "status": "done",
+      "created_at": "2026-04-20T00:39:06Z",
+      "resolved_at": "2026-04-20T00:54:41Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-TW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all three TW-01 artifacts intact, all docs and front mirror present. BFF trainer-session routes confirmed absent from main.py — pending-BFF gate is correct. Lovable lane stays blocked until four trainer-session routes go live. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-20T00:54:41Z",
+      "resolved_at": "2026-04-20T00:57:51Z"
+    }
+  ],
+  "blockers": []
+}

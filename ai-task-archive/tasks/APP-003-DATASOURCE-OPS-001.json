@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-OPS-001",
+  "archived_at": "2026-04-24T18:01:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-OPS-001",
+    "title": "Provision governed data-source secrets, env, and smoke automation",
+    "summary_zh": "補齊 IBKR、Shioaji、Kraken、TEJ 相關 secrets、env materialization 與 smoke automation。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/",
+      "env/",
+      "docs/deployment/ep5-canary-ready/"
+    ],
+    "acceptance": [
+      "Secret materialization covers the governed provider set",
+      "env templates and smoke scripts support provider bring-up",
+      "operator runbooks record truthful provider-specific onboarding steps"
+    ],
+    "next": "Finalized after review approval: governed provider secrets/env coverage, VM-2 onboarding runbook, and datasource smoke/operator checklist verification are complete for IBKR, Shioaji, Kraken, and TEJ.",
+    "last_update": "2026-04-24T18:01:32Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已確認 env/prod-exec.env.example 補齊 IBKR、Shioaji、Kraken、TEJ 的 provider matrix、secret-name refs 與 smoke defaults",
+      "已確認 docs/deployment/exec-vm-secrets-guide.md 記錄 VM-2 provider-specific onboarding、telemetry endpoint 設定與 datasource-smoke 驗證步驟",
+      "已重跑 python3 scripts/test_run_ep5_canary_readiness.py、python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/canary-exec.env.example、python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets，以及 python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/prod-exec.env.example，皆回傳 pass"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T18:01:32Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "95ba6c16d1600ee971dc49aea4fe326615daecee",
+      "commit_subject": "APP-003-DATASOURCE-OPS-001 finalize datasource ops readiness",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-OPS-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1175,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:35:21Z",
+      "resolved_at": "2026-04-24T16:46:49Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:46:49Z",
+      "resolved_at": "2026-04-24T16:56:37Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T17:00:56Z",
+      "resolved_at": "2026-04-24T17:01:39Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T17:10:44Z",
+      "resolved_at": "2026-04-24T17:11:28Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Governed datasource ops bring-up is aligned for review: env/prod-exec.env.example now materializes the VM-2 provider matrix and secret-name refs for IBKR/Shioaji/Kraken/TEJ plus smoke defaults, docs/deployment/exec-vm-secrets-guide.md now records provider-specific onboarding and verification, and scripts/test_run_ep5_canary_readiness.py locks provider-matrix + datasource-smoke behavior. Verified with python3 scripts/test_run_ep5_canary_readiness.py, python3 scripts/run_ep5_canary_readiness.py run-datasource-smoke --env-file env/canary-exec.env.example --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke-test, and python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets --output-dir /tmp/pantheon/ep5-canary-ready/checklist-test.",
+      "status": "done",
+      "created_at": "2026-04-24T17:28:29Z",
+      "resolved_at": "2026-04-24T17:34:22Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Governed datasource ops env/doc/script bring-up passed reviewer re-run; owner should finalize to done after any last packaging checks.",
+      "status": "done",
+      "created_at": "2026-04-24T17:34:22Z",
+      "resolved_at": "2026-04-24T18:01:32Z"
+    }
+  ],
+  "blockers": []
+}

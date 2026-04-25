@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-EW05-001",
+  "archived_at": "2026-04-20T16:39:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-EW05-001",
+    "title": "Implement EW-05 mutation review front-end flow against the activated handoff",
+    "summary_zh": "依已 activation 的 EW-05 handoff 與 live route，在 front-end lane 實作 mutation review flow，並保留 command vocabulary 對齊。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/EW-05-mutation-review-contract-ready.yaml",
+      ".coordination/responses/EW-05-mutation-review-lovable-ui-task.yaml",
+      "docs/pantheon-handoffs/EW-05-mutation-review/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "mutation review UI 依 live route / command vocabulary 實作",
+      "不自行發明 action semantics 或 shadow state",
+      "完成後提交 ui-done handoff 並留下可 review 的前端變更摘要"
+    ],
+    "next": "Owner finalized approved EW-05 closeout. Publish chain is truthful, the mutation-review UI remains contract-aligned, and only deferred live browser QA remains outside task scope.",
+    "last_update": "2026-04-20T16:39:58Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "EW-05 re-review completed: publish chain is replay-clean and mutation-review UI remains contract-aligned; owner may finalize to done.",
+      "Residual risk is limited to deferred live browser QA against a running Pantheon environment."
+    ],
+    "review_file": ".coordination/reviews/EW-05-mutation-review-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T16:39:58Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "edad9d435aa9c51bc5f7395560548dcc1d78dcf5",
+      "commit_subject": "EXEC-FRONT-EW05-001: finalize mutation review frontend closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-FRONT-EW05-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 909,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "EW-05 mutation review frontend implementation is ready for review. UI route, BFF client wiring, command submission flow, and ui-done handoff are complete; npm run build passed in front-ai-trading-system.",
+      "status": "done",
+      "created_at": "2026-04-20T11:57:02Z",
+      "resolved_at": "2026-04-20T12:09:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: approval_decision_id currently links to /personas/approval-decisions/:id but App.tsx does not mount that route, so the deep link lands on NotFound. linked_postmortem_id is also routed to /operator/post-incident-review?incident=<postmortem_id>, but that screen consumes an incident id, not a postmortem id. Please fix both navigation issues and re-submit. See docs/reviews/2026-04-20-exec-front-ew05-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T12:09:52Z",
+      "resolved_at": "2026-04-20T12:09:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T12:12:08Z",
+      "resolved_at": "2026-04-20T12:12:08Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Fixed approval decision route activation and linked_postmortem_id deep-link resolution; targeted eslint and vite build passed in front-ai-trading-system.",
+      "status": "done",
+      "created_at": "2026-04-20T12:20:25Z",
+      "resolved_at": "2026-04-20T12:27:17Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "EW-05 ui-done handoff is now published in front-ai-trading-system; approval-decision routes and postmortem deep-link fix are verified; npx eslint on touched files and npm run build passed.",
+      "status": "done",
+      "created_at": "2026-04-20T12:27:31Z",
+      "resolved_at": "2026-04-20T12:28:05Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Error: ENOENT: no such file or directory, open '/home/edna/code/front-ai-trading-system/vite.config.ts.timestamp-1776687865252-01e3e9239cbe1.mjs'",
+      "status": "done",
+      "created_at": "2026-04-20T12:28:05Z",
+      "resolved_at": "2026-04-20T12:36:39Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Claude review: code PASS, blocking delivery issue — MutationReview.tsx + MutationReviewTypes.ts untracked, App.tsx unstaged, source_commit points to wrong commit. Commit EW-05 files in front-ai-trading-system and update source_commit in ui-done.yaml, then re-submit. Full review at docs/reviews/2026-04-20-exec-front-ew05-001-claude-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T12:36:39Z",
+      "resolved_at": "2026-04-20T12:36:39Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T12:36:41Z",
+      "resolved_at": "2026-04-20T12:36:41Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:43:37Z",
+      "resolved_at": "2026-04-20T12:44:53Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:44:53Z",
+      "resolved_at": "2026-04-20T12:45:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "EW-05 delivery republished from front-ai-trading-system with replayable Git evidence. Implementation commit: 58fc79cc3aed641a97b1c9c74140cb6626dbb231. Handoff commits: 15399e9e6387001a61747e5a07d7d6ea3388615b then source_commit correction fc3b98dc4607ebf5a31244dcffea4f9d640c9422. Verified git show for ui-done and implementation routes, npx eslint on src/App.tsx + MutationReview files passed, and npm run build passed.",
+      "status": "done",
+      "created_at": "2026-04-20T12:50:37Z",
+      "resolved_at": "2026-04-20T13:22:15Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review found one blocking contract issue still open: MutationReview.tsx still does not fail closed when required nested fields are missing inside change_details, threshold_triggers, required_approvals, review_chain, evidence_refs, or a non-null rollback_followthrough. Extend the contract guard before rendering and return for review. See docs/reviews/2026-04-20-exec-front-ew05-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T13:22:15Z",
+      "resolved_at": "2026-04-20T13:22:15Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:30:35Z",
+      "resolved_at": "2026-04-20T13:32:10Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:55:20Z",
+      "resolved_at": "2026-04-20T14:56:02Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "EW-05 front repo return is published for review. UI implementation commit 58fc79cc3aed641a97b1c9c74140cb6626dbb231 remains live, nested fail-closed validation plus feedback bundle were published in d270c4d7ae2c640f50a8e1dc9c14e0eb94b38cf2, and request metadata alignment landed in 5ce990a85cf58c5e8b21b4ced9e685e59026bdbe. Please review the paired EW-05 ui-done/frontend-feedback return and close out if no further findings remain.",
+      "status": "done",
+      "created_at": "2026-04-20T15:01:57Z",
+      "resolved_at": "2026-04-20T15:20:17Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review confirms follow-up required: /operator/post-incident-review still ignores ?postmortem=..., and the live 503 evidence_unavailable branch still renders a generic load error instead of the required unavailable placeholder. Keep the nested fail-closed fix; implement those two front-owned fixes and republish the EW-05 ui-done/frontend-feedback pair from one truthful source_commit.",
+      "status": "done",
+      "created_at": "2026-04-20T15:20:17Z",
+      "resolved_at": "2026-04-20T15:20:17Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "EW-05 follow-up fixes are complete in front-ai-trading-system. Code/source commit is b2baed2c1a6107f31f530fad127492f74f65607a: /operator/post-incident-review now preserves and resolves ?postmortem=... to the matching resolved incident, and MutationReview maps live 503 evidence_unavailable to the explicit unavailable placeholder instead of the generic load-error branch. The paired EW-05 ui-done/frontend-feedback payloads now both point to that truthful source_commit and were republished in commit 4e1d661b780d141660b05a8e4d621e78feebf233. Verification: npx eslint src/pages/operator/PostIncidentReviewConsole.tsx src/pages/evolution/MutationReview.tsx, npm run build.",
+      "status": "done",
+      "created_at": "2026-04-20T15:26:47Z",
+      "resolved_at": "2026-04-20T16:01:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review complete: UI behavior is contract-aligned, but the EW-05 publish chain is still not truthful enough to close. ui-done.source_branch still says main while the paired frontend-feedback says pkt-004-detail-fix, and neither b2baed2 nor 4e1d661 is on a fetched remote head after git fetch --all --prune. Push or republish the EW-05 request pair on the truthful branch, then re-handoff for final review.",
+      "status": "done",
+      "created_at": "2026-04-20T16:01:59Z",
+      "resolved_at": "2026-04-20T16:01:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "EW-05 publish chain is now truthful for final re-review. In front-ai-trading-system, .coordination/requests/EW-05-mutation-review-ui-done.yaml now matches frontend-feedback with source_branch pkt-004-detail-fix and source_commit b2baed2c1a6107f31f530fad127492f74f65607a. I pushed pkt-004-detail-fix to origin at 9aeb496db05de60161d180e0f92676f86d3423cc, and origin/pkt-004-detail-fix now contains b2baed2, 4e1d661, and 9aeb496.",
+      "status": "done",
+      "created_at": "2026-04-20T16:05:40Z",
+      "resolved_at": "2026-04-20T16:36:09Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "EW-05 re-review approved: publish chain is truthful and the front mutation-review flow remains contract-aligned. Owner should finalize to done when ready.",
+      "status": "done",
+      "created_at": "2026-04-20T16:36:09Z",
+      "resolved_at": "2026-04-20T16:39:58Z"
+    }
+  ],
+  "blockers": []
+}

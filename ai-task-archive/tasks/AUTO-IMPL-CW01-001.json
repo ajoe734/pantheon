@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-CW01-001",
+  "archived_at": "2026-04-20T05:16:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-CW01-001",
+    "title": "Implement CW-01 consult request route family",
+    "summary_zh": "把 CW-01 consult request 的 create list detail cancel routes 做成 live BFF truth，讓 consultation 不再只有 overview。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "docs/bff/CW-01-consult-request.md",
+      "docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "CW-01 route family 已實作",
+      "Request lifecycle 對齊 published contract",
+      "測試涵蓋 create 與 cancel"
+    ],
+    "next": "Owner finalized: all 5 CW-01 contract tests pass (5/5). Route family live at main.py:5556-5718, read_store.py:6302-6510. Cancel authority correctly limited to pre-session requests per lifecycle contract. Committed 3557317. Task closed.",
+    "last_update": "2026-04-20T05:16:42Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer found and fixed a CW-01 lifecycle mismatch: running requests now project allowedActions.canCancel=false, cancel is limited to pre-session requests, and a regression test covers the running-session denial path. Contract tests pass 5/5."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T05:16:42Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "355731765a46a3cf02b04f031b775d265356615e",
+      "commit_subject": "AUTO-IMPL-CW01-001 finalize CW-01 consult request route family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "AUTO-IMPL-CW01-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 806,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned AUTO-IMPL-CW01-001 away from sidecar-only lane Qwen; owner Qwen -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:09:56Z",
+      "resolved_at": "2026-04-20T03:26:51Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:26:51Z",
+      "resolved_at": "2026-04-20T04:00:09Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:31:21Z",
+      "resolved_at": "2026-04-20T04:31:40Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:38:20Z",
+      "resolved_at": "2026-04-20T04:57:55Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CW-01 route family is live: all 4 routes implemented in services/control-plane/bff/main.py (lines 5556-5718), read_store methods at read_store.py lines 6302-6510. 4/4 contract tests pass in test_cw01_consult_request_contract.py. Contract aligns to docs/bff/CW-01-consult-request.md on all required fields, lifecycle states, session_handoff semantics, degradation surface states, and cancel authority. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-20T05:11:18Z",
+      "resolved_at": "2026-04-20T05:14:58Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-CW01-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "CW-01 consult request route family reviewed and corrected. Cancel authority now matches the published pre-session lifecycle semantics; targeted contract tests pass (5/5). Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T05:14:58Z",
+      "resolved_at": "2026-04-20T05:16:43Z"
+    }
+  ],
+  "blockers": []
+}

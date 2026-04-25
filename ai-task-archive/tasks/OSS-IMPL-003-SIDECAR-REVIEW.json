@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "OSS-IMPL-003-SIDECAR-REVIEW",
+  "archived_at": "2026-04-17T19:32:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-IMPL-003-SIDECAR-REVIEW",
+    "title": "Prepare OSS-IMPL-003 review packet and evidence summary",
+    "summary_zh": "平行支援 OSS-IMPL-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OSS-IMPL-003/OSS-IMPL-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved sidecar review packet. Support artifact remains limited to blocker-and-fix evidence for OSS-IMPL-003; no canonical/runtime changes were made in this slice.",
+    "last_update": "2026-04-17T19:32:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-IMPL-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Review packet 已更新為目前 repo 快照：保留 OSS-IMPL-003 真正的 reopen blocker（vectorbt adapter 先前未依 instrument/date 排序），並確認當前修復與 2 個 regression tests 均成立。我本地重跑 smoke test 與 28 個單元測試皆通過；ACTIVATION_CRITERIA 尚有非阻塞文件漂移，但 checklist 已與 28 tests 對齊。"
+    ],
+    "review_file": "support/sidecars/OSS-IMPL-003/OSS-IMPL-003-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T19:32:49Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "e55ddce7dc7119e6d913d94c16381194b6944e7a",
+      "commit_subject": "OSS-IMPL-003-SIDECAR-REVIEW: finalize review packet closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OSS-IMPL-003-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 476,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-IMPL-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:36:54Z",
+      "resolved_at": "2026-04-17T18:37:19Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/OSS-IMPL-003/OSS-IMPL-003-SIDECAR-REVIEW.md. Fresh evidence reproduced from current repo snapshot: vectorbt smoke test passes, 26 unit tests pass, checklist promotion confirmed. Reviewer note: ACTIVATION_CRITERIA Gate 1 still lists worker.py/examples outside the materialized parent scope; documented as non-blocking drift.",
+      "status": "done",
+      "created_at": "2026-04-17T18:39:26Z",
+      "resolved_at": "2026-04-17T18:53:36Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: this packet says no acceptance-blocking issues were found, but parent OSS-IMPL-003 was reopened after reviewer verification found a real blocker. The current vectorbt adapter ignores per-instrument date ordering, so unsorted OHLCV input can silently change results (AAA repro: total_return 0.008743 -> 0.0). Refresh the packet so findings and disposition match the actual blocker.",
+      "status": "done",
+      "created_at": "2026-04-17T18:53:36Z",
+      "resolved_at": "2026-04-17T18:53:36Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet refreshed at support/sidecars/OSS-IMPL-003/OSS-IMPL-003-SIDECAR-REVIEW.md. Corrected the stale no-blocker claim by documenting the real vectorbt date-ordering reopen, the current sort-by-date fix and regression coverage, and fresh local evidence: smoke test passes and unittest now reports 28 passed. Please review this as an accurate blocker-and-fix summary; remaining ACTIVATION_CRITERIA/checklist count drift is documented as non-blocking follow-up.",
+      "status": "done",
+      "created_at": "2026-04-17T18:59:09Z",
+      "resolved_at": "2026-04-17T19:30:39Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet verified against the reopened vectorbt date-ordering blocker and the current fix snapshot; smoke test and 28 unit tests reproduced; remaining activation-criteria drift recorded as non-blocking follow-up.",
+      "status": "done",
+      "created_at": "2026-04-17T19:30:39Z",
+      "resolved_at": "2026-04-17T19:32:49Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+  "archived_at": "2026-04-23T05:48:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+    "title": "Publish remaining route-live frontend activation packets for Research Knowledge and Trainer modules",
+    "summary_zh": "把已 route-live 或 contract-live 但仍缺 frontend activation 的 RW-02、RW-04、RW-05、KW-02、KW-03、TW-01、TW-02、TW-04 補成 supervisor 可見的 execution work，避免它們繼續只停留在 canonical backlog。",
+    "phase": "Execution / Frontend Activation Follow-through",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md",
+      "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+      "docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md",
+      "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md"
+    ],
+    "acceptance": [
+      "Research frontend activation surfaces are supervisor-visible",
+      "Knowledge frontend activation surfaces are supervisor-visible",
+      "Trainer frontend activation surfaces are supervisor-visible",
+      "Scope stays disjoint from APP-003-ROUTE-LIVE-FRONTEND-001"
+    ],
+    "next": "Owner finalized the approved frontend activation publication lane on 2026-04-23. Supervisor-visible activation surfaces remain published for RW-02, RW-04, RW-05, KW-02, KW-03, TW-01, TW-02, and TW-04; scope stays disjoint from APP-003-ROUTE-LIVE-FRONTEND-001, and the remaining TW-01 wording drift is non-blocking.",
+    "last_update": "2026-04-23T05:48:47Z",
+    "source_plane": "canonical_backlog",
+    "source_ref": {
+      "type": "canonical_backlog",
+      "path": "WORKBENCH_DELIVERY_BACKLOG.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已重驗 task brief 指定的狹義證據：TW-02 contract test 5 passed、example JSON 可解析、RW-02/RW-04/RW-05/KW-02/KW-03/TW-01/TW-02/TW-04 八個 module-local FRONTEND_CHANGE_SPEC.md 全數存在。",
+      "目前 repo 內的 backlog、Trainer packet family 與 Lovable master summary 仍維持此 lane 的 supervisor-visible activation surface 結論；僅剩 TW-01 contract-live 與 route-live 用語漂移，屬非阻塞文件細節。",
+      "核准範圍僅限 packet publication 與 doc alignment，不主張前端實作 loop 已完成。"
+    ],
+    "review_file": "support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T05:48:47Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1168,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "TW-02 frontend activation packet is now published at docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md. Synced docs/screens/TW-02-parameter-controls.md, docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, and docs/lovable/PANTHEON_FRONTEND_SA.md so Trainer docs now describe the live controls contract with status=accepted|rejected, field_errors[], rejected_changes[], and diff.updated_controls[] instead of the older placeholder semantics. Added reviewer support note at support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md. Verified with pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed) and python3 -m json.tool docs/examples/TW-02-parameter-controls.json (OK). Scope stays disjoint from APP-003-ROUTE-LIVE-FRONTEND-001.",
+      "status": "done",
+      "created_at": "2026-04-22T12:48:07Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "TW-02 frontend activation packet is now published at docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md. Synced docs/screens/TW-02-parameter-controls.md, docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, and docs/lovable/PANTHEON_FRONTEND_SA.md so Trainer docs now describe the live controls contract with status=accepted|rejected, field_errors[], rejected_changes[], and diff.updated_controls[] instead of the older placeholder semantics. Added reviewer support note at support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md. Verified with pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed) and python3 -m json.tool docs/examples/TW-02-parameter-controls.json (OK). Scope stays disjoint from APP-003-ROUTE-LIVE-FRONTEND-001.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-23T01:53:55Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:53:55Z",
+      "resolved_at": "2026-04-23T03:38:29Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T03:38:29Z",
+      "resolved_at": "2026-04-23T04:10:08Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:10:08Z",
+      "resolved_at": "2026-04-23T04:10:36Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:10:36Z",
+      "resolved_at": "2026-04-23T04:12:09Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:12:09Z",
+      "resolved_at": "2026-04-23T04:13:02Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:13:02Z",
+      "resolved_at": "2026-04-23T04:14:09Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:14:09Z",
+      "resolved_at": "2026-04-23T04:14:37Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:14:37Z",
+      "resolved_at": "2026-04-23T04:15:44Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:15:44Z",
+      "resolved_at": "2026-04-23T04:16:14Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:16:14Z",
+      "resolved_at": "2026-04-23T04:17:09Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:17:09Z",
+      "resolved_at": "2026-04-23T04:17:38Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:17:38Z",
+      "resolved_at": "2026-04-23T04:18:33Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:18:33Z",
+      "resolved_at": "2026-04-23T04:39:02Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Parent review revalidated after the auto-reassignment. Narrow evidence on 2026-04-23 still matches the review packet: pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py => 5 passed, python3 -m json.tool docs/examples/TW-02-parameter-controls.json => OK, and all eight module-local FRONTEND_CHANGE_SPEC.md paths for RW-02/RW-04/RW-05/KW-02/KW-03/TW-01/TW-02/TW-04 are present. Active Trainer-facing truth surfaces still align on live backend-authored TW-02 accepted|rejected patch semantics; scope remains disjoint from APP-003-ROUTE-LIVE-FRONTEND-001. Please review the parent against packet publication/doc alignment only, not front-repo delivery closeout.",
+      "status": "done",
+      "created_at": "2026-04-23T04:39:02Z",
+      "resolved_at": "2026-04-23T04:39:41Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T04:39:41Z",
+      "resolved_at": "2026-04-23T04:39:54Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:39:54Z",
+      "resolved_at": "2026-04-23T04:40:22Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:40:22Z",
+      "resolved_at": "2026-04-23T04:40:48Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Claude2",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude2 to Gemini after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:40:48Z",
+      "resolved_at": "2026-04-23T04:56:47Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T04:56:47Z",
+      "resolved_at": "2026-04-23T05:33:19Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Parent review revalidated on 2026-04-23. Narrow evidence still passes: pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py => 5 passed, python3 -m json.tool docs/examples/TW-02-parameter-controls.json => OK, and all eight module-local FRONTEND_CHANGE_SPEC.md paths for RW-02/RW-04/RW-05/KW-02/KW-03/TW-01/TW-02/TW-04 are present. Please review this lane for packet publication and doc alignment only; TW-01 wording drift and broader Trainer sweep remain non-blocking per the sidecar packet.",
+      "status": "done",
+      "created_at": "2026-04-23T05:33:19Z",
+      "resolved_at": "2026-04-23T05:36:14Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewed on 2026-04-23: narrow evidence revalidated, packet publication and doc alignment pass, and the remaining TW-01 wording drift stays non-blocking. Returning to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-23T05:36:14Z",
+      "resolved_at": "2026-04-23T05:48:47Z"
+    }
+  ],
+  "blockers": []
+}

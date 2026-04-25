@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "BP5-LUV-005",
+  "archived_at": "2026-04-16T15:52:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-LUV-005",
+    "title": "Drive PKT-002 incident-action-drawer through the Lovable implementation loop",
+    "summary_zh": "把 incident-action-drawer 從 lovable-ui-task 真正推進到 ui-done、frontend feedback、Pantheon review 與 closeout。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-011",
+      "BP5-SVC-015"
+    ],
+    "artifacts": [
+      ".coordination/responses/PKT-002-incident-action-drawer-lovable-ui-task.yaml",
+      ".coordination/responses/PKT-002-incident-action-drawer-lovable-prompt.md"
+    ],
+    "acceptance": [
+      "incident-action-drawer completes one full Lovable loop with explicit closure or follow-up",
+      "operator action affordances stay backend-shaped and command-safe"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Closeout complete: ui-done and frontend feedback are synced into Pantheon, Claude review approved both acceptance criteria, and remaining live BFF QA stays explicitly deferred in docs/pantheon-feedback/PKT-002-incident-action-drawer/QA_STATUS.md.",
+    "last_update": "2026-04-16T15:52:51Z",
+    "review_notes_zh": [
+      "審查通過",
+      "兩項驗收標準均達成：抽屜以 allowedActions 驅動，command-safe",
+      "剩餘工作為整合 PKT-002 Incident Detail host 與即時 BFF 驗證，已誠實記錄於 QA_STATUS 作後續追蹤"
+    ],
+    "review_file": ".coordination/reviews/BP5-LUV-005-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T15:52:51Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1aab46824ccb9aeb5e6caaaa248669c2a455408e",
+      "commit_subject": "BP5-LUV-005: finalize incident-action-drawer closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP5-LUV-005",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 226,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-LUV-005",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Returned ui-done synced into Pantheon, frontend feedback bundle filed, and front repo lint/build re-verified at commit faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7. Review packet: .coordination/reviews/BP5-LUV-005-review.md",
+      "status": "done",
+      "created_at": "2026-04-16T15:42:18Z",
+      "resolved_at": "2026-04-16T15:44:06Z"
+    },
+    {
+      "task_id": "BP5-LUV-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: both acceptance criteria met. CTA visibility is backend-shaped from allowedActions, reason gating and fallback paths are present, lint/build clean at commit faa1bc2d. Remaining live BFF QA is honestly deferred and tracked in QA_STATUS.md.",
+      "status": "done",
+      "created_at": "2026-04-16T15:44:06Z",
+      "resolved_at": "2026-04-16T15:52:51Z"
+    }
+  ],
+  "blockers": []
+}

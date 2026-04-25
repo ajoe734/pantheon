@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "SVC-EVO-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T17:52:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-EVO-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-EVO-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-EVO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-EVO-001/SVC-EVO-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: acceptance packet reviewed and approved by Codex2. Health endpoint wording drift (/__health__ vs /health) correctly captured as parent-task follow-up. Sidecar closed.",
+    "last_update": "2026-04-17T17:52:23Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-EVO-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "packet 內容與實際檔案一致：Dockerfile、compose evolution stanza、/health endpoint 與 named volume 都已核對。|/__health__ 與 /health 的差異屬於 parent task acceptance wording drift；sidecar 已正確標註，無須在此 slice 修正 canonical truth。|INCIDENT_DATA_DIR 缺少 compose-level depends_on 的觀察合理，作為低嚴重度 reviewer note 保留即可。"
+    ],
+    "review_file": "support/sidecars/SVC-EVO-001/SVC-EVO-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T17:52:23Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "d59b84486aea9c76b491de3cae396ebd6adada03",
+      "commit_subject": "SVC-EVO-001-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-EVO-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 467,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-EVO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:23:25Z",
+      "resolved_at": "2026-04-17T17:48:30Z"
+    },
+    {
+      "task_id": "SVC-EVO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:48:29Z",
+      "resolved_at": "2026-04-17T17:49:11Z"
+    },
+    {
+      "task_id": "SVC-EVO-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Acceptance packet complete at support/sidecars/SVC-EVO-001/SVC-EVO-001-SIDECAR-ACCEPTANCE.md. Checklist covers Dockerfile, compose entry, health endpoint, and dependency map. One minor discrepancy flagged (/__health__ vs /health). Ready for your review.",
+      "status": "done",
+      "created_at": "2026-04-17T17:50:14Z",
+      "resolved_at": "2026-04-17T17:51:24Z"
+    },
+    {
+      "task_id": "SVC-EVO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved: acceptance packet is complete and accurate against the current repo state. Wording drift on /__health__ vs /health is correctly captured as a parent-task follow-up, not a sidecar defect.",
+      "status": "done",
+      "created_at": "2026-04-17T17:51:24Z",
+      "resolved_at": "2026-04-17T17:52:24Z"
+    }
+  ],
+  "blockers": []
+}

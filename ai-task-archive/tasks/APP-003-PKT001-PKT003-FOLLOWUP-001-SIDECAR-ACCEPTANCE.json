@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T09:56:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-PKT001-PKT003-FOLLOWUP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-PKT001-PKT003-FOLLOWUP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved acceptance packet. Support artifact now reflects the corrected PKT-001 republish hash, truthful reviewer metadata, and the verified PKT-003 replay chain.",
+    "last_update": "2026-04-24T09:56:11Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "PKT-001 republish 哈希已修正為 139081f0e4d516494819003bd95968ecb9b86c99，四處引用全數更新且無殘留 675f1cc",
+      "PKT-003 重放鏈 c9b03d7b → 1df4a64 維持不變",
+      "sidecar 範圍合規：僅修改 support 材料，未觸及 canonical truth"
+    ],
+    "review_file": ".coordination/reviews/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T09:56:11Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "cc330bafa34a7b06341bd716ce7d210d22f7e21b",
+      "commit_subject": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE closeout sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1241,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Acceptance packet added at support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md. PKT-001 is already replay-clean at c94f630 via the 675f1cc republish pattern, while PKT-003 still cites unrelated source_commit 7089d3e even though the truthful refresh now exists locally on pkt-004-detail-fix atop 139081f and passes ./node_modules/.bin/tsc --noEmit --pretty false. Parent owner should publish one PKT-003 snapshot commit and one republish commit before review resumes.",
+      "status": "done",
+      "created_at": "2026-04-24T08:48:33Z",
+      "resolved_at": "2026-04-24T08:52:56Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T08:52:56Z",
+      "resolved_at": "2026-04-24T08:54:34Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet updated to reflect reviewer reassignment to Codex2. PKT-001 remains replay-clean via c94f630/675f1cc, while PKT-003 still needs a Git-visible snapshot commit plus republish before the parent task can return to review. See support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-04-24T08:54:34Z",
+      "resolved_at": "2026-04-24T08:58:28Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T08:58:28Z",
+      "resolved_at": "2026-04-24T09:00:25Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T09:00:25Z",
+      "resolved_at": "2026-04-24T09:02:43Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet is current at support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md. PKT-001 remains replay-clean via c94f630/675f1cc; PKT-003 still needs a Git-visible snapshot commit plus republish before the parent task can resume review.",
+      "status": "done",
+      "created_at": "2026-04-24T09:02:43Z",
+      "resolved_at": "2026-04-24T09:03:20Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T09:03:20Z",
+      "resolved_at": "2026-04-24T09:03:34Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T09:03:34Z",
+      "resolved_at": "2026-04-24T09:07:40Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md to match current ai-status ownership: parent owner is Codex and reviewer is Codex2. Packet verdict is unchanged: PKT-001 remains replay-clean via c94f630/675f1cc, while PKT-003 still needs a Git-visible snapshot commit plus republish before the parent task can return to review.",
+      "status": "done",
+      "created_at": "2026-04-24T09:07:40Z",
+      "resolved_at": "2026-04-24T09:08:16Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex2 to Gemini after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T09:08:16Z",
+      "resolved_at": "2026-04-24T09:24:37Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T09:24:37Z",
+      "resolved_at": "2026-04-24T09:34:33Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet is current at support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md. PKT-001 remains replay-clean via snapshot c94f63082eae1667ed919353d62c85180d7bafba and republish 675f1cc59be537455e776113be9ad8a45fa44208; PKT-003 remains replay-clean via snapshot c9b03d7ba1439db4f956c56106925675a98f8512 and republish 1df4a64caa174d0b458c539b391f3380882224db. Current feedback anchors are truthful, ./node_modules/.bin/tsc --noEmit --pretty false passed in front-ai-trading-system, and no new PKT-001 or PKT-003 BFF gap is indicated. Ready for review by Codex2.",
+      "status": "done",
+      "created_at": "2026-04-24T09:34:33Z",
+      "resolved_at": "2026-04-24T09:35:37Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-24T09:35:37Z",
+      "resolved_at": "2026-04-24T09:36:02Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T09:36:02Z",
+      "resolved_at": "2026-04-24T09:41:40Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reopen: PKT-001 republish commit cited in packet (675f1cc) is stale — current truth per .coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml:8,11 is 139081f0e4d516494819003bd95968ecb9b86c99. Update the three PKT-001 republish references in the packet (Executive Summary §1, Evidence Snapshot, Acceptance Read, Reviewer Checklist §1) from 675f1cc... to 139081f.... Snapshot c94f63082... stays; PKT-003 hashes stay. See .coordination/reviews/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE-review.md.",
+      "status": "done",
+      "created_at": "2026-04-24T09:41:40Z",
+      "resolved_at": "2026-04-24T09:41:40Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Corrected the stale PKT-001 republish hash in the acceptance packet to 139081f0e4d516494819003bd95968ecb9b86c99; PKT-003 hashes remain unchanged. Packet is back in review at support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-04-24T09:52:47Z",
+      "resolved_at": "2026-04-24T09:54:09Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: PKT-001 republish hash corrected to 139081f0e4d516494819003bd95968ecb9b86c99 at all four cited locations; no stale 675f1cc references remain. PKT-003 replay chain (snapshot c9b03d7b → republish 1df4a64) and scope disposition (no new PKT-001/PKT-003 BFF gap) re-verified against canonical coordination responses. Sidecar scope respected — support artifact only, no canonical truth mutated. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T09:54:09Z",
+      "resolved_at": "2026-04-24T09:56:11Z"
+    }
+  ],
+  "blockers": []
+}

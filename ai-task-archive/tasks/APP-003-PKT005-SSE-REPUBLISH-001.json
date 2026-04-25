@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT005-SSE-REPUBLISH-001",
+  "archived_at": "2026-04-24T11:50:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-003-PKT005-SSE-REPUBLISH-001",
+    "title": "Republish PKT-005 SSE request pair with reachable source commit",
+    "summary_zh": "追蹤 PKT-005-sse-substrate request pair 的窄範圍重發佈；僅修正 front repo request files 內嵌的 source_commit 指向可解析的 87088d718dcbc6f07cc66932f44b5f16985583a9，不重開新的 Pantheon contract 或 BFF gap。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "../front-ai-trading-system/.coordination/requests/PKT-005-sse-substrate-ui-done.yaml",
+      "../front-ai-trading-system/.coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml",
+      "docs/pantheon-delivery/PKT-005-sse-substrate/DELIVERY_NOTE.md"
+    ],
+    "acceptance": [
+      "Republish the PKT-005 SSE request pair with source_commit 87088d718dcbc6f07cc66932f44b5f16985583a9",
+      "Do not reopen a new Pantheon contract or BFF gap",
+      "Return Git-visible republish evidence and keep Pantheon delivery tracking truthful"
+    ],
+    "next": "Narrow republish completed and absorbed into the refreshed PKT-005-sse-substrate closeout. Front origin/main now publishes reviewed UI snapshot 9725e0b638c53c0e3b21164c0a08fbb36851f806 plus request-pair republish 118c9647e1bb42f4a7a727201dcb9593e54a88e9, so no separate active follow-up task remains.",
+    "last_update": "2026-04-24T11:50:35Z",
+    "task_class": "frontend_feedback_followup",
+    "mutates_canonical": false,
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT005-SSE-REPUBLISH-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Completed the narrow PKT-005 republish. Front repo commit c63eebc8fb93c8be954725b26dcf662237f67c01 republishes both request files and points them to reachable source_commit 87088d718dcbc6f07cc66932f44b5f16985583a9. Pantheon commit 0ee754b syncs docs/pantheon-delivery/PKT-005-sse-substrate/DELIVERY_NOTE.md to delivered with the republish evidence. No new contract or BFF gap was opened.",
+      "status": "done",
+      "created_at": "2026-04-24T11:46:49Z",
+      "resolved_at": "2026-04-24T11:50:35Z"
+    }
+  ],
+  "blockers": []
+}

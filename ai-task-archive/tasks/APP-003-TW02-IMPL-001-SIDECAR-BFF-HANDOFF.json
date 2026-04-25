@@ -1,0 +1,1198 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-23T02:31:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-003-TW02-IMPL-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-003-TW02-IMPL-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Trainer Workbench Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved support-only TW-02 BFF/frontend handoff packet to done. The sidecar remains a non-canonical reference for downstream frontend activation and truthful closeout, with no parent/runtime reopening required.",
+    "last_update": "2026-04-23T02:31:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-TW02-IMPL-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已 spot-check TW-02 live routes、409 guard、contract test、route-live frontend handoff 與 family/frontend summary；support packet 與 2026-04-23 repo truth 一致，且仍維持 support-only 邊界，不重開 parent canonical/runtime 實作。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T02:31:28Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "3c121e56a8ac7a262be24d8d780b8f98bfd4bc3c",
+      "commit_subject": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF finalize support-only handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1173,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support handoff packet added at support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md. It captures the current TW-02 truth: ratified contract plus read_store helper exist, public routes/tests/frontend bundle are still open, and frontend should follow the ratified status/field_errors/diff.updated_controls[] shape rather than older family-summary shorthand.",
+      "status": "done",
+      "created_at": "2026-04-22T06:53:33Z",
+      "resolved_at": "2026-04-22T06:55:01Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T06:55:01Z",
+      "resolved_at": "2026-04-22T06:55:25Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider",
+      "status": "done",
+      "created_at": "2026-04-22T06:55:25Z",
+      "resolved_at": "2026-04-22T06:57:00Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T06:57:00Z",
+      "resolved_at": "2026-04-22T06:57:24Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider",
+      "status": "done",
+      "created_at": "2026-04-22T06:57:24Z",
+      "resolved_at": "2026-04-22T06:59:06Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T06:59:06Z",
+      "resolved_at": "2026-04-22T06:59:32Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider",
+      "status": "done",
+      "created_at": "2026-04-22T06:59:32Z",
+      "resolved_at": "2026-04-22T07:01:09Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:01:09Z",
+      "resolved_at": "2026-04-22T07:01:33Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider",
+      "status": "done",
+      "created_at": "2026-04-22T07:01:33Z",
+      "resolved_at": "2026-04-22T07:04:08Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:04:08Z",
+      "resolved_at": "2026-04-22T07:05:55Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider",
+      "status": "done",
+      "created_at": "2026-04-22T07:05:55Z",
+      "resolved_at": "2026-04-22T07:22:33Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:22:33Z",
+      "resolved_at": "2026-04-22T07:22:57Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials. Inbox fallback is disabled for this provider",
+      "status": "done",
+      "created_at": "2026-04-22T07:22:57Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T14:57:38Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar packet rejected: §2 current-truth and GAP-001/002/003/DRIFT-004 are all contradicted by the live repo (main.py:5707/5726 routes mounted, test_tw02_parameter_controls_contract.py exists, FRONTEND_CHANGE_SPEC.md published as route-live). See review-claude2-2026-04-22.md for cited evidence and required rewrite scope.",
+      "status": "done",
+      "created_at": "2026-04-22T14:57:38Z",
+      "resolved_at": "2026-04-22T14:57:38Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-22T15:33:52Z",
+      "resolved_at": "2026-04-22T16:46:40Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T16:46:40Z",
+      "resolved_at": "2026-04-22T16:47:17Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Rebased support packet at support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md against live repo truth: TW-02 routes are mounted in main.py, contract tests exist and re-ran green (5 passed), FRONTEND_CHANGE_SPEC.md is already route-live, and the packet now narrows remaining work to frontend activation/closeout instead of reopening BFF gaps.",
+      "status": "done",
+      "created_at": "2026-04-22T16:52:03Z",
+      "resolved_at": "2026-04-22T23:08:50Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support packet is rebased to live TW-02 repo truth. Please review that it remains support-only, removes stale pending-BFF claims, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:08:50Z",
+      "resolved_at": "2026-04-22T23:27:55Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the support-only TW-02 handoff packet against live repo truth. Refreshed the packet with a 2026-04-22T23:35Z verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 1.88s), and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that the packet stays support-only, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:27:55Z",
+      "resolved_at": "2026-04-22T23:28:36Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the support-only TW-02 handoff packet against live repo truth. Refreshed the packet with a 2026-04-22T23:27Z verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 1.88s), and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that the packet stays support-only, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:28:36Z",
+      "resolved_at": "2026-04-22T23:30:41Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the support-only TW-02 handoff packet against live repo truth. Refreshed support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md with a 2026-04-22T23:30Z verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 2.11s), and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that the packet stays support-only, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:30:41Z",
+      "resolved_at": "2026-04-22T23:33:00Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the support-only TW-02 handoff packet against live repo truth again at 2026-04-22T23:32Z. Refreshed support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md with the new verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 1.97s), and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that the packet stays support-only, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:33:00Z",
+      "resolved_at": "2026-04-22T23:35:46Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the support-only TW-02 handoff packet against live repo truth again at 2026-04-22T23:35Z. Refreshed support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md with the new verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 2.01s), and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that the packet stays support-only, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:35:46Z",
+      "resolved_at": "2026-04-22T23:37:37Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the support-only TW-02 handoff packet against live repo truth again at 2026-04-22T23:43Z. Re-ran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 1.96s), and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md stays support-only, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:37:37Z",
+      "resolved_at": "2026-04-22T23:39:57Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the support-only TW-02 handoff packet against live repo truth at 2026-04-22T23:39Z. Refreshed support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md with the current verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 2.04s), and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that the packet stays support-only, preserves the ratified frontend contract boundary, and limits remaining work to frontend activation/closeout.",
+      "status": "done",
+      "created_at": "2026-04-22T23:39:57Z",
+      "resolved_at": "2026-04-22T23:44:30Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:44:30Z",
+      "resolved_at": "2026-04-22T23:46:16Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:46:16Z",
+      "resolved_at": "2026-04-22T23:47:12Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:47:12Z",
+      "resolved_at": "2026-04-22T23:48:52Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:48:52Z",
+      "resolved_at": "2026-04-22T23:49:47Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:49:47Z",
+      "resolved_at": "2026-04-22T23:51:28Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:51:28Z",
+      "resolved_at": "2026-04-22T23:52:40Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:52:40Z",
+      "resolved_at": "2026-04-22T23:54:00Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:54:00Z",
+      "resolved_at": "2026-04-22T23:55:07Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:55:07Z",
+      "resolved_at": "2026-04-22T23:57:27Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:57:27Z",
+      "resolved_at": "2026-04-22T23:58:42Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:58:42Z",
+      "resolved_at": "2026-04-23T00:00:07Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:00:07Z",
+      "resolved_at": "2026-04-23T00:01:15Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:01:15Z",
+      "resolved_at": "2026-04-23T00:02:41Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:02:41Z",
+      "resolved_at": "2026-04-23T00:03:37Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:03:37Z",
+      "resolved_at": "2026-04-23T00:04:48Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:04:48Z",
+      "resolved_at": "2026-04-23T00:06:23Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:06:23Z",
+      "resolved_at": "2026-04-23T00:07:46Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:07:46Z",
+      "resolved_at": "2026-04-23T00:09:47Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:09:47Z",
+      "resolved_at": "2026-04-23T00:11:44Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:11:44Z",
+      "resolved_at": "2026-04-23T00:12:45Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:12:45Z",
+      "resolved_at": "2026-04-23T00:14:07Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:14:07Z",
+      "resolved_at": "2026-04-23T00:15:06Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:15:06Z",
+      "resolved_at": "2026-04-23T00:16:27Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:16:27Z",
+      "resolved_at": "2026-04-23T00:17:34Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:17:34Z",
+      "resolved_at": "2026-04-23T00:18:59Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:18:59Z",
+      "resolved_at": "2026-04-23T00:20:07Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:20:07Z",
+      "resolved_at": "2026-04-23T00:21:53Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:21:53Z",
+      "resolved_at": "2026-04-23T00:23:40Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:23:40Z",
+      "resolved_at": "2026-04-23T00:25:01Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:25:01Z",
+      "resolved_at": "2026-04-23T00:26:31Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:26:31Z",
+      "resolved_at": "2026-04-23T00:27:59Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:27:59Z",
+      "resolved_at": "2026-04-23T00:29:20Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:29:20Z",
+      "resolved_at": "2026-04-23T00:30:52Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:30:52Z",
+      "resolved_at": "2026-04-23T00:32:06Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:32:06Z",
+      "resolved_at": "2026-04-23T00:34:40Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:34:40Z",
+      "resolved_at": "2026-04-23T00:35:33Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:35:33Z",
+      "resolved_at": "2026-04-23T00:36:56Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:36:56Z",
+      "resolved_at": "2026-04-23T00:38:14Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:38:14Z",
+      "resolved_at": "2026-04-23T00:39:20Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:39:20Z",
+      "resolved_at": "2026-04-23T00:40:33Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:40:33Z",
+      "resolved_at": "2026-04-23T00:41:56Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:41:56Z",
+      "resolved_at": "2026-04-23T00:43:09Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:43:09Z",
+      "resolved_at": "2026-04-23T00:45:02Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:45:02Z",
+      "resolved_at": "2026-04-23T00:46:29Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:46:29Z",
+      "resolved_at": "2026-04-23T00:48:05Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:48:05Z",
+      "resolved_at": "2026-04-23T00:49:04Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:49:04Z",
+      "resolved_at": "2026-04-23T00:50:41Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:50:41Z",
+      "resolved_at": "2026-04-23T00:51:55Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:51:55Z",
+      "resolved_at": "2026-04-23T00:53:18Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:53:18Z",
+      "resolved_at": "2026-04-23T00:54:17Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:54:17Z",
+      "resolved_at": "2026-04-23T00:55:27Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:55:27Z",
+      "resolved_at": "2026-04-23T00:57:38Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:57:38Z",
+      "resolved_at": "2026-04-23T00:59:13Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:59:13Z",
+      "resolved_at": "2026-04-23T01:00:16Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:00:16Z",
+      "resolved_at": "2026-04-23T01:01:43Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:01:43Z",
+      "resolved_at": "2026-04-23T01:02:55Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:02:55Z",
+      "resolved_at": "2026-04-23T01:04:19Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:04:19Z",
+      "resolved_at": "2026-04-23T01:05:35Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:05:35Z",
+      "resolved_at": "2026-04-23T01:06:58Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:06:58Z",
+      "resolved_at": "2026-04-23T01:08:26Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:08:26Z",
+      "resolved_at": "2026-04-23T01:10:43Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:10:43Z",
+      "resolved_at": "2026-04-23T01:11:30Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:11:30Z",
+      "resolved_at": "2026-04-23T01:13:25Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:13:25Z",
+      "resolved_at": "2026-04-23T01:14:12Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:14:12Z",
+      "resolved_at": "2026-04-23T01:15:10Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:15:10Z",
+      "resolved_at": "2026-04-23T01:16:25Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:16:25Z",
+      "resolved_at": "2026-04-23T01:17:55Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:17:55Z",
+      "resolved_at": "2026-04-23T01:19:24Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:19:24Z",
+      "resolved_at": "2026-04-23T01:20:57Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:20:57Z",
+      "resolved_at": "2026-04-23T01:22:30Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:22:30Z",
+      "resolved_at": "2026-04-23T01:24:02Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:24:02Z",
+      "resolved_at": "2026-04-23T01:25:13Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:25:13Z",
+      "resolved_at": "2026-04-23T01:26:37Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:26:37Z",
+      "resolved_at": "2026-04-23T01:27:25Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:27:25Z",
+      "resolved_at": "2026-04-23T01:29:05Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:29:05Z",
+      "resolved_at": "2026-04-23T01:30:22Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:30:22Z",
+      "resolved_at": "2026-04-23T01:31:35Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:31:35Z",
+      "resolved_at": "2026-04-23T01:33:18Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:33:18Z",
+      "resolved_at": "2026-04-23T01:35:38Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:35:38Z",
+      "resolved_at": "2026-04-23T01:36:53Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:36:53Z",
+      "resolved_at": "2026-04-23T01:38:11Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:38:11Z",
+      "resolved_at": "2026-04-23T01:39:22Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:39:22Z",
+      "resolved_at": "2026-04-23T01:40:52Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:40:52Z",
+      "resolved_at": "2026-04-23T01:41:58Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:41:58Z",
+      "resolved_at": "2026-04-23T01:43:27Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:43:27Z",
+      "resolved_at": "2026-04-23T01:45:01Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:45:01Z",
+      "resolved_at": "2026-04-23T01:47:40Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:47:40Z",
+      "resolved_at": "2026-04-23T01:48:37Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:48:37Z",
+      "resolved_at": "2026-04-23T01:49:50Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:49:50Z",
+      "resolved_at": "2026-04-23T01:51:16Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:51:16Z",
+      "resolved_at": "2026-04-23T02:01:02Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Requeued to Codex3 review so Gemini can stay focused on the critical RW-01 closure lane.",
+      "status": "done",
+      "created_at": "2026-04-23T02:01:02Z",
+      "resolved_at": "2026-04-23T02:03:23Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md against 2026-04-23 repo truth: aligned header metadata with the current task board (parent done, reviewer Codex3), reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 2.92s), reconfirmed live TW-02 controls/patch routes plus route-live frontend handoff docs, and rechecked that no TW-02 frontend closeout artifact exists yet under .coordination/ or docs/pantheon-feedback. Please review that the packet remains support-only and limits remaining work to frontend activation/closeout without reopening the completed parent implementation.",
+      "status": "done",
+      "created_at": "2026-04-23T02:03:23Z",
+      "resolved_at": "2026-04-23T02:07:23Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md with a fresh 2026-04-23T02:08:59Z verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 7.76s), rechecked live TW-02 controls and patch routes plus route-live frontend handoff docs, and reconfirmed there is still no TW-02 frontend closeout artifact under .coordination/ or docs/pantheon-feedback. Please review that the packet stays support-only and keeps the remaining work bounded to frontend activation and truthful closeout instead of reopening the completed parent implementation.",
+      "status": "done",
+      "created_at": "2026-04-23T02:10:21Z",
+      "resolved_at": "2026-04-23T02:14:42Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed support/sidecars/APP-003-TW02-IMPL-001/APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF.md with a fresh 2026-04-23T02:13:57Z verification stamp, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 2.76s), reconfirmed live TW-02 controls/patch routes and route-live frontend handoff docs, and rechecked that no TW-02 frontend closeout artifact exists yet under .coordination/ or docs/pantheon-feedback. Please review that the packet remains support-only and keeps remaining work bounded to frontend activation and truthful closeout without reopening the completed parent implementation.",
+      "status": "done",
+      "created_at": "2026-04-23T02:14:42Z",
+      "resolved_at": "2026-04-23T02:15:25Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T02:15:25Z",
+      "resolved_at": "2026-04-23T02:20:09Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T02:20:09Z",
+      "resolved_at": "2026-04-23T02:23:26Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-23T02:24:43Z",
+      "resolved_at": "2026-04-23T02:25:11Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Refreshed the support-only TW-02 handoff packet against 2026-04-23 repo truth: aligned sidecar metadata with the current task board, reran pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed in 2.28s), and reconfirmed live TW-02 controls/patch routes plus route-live frontend handoff docs with no TW-02 frontend closeout artifact yet under .coordination/ or docs/pantheon-feedback. Please review that the packet remains support-only and keeps the remaining work bounded to frontend activation and truthful closeout.",
+      "status": "done",
+      "created_at": "2026-04-23T02:26:54Z",
+      "resolved_at": "2026-04-23T02:29:42Z"
+    },
+    {
+      "task_id": "APP-003-TW02-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: support-only TW-02 handoff packet matches 2026-04-23 repo truth and should now only inform frontend activation/closeout. Owner should finalize to done without reopening the completed parent implementation.",
+      "status": "done",
+      "created_at": "2026-04-23T02:29:42Z",
+      "resolved_at": "2026-04-23T02:31:28Z"
+    }
+  ],
+  "blockers": []
+}

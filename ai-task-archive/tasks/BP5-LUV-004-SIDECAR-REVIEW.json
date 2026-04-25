@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+  "archived_at": "2026-04-16T20:16:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-LUV-004-SIDECAR-REVIEW",
+    "title": "Prepare BP5-LUV-004 review packet and evidence summary",
+    "summary_zh": "平行支援 BP5-LUV-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-011",
+      "BP5-SVC-015"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-LUV-004/BP5-LUV-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: sidecar review packet approved by Codex. Artifact inventory and dependency checks confirmed complete. Final disposition recorded in .coordination/reviews/BP5-LUV-004-final.md — parent BP5-LUV-004 remains not approved pending OI-2 evidence correction, OI-3 route boundary fix, and drawer/staleness/active_commands UI follow-up. No canonical files modified.",
+    "last_update": "2026-04-16T20:16:32Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-LUV-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "sidecar review packet 已核對完成",
+      "依賴狀態與 artifact inventory 屬實",
+      "fresh mirror check 重現 Review A，parent BP5-LUV-004 仍不得進 review_approved",
+      "OI-4 runtime 驗證維持非阻塞殘餘風險"
+    ],
+    "review_file": ".coordination/reviews/BP5-LUV-004-final.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T20:16:32Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "0904f014848531c9aee1fcb06ccb09271be3c73f",
+      "commit_subject": "BP5-LUV-004-SIDECAR-REVIEW: finalize review packet and close sidecar",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-LUV-004-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 272,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T17:40:02Z",
+      "resolved_at": "2026-04-16T17:47:39Z"
+    },
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T17:48:25Z",
+      "resolved_at": "2026-04-16T17:49:07Z"
+    },
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T18:07:01Z",
+      "resolved_at": "2026-04-16T18:09:37Z"
+    },
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T18:09:36Z",
+      "resolved_at": "2026-04-16T18:19:55Z"
+    },
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T18:54:02Z",
+      "resolved_at": "2026-04-16T18:58:08Z"
+    },
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete. Dependencies confirmed done (BP5-SVC-011, BP5-SVC-015). Artifact inventory complete. Two prior reviews with contradictory findings documented (Review A: not approved — mirrored frontend code inspection found gaps; Review B: approved — artifact chain validation only). Four open items (OI-1 to OI-4) logged for reviewer disposition. No canonical files modified. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-04-16T19:05:21Z",
+      "resolved_at": "2026-04-16T20:14:55Z"
+    },
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet verified; artifact inventory complete; final disposition recorded in .coordination/reviews/BP5-LUV-004-final.md. Parent BP5-LUV-004 remains not approved pending evidence correction and UI follow-up.",
+      "status": "done",
+      "created_at": "2026-04-16T20:14:55Z",
+      "resolved_at": "2026-04-16T20:16:32Z"
+    }
+  ],
+  "blockers": []
+}

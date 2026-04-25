@@ -1,0 +1,363 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-006",
+  "archived_at": "2026-04-16T02:52:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-006",
+    "title": "Packetize the Knowledge Workbench family",
+    "summary_zh": "把 Institutional Memory、Research Notes、Evidence Refs、Insight Cards、Strategy Spec 五個 Knowledge modules 補成 packet family 與 backend gap matrix。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-010",
+      "BP5-SVC-011",
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+      "docs/pantheon-handoffs/"
+    ],
+    "acceptance": [
+      "Knowledge Workbench modules have canonical packets and explicit BFF or read-model prerequisites",
+      "module ordering from Institutional Memory to Strategy Spec is preserved in the packet plan"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: corrected header Owner/Reviewer alignment in PACKET_FAMILY.md (was reversed vs. ai-status assignment); all five KW modules (KW-01 to KW-05) fully packetized with surface scope, backend gap matrix, dependency chain, promotion criteria, and cross-cutting rules. Task closed.",
+    "last_update": "2026-04-16T02:52:30Z",
+    "review_notes_zh": [
+      "內容審核通過：PACKET_FAMILY.md 已覆蓋 KW-01 到 KW-05、每模組 surface scope / backend gaps / prerequisite / readiness gate、共用 Backend Gap Matrix、Wave 3 依賴鏈、Promotion Criteria、以及 PKT-005 / evidence-link / no-client-side-synthesis cross-cutting rules。",
+      "非阻塞備註：docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md header 的 Owner/Reviewer 目前與 ai-status 任務指派相反；owner 正式收尾為 done 前可順手對齊。"
+    ],
+    "review_file": "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T02:52:30Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "bc65bfb8cfc1f28bac7602b110b05b1574a18f5a",
+      "commit_subject": "BP5-WB-006: fix header Owner/Reviewer alignment in PACKET_FAMILY.md",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "(Owner": "Claude, Reviewer: Codex). Addressed non-blocking review note",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-WB-006",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 108,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:28:34Z",
+      "resolved_at": "2026-04-16T00:29:03Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:30:59Z",
+      "resolved_at": "2026-04-16T00:31:55Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:36:13Z",
+      "resolved_at": "2026-04-16T00:37:08Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:38:53Z",
+      "resolved_at": "2026-04-16T00:40:06Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:44:26Z",
+      "resolved_at": "2026-04-16T00:45:42Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-16T00:47:28Z",
+      "resolved_at": "2026-04-16T00:48:03Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:49:01Z",
+      "resolved_at": "2026-04-16T00:50:01Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:02:21Z",
+      "resolved_at": "2026-04-16T01:03:14Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:04:28Z",
+      "resolved_at": "2026-04-16T01:05:46Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:13:10Z",
+      "resolved_at": "2026-04-16T01:13:53Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:17:22Z",
+      "resolved_at": "2026-04-16T01:18:13Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:20:56Z",
+      "resolved_at": "2026-04-16T01:21:55Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:23:36Z",
+      "resolved_at": "2026-04-16T01:23:54Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:25:23Z",
+      "resolved_at": "2026-04-16T01:26:07Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:31:21Z",
+      "resolved_at": "2026-04-16T01:33:19Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:36:41Z",
+      "resolved_at": "2026-04-16T01:43:56Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:43:56Z",
+      "resolved_at": "2026-04-16T01:44:59Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:49:31Z",
+      "resolved_at": "2026-04-16T01:50:51Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:58:38Z",
+      "resolved_at": "2026-04-16T01:59:29Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:02:59Z",
+      "resolved_at": "2026-04-16T02:03:40Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:04:25Z",
+      "resolved_at": "2026-04-16T02:05:19Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:06:28Z",
+      "resolved_at": "2026-04-16T02:07:21Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:11:11Z",
+      "resolved_at": "2026-04-16T02:12:03Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:14:31Z",
+      "resolved_at": "2026-04-16T02:15:30Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:18:13Z",
+      "resolved_at": "2026-04-16T02:18:41Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:27:03Z",
+      "resolved_at": "2026-04-16T02:27:51Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:34:50Z",
+      "resolved_at": "2026-04-16T02:36:36Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:40:55Z",
+      "resolved_at": "2026-04-16T02:41:23Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:43:16Z",
+      "resolved_at": "2026-04-16T02:44:20Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Knowledge Workbench packet family complete: docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md covers KW-01 through KW-05. Each module has: surface scope, backend gap table, packetization prerequisite, and Lovable readiness gate. Document also includes: consolidated Backend Gap Matrix (18 rows across 5 modules), internal Wave-3 ordering chain, promotion criteria checklist, cross-cutting rules (no client-side synthesis, BFF-resolved evidence links, PKT-005 banner inheritance). Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-16T02:45:37Z",
+      "resolved_at": "2026-04-16T02:50:55Z"
+    },
+    {
+      "task_id": "BP5-WB-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: packet family aligns with the Knowledge Workbench backlog and cited canonical artifacts; owner can finalize after optional header metadata cleanup.",
+      "status": "done",
+      "created_at": "2026-04-16T02:50:55Z",
+      "resolved_at": "2026-04-16T02:52:30Z"
+    }
+  ],
+  "blockers": []
+}

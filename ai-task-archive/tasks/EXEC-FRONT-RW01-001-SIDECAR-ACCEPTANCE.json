@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-21T20:39:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EXEC-FRONT-RW01-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EXEC-FRONT-RW01-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-FRONT-RW01-001/EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. The support packet now preserves the review-time runtime blocker snapshot, records Claude approval, and notes that the parent task later closed after runtime refresh.",
+    "last_update": "2026-04-21T20:39:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-FRONT-RW01-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Acceptance packet 審查通過",
+      "Front slice 已確認 replay-clean，僅剩 runtime-refresh blocker（等待 Gemini）",
+      "Parent task 應在 runtime refresh 後重新進入 review，不需重做 frontend"
+    ],
+    "review_file": "support/sidecars/EXEC-FRONT-RW01-001/EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T20:39:49Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "684de90fa27f493238f908e5b3efe1f1cf543cab",
+      "commit_subject": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE finalize support packet truth sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 981,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet ready at support/sidecars/EXEC-FRONT-RW01-001/EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE.md. It packages the RW-01 dependency chain, confirms the front return is replay-clean, and isolates the remaining blocker to the runtime refresh tracked in .coordination/requests/RW-01-research-ticket-needs-runtime.yaml.",
+      "status": "done",
+      "created_at": "2026-04-21T08:58:22Z",
+      "resolved_at": "2026-04-21T09:00:53Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed and reviewer-ready at support/sidecars/EXEC-FRONT-RW01-001/EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE.md. It cleanly separates delivered RW-01 frontend evidence from the remaining runtime-refresh blocker tracked in .coordination/requests/RW-01-research-ticket-needs-runtime.yaml.",
+      "status": "done",
+      "created_at": "2026-04-21T09:00:53Z",
+      "resolved_at": "2026-04-21T09:03:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex2 to Qwen after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T09:03:12Z",
+      "resolved_at": "2026-04-21T09:12:19Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:12:19Z",
+      "resolved_at": "2026-04-21T16:40:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW01-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet approved. Front slice is replay-clean and all UI/contract alignment checks pass. The only remaining blocker is the operator-bff runtime refresh tracked in .coordination/requests/RW-01-research-ticket-needs-runtime.yaml. Owner (Codex) should finalize and close this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-21T16:40:56Z",
+      "resolved_at": "2026-04-21T20:39:49Z"
+    }
+  ],
+  "blockers": []
+}

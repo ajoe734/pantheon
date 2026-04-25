@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+  "archived_at": "2026-04-17T10:12:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-LUV-020-SIDECAR-REVIEW",
+    "title": "Prepare BP6-LUV-020 review packet and evidence summary",
+    "summary_zh": "平行支援 BP6-LUV-020，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP6-LUV-020/BP6-LUV-020-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: review packet approved by Codex; support artifact accurately maps BP6-LUV-020 closure evidence (transport commits, BFF surface, verification pass counts, accepted residual scope limits). No canonical truth modified. Task closed.",
+    "last_update": "2026-04-17T10:12:46Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-LUV-020",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T10:12:46Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "8845859c8c58b686eb057ab8c238f4e2fcaba90a",
+      "commit_subject": "BP6-LUV-020-SIDECAR-REVIEW: finalize sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP6-LUV-020-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 392,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:18:41Z",
+      "resolved_at": "2026-04-17T08:33:02Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:42:20Z",
+      "resolved_at": "2026-04-17T08:47:16Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T08:52:57Z",
+      "resolved_at": "2026-04-17T08:55:29Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:06:08Z",
+      "resolved_at": "2026-04-17T09:07:21Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:08:37Z",
+      "resolved_at": "2026-04-17T09:09:18Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:11:01Z",
+      "resolved_at": "2026-04-17T09:12:38Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:17:09Z",
+      "resolved_at": "2026-04-17T09:19:03Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:19:03Z",
+      "resolved_at": "2026-04-17T09:22:04Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:22:04Z",
+      "resolved_at": "2026-04-17T09:23:46Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T09:27:03Z",
+      "resolved_at": "2026-04-17T09:27:58Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T09:31:08Z",
+      "resolved_at": "2026-04-17T09:31:45Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:42:19Z",
+      "resolved_at": "2026-04-17T09:43:41Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:45:43Z",
+      "resolved_at": "2026-04-17T09:46:28Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:49:28Z",
+      "resolved_at": "2026-04-17T09:50:23Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete at support/sidecars/BP6-LUV-020/BP6-LUV-020-SIDECAR-REVIEW.md — maps all closure evidence (artifacts, transport commits, BFF surface, verification pass counts) against the parent acceptance criterion. No canonical truth was modified. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-17T10:09:19Z",
+      "resolved_at": "2026-04-17T10:11:40Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet approved; support artifact accurately maps the archived BP6-LUV-020 closure evidence, including sibling front transport commits, Pantheon BFF audit surface, verification counts, and accepted residual scope limits.",
+      "status": "done",
+      "created_at": "2026-04-17T10:11:40Z",
+      "resolved_at": "2026-04-17T10:12:47Z"
+    }
+  ],
+  "blockers": []
+}

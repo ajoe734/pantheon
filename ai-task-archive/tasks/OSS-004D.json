@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "OSS-004D",
+  "archived_at": "2026-04-19T00:59:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-004D",
+    "title": "Publish EP4 evidence packet and reconcile status truth",
+    "summary_zh": "發布 EP4 evidence packet，並把 status/tracking layers 對齊，讓 repo 可 truthfully claim stable EP4穩定而非更高。",
+    "phase": "Phase 7: EP4 Evidence Publication",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "OSS-004C"
+    ],
+    "artifacts": [],
+    "acceptance": [
+      "EP4 evidence packet published||status layers do not overclaim beyond EP4"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "phase": "phase7",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+      "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-19T00:59:09Z",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md",
+      "initial_materialization_task_ids": "OSS-004A,OSS-004B,OSS-004C,OSS-004D"
+    },
+    "status": "done",
+    "next": "Final checks passed: EP4 evidence packet confirmed at docs/deployment/ep4-evidence-packet.md, EXECUTION_PROOF_AND_MATURITY_LEVELS.md declares stable EP4 without overclaiming EP5. Both acceptance criteria met. Committed as fd71a7d. Task closed.",
+    "last_update": "2026-04-19T00:59:11Z",
+    "review_notes_zh": [
+      "已核對 EP4 evidence packet 與 maturity ladder；補正 EXECUTION_PROOF_AND_MATURITY_LEVELS.md 的 Last updated metadata 後，repo claim 嚴格停在 stable EP4，未越界到 EP5。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T00:59:11Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "fd71a7d473bbb9eae2a0d41067889e4c7380a352",
+      "commit_subject": "OSS-004D: publish EP4 evidence packet and reconcile status truth",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- Update EXECUTION_PROOF_AND_MATURITY_LEVELS.md": "evidence table row, section 5 (stable EP4 declared), section 6 (EP5 follow-on), Last updated 2026-04-19",
+        "Task-ID": "OSS-004D",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 674,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-004D",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T00:47:34Z",
+      "resolved_at": "2026-04-19T00:48:38Z"
+    },
+    {
+      "task_id": "OSS-004D",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EP4 evidence packet published at docs/deployment/ep4-evidence-packet.md. EXECUTION_PROOF_AND_MATURITY_LEVELS.md updated: evidence table, section 5 (stable EP4 declared), section 6 (follow-on EP5 work). Acceptance criteria: (1) EP4 evidence packet published — done; (2) status layers do not overclaim beyond EP4 — done. Please review the two artifacts and approve.",
+      "status": "done",
+      "created_at": "2026-04-19T00:55:50Z",
+      "resolved_at": "2026-04-19T00:57:39Z"
+    },
+    {
+      "task_id": "OSS-004D",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved. EP4 evidence packet is published, maturity mapping now matches the 2026-04-19 repo state, and the repo truthfully claims stable EP4 without overclaiming EP5. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T00:57:39Z",
+      "resolved_at": "2026-04-19T00:59:11Z"
+    }
+  ],
+  "blockers": []
+}

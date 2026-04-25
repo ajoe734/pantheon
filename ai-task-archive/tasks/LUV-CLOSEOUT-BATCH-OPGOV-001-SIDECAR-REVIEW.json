@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-20T03:28:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW",
+    "title": "Prepare LUV-CLOSEOUT-BATCH-OPGOV-001 review packet and evidence summary",
+    "summary_zh": "平行支援 LUV-CLOSEOUT-BATCH-OPGOV-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Frontend Loop Closeout",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/LUV-CLOSEOUT-BATCH-OPGOV-001/LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet. Support-only artifact closed; PKT-005 remains closure-ready, PKT-001-deployment-review and PKT-013 remain blocked as recorded, and parent owner should amend the closeout summary to reflect APPROVED for PKT-001-governance-review-queue per the 2026-04-19 addendum.",
+    "last_update": "2026-04-20T03:28:06Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LUV-CLOSEOUT-BATCH-OPGOV-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T03:28:06Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "0a75e0f43dfdf914565675ebe7b7e0219ee7c854",
+      "commit_subject": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW finalize owner checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 794,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet ready at support/sidecars/LUV-CLOSEOUT-BATCH-OPGOV-001/LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW.md. Support-only packet compresses the four packet dispositions, keeps PKT-001 deployment-review and PKT-013 operator-home blocked on their recorded frontend-feedback conditions, marks PKT-005 closure-ready, and explicitly flags PKT-001-governance-review-queue record drift between older Pantheon mirrors and newer approved review/front transport evidence.",
+      "status": "done",
+      "created_at": "2026-04-20T01:44:18Z",
+      "resolved_at": "2026-04-20T03:25:25Z"
+    },
+    {
+      "task_id": "LUV-CLOSEOUT-BATCH-OPGOV-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar APPROVED. PKT-005 closure-ready. PKT-001-deployment-review and PKT-013-operator-home remain blocked as recorded. PKT-001-governance-review-queue drift resolved: 2026-04-19 addendum is authoritative, disposition is APPROVED. Parent owner should amend closeout summary to reflect APPROVED for governance-review-queue.",
+      "status": "done",
+      "created_at": "2026-04-20T03:25:25Z",
+      "resolved_at": "2026-04-20T03:28:06Z"
+    }
+  ],
+  "blockers": []
+}

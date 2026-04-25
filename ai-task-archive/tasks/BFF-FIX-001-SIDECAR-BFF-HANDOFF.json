@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "task_id": "BFF-FIX-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-18T05:24:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FIX-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-FIX-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-FIX-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / BFF Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BFF-FIX-001/BFF-FIX-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "BFF handoff packet finalized. Support artifact remains limited to support/sidecars/BFF-FIX-001/BFF-FIX-001-SIDECAR-BFF-HANDOFF.md; parent owner can absorb the packet to treat BFF-FIX-001 as one remaining PKT-004 BFF gap plus separate runtime/frontend follow-up.",
+    "last_update": "2026-04-18T05:24:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-FIX-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T05:24:33Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "5e0d28db1cf654d3407ab8e6063dc6fc8ed73b84",
+      "commit_subject": "BFF-FIX-001-SIDECAR-BFF-HANDOFF: finalize sidecar delivery checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-FIX-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 513,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-FIX-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "BFF handoff packet ready at support/sidecars/BFF-FIX-001/BFF-FIX-001-SIDECAR-BFF-HANDOFF.md. Current repo evidence reduces the parent from five open BFF gaps to one remaining PKT-004 persona_id filter gap; PKT-002 incident-detail runtime-data blockage and frontend transport/SSE follow-up are separated explicitly so they do not get miscounted as unresolved BFF contract work.",
+      "status": "done",
+      "created_at": "2026-04-18T05:22:10Z",
+      "resolved_at": "2026-04-18T05:23:12Z"
+    },
+    {
+      "task_id": "BFF-FIX-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Handoff packet approved; BFF-FIX-001 is accurately reduced to one open PKT-004 BFF gap plus separate runtime/frontend follow-up. Gap resolution status verified against all five .coordination/requests files. Scope is clean — support-only, no canonical mutation.",
+      "status": "done",
+      "created_at": "2026-04-18T05:23:12Z",
+      "resolved_at": "2026-04-18T05:24:33Z"
+    }
+  ],
+  "blockers": []
+}

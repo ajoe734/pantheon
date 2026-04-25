@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-001",
+  "archived_at": "2026-04-16T14:54:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-001",
+    "title": "Packetize Persona Workbench Wave 1 surfaces",
+    "summary_zh": "把 Persona management composed screen、Persona drilldowns、Capital/Binding drilldowns、shared Deployment/Approval drilldowns 落成可執行 packet family。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-014",
+      "BP5-SVC-015"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+      "docs/pantheon-handoffs/"
+    ],
+    "acceptance": [
+      "Persona Workbench Wave 1 surfaces have canonical packets and truthful backend dependency notes",
+      "the packet family reuses existing BFF routes instead of inventing shadow data sources"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Checkpoint complete: PKT-004 Persona Workbench Wave 1 packet family is canonical, reviewed, and archived for frontend execution with PKT-001 governance write ownership preserved and Wave 2 persona surfaces explicitly deferred.",
+    "last_update": "2026-04-16T14:54:22Z",
+    "review_notes_zh": [
+      "全四模組 BFF contract、screen spec、example payload、FRONTEND_CHANGE_SPEC 均已確認存在",
+      "WB-GAP-01..05 記錄為非阻斷型 backend 備注，Wave 1 handoff 條件成立",
+      "PKT-001 governance write ownership 保持原位，Module C 僅開放 read-only cross-link",
+      "Wave 2 surfaces 明確點名延後，範疇邊界清晰"
+    ],
+    "review_file": "docs/pantheon-handoffs/PKT-004-persona-workbench/PACKET_FAMILY.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T14:54:22Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "da3b22aadfa88fa504f66176a6ba0e7818a58467",
+      "commit_subject": "BP5-WB-001: finalize persona workbench wave 1 packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP5-WB-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 190,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Persona Workbench Wave 1 packet family is now canonical at docs/pantheon-handoffs/PKT-004-persona-workbench/PACKET_FAMILY.md. It ties together PM-01, Modules A/B/C, records WB-GAP-01..05 as non-blocking backend notes, explicitly defers Wave 2 Persona surfaces, and preserves PKT-001 governance write ownership. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-16T14:50:08Z",
+      "resolved_at": "2026-04-16T14:51:37Z"
+    },
+    {
+      "task_id": "BP5-WB-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "審查通過：PKT-004 Persona Workbench Wave 1 packet family 完整，BFF routes 全部重用現有路由，governance 寫入邊界保留在 PKT-001，Wave 2 延後範疇明確。回傳 Codex2 進行最終收尾。",
+      "status": "done",
+      "created_at": "2026-04-16T14:51:37Z",
+      "resolved_at": "2026-04-16T14:54:22Z"
+    }
+  ],
+  "blockers": []
+}

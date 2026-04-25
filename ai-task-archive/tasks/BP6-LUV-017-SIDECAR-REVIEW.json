@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "BP6-LUV-017-SIDECAR-REVIEW",
+  "archived_at": "2026-04-17T08:58:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-LUV-017-SIDECAR-REVIEW",
+    "title": "Prepare BP6-LUV-017 review packet and evidence summary",
+    "summary_zh": "平行支援 BP6-LUV-017，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP6-LUV-017/BP6-LUV-017-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized sidecar review packet after Claude approval. Support artifact is complete; packet remains advisory and explicitly preserves that BP6-LUV-017 parent must not close until PKT-006 backend/BFF blockers are resolved.",
+    "last_update": "2026-04-17T08:58:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-LUV-017",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "sidecar packet 結構完整，PKT-006-backend-delivery blocked 狀態已確認。BP6-LUV-017 parent 不應在 BFF gap 未解決前關閉為 done。"
+    ],
+    "review_file": "support/sidecars/BP6-LUV-017/BP6-LUV-017-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T08:58:59Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c0dc4ddfe35ce2cb083455b6f3066d075859c5ee",
+      "commit_subject": "BP6-LUV-017-SIDECAR-REVIEW: add owner finalize checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP6-LUV-017-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 384,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-LUV-017-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Sidecar review packet created at support/sidecars/BP6-LUV-017/BP6-LUV-017-SIDECAR-REVIEW.md. Packet summarizes current PKT-006 evidence, highlights the mismatch between BP6-LUV-017 review_approved state and the still-blocked Pantheon review/delivery artifacts, and recommends reconciling parent state before any finalize-to-done step.",
+      "status": "done",
+      "created_at": "2026-04-17T08:18:21Z",
+      "resolved_at": "2026-04-17T08:42:26Z"
+    },
+    {
+      "task_id": "BP6-LUV-017-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar review packet is accurate: backend-delivery artifact still blocked, all four BFF/front gaps remain open. Packet correctly flags that BP6-LUV-017 must not be finalized to done until those gaps are resolved. All three acceptance criteria met: support artifact created, canonical truth untouched, reviewer handoff complete.",
+      "status": "done",
+      "created_at": "2026-04-17T08:42:26Z",
+      "resolved_at": "2026-04-17T08:58:59Z"
+    }
+  ],
+  "blockers": []
+}

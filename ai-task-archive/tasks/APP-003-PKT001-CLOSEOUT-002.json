@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-CLOSEOUT-002",
+  "archived_at": "2026-04-24T05:34:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-CLOSEOUT-002",
+    "title": "Reopen the remaining PKT-001 front-owned closeout follow-up",
+    "summary_zh": "PKT-001 不是新的 BFF gap，但目前前端仍未以 shared helper 對必需的 meta.surfaces key set 做 fail-closed 驗證；重開具名 execution task，避免它只留在 generic follow-up 註記。",
+    "phase": "Execution / Frontend Contract Validation",
+    "owner": "Codex3",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md",
+      ".coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml",
+      "../front-ai-trading-system/docs/lovable/2026-04-24-pkt001-pkt003-followup-prompt.md"
+    ],
+    "acceptance": [
+      "PKT-001 follow-up is represented by a named execution task instead of only a generic closeout note",
+      "Closure criteria point at fail-closed meta.surfaces validation and refreshed feedback republish",
+      "The reopened PKT-001 closeout work is visible on the execution board"
+    ],
+    "next": "Owner finalized closeout on 2026-04-24: PKT-001 fail-closed shared-helper validation, replay-clean feedback republish, route wording alignment, and targeted pytest/tsc/eslint verification are accepted; remaining QA/build hygiene is non-blocking.",
+    "last_update": "2026-04-24T05:34:33Z",
+    "feature_id": "PKT-001-deployment-review",
+    "coordination_stage": "follow_up_required",
+    "coordination_next_action": "Front repo must complete the remaining fail-closed validation refresh and republish feedback.",
+    "task_class": "execution_candidate",
+    "auto_generated": true,
+    "auto_created_by": "2026-04-24-cross-repo-reopen-execution-packet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已重跑 Pantheon PKT-001 contract pytest 與 sibling front workspace 的 targeted tsc/eslint；request pair 仍以 reviewed snapshot c94f63082eae1667ed919353d62c85180d7bafba 為 truth source，publish commit 139081f0e4d516494819003bd95968ecb9b86c99 只重發 metadata，不改已審閱 UI transport。",
+      "DeploymentReviewConsole.tsx 與 DeploymentPlanDetail.tsx 目前都透過 shared findMissingSurfaceFields() 對必要 meta.surfaces key set 做 fail-closed 驗證，且 UI_DECISIONS route wording 已對齊 /operator/deployment-review；剩餘風險僅為非阻塞 QA/build hygiene。"
+    ],
+    "review_file": ".coordination/reviews/PKT-001-deployment-review-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T05:34:33Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "34ee8ebc9ecf50acd3678f1b632df319143759f0",
+      "commit_subject": "APP-003-PKT001-CLOSEOUT-002 finalize PKT-001 closeout truth",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex3",
+        "Task-ID": "APP-003-PKT001-CLOSEOUT-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1216,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-CLOSEOUT-002",
+      "from": "Codex3",
+      "to": "Codex",
+      "message": "Re-reviewed PKT-001 against reviewed snapshot c94f630 and publish commit 139081f: request-pair replay truth, fail-closed list/detail surface validation, route wording, and targeted pytest/tsc/eslint all pass. Please review the updated Pantheon response and review packet for closure.",
+      "status": "done",
+      "created_at": "2026-04-24T05:29:27Z",
+      "resolved_at": "2026-04-24T05:32:42Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-CLOSEOUT-002",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Reviewer approved closeout on 2026-04-24: replay-clean request pair, fail-closed list/detail surface validation, route wording, and targeted pytest/tsc/eslint all pass. Owner should finalize this task to done.",
+      "status": "done",
+      "created_at": "2026-04-24T05:32:42Z",
+      "resolved_at": "2026-04-24T05:34:34Z"
+    }
+  ],
+  "blockers": []
+}

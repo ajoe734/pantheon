@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T18:45:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-RUNTIME-PROOF-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-RUNTIME-PROOF-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-RUNTIME-PROOF-001/APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the sidecar acceptance packet after Claude review approval; reviewer metadata and stale closeout observation were reconciled in the committed support artifact.",
+    "last_update": "2026-04-24T18:45:40Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-RUNTIME-PROOF-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "三項 acceptance 皆通過：(1) 11 個 frontend-feedback YAML 全部存在且 disposition=close/lovable_ui_task_status=closed；(2) 8 個 review_findings_ref 指到的 review 檔全在；(3) 父 packet/父 review/EXECUTION_PROOF_AND_MATURITY_LEVELS.md 與 32/46->43/46、stable EP4 一致。",
+      "Scope 守住 support-only，未觸 canonical L1 或主 runtime/governance。",
+      "Non-blocking closeout 清理（請 owner 在 finalize 時處理）：Observation #1 與 Reviewer Checklist #4 已過期——commit f3a7f90 已把父 packet、父 review 與 EXECUTION_PROOF_AND_MATURITY_LEVELS.md 納入 HEAD，git diff HEAD 對三個檔案皆為空，不再是 untracked/modified；請把該段改寫或刪除以免誤導後續讀者。",
+      "Non-blocking：packet 表頭仍寫 Reviewer: Codex2，auto-reassign 後實際 reviewer 為 Claude，請 finalize 時一併更新。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T18:45:40Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "afce1d96ad121c6e73e228b6e268c9140188a89e",
+      "commit_subject": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1177,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet is ready at support/sidecars/APP-003-RUNTIME-PROOF-001/APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE.md. It maps the parent 11-feature runtime-verification batch to concrete proof sources, confirms the 32/46 -> 43/46 operational count and stable EP4 boundary, and flags that the parent packet/review doc are still untracked while EXECUTION_PROOF_AND_MATURITY_LEVELS.md is modified in the working tree.",
+      "status": "done",
+      "created_at": "2026-04-24T18:34:08Z",
+      "resolved_at": "2026-04-24T18:35:50Z"
+    },
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet revalidated and ready for reviewer sign-off at support/sidecars/APP-003-RUNTIME-PROOF-001/APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE.md. Rechecked the parent packet, review record, and all 11 frontend-feedback YAML proof sources; the 32/46 -> 43/46 operational coverage and stable EP4 boundary still match repo-local evidence. Finalize note remains unchanged: parent packet/review doc are still untracked while EXECUTION_PROOF_AND_MATURITY_LEVELS.md is modified in the working tree.",
+      "status": "done",
+      "created_at": "2026-04-24T18:35:50Z",
+      "resolved_at": "2026-04-24T18:38:03Z"
+    },
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed and ready for reviewer sign-off at support/sidecars/APP-003-RUNTIME-PROOF-001/APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE.md. Revalidated the parent packet, archived parent task state, review record, and all 11 frontend-feedback YAML proof sources; corrected the sidecar to reflect that the parent is already done while the 32/46 -> 43/46 coverage and stable EP4 boundary remain unchanged. Finalize note also remains unchanged: parent packet/review doc are still untracked while EXECUTION_PROOF_AND_MATURITY_LEVELS.md is modified in the working tree.",
+      "status": "done",
+      "created_at": "2026-04-24T18:38:03Z",
+      "resolved_at": "2026-04-24T18:38:58Z"
+    },
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T18:38:58Z",
+      "resolved_at": "2026-04-24T18:41:52Z"
+    },
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved. Verified the three acceptance criteria map to concrete repo artifacts (11/11 YAMLs with disposition=close, 8/8 referenced reviews present, parent packet/review and EXECUTION_PROOF_AND_MATURITY_LEVELS.md land 32/46->43/46 stable EP4). Non-blocking cleanup at owner finalize: Observation #1 is stale — commit f3a7f90 already put the parent packet, parent review, and EXECUTION_PROOF_AND_MATURITY_LEVELS.md into HEAD (git diff HEAD is empty), so please refresh or drop that note and the matching Reviewer Checklist #4 item. Packet header also still lists Codex2 as reviewer; should reflect Claude after auto-reassignment.",
+      "status": "done",
+      "created_at": "2026-04-24T18:41:52Z",
+      "resolved_at": "2026-04-24T18:45:40Z"
+    }
+  ],
+  "blockers": []
+}

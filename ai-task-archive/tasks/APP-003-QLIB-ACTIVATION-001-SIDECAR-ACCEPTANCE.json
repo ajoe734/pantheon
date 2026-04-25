@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T19:48:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-QLIB-ACTIVATION-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-QLIB-ACTIVATION-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-QLIB-ACTIVATION-001/APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Packet remains support-only and aligned with the archived parent closeout, approved review, and Qlib smoke-tested dependency surfaces.",
+    "last_update": "2026-04-24T19:48:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-QLIB-ACTIVATION-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 通過審查：(1) 範圍僅限 support/sidecars/APP-003-QLIB-ACTIVATION-001/ 底下的 support artifact，未修改 L1 canonical truth、runtime、registry 或 governance；(2) acceptance 讀表與 archived parent 記錄及 approved review 一致，Qlib 留在 smoke-tested、production-blocked 於 RS-003 candidate/governed dataset/target StrategySpec binding；(3) dependency map 所列 archive snapshot、approved review、activation packet、canonical OSS summaries、repo-local adapter/smoke/test 檔都在磁碟上存在；(4) 本次 reviewer 實跑 14 unit tests OK 且 smoke assertions OK，與 packet 記錄的 14 tests / assertions: OK 相符；(5) 13 vs 14 tests 的觀察已被正確定位成歷史 sequencing note，非真相衝突。Review 意涵僅為『support packet 準確可供 owner closeout』，不重啟或重批 parent。",
+      "Packet header 仍標註 Reviewer: Codex2 / Status: review_ready；durable 真相以 ai-status.json 為準（實際 reviewer 因 auto-reassign 為 Claude）。Owner 若要在收尾時刷 packet header 純為支援性 polish，非 blocker。"
+    ],
+    "review_file": "docs/reviews/sidecars/2026-04-24-APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:48:47Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "f81b27888e395209c8b9b0f32ae4d1015399f1ad",
+      "commit_subject": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1181,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-24T18:45:33Z",
+      "resolved_at": "2026-04-24T19:14:08Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T19:32:25Z",
+      "resolved_at": "2026-04-24T19:33:05Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet added at support/sidecars/APP-003-QLIB-ACTIVATION-001/APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. It aligns to the archived parent closeout, approved Qlib review evidence, and the smoke-tested-but-data-gated dependency map. Please review the packet for support-only accuracy before approval.",
+      "status": "done",
+      "created_at": "2026-04-24T19:37:07Z",
+      "resolved_at": "2026-04-24T19:39:22Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T19:39:22Z",
+      "resolved_at": "2026-04-24T19:42:23Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved. Support-only scope verified; parent archive, approved review, activation packet, canonical OSS surfaces, and repo-local adapter/smoke/test claims all match; reviewer replayed 14 unit tests + smoke assertions OK. Owner Codex to finalize.",
+      "status": "done",
+      "created_at": "2026-04-24T19:42:23Z",
+      "resolved_at": "2026-04-24T19:48:47Z"
+    }
+  ],
+  "blockers": []
+}

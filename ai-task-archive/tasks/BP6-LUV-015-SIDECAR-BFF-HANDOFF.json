@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-17T09:52:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BP6-LUV-015 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BP6-LUV-015，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP6-BFF-001"
+    ],
+    "artifacts": [
+      "support/sidecars/BP6-LUV-015/BP6-LUV-015-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: Codex review approved. Sidecar BFF handoff packet at support/sidecars/BP6-LUV-015/BP6-LUV-015-SIDECAR-BFF-HANDOFF.md is fully aligned to F-042-lovable-ui-task.yaml and FRONTEND_CHANGE_SPEC.md. No canonical truth modified. Task closed.",
+    "last_update": "2026-04-17T09:52:48Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-LUV-015",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已逐節核對 support packet 與 `.coordination/responses/F-042-lovable-ui-task.yaml`、`docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md`；§3.1、§4、§5、§6、§8、§9 已對齊，內容可交還 owner 做正式收尾。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T09:52:48Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "5b41cf76b2676c54a0c9264f2b302a69fca2b8f8",
+      "commit_subject": "BP6-LUV-015-SIDECAR-BFF-HANDOFF: finalize BFF and frontend handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 391,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:36:26Z",
+      "resolved_at": "2026-04-17T07:37:43Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:46:33Z",
+      "resolved_at": "2026-04-17T07:53:06Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:17:48Z",
+      "resolved_at": "2026-04-17T08:23:30Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:25:04Z",
+      "resolved_at": "2026-04-17T08:31:42Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:41:50Z",
+      "resolved_at": "2026-04-17T08:42:41Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:43:35Z",
+      "resolved_at": "2026-04-17T08:44:25Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:45:20Z",
+      "resolved_at": "2026-04-17T08:45:43Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T08:54:02Z",
+      "resolved_at": "2026-04-17T08:54:38Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:05:56Z",
+      "resolved_at": "2026-04-17T09:07:14Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:10:47Z",
+      "resolved_at": "2026-04-17T09:11:21Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:12:17Z",
+      "resolved_at": "2026-04-17T09:14:21Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet complete at support/sidecars/BP6-LUV-015/BP6-LUV-015-SIDECAR-BFF-HANDOFF.md. Covers: BFF gap resolution history (all 3 gaps closed), source commit replay blocker, operator journey for F-042 Promotion Review, 4 frontend files with required changes, example payload, and reviewer checklist. No canonical truth was modified.",
+      "status": "done",
+      "created_at": "2026-04-17T09:26:36Z",
+      "resolved_at": "2026-04-17T09:29:22Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer changes requested: the handoff packet currently misstates .coordination/requests/F-042-bff-gap.yaml and .coordination/responses/F-042-lovable-prompt.md (they still say errors[] / error, not detail.error.* / unavailable), and §6 cites docs/examples/F-042-review-page.json as progress:null + degraded/unavailable even though the file still shows progress: 0.82 and all-ok surfaces. Please align the packet to the actual referenced artifacts or change the citations to files that support the newer contract.",
+      "status": "done",
+      "created_at": "2026-04-17T09:29:22Z",
+      "resolved_at": "2026-04-17T09:29:22Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All reviewer-identified mismatches corrected: §3.1 now accurately reflects F-042-bff-gap.yaml (errors[] / 'error'), §5.1/5.2 updated to match, §6 shows actual F-042-review-page.json payload (progress:0.82, all-ok), §8 blocker corrected. Packet is self-consistent with actual referenced artifacts. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T09:32:24Z",
+      "resolved_at": "2026-04-17T09:44:44Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review failed: the packet still conflicts with .coordination/responses/F-042-lovable-ui-task.yaml and docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md on error-envelope and surface-status requirements (packet says errors[] / ok|error, published frontend handoff says detail.error.* / ok|degraded|unavailable), and §4 invents an unsupported POST body { action: 'promote_to_paper', plan_id }. Please align §§3.1, 4, 5.1, 5.2, 6, 8, and the checklist to the published frontend handoff artifacts.",
+      "status": "done",
+      "created_at": "2026-04-17T09:44:44Z",
+      "resolved_at": "2026-04-17T09:44:44Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All Codex re-review items resolved: §3.1 now correctly reflects published frontend handoff (detail.error.* / ok|degraded|unavailable); §4 POST body replaced with published ApproveDeployment command contract from FRONTEND_CHANGE_SPEC.md (removed unsupported promote_to_paper shape); §5.1 references detail.error.*; §5.2 SurfaceStatus is ok|degraded|unavailable; §6 degradation note references degraded/unavailable; §8 surface-status blocker inverted to correct direction; §9 checklist updated. All sections now aligned to F-042-lovable-ui-task.yaml and docs/pantheon-handoffs/F-042/FRONTEND_CHANGE_SPEC.md.",
+      "status": "done",
+      "created_at": "2026-04-17T09:49:01Z",
+      "resolved_at": "2026-04-17T09:51:36Z"
+    },
+    {
+      "task_id": "BP6-LUV-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex re-review passed against the published F-042 task YAML and frontend change spec; sidecar packet is aligned and ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-17T09:51:36Z",
+      "resolved_at": "2026-04-17T09:52:48Z"
+    }
+  ],
+  "blockers": []
+}

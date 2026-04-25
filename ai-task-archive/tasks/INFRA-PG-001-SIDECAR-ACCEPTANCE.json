@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T18:41:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare INFRA-PG-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 INFRA-PG-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: all 3 acceptance gates passed, Codex review approved. Artifact support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-ACCEPTANCE.md marked done. No canonical truth modified.",
+    "last_update": "2026-04-17T18:41:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INFRA-PG-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "acceptance packet captures the compose/env/dependency scaffold correctly; the late schema-ownership fix from commit 4018762 is covered by the paired review packet and by live revalidation."
+    ],
+    "review_file": "support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:41:26Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1568d5d0c32b3698c5968ebfd009c857f1576227",
+      "commit_subject": "INFRA-PG-001-SIDECAR-ACCEPTANCE: finalize acceptance packet as done",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 475,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:36:20Z",
+      "resolved_at": "2026-04-17T16:41:52Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:04:29Z",
+      "resolved_at": "2026-04-17T17:07:52Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:18:26Z",
+      "resolved_at": "2026-04-17T17:21:53Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:23:51Z",
+      "resolved_at": "2026-04-17T17:28:35Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:30:26Z",
+      "resolved_at": "2026-04-17T17:32:13Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:34:43Z",
+      "resolved_at": "2026-04-17T17:39:35Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:55:25Z",
+      "resolved_at": "2026-04-17T17:57:57Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete. All 3 gates pass. Artifact: support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-ACCEPTANCE.md. Two non-blocking notes included for reviewer consideration.",
+      "status": "done",
+      "created_at": "2026-04-17T18:08:44Z",
+      "resolved_at": "2026-04-17T18:40:19Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: acceptance packet is sufficient for the compose/env/dependency snapshot, and the late schema-owner fix is explicitly covered by the paired review packet plus live revalidation.",
+      "status": "done",
+      "created_at": "2026-04-17T18:40:19Z",
+      "resolved_at": "2026-04-17T18:41:26Z"
+    }
+  ],
+  "blockers": []
+}

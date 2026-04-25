@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "TW-04-REPLAY-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-19T22:13:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TW-04-REPLAY-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare TW-04-REPLAY-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 TW-04-REPLAY-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "TW-03-COMPARE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/TW-04-REPLAY-001/TW-04-REPLAY-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Verification confirmed: support artifact complete at support/sidecars/TW-04-REPLAY-001/TW-04-REPLAY-001-SIDECAR-ACCEPTANCE.md, all three parent acceptance criteria crosswalked to published artifacts, dependency closure on TW-03-COMPARE-001 satisfied, remaining BFF runtime work honestly stated as non-goal.",
+    "last_update": "2026-04-19T22:13:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "TW-04-REPLAY-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 已校正為目前 repo 真相：（1）support artifact 仍只落在 support/sidecars/；（2）parent TW-04 已進 review，TW-04 replay contract pack、screen spec、example payload、PACKET_FAMILY 與 frontend SA 均已發布且互相一致；（3）packet 現在明確區分 contract publication 與 pending-BFF runtime blocker，可作為 parent review/closeout 的支援材料。"
+    ],
+    "review_file": "support/sidecars/TW-04-REPLAY-001/TW-04-REPLAY-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T22:13:04Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3f2424c4ddb44ac0b44beec5c296e821e4c404e8",
+      "commit_subject": "TW-04-REPLAY-001-SIDECAR-ACCEPTANCE finalize: record metadata checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "TW-04-REPLAY-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 770,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TW-04-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet ready at support/sidecars/TW-04-REPLAY-001/TW-04-REPLAY-001-SIDECAR-ACCEPTANCE.md. Crosswalk maps the 3 parent criteria to 6 missing BFF contracts. Upstream TW-01/TW-02/TW-03 confirmed published. Minimum contract shape table drawn from gap matrix §E4 and PACKET_FAMILY.md §TW-04.",
+      "status": "done",
+      "created_at": "2026-04-19T22:06:04Z",
+      "resolved_at": "2026-04-19T22:11:28Z"
+    },
+    {
+      "task_id": "TW-04-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Acceptance packet now matches current TW-04 publication state and cleanly separates contract publication from pending-BFF runtime work. Owner can finalize this sidecar when ready.",
+      "status": "done",
+      "created_at": "2026-04-19T22:11:28Z",
+      "resolved_at": "2026-04-19T22:13:04Z"
+    }
+  ],
+  "blockers": []
+}

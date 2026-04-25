@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "task_id": "BP6-LUV-011-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T02:28:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-LUV-011-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP6-LUV-011 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP6-LUV-011，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP6-LUV-011/BP6-LUV-011-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet finalized and archived as support-only; parent BP6-LUV-011 remains open pending PKT-001-governance-review-queue loop-return artifacts.",
+    "last_update": "2026-04-17T02:28:30Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-LUV-011",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T02:28:30Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c19317cac7e1295b380aadc8f17981daff35a1ec",
+      "commit_subject": "BP6-LUV-011-SIDECAR-ACCEPTANCE: finalize status metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP6-LUV-011-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 285,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-LUV-011-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet ready: BP6-LUV-011 currently has one completed PKT-001 loop (deployment review) and one remaining pending-execution loop (governance review queue); packet accurately captures dependency state and missing closure artifacts.",
+      "status": "done",
+      "created_at": "2026-04-17T02:24:29Z",
+      "resolved_at": "2026-04-17T02:26:29Z"
+    },
+    {
+      "task_id": "BP6-LUV-011-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet approved; BP6-LUV-011 is accurately summarized as partially complete, with governance review queue still waiting on loop return artifacts.",
+      "status": "done",
+      "created_at": "2026-04-17T02:26:29Z",
+      "resolved_at": "2026-04-17T02:28:30Z"
+    }
+  ],
+  "blockers": []
+}

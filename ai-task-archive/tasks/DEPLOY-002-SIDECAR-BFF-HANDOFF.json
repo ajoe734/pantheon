@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-17T23:17:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare DEPLOY-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 DEPLOY-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DEPLOY-001"
+    ],
+    "artifacts": [
+      "support/sidecars/DEPLOY-002/DEPLOY-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "BFF handoff packet finalized. Artifact support/sidecars/DEPLOY-002/DEPLOY-002-SIDECAR-BFF-HANDOFF.md complete and reviewer-approved. All 33 L1 surfaces, 4 composed operator views, 3 SSE streams, and command surface confirmed implemented. Compose wiring, RBAC, error codes, and port/host mappings aligned with current BFF main.py. Sidecar boundary maintained — no canonical truth modified.",
+    "last_update": "2026-04-17T23:17:24Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEPLOY-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Reviewer cleanup: 修正 handoff packet 中與 main.py 不一致的 frontend-facing 細節，包含 read-surface RBAC、viewer token 限制、response families、degradation semantics、pagination 參數，以及補齊 LiquidateAll / IssueSafeMode / ExecuteEvolutionAction 權限矩陣。文件仍維持 sidecar/support 邊界，未修改 canonical truth。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T23:17:24Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c410737ef1f701fb0f23784e85f7d385af76ddc5",
+      "commit_subject": "DEPLOY-002-SIDECAR-BFF-HANDOFF: mark handoff packet as approved",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "DEPLOY-002-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 478,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet complete at support/sidecars/DEPLOY-002/DEPLOY-002-SIDECAR-BFF-HANDOFF.md. Key findings: (1) all 33 L1 surfaces + 4 composed views + 3 SSE streams implemented; (2) query gap is data wiring not routing — env vars PANTHEON_GOVERNANCE_DATA_DIR and PANTHEON_RUNTIME_DATA_DIR must be set in compose; (3) frontend handoff materials (auth, envelopes, RBAC, SSE, errors) ready in §5. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-17T22:58:06Z",
+      "resolved_at": "2026-04-17T23:00:50Z"
+    },
+    {
+      "task_id": "DEPLOY-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested: update the handoff packet to reflect current compose wiring (BFF_DATA_DIR volume plus PANTHEON_GOVERNANCE_DATA_DIR and PANTHEON_RUNTIME_DATA_DIR are already configured), fix the internal base URL to operator-bff:8001, and align RBAC plus error/degradation guidance with current BFF implementation before resubmitting for review.",
+      "status": "done",
+      "created_at": "2026-04-17T23:00:50Z",
+      "resolved_at": "2026-04-17T23:00:50Z"
+    },
+    {
+      "task_id": "DEPLOY-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet v2 complete at support/sidecars/DEPLOY-002/DEPLOY-002-SIDECAR-BFF-HANDOFF.md. Changes vs v1: (1) port corrected to 8001, host-mapped 18001; (2) all compose wiring confirmed already in place — BFF_DATA_DIR, PANTHEON_GOVERNANCE_DATA_DIR, PANTHEON_RUNTIME_DATA_DIR, INCIDENTS_DATA_DIR, volumes and PANTHEON_INTERNAL_API_URL all present in docker-compose.yml; (3) RBAC table expanded to include approver role and command-surface role requirements per main.py; (4) error codes §5.8 now match ErrorCode enum exactly (INVALID_TOKEN, INSUFFICIENT_ROLE, MFA_REQUIRED, OBJECT_NOT_FOUND, INVALID_PARAMS, INVALID_STATE, PRECONDITION_NOT_MET, CONCURRENT_MODIFICATION, DOWNSTREAM_UNAVAILABLE). No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-17T23:09:02Z",
+      "resolved_at": "2026-04-17T23:13:06Z"
+    },
+    {
+      "task_id": "DEPLOY-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved after reviewer cleanup of support artifact; handoff packet now matches current BFF implementation and is ready for parent-owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-17T23:13:06Z",
+      "resolved_at": "2026-04-17T23:17:24Z"
+    }
+  ],
+  "blockers": []
+}

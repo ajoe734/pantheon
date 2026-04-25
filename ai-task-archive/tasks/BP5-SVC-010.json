@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-010",
+  "archived_at": "2026-04-15T22:13:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-010",
+    "title": "Realize the lineage read model and performance service path",
+    "summary_zh": "把 normalized lineage edges、derived-only read model 與高效能 read service path 落成真實 API、benchmark corpus 與 p95 驗證。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-009"
+    ],
+    "artifacts": [
+      "services/telemetry/lineage_read/service.py",
+      "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md"
+    ],
+    "acceptance": [
+      "lineage reads are exposed through a dedicated service path over normalized edges and derived read models",
+      "deep graph traversal has documented performance targets and benchmark evidence"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized lineage read service HTTP surface after review approval; delivery commit 38aa953 records the telemetry HTTP endpoints, 26 lineage unit tests and 7 route tests pass, and reviewer-approved benchmark/SLA evidence is accepted.",
+    "last_update": "2026-04-15T22:13:18Z",
+    "review_notes_zh": [
+      "審查通過",
+      "接受條件全達成、L1 政策合規、26 單元測試 + 7 路由測試全通過、benchmark 均在 SLA 預算內",
+      "下游解鎖：BP5-SVC-011、BP5-SVC-014、BP5-LUV-007、BP5-WB-006"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-010-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T22:13:18Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "38aa953d93dc7dc490b30dde3d6df371877c5cab",
+      "commit_subject": "BP5-SVC-010: expose lineage read service HTTP surface",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "BP5-SVC-010",
+        "LLM-Agent": "Codex",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 73,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented lineage HTTP routes and verified route tests plus LIN-002 benchmark budgets; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-15T22:08:05Z",
+      "resolved_at": "2026-04-15T22:10:32Z"
+    },
+    {
+      "task_id": "BP5-SVC-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. All acceptance criteria met, L1 policy compliant, 26 unit + 7 route tests pass, benchmarks within SLA budget. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T22:10:32Z",
+      "resolved_at": "2026-04-15T22:13:18Z"
+    }
+  ],
+  "blockers": []
+}

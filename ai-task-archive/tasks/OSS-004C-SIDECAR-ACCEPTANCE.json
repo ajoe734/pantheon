@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "OSS-004C-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-19T00:44:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-004C-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OSS-004C acceptance packet and dependency map",
+    "summary_zh": "平行支援 OSS-004C，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: EP4 Proof Run",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OSS-004A",
+      "OSS-004B"
+    ],
+    "artifacts": [
+      "support/sidecars/OSS-004C/OSS-004C-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved task: acceptance packet verified — all eight EP4 proof planes documented (approval, deployment, runtime binding, paper execution, telemetry, incident/health, kill-switch, rollback), upstream dependency status confirmed (OSS-004A done, OSS-004B done), evidence bundle shape aligned, EP5 scope boundary declared. No canonical truth modified. Support artifact complete and closed.",
+    "last_update": "2026-04-19T00:44:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-004C",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "review packet 已校正為目前 repo 真相；parent 狀態、archived evidence 路徑、八個 EP4 proof planes 與 repo-current summary/evidence 命名均已對齊。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T00:44:25Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "ea3eb9e8861c9dbefe9af69274b4ae9746f2f673",
+      "commit_subject": "OSS-004C-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "OSS-004C-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 672,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-004C-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete at support/sidecars/OSS-004C/OSS-004C-SIDECAR-ACCEPTANCE.md. Eight EP4 proof planes documented (approval, deployment, runtime binding, paper execution, telemetry, incident/health, kill-switch, rollback), upstream dependency status confirmed, evidence bundle shape aligned with dual-vm-acceptance-results.md, and EP5 scope boundary declared. Support-only artifact — no canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-19T00:33:45Z",
+      "resolved_at": "2026-04-19T00:42:40Z"
+    },
+    {
+      "task_id": "OSS-004C-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet approved: OSS-004C sidecar now accurately restates the current parent review state, archived EP4 evidence packet shape, eight EP4 acceptance planes, upstream dependency status, and EP5 scope boundary without modifying canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-19T00:42:40Z",
+      "resolved_at": "2026-04-19T00:44:25Z"
+    }
+  ],
+  "blockers": []
+}

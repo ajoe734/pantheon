@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-20T05:08:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AUTO-HARDEN-KW01-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AUTO-HARDEN-KW01-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Auto Worker - Truth Hardening",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AUTO-HARDEN-KW01-001/AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the Claude-approved KW-01 sidecar BFF handoff packet to done. Support-only artifact remains the accepted handoff for BFF/frontend briefing; no canonical or runtime changes were required for closeout.",
+    "last_update": "2026-04-20T05:08:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AUTO-HARDEN-KW01-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar BFF handoff packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）KW-01 list/detail routes 存在（main.py:6404-6521），service-backed store 優先邏輯在 read_store.py:4018-4026 確認；（3）4 個 pytest tests 全部通過（contract shape、service override、data-dir discovery）；（4）已修正 Section 3 中的 stale 行號（6126-6219 → 6404-6521）。Operator journey、surface state 語義、前端 consume rules 均正確。Packet 可作為 KW-01 post-hardening 前端交接的支援材料。"
+    ],
+    "review_file": "support/sidecars/AUTO-HARDEN-KW01-001/AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T05:08:27Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 806,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:44:53Z",
+      "resolved_at": "2026-04-20T03:48:57Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:52:06Z",
+      "resolved_at": "2026-04-20T03:54:26Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:57:56Z",
+      "resolved_at": "2026-04-20T03:58:20Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:03:58Z",
+      "resolved_at": "2026-04-20T04:05:09Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:07:28Z",
+      "resolved_at": "2026-04-20T04:08:26Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:29:31Z",
+      "resolved_at": "2026-04-20T04:29:46Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:36:11Z",
+      "resolved_at": "2026-04-20T04:37:06Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:55:07Z",
+      "resolved_at": "2026-04-20T04:55:31Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Created support/sidecars/AUTO-HARDEN-KW01-001/AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF.md capturing the post-hardening KW-01 BFF/frontend handoff: service-owned institutional memory store precedence, query semantics, operator journey, and frontend consume rules. Verified with pytest services/control-plane/bff/test_kw01_institutional_memory_contract.py (4 passed).",
+      "status": "done",
+      "created_at": "2026-04-20T05:03:40Z",
+      "resolved_at": "2026-04-20T05:06:18Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar BFF handoff packet reviewed and approved. All acceptance criteria met: support-only artifact, tests pass (4/4), service-backed truth precedence confirmed in source. Minor stale line reference corrected in Section 3 during review. Returning to Codex for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-20T05:06:18Z",
+      "resolved_at": "2026-04-20T05:08:27Z"
+    }
+  ],
+  "blockers": []
+}

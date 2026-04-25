@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "APP-003-CW04-IMPL-001",
+  "archived_at": "2026-04-22T14:51:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-CW04-IMPL-001",
+    "title": "Implement CW-04 Red-team Memo route family",
+    "summary_zh": "補上已 ratified 但尚未落地的 CW-04 memo route family 與 governance handoff 行為。",
+    "phase": "Execution / Consultation Workbench Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-CW02-IMPL-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "docs/bff/CW-04-redteam-memo.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "Consult memo list and detail routes are implemented",
+      "Governance handoff fields and allowedActions match the ratified contract",
+      "Tests cover memo lifecycle mapping and degraded behavior"
+    ],
+    "next": "Finalized CW-04 as done after re-verifying the approved worktree state: route-live memo list/detail routes and governance gate remain clean, 30 targeted BFF tests passed, and docs/bff/CW-04-redteam-memo.md now matches the route-live truth while the CW-04 frontend handoff/UI activation follow-up stays tracked separately.",
+    "last_update": "2026-04-22T14:51:33Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "CW-04 memo list/detail routes 與 governance gate 已對齊 ratified contract",
+      "7 個 CW-04 contract test 與 28 個鄰近 CW workbench/PKT-015 test 全數通過",
+      "回交 Codex 進行 review_approved -> done 收尾"
+    ],
+    "review_file": "docs/reviews/APP-003-CW04-IMPL-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T14:51:33Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1071,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned APP-003-CW04-IMPL-001 away from sidecar-only lane Qwen; owner Qwen -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-22T05:44:42Z",
+      "resolved_at": "2026-04-22T06:18:27Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T06:18:27Z",
+      "resolved_at": "2026-04-22T06:18:51Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-22T06:20:24Z",
+      "resolved_at": "2026-04-22T06:20:24Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T06:45:03Z",
+      "resolved_at": "2026-04-22T07:35:08Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:35:08Z",
+      "resolved_at": "2026-04-22T07:36:57Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented CW-04 consult memo list/detail routes, read-store projections, governance handoff gating, and consultation overview sync. Targeted BFF tests passed: 30 passed across CW-04, PKT-015, CW-02, and CW-03.",
+      "status": "done",
+      "created_at": "2026-04-22T08:17:54Z",
+      "resolved_at": "2026-04-22T14:40:42Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented CW-04 consult memo list/detail routes, read-store projections, governance handoff gating, and consultation overview sync. Targeted BFF tests passed: 30 passed across CW-04, PKT-015, CW-02, and CW-03.",
+      "status": "done",
+      "created_at": "2026-04-22T14:40:42Z",
+      "resolved_at": "2026-04-22T14:44:51Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CW-04 memo route family aligned with the ratified contract; returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T14:44:51Z",
+      "resolved_at": "2026-04-22T14:51:33Z"
+    }
+  ],
+  "blockers": []
+}

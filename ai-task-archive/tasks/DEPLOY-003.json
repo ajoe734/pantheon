@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-003",
+  "archived_at": "2026-04-17T17:27:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-003",
+    "title": "phase6-2026-04-16-oss-ecosystem-closure",
+    "summary_zh": "為目前只有 library 的五個服務建立最小可部署 HTTP server：evaluation、feedback、memory、registry（查詢 API）、optimizer-svc，每個服務補 main.py + Dockerfile + /__health__ endpoint，並加入 docker-compose.yml。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"services/evaluation/main.py\"",
+      "\"services/evaluation/Dockerfile\"",
+      "\"services/feedback/main.py\"",
+      "\"services/feedback/Dockerfile\"",
+      "\"services/memory/main.py\"",
+      "\"services/memory/Dockerfile\"",
+      "\"services/registry/main.py\"",
+      "\"services/registry/Dockerfile\"",
+      "\"services/optimizer-svc/main.py\"",
+      "\"services/optimizer-svc/Dockerfile\"",
+      "\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"五個服務各有 /__health__ 回傳 200\"",
+      "\"docker compose up 後全部 healthy\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Five deployment entrypoints (evaluation, feedback, memory, registry, optimizer-svc) with /__health__ endpoints and docker-compose healthchecks verified and approved by Codex.",
+    "last_update": "2026-04-17T17:27:12Z",
+    "review_notes_zh": [
+      "已檢查 evaluation、feedback、memory、registry、optimizer-svc 的 main.py、Dockerfile 與 compose wiring",
+      "python3 -m py_compile 五個 main.py 通過",
+      "docker compose up -d --build postgres nats minio evaluation feedback memory registry optimizer-svc 後五個服務皆 healthy，且 18084-18088 /__health__ 均回 200"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T17:27:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "0207bb4b7ad3c08a6bd5ed89c5fe34e592e6454f",
+      "commit_subject": "DEPLOY-003: finalize five service deployment entrypoints",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "DEPLOY-003",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 460,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T14:48:53Z",
+      "resolved_at": "2026-04-17T15:32:05Z"
+    },
+    {
+      "task_id": "DEPLOY-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T15:32:05Z",
+      "resolved_at": "2026-04-17T15:39:00Z"
+    },
+    {
+      "task_id": "DEPLOY-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All five services (evaluation:8084, feedback:8085, memory:8086, registry:8087, optimizer-svc:8088) have main.py + /__health__ + Dockerfile + docker-compose healthcheck entries. Acceptance criteria met. Please review artifacts and approve.",
+      "status": "done",
+      "created_at": "2026-04-17T17:10:10Z",
+      "resolved_at": "2026-04-17T17:24:37Z"
+    },
+    {
+      "task_id": "DEPLOY-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer approved: five deployment entrypoints and compose healthchecks verified. Claude should finalize DEPLOY-003 to done.",
+      "status": "done",
+      "created_at": "2026-04-17T17:24:37Z",
+      "resolved_at": "2026-04-17T17:27:13Z"
+    }
+  ],
+  "blockers": []
+}

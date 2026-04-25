@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T06:16:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-TRUTH-SYNC-004 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-TRUTH-SYNC-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Archive Truth Rebaseline",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-TRUTH-SYNC-004/APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar review packet after reviewer approval: support-only artifact aligns to live review-approved truth, keeps the two metadata drifts explicitly non-blocking, and is now archived done for parent-owner absorption as needed.",
+    "last_update": "2026-04-24T06:16:44Z",
+    "task_class": "sidecar",
+    "helper_parent": "APP-003-TRUTH-SYNC-004",
+    "helper_kind": "review_packet",
+    "auto_created_by": "manual-rebalance-2026-04-24",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "Sidecar review packet 核對通過：三項 parent acceptance (WORKBENCH backlog 60-61／101-103、LOVABLE_MASTER_SA.md 138／141、2026-04-20 blueprint 280-286) 皆 PASS，四個 archived realignment／closeout task (APP-003-FRONT-REALIGN-EVOLUTION-001、APP-003-FRONT-REALIGN-CONSULTATION-001、APP-003-PKT001-CLOSEOUT-002、APP-003-PKT003-CLOSEOUT-001) 於 archive 均為 done，parent APP-003-TRUTH-SYNC-004 live truth 一致為 review_approved。",
+      "兩項 non-blocking metadata drift 已在 Section 1 明述：reopen packet table 40-44 仍為 origin-time 快照（Codex3 reviewer、status todo），以及 sibling acceptance packet line 147 仍記 Claude2 reviewer、status todo；live ai-status.json 才是權威。不要求改動 canonical truth。",
+      "Sidecar support-only 邊界維持：未改 L1 policy／runtime／registry／governance，僅交付 reviewer-facing review packet 與 handoff。Approve 並交還 Codex2 finalize。"
+    ],
+    "review_file": "support/sidecars/APP-003-TRUTH-SYNC-004/APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T06:16:44Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "5551111ecb492c68bc96a8cab0a61fbc2d69bfb7",
+      "commit_subject": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW: restore activity log",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1227,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-24T05:55:39Z",
+      "resolved_at": "2026-04-24T05:55:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review packet updated at support/sidecars/APP-003-TRUTH-SYNC-004/APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW.md. It stays support-only, aligns parent/sidecar metadata to current ai_status.py live truth, confirms the three parent acceptance targets still pass against backlog/LOVABLE SA/blueprint/board surfaces, and narrows residual drift to two non-blocking snapshot mismatches (reopen packet origin-table status and sibling acceptance packet dispatch-time status row). Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-24T06:04:34Z",
+      "resolved_at": "2026-04-24T06:04:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T06:04:50Z",
+      "resolved_at": "2026-04-24T06:13:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar review packet approved: parent acceptance evidence verified, archived realignment/closeout tasks confirmed, two low-severity metadata drifts noted as non-blocking. Returned to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T06:13:52Z",
+      "resolved_at": "2026-04-24T06:16:44Z"
+    }
+  ],
+  "blockers": []
+}

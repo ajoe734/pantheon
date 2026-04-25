@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "AUTO-HARDEN-RW03-001",
+  "archived_at": "2026-04-20T05:19:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-HARDEN-RW03-001",
+    "title": "Harden RW-03 analysis truth source",
+    "summary_zh": "把已 live 的 RW-03 analysis list detail 路徑從 local fallback 推進到 service-owned truth，讓 aggregation 不再只是 local snapshot。",
+    "phase": "Execution / Auto Worker - Truth Hardening",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "RW-03 不再主要依賴 local fallback",
+      "Aggregation source 有明確 owner",
+      "Regression tests 更新"
+    ],
+    "next": "Owner finalized approved RW-03 truth-hardening work. Research analysis list/detail now prefer the service-backed store, local fallback only engages when the backend store is unavailable, and pytest services/control-plane/bff/test_rw03_analyze_contract.py -q previously passed (4/4).",
+    "last_update": "2026-04-20T05:19:44Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer verified the RW-03 list/detail path now reads research_analyses through the service-backed adapter first, with local fallback only when the backend store is unavailable. Targeted contract regression pytest services/control-plane/bff/test_rw03_analyze_contract.py -q passed (4/4)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T05:19:44Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 807,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned AUTO-HARDEN-RW03-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:10:14Z",
+      "resolved_at": "2026-04-20T03:12:26Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:12:25Z",
+      "resolved_at": "2026-04-20T03:28:32Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:45:41Z",
+      "resolved_at": "2026-04-20T04:01:55Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T04:31:32Z",
+      "resolved_at": "2026-04-20T05:02:44Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:07:06Z",
+      "resolved_at": "2026-04-20T05:08:05Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented RW-03 truth hardening in read_store: added service-backed research_analyses dataset, switched list/detail to service-first reads, and verified with pytest services/control-plane/bff/test_rw03_analyze_contract.py -q (4 passed).",
+      "status": "done",
+      "created_at": "2026-04-20T05:11:26Z",
+      "resolved_at": "2026-04-20T05:17:50Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW03-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "RW-03 research analysis reads now prefer the service-backed store, local fallback only engages when the backend store is unavailable, and pytest services/control-plane/bff/test_rw03_analyze_contract.py -q passed (4/4). Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T05:17:50Z",
+      "resolved_at": "2026-04-20T05:19:44Z"
+    }
+  ],
+  "blockers": []
+}

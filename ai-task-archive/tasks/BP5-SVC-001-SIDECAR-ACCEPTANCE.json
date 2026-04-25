@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T15:39:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-SVC-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-SVC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-001/BP5-SVC-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet finalized. AC-1/AC-2 gap analysis, dependency map (BP5-SVC-002/OSS-001/CICD-001 blocked), service inventory, proposed port/env/volume contract, and 5 open questions delivered as advisory support input. No canonical files modified. Codex to resolve OQ-1/OQ-2 and adopt contract into canonical delivery.",
+    "last_update": "2026-04-15T15:39:53Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/BP5-SVC-001/BP5-SVC-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T15:39:53Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "bc7f6373bc7a356d3fe491a68ead73e4305285db",
+      "commit_subject": "BP5-SVC-001-SIDECAR-ACCEPTANCE: finalize acceptance packet as done",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 31,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete. Covers: acceptance checklist for AC-1 and AC-2 (both currently unmet), dependency map (BP5-SVC-002, BP5-OSS-001, BP5-CICD-001 directly blocked), service inventory (what has Dockerfiles vs. what needs wrapping), proposed port/env/volume baseline contract, and 5 open questions for Codex to resolve before Gemini review of BP5-SVC-001. Packet is advisory only — no canonical files modified.",
+      "status": "done",
+      "created_at": "2026-04-15T15:32:28Z",
+      "resolved_at": "2026-04-15T15:35:00Z"
+    },
+    {
+      "task_id": "BP5-SVC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: fix runtime-control health evidence (/__health__ exists), correct feedback service framework (FastAPI, not Flask), and align the BFF_READ_SURFACE_STATE draft with current accepted values (fresh/degraded/stale/unavailable; 'live' is undefined).",
+      "status": "done",
+      "created_at": "2026-04-15T15:35:00Z",
+      "resolved_at": "2026-04-15T15:35:00Z"
+    },
+    {
+      "task_id": "BP5-SVC-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "v2 corrections applied per Codex review: (1) runtime-control health is GET /__health__ (not 'none') — confirmed in internal_api.py:874; (2) feedback service is FastAPI (not Flask) — confirmed in feedback/main.py:19; (3) BFF_READ_SURFACE_STATE propose value corrected from 'live' (undefined) to 'fresh' with note that accepted values are fresh/degraded/stale/unavailable.",
+      "status": "done",
+      "created_at": "2026-04-15T15:36:21Z",
+      "resolved_at": "2026-04-15T15:38:38Z"
+    },
+    {
+      "task_id": "BP5-SVC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer validation passed. Packet remains non-canonical, but the v2 corrections are verified and the acceptance/dependency handoff is approved for Claude to finalize or archive as support input.",
+      "status": "done",
+      "created_at": "2026-04-15T15:38:38Z",
+      "resolved_at": "2026-04-15T15:39:53Z"
+    }
+  ],
+  "blockers": []
+}

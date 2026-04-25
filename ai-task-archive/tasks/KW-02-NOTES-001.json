@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "KW-02-NOTES-001",
+  "archived_at": "2026-04-19T19:45:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "KW-02-NOTES-001",
+    "title": "Publish Research Note ownership and attachment contract",
+    "summary_zh": "為 KW-02 補齊 note create/list/detail、owner_ref 與 attachment taxonomy，讓 Knowledge Workbench 有 truthful notes surface。",
+    "phase": "Execution / Wave 3 - Module Contract Expansion",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "KW-01-FOUNDATION-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "note create list and detail routes are published",
+      "ownership and attachment semantics are explicit",
+      "notes no longer rely on client invented taxonomy"
+    ],
+    "next": "Owner finalized approved task: docs/bff/KW-02-research-notes.md and docs/examples/KW-02-research-notes.json published, PACKET_FAMILY.md updated, all three acceptance criteria met (routes published, ownership/attachment semantics explicit, no client-invented taxonomy). Closing KW-02-NOTES-001.",
+    "last_update": "2026-04-19T19:45:54Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：docs/bff/KW-02-research-notes.md 已完整發布 create/list/detail routes、owner_ref、attachment taxonomy、referential integrity、degradation semantics，符合 gap matrix 與 task brief acceptance。",
+      "已同步修正 docs/lovable/PANTHEON_FRONTEND_SA.md，使 KW-02 readiness 與 PACKET_FAMILY.md 一致，避免前端入口文件仍將 notes 誤標為 blocked。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T19:45:54Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "e56e249b5523e207faca5755a3a1e56535cf7ccb",
+      "commit_subject": "KW-02-NOTES-001 finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Publish Research Note ownership and attachment contract": "create/list/detail",
+        "LLM-Agent": "Claude",
+        "Task-ID": "KW-02-NOTES-001",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 752,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "KW-02-NOTES-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:00:19Z",
+      "resolved_at": "2026-04-19T19:01:12Z"
+    },
+    {
+      "task_id": "KW-02-NOTES-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:07:23Z",
+      "resolved_at": "2026-04-19T19:09:26Z"
+    },
+    {
+      "task_id": "KW-02-NOTES-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:09:25Z",
+      "resolved_at": "2026-04-19T19:10:22Z"
+    },
+    {
+      "task_id": "KW-02-NOTES-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "KW-02 contract ready for review. Deliverables: (1) docs/bff/KW-02-research-notes.md — create/list/detail routes, owner_ref contract, attachment taxonomy, referential integrity rules, degradation semantics, non-goals; (2) docs/examples/KW-02-research-notes.json — list, detail, create, and degraded example payloads; (3) PACKET_FAMILY.md updated — KW-02 Lovable gate now true, backend gap matrix rows resolved. Acceptance criteria: note create/list/detail routes published, ownership and attachment semantics explicit, notes no longer rely on client-invented taxonomy.",
+      "status": "done",
+      "created_at": "2026-04-19T19:13:35Z",
+      "resolved_at": "2026-04-19T19:15:58Z"
+    },
+    {
+      "task_id": "KW-02-NOTES-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2. KW-02 contract is complete and cross-doc readiness is now aligned; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T19:15:58Z",
+      "resolved_at": "2026-04-19T19:45:54Z"
+    }
+  ],
+  "blockers": []
+}

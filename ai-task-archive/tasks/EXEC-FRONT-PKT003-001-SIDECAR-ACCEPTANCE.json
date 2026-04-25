@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-21T16:29:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EXEC-FRONT-PKT003-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EXEC-FRONT-PKT003-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-FRONT-PKT003-001/EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved sidecar acceptance packet after aligning reviewer metadata and preserving the support-only handoff artifact. Archived as done; parent owner can decide whether to absorb it into mainline records.",
+    "last_update": "2026-04-21T16:29:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-FRONT-PKT003-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "packet 已核對：acceptance checklist 六項全部 PASS；replay-closeout 三階段修復弧（UI validation fix → returned artifact publication repair → API_GAP_REQUESTS.json alignment）記錄清楚且與已封存父任務一致；dependency map 從 EW-04 contract publication 到 route-live 實作到 frontend closeout 完整覆蓋；support artifact 範圍嚴格，未觸碰任何 canonical truth、L1 policy、或核心實作。可交由 parent owner 決定是否吸收進主線。"
+    ],
+    "review_file": "support/sidecars/EXEC-FRONT-PKT003-001/EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T16:29:35Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "7cba24341bc3e8af2efd63ba25057a98835cf488",
+      "commit_subject": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 985,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:22:28Z",
+      "resolved_at": "2026-04-21T03:29:36Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:29:36Z",
+      "resolved_at": "2026-04-21T03:44:31Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:44:31Z",
+      "resolved_at": "2026-04-21T03:45:32Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Support packet is ready at support/sidecars/EXEC-FRONT-PKT003-001/EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE.md. It maps the archived PKT-003 inspiration-graph frontend acceptance scope, the EW-04 -> route-live dependency chain, and the replay-clean repair arc that closed the parent task without reopening canonical truth or runtime/frontend implementations.",
+      "status": "done",
+      "created_at": "2026-04-21T04:15:39Z",
+      "resolved_at": "2026-04-21T04:25:02Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:25:02Z",
+      "resolved_at": "2026-04-21T16:16:43Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-PKT003-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved; all checklist items pass, replay-closeout arc is clearly documented and consistent with the archived parent record. Returned to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T16:16:43Z",
+      "resolved_at": "2026-04-21T16:29:35Z"
+    }
+  ],
+  "blockers": []
+}

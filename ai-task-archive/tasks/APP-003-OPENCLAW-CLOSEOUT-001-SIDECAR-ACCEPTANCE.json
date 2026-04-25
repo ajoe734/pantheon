@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T19:26:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-OPENCLAW-CLOSEOUT-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-OPENCLAW-CLOSEOUT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-DATASOURCE-US-001",
+      "APP-003-DATASOURCE-OPS-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-OPENCLAW-CLOSEOUT-001/APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Support packet remains support-only, preserves the missing human-gate artifact and run_ep5_canary_readiness.py import regression, and is handed off for parent-owner absorption.",
+    "last_update": "2026-04-24T19:26:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-OPENCLAW-CLOSEOUT-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 審查通過：acceptance packet 準確反映父任務當前狀態，並誠實保留兩個關鍵 gap（缺少 human-gate-packet.json、run_ep5_canary_readiness.py 重新執行因 kraken_adapter 相對匯入而失敗）",
+      "Sidecar scope 乾淨：只新增 support artifact，未動 L1 canonical truth 或父任務 lifecycle",
+      "Reviewer metadata 有 cosmetic drift（header 仍列 Codex2），父任務 owner 吸收時可順手更新"
+    ],
+    "review_file": "docs/reviews/sidecars/2026-04-24-APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:26:54Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1189,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet is ready at support/sidecars/APP-003-OPENCLAW-CLOSEOUT-001/APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE.md. It maps the parent closeout packet, EP5 canary bundle, dual-VM evidence, and datasource dependency reviews, and it preserves two current parent gaps: the referenced human-gate-packet.json is absent from docs/deployment/evidence, and the documented run_ep5_canary_readiness.py entrypoints now fail in this workspace with a kraken_adapter import error.",
+      "status": "done",
+      "created_at": "2026-04-24T18:39:22Z",
+      "resolved_at": "2026-04-24T18:41:48Z"
+    },
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet revalidated and refreshed at support/sidecars/APP-003-OPENCLAW-CLOSEOUT-001/APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE.md. Current workspace state still shows the same two parent gaps: no docs/deployment/evidence/**/human-gate-packet.json exists, and python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets --output-dir /tmp/pantheon/ep5-openclaw-sidecar/checklist still fails with ImportError from kraken_adapter package-relative imports. Working tree state remains: app-003-openclaw-closeout-packet.md untracked, ep5-canary-ready/README.md modified, run_ep5_canary_readiness.py modified, and this sidecar packet untracked.",
+      "status": "done",
+      "created_at": "2026-04-24T18:41:48Z",
+      "resolved_at": "2026-04-24T18:44:40Z"
+    },
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet revalidated at support/sidecars/APP-003-OPENCLAW-CLOSEOUT-001/APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE.md. Repo-local truth is unchanged: no docs/deployment/evidence/**/human-gate-packet.json exists, and python3 scripts/run_ep5_canary_readiness.py run-operator-checklist --env-file env/canary-exec.env.example --allow-empty-secrets --output-dir /tmp/pantheon/ep5-openclaw-sidecar/checklist still fails with ImportError from kraken_adapter package-relative imports. Workspace state for the cited files remains: app-003-openclaw-closeout-packet.md untracked, ep5-canary-ready/README.md modified, run_ep5_canary_readiness.py modified, and this sidecar packet untracked.",
+      "status": "done",
+      "created_at": "2026-04-24T18:44:40Z",
+      "resolved_at": "2026-04-24T18:45:21Z"
+    },
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T18:45:21Z",
+      "resolved_at": "2026-04-24T18:48:05Z"
+    },
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: sidecar acceptance packet truthfully preserves the two parent gaps (missing human-gate-packet.json, run_ep5_canary_readiness.py kraken_adapter import regression) and stays support-only. Review doc at docs/reviews/sidecars/2026-04-24-APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-ACCEPTANCE-review.md. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T18:48:05Z",
+      "resolved_at": "2026-04-24T19:26:54Z"
+    }
+  ],
+  "blockers": []
+}

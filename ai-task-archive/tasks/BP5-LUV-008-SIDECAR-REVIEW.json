@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "BP5-LUV-008-SIDECAR-REVIEW",
+  "archived_at": "2026-04-16T17:42:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-LUV-008-SIDECAR-REVIEW",
+    "title": "Prepare BP5-LUV-008 review packet and evidence summary",
+    "summary_zh": "平行支援 BP5-LUV-008，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-011",
+      "BP5-SVC-013",
+      "BP5-SVC-015"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-LUV-008/BP5-LUV-008-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only review packet after Claude approval. Packet preserves the corrected BP5-LUV-008 evidence summary, records incident as the shipped query key, and keeps GET /api/v1/postmortems explicitly deferred follow-up scope rather than shipped integration.",
+    "last_update": "2026-04-16T17:42:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-LUV-008",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過；sidecar review packet 完整準確，evidence bundle 修正記錄與已核准的 parent 狀態一致，無 canonical truth 改動。"
+    ],
+    "review_file": "support/sidecars/BP5-LUV-008/BP5-LUV-008-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T17:42:33Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3c1bc526a54dbaec4cf6b3e32c9884c5c7a6017a",
+      "commit_subject": "BP5-LUV-008-SIDECAR-REVIEW: finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP5-LUV-008-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 242,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-LUV-008-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Sidecar review packet is ready at support/sidecars/BP5-LUV-008/BP5-LUV-008-SIDECAR-REVIEW.md. It captures that parent BP5-LUV-008 is already review_approved, summarizes the corrected evidence bundle, and provides a suggested closeout message for the parent finalize-to-done step.",
+      "status": "done",
+      "created_at": "2026-04-16T16:59:39Z",
+      "resolved_at": "2026-04-16T17:04:37Z"
+    },
+    {
+      "task_id": "BP5-LUV-008-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar review packet is accurate and complete. Parent BP5-LUV-008 is correctly documented as review_approved with corrected evidence bundle (incident query key and deferred GET /api/v1/postmortems). Packet approved; Codex2 may finalize this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-16T17:04:37Z",
+      "resolved_at": "2026-04-16T17:42:34Z"
+    }
+  ],
+  "blockers": []
+}

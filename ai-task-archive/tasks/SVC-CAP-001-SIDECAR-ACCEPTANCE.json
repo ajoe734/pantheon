@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "SVC-CAP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T19:23:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CAP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-CAP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-CAP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-CAP-001/SVC-CAP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized review-approved sidecar packet. Support artifact remains support-only, records the archived parent closeout plus fresh capital compose/health evidence, and is now formally closed.",
+    "last_update": "2026-04-17T19:23:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-CAP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "acceptance packet 已從舊的 active-parent 敘述修正為 archived parent `SVC-CAP-001`：parent 目前是 `done`，並引用 archive snapshot 與 parent review notes，而不是過時的 `review`/`review_approved` 中間狀態。",
+      "reviewer 已在目前 workspace 重新執行 `docker compose -f docker-compose.yml up -d --build capital`、`docker compose ps capital`、`curl http://127.0.0.1:18092/health` 與 health inspect；capital 容器 healthy，/health 回 200。",
+      "封包現在把 `/__health__` vs `/health` 明確記錄為已在 parent review 接受的 wording drift，且只更新 support artifact，未觸及 canonical truth 或主要 runtime 實作。"
+    ],
+    "review_file": "support/sidecars/SVC-CAP-001/SVC-CAP-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T19:23:49Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "408029833be06e368885b9338f262e7f73d91632",
+      "commit_subject": "SVC-CAP-001-SIDECAR-ACCEPTANCE: finalize acceptance sidecar packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-CAP-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 474,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CAP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:20:05Z",
+      "resolved_at": "2026-04-17T17:24:13Z"
+    },
+    {
+      "task_id": "SVC-CAP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet prepared at support/sidecars/SVC-CAP-001/SVC-CAP-001-SIDECAR-ACCEPTANCE.md with live compose/health evidence. Review the packet and note the remaining parent acceptance wording drift: task text says /__health__ while current implementation and runtime evidence use /health.",
+      "status": "done",
+      "created_at": "2026-04-17T17:27:45Z",
+      "resolved_at": "2026-04-17T19:21:51Z"
+    },
+    {
+      "task_id": "SVC-CAP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: acceptance packet now reflects the archived parent closeout, includes a fresh capital compose/health rerun, and records the /__health__ wording drift as already accepted in the parent review notes. Scope constraint respected. Returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-04-17T19:21:51Z",
+      "resolved_at": "2026-04-17T19:23:49Z"
+    }
+  ],
+  "blockers": []
+}

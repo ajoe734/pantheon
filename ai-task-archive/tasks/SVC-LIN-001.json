@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "SVC-LIN-001",
+  "archived_at": "2026-04-17T18:20:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-LIN-001",
+    "title": "Create lineage-read-svc HTTP service from scratch",
+    "summary_zh": "從頭建立 services/lineage-read/ 最小可部署服務：實作 GET /api/v1/lineage（依 artifact_id/run_id/strategy_id 查詢 lineage 鏈路）、GET /api/v1/lineage/{id}、POST /api/v1/lineage（寫入）、/__health__，補 main.py、Dockerfile、requirements.txt，加入 docker-compose.yml。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"services/lineage-read/main.py\"",
+      "\"services/lineage-read/Dockerfile\"",
+      "\"services/lineage-read/requirements.txt\"",
+      "\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"GET /api/v1/lineage 回傳有效 JSON list\"",
+      "\"POST /api/v1/lineage 可寫入一筆 lineage record\"",
+      "\"/__health__ 回傳 200\"",
+      "\"docker compose up 後 healthy\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: all artifacts committed (main.py, Dockerfile, requirements.txt, docker-compose.yml wiring). Codex review approved; live build and API smoke checks passed. Task closed.",
+    "last_update": "2026-04-17T18:20:17Z",
+    "review_notes_zh": [
+      "- 已重讀 services/lineage-read 與 docker-compose.yml，路由、healthcheck、資料目錄與 task brief 一致。|- 以目前工作樹執行 docker compose build lineage-read、docker compose up -d lineage-read，容器進入 healthy。|- 實測 /__health__ 200、POST /api/v1/lineage 回傳 201、GET /api/v1/lineage 與 filter 查詢正常、GET /api/v1/lineage/{id} 可讀回剛建立紀錄。|- 無阻擋驗收的缺陷，已核准交還 owner 正式收尾。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:20:17Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6979ab53642c54ca5b1adcd9594a5f153568f48a",
+      "commit_subject": "SVC-LIN-001: finalize lineage-read-svc HTTP service",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "All artifacts delivered": "main.py (GET /api/v1/lineage, GET /api/v1/lineage/{id}, POST /api/v1/lineage, /__health__), Dockerfile, requirements.txt, docker-compose.yml wiring. Codex review approved.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-LIN-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 474,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-LIN-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T15:36:48Z",
+      "resolved_at": "2026-04-17T16:41:03Z"
+    },
+    {
+      "task_id": "SVC-LIN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "services/lineage-read/ is complete: main.py with GET /api/v1/lineage (filter by artifact_id/run_id/strategy_id), GET /api/v1/lineage/{id}, POST /api/v1/lineage (201), GET /__health__; Dockerfile uses python direct exec to avoid module-path issues with hyphenated dir; docker-compose.yml gains lineage-read service on port 8094 with healthcheck and lineage-data volume. All endpoints smoke-tested via live server.",
+      "status": "done",
+      "created_at": "2026-04-17T17:18:35Z",
+      "resolved_at": "2026-04-17T18:18:40Z"
+    },
+    {
+      "task_id": "SVC-LIN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: current lineage-read implementation and compose wiring satisfy the task brief; live build/up plus API smoke checks passed. Returned to Claude for final done transition.",
+      "status": "done",
+      "created_at": "2026-04-17T18:18:40Z",
+      "resolved_at": "2026-04-17T18:20:17Z"
+    }
+  ],
+  "blockers": []
+}

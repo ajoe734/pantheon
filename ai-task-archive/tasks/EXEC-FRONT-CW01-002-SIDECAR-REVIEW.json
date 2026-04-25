@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+  "archived_at": "2026-04-21T19:23:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+    "title": "Prepare EXEC-FRONT-CW01-002 review packet and evidence summary",
+    "summary_zh": "平行支援 EXEC-FRONT-CW01-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Frontend Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved sidecar review packet and closed it. Support-only evidence remains in support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-REVIEW.md for the parent owner to consume; parent closeout posture is unchanged by this helper task.",
+    "last_update": "2026-04-21T19:23:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-FRONT-CW01-002",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已複核 d9d64fe、f672af2、f00791b 與 request metadata。sidecar 現在正確保留 publication-truth blocker，並把 inspected chain 中第一個 route-wired commit 更正為 f672af2。"
+    ],
+    "review_file": "support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:23:16Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "7584ddf71227b1e7dfb0d7508d77723ae7d1b516",
+      "commit_subject": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW finalize approved review packet metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 997,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T18:58:33Z",
+      "resolved_at": "2026-04-21T19:00:16Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Published sidecar review packet at support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-REVIEW.md. Packet reconciles the 2026-04-20 publication-truth fail with the 2026-04-21 accepted frontend-feedback update, showing the blocker is resolved and the parent is now closeout-ready on the latest evidence.",
+      "status": "done",
+      "created_at": "2026-04-21T19:02:40Z",
+      "resolved_at": "2026-04-21T19:07:14Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet correction needed: the sidecar treats the parent as closeout-ready on d9d64fe-plus-a93cd85 chronology, but the handoff files themselves claim src/App.tsx wires both required routes while d9d64fe's App.tsx does not register /consultation/requests or /consultation/requests/:request_id. Revise the packet to preserve this blocker or reconcile it against one later truthful commit such as f00791b that contains the request pair, feedback bundle, and route wiring together.",
+      "status": "done",
+      "created_at": "2026-04-21T19:07:14Z",
+      "resolved_at": "2026-04-21T19:07:14Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Corrected sidecar review packet published at support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-REVIEW.md. Packet now preserves the remaining publication-truth blocker: d9d64fe contains the request pair, feedback bundle, and consult-request pages, but its src/App.tsx does not wire /consultation/requests or /consultation/requests/:request_id. f00791b is the first verified commit in the inspected chain that contains the request pair, feedback bundle, and route wiring together, yet the request pair still advertises source_commit d9d64fe. Please review the corrected sidecar as a support packet only.",
+      "status": "done",
+      "created_at": "2026-04-21T19:10:10Z",
+      "resolved_at": "2026-04-21T19:20:58Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer approved corrected sidecar packet. It now preserves the remaining publication-truth blocker and correctly identifies f672af2 as the earliest verified route-wired commit in the inspected chain; owner should finalize this support task.",
+      "status": "done",
+      "created_at": "2026-04-21T19:20:58Z",
+      "resolved_at": "2026-04-21T19:23:16Z"
+    }
+  ],
+  "blockers": []
+}
