@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-004",
+  "archived_at": "2026-04-15T18:10:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-004",
+    "title": "Realize the DeploymentPlan and stage-transition planner API",
+    "summary_zh": "把 DeploymentPlan 與 paper/canary/live/frozen transition planner 落成真實 API、read model 與 stage transition validator。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-003"
+    ],
+    "artifacts": [
+      "services/deployment/",
+      "PAPER_CANARY_LIVE_POLICY.md",
+      "ROLLBACK_AND_POSITION_SEMANTICS.md"
+    ],
+    "acceptance": [
+      "deployment plans are created, validated, and read through one deployable service surface",
+      "paper/canary/live/frozen stage transitions and rollback linkage are enforced by the planner"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized deployment planner service. Commit 4e70fa1 records the deployable API, contract, tests, and review evidence; owner re-ran 8 pytest cases and confirmed the review-approved scope is complete.",
+    "last_update": "2026-04-15T18:10:49Z",
+    "review_notes_zh": [
+      "審查通過：8 tests passed；routes 全覆蓋；PAPER_CANARY_LIVE_POLICY 與 ROLLBACK_AND_POSITION_SEMANTICS 對齊；domain 層邏輯未重複實作",
+      "非阻斷：freeze/resume transition 無 HTTP 層測試；draft 初始狀態未覆蓋；requirements.txt 未 pin 版本"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-004-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T18:10:49Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "4e70fa1156839b8e355ae4fc0b8f63925e9b403b",
+      "commit_subject": "BP5-SVC-004: realize deployment planner service",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-004",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 52,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Deployment service implemented under services/deployment with create/validate/list/get/status/read-model endpoints, file-backed deployment_plans.json persistence, and 8 passing pytest cases. Live uvicorn smoke was not run because uvicorn is unavailable in this environment.",
+      "status": "done",
+      "created_at": "2026-04-15T18:04:53Z",
+      "resolved_at": "2026-04-15T18:07:50Z"
+    },
+    {
+      "task_id": "BP5-SVC-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 8 tests pass, full route coverage, policy-compliant. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T18:07:50Z",
+      "resolved_at": "2026-04-15T18:10:49Z"
+    }
+  ],
+  "blockers": []
+}

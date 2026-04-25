@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T05:35:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-PKT001-CLOSEOUT-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-PKT001-CLOSEOUT-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Contract Validation",
+    "owner": "Codex",
+    "reviewer": "Codex3",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-PKT001-CLOSEOUT-002/APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Checkpoint: finalized the approved support-only acceptance packet after syncing owner/status truth and recording commit 820e2c6.",
+    "last_update": "2026-04-24T05:35:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-PKT001-CLOSEOUT-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 已收斂為 support-only 事實摘要：明確保留 PKT-001 reopen 是前端 fail-closed meta.surfaces 驗證與 truthy republish follow-up，而非新的 Pantheon BFF gap。",
+      "父任務 acceptance 與預期 front republish 已拆開表述，避免把推測或 scope widening 寫成既成事實。"
+    ],
+    "review_file": "support/sidecars/APP-003-PKT001-CLOSEOUT-002/APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T05:35:52Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "820e2c6417337d369e154b4871b0f6df956d4aa6",
+      "commit_subject": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE sync acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex3"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1216,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Refined acceptance packet with specific file paths for fail-closed validation verification at support/sidecars/APP-003-PKT001-CLOSEOUT-002/APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE.md",
+      "status": "done",
+      "created_at": "2026-04-24T05:13:53Z",
+      "resolved_at": "2026-04-24T05:20:36Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Support packet reviewed and approved within support-only scope; PKT-001 remains a front-owned fail-closed meta.surfaces validation follow-up and parent closeout should end with truthful front republish artifacts.",
+      "status": "done",
+      "created_at": "2026-04-24T05:20:36Z",
+      "resolved_at": "2026-04-24T05:23:47Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T05:23:48Z",
+      "resolved_at": "2026-04-24T05:35:52Z"
+    }
+  ],
+  "blockers": []
+}

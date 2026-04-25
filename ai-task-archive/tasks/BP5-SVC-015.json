@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-015",
+  "archived_at": "2026-04-16T06:06:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-015",
+    "title": "Remove BFF snapshot and default fallback from the normal integration path",
+    "summary_zh": "把 operator/BFF 目前靠 snapshot/default fallback 撐住的正常路徑收斂成 backend-owned composed reads 與 command-submission path。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-003",
+      "BP5-SVC-004",
+      "BP5-SVC-011",
+      "BP5-SVC-013",
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/command_executor.py",
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md"
+    ],
+    "acceptance": [
+      "operator and persona BFF reads no longer treat snapshot/default seed mode as the normal integration path",
+      "degraded operator behavior is explicit and backend-owned instead of UI-invented"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner closeout: service-backed BFF reads, source-aware degraded metadata, and governance-dispatched evolution commands verified; targeted BFF/governance tests passed.",
+    "last_update": "2026-04-16T06:06:56Z",
+    "review_notes_zh": [
+      "審查通過：service-backed adapters 已正確接管 normal read path；dataset_source() 已串入 _dataset_surface_status()，確保 local-snapshot fallback 明確標為 degraded；evolution commands 已實際 dispatch 到 governance API，測試覆蓋確認 URL 與 payload 正確。接受實作，回傳 Codex 完成收尾。"
+    ],
+    "review_file": "support/sidecars/BP5-SVC-015/BP5-SVC-015-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T06:06:56Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "66e4786c04712813a9fde0a15725753039277b95",
+      "commit_subject": "BP5-SVC-015: finalize BFF fallback removal path",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-015",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 140,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T03:35:09Z",
+      "resolved_at": "2026-04-16T03:35:34Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T03:42:11Z",
+      "resolved_at": "2026-04-16T03:43:11Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented service-backed BFF reads and source-aware degraded surface metadata; evolution commands now dispatch to the governance API. Targeted BFF tests passed (40/40).",
+      "status": "done",
+      "created_at": "2026-04-16T04:06:25Z",
+      "resolved_at": "2026-04-16T04:13:34Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T04:13:34Z",
+      "resolved_at": "2026-04-16T04:14:35Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T04:14:35Z",
+      "resolved_at": "2026-04-16T04:28:56Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T04:28:56Z",
+      "resolved_at": "2026-04-16T04:29:56Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T04:29:56Z",
+      "resolved_at": "2026-04-16T04:44:17Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T04:44:17Z",
+      "resolved_at": "2026-04-16T04:45:17Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T04:45:17Z",
+      "resolved_at": "2026-04-16T04:59:32Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T04:59:32Z",
+      "resolved_at": "2026-04-16T05:00:34Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T05:00:34Z",
+      "resolved_at": "2026-04-16T05:14:58Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T05:14:58Z",
+      "resolved_at": "2026-04-16T05:15:53Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T05:15:53Z",
+      "resolved_at": "2026-04-16T05:30:21Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T05:30:21Z",
+      "resolved_at": "2026-04-16T05:31:14Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T05:31:14Z",
+      "resolved_at": "2026-04-16T05:45:47Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T05:45:47Z",
+      "resolved_at": "2026-04-16T05:46:31Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T05:46:31Z",
+      "resolved_at": "2026-04-16T06:03:19Z"
+    },
+    {
+      "task_id": "BP5-SVC-015",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Service-backed reads, source-aware degraded metadata, and governance-dispatched evolution commands all confirmed. Return to Codex (owner) for final closeout as done.",
+      "status": "done",
+      "created_at": "2026-04-16T06:03:19Z",
+      "resolved_at": "2026-04-16T06:06:56Z"
+    }
+  ],
+  "blockers": []
+}

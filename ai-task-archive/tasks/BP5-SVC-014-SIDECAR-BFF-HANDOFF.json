@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-014-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-15T19:43:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-014-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BP5-SVC-014 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BP5-SVC-014，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-006"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-014/BP5-SVC-014-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized after Claude approval. Support packet now records the approved BFF/frontend handoff without touching canonical truth; parent owner can consume support/sidecars/BP5-SVC-014/BP5-SVC-014-SIDECAR-BFF-HANDOFF.md for the remaining consultation-gap follow-through.",
+    "last_update": "2026-04-15T19:43:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-014",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：PS-01 至 PS-06 persona 路由已上線並測試通過；CS-01 至 CS-06 consultation 路由確認為 contract-only gap；PS-01 viewer RBAC 不符已明確標記",
+      "後續追蹤：parent task BP5-SVC-014 需補 CS-01..CS-06 實作、consultation read-store primitives、HTTP 煙霧測試，並決定是否修正 PS-01 viewer 角色"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-014-SIDECAR-BFF-HANDOFF-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T19:43:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 54,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-014-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Prepared support handoff packet at support/sidecars/BP5-SVC-014/BP5-SVC-014-SIDECAR-BFF-HANDOFF.md. Persona surfaces and persona-management composed view are already live and verified by focused tests; consultation CS-01..CS-06 remain contract-only and are the real remaining parent-task gap.",
+      "status": "done",
+      "created_at": "2026-04-15T19:38:48Z",
+      "resolved_at": "2026-04-15T19:40:36Z"
+    },
+    {
+      "task_id": "BP5-SVC-014-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: packet accurately surfaces the BFF reality and consultation gap; all three acceptance criteria met. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T19:40:36Z",
+      "resolved_at": "2026-04-15T19:43:10Z"
+    }
+  ],
+  "blockers": []
+}

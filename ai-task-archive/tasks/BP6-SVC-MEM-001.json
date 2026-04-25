@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "task_id": "BP6-SVC-MEM-001",
+  "archived_at": "2026-04-17T08:47:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-SVC-MEM-001",
+    "title": "Implement services/memory/ institutional memory store with smoke test and unit coverage",
+    "summary_zh": "實作 services/memory/ 核心路徑：institutional_memory_entry schema 落成 .py 實作 + tests",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "services/memory/"
+    ],
+    "acceptance": [
+      "services/memory/ 有核心 .py 實作",
+      "memory entry 可寫入並查詢",
+      "smoke test 通過"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized after commits b653691/HEAD and local verification: 20/20 unit tests and 12/12 smoke checks passed; institutional memory store implementation, write/query flow, schema validation on create/load, UTC-only enforcement, persistence round-trip, and supersession semantics are complete.",
+    "last_update": "2026-04-17T08:47:11Z",
+    "review_notes_zh": [
+      "審查通過",
+      "20/20 unit tests + 12/12 smoke tests green。schema validation、UTC 強制、持久化 load 驗證、supersession semantics 全部正確實作。三條 acceptance criteria 達成。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T08:47:11Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "fa1d071d36291c24be09f9a57b6be6bd005416e0",
+      "commit_subject": "BP6-SVC-MEM-001: finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP6-SVC-MEM-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 383,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:42:02Z",
+      "resolved_at": "2026-04-17T05:36:16Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T05:51:01Z",
+      "resolved_at": "2026-04-17T07:26:52Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:36:08Z",
+      "resolved_at": "2026-04-17T07:40:44Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:47:16Z",
+      "resolved_at": "2026-04-17T08:14:37Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:18:30Z",
+      "resolved_at": "2026-04-17T08:19:56Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation complete. Fixed nested-lock deadlocks in mark_reused/supersede, added persisted-entry validation, and added unit + smoke coverage. Verify with: python3 -m unittest services/memory/test_institutional_memory_store.py && python3 services/memory/smoke_test_institutional_memory.py",
+      "status": "done",
+      "created_at": "2026-04-17T08:23:26Z",
+      "resolved_at": "2026-04-17T08:27:10Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requested changes: persisted schema-invalid records still load, and non-UTC offsets pass validation but sort incorrectly. See services/memory/review_bp6_svc_mem_001_codex.md.",
+      "status": "done",
+      "created_at": "2026-04-17T08:27:10Z",
+      "resolved_at": "2026-04-17T08:27:10Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:31:22Z",
+      "resolved_at": "2026-04-17T08:32:15Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Institutional memory store/schema/tests are ready for review. Verified with python3 -m unittest services/memory/test_institutional_memory_store.py and python3 services/memory/smoke_test_institutional_memory.py.",
+      "status": "done",
+      "created_at": "2026-04-17T08:40:45Z",
+      "resolved_at": "2026-04-17T08:42:18Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Addressed review feedback: persisted records now run canonical schema validation during load, UTC-only timestamps are enforced, and list/retrieve ordering compares normalized UTC instants. Reverified with python3 -m unittest services/memory/test_institutional_memory_store.py and python3 services/memory/smoke_test_institutional_memory.py.",
+      "status": "done",
+      "created_at": "2026-04-17T08:42:18Z",
+      "resolved_at": "2026-04-17T08:42:45Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-17T08:42:45Z",
+      "resolved_at": "2026-04-17T08:43:58Z"
+    },
+    {
+      "task_id": "BP6-SVC-MEM-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 20 unit tests and 12 smoke tests pass. Core .py implementation complete, entries writable and queryable with correct schema validation on load, UTC-only enforcement, and supersession semantics. All three acceptance criteria met.",
+      "status": "done",
+      "created_at": "2026-04-17T08:43:58Z",
+      "resolved_at": "2026-04-17T08:47:11Z"
+    }
+  ],
+  "blockers": []
+}

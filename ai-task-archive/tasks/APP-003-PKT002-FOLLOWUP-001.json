@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT002-FOLLOWUP-001",
+  "archived_at": "2026-04-24T11:25:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT002-FOLLOWUP-001",
+    "title": "Finish PKT-002 incident surfaces front follow-up bundle",
+    "summary_zh": "收斂 PKT-002 incident-home / incident-detail / incident-action-drawer 的前端 follow-up；以各 feature 的 repo-local Lovable prompt 為準，完成需要的 front repo 更新或 truthful follow-up evidence。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "../front-ai-trading-system/.coordination/responses/PKT-002-incident-home-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/PKT-002-incident-detail-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/PKT-002-incident-action-drawer-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/requests/PKT-002-incident-home-frontend-feedback.yaml",
+      "../front-ai-trading-system/.coordination/requests/PKT-002-incident-detail-frontend-feedback.yaml",
+      "../front-ai-trading-system/.coordination/requests/PKT-002-incident-action-drawer-frontend-feedback.yaml"
+    ],
+    "acceptance": [
+      "Use the existing feature-local PKT-002 prompts as the packet source",
+      "Keep route and SSE evidence truthful instead of compensating in the browser",
+      "Return Git-visible follow-up outputs for all three PKT-002 surfaces"
+    ],
+    "next": "Owner finalized approved PKT-002 front follow-up bundle and closed it. Reviewer-approved replay stays pinned to source snapshot 82b1ceb across all six PKT-002 request files; later front branch advance to 1a1a42e does not reopen this slice.",
+    "last_update": "2026-04-24T11:25:55Z",
+    "task_class": "frontend_feedback_followup",
+    "auto_created_by": "2026-04-24-frontend-feedback-followup-materialization",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "三個 PKT-002 surface 的 Pantheon reviewer packet 都已收斂為 loop-complete / close，無阻塞 follow-up。",
+      "origin/pkt-004-detail-fix 雖已前進到 1a1a42e，但 PKT-002 request/UI/feedback scope 相對 b146ba7 無差異，六個 request 仍固定指向 reviewed source 82b1ceb。"
+    ],
+    "review_file": "support/sidecars/APP-003-PKT002-FOLLOWUP-001/APP-003-PKT002-FOLLOWUP-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T11:25:55Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "7d9061a9252703fe40489fe04c8046745f6d9b0c",
+      "commit_subject": "APP-003-PKT002-FOLLOWUP-001 finalize closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-PKT002-FOLLOWUP-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1260,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Corrected the PKT-002 action route host to keep incidentId on /operator/incidents/:incidentId/action, refreshed incident-detail and action-drawer feedback/QA evidence, and re-ran targeted eslint plus npm run build in front-ai-trading-system. Incident home remains no-gap with no additional code changes required.",
+      "status": "done",
+      "created_at": "2026-04-24T07:25:38Z",
+      "resolved_at": "2026-04-24T07:36:05Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reopen: follow-up edits are uncommitted in front repo, so acceptance #3 (Git-visible outputs) fails for all three surfaces; incident-home row navigation gap (PKT002-ROUTE-001 at src/pages/operator/IncidentHome.tsx:534 still hitting /incidents/:id instead of /operator/incidents/:incidentId) is wrongly reported as no-gap; action-drawer SSE hydration gap (IAD-SSE-001) untouched; ui-done / frontend-feedback yamls still pin source_commit HEAD or 1b5e5680. Required: (1) commit and push action-drawer useParams refactor, IncidentDetail query simplification, IncidentHome row route fix, and feedback bundles in one Git-visible front commit; (2) repoint all PKT-002 ui-done and frontend-feedback yamls plus docs/pantheon-feedback bundles at that SHA; (3) close IAD-SSE-001 with code change or live evidence; (4) refresh pantheon-side frontend-feedback yamls. Detailed review at .coordination/reviews/APP-003-PKT002-FOLLOWUP-001-review.md.",
+      "status": "done",
+      "created_at": "2026-04-24T07:36:05Z",
+      "resolved_at": "2026-04-24T07:36:05Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:43:04Z",
+      "resolved_at": "2026-04-24T07:45:12Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:45:12Z",
+      "resolved_at": "2026-04-24T08:44:22Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T08:44:22Z",
+      "resolved_at": "2026-04-24T09:28:53Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T09:28:53Z",
+      "resolved_at": "2026-04-24T09:29:38Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T09:29:38Z",
+      "resolved_at": "2026-04-24T09:32:44Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T09:32:44Z",
+      "resolved_at": "2026-04-24T09:33:28Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T10:41:29Z",
+      "resolved_at": "2026-04-24T10:42:16Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Published PKT-002 front follow-up on origin/pkt-004-detail-fix with source snapshot 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9 and request-pair republish b146ba7f3f23c63570a6c97728c76ea12c3fd637. IncidentHome row navigation now uses /operator/incidents/:incidentId, IncidentActionDrawerPage delays PKT-005 SSE hydration until the initial kill-switch snapshot resolves, home/action feedback bundles are truthful again, and all six PKT-002 ui-done/frontend-feedback requests now point to 82b1ceb for replay.",
+      "status": "done",
+      "created_at": "2026-04-24T10:49:15Z",
+      "resolved_at": "2026-04-24T11:24:05Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: PKT-002 front follow-up is replay-clean on origin/pkt-004-detail-fix, reviewed source snapshot 82b1ceb remains pinned across all six request files, and the later branch-tip advance to 1a1a42e does not change the reviewed PKT-002 slice. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-24T11:24:05Z",
+      "resolved_at": "2026-04-24T11:25:56Z"
+    }
+  ],
+  "blockers": []
+}

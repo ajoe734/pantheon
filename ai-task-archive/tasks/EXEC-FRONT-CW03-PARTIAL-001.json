@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+  "archived_at": "2026-04-21T00:46:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-CW03-PARTIAL-001",
+    "title": "Implement CW-03 committee board partial-activation UI against live Pantheon APIs",
+    "summary_zh": "在 front-end lane 依 partial activation rule 實作 CW-03 committee board 的 read-only / sponsor-status / outcome-summary 版本。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/CW-03-committee-board.md",
+      "docs/examples/CW-03-committee-board.json",
+      "MODULE_READINESS_RATIFICATION_2026-04-20.md"
+    ],
+    "acceptance": [
+      "committee board UI 僅實作 partial-activation 範圍：read-only / sponsor-status / outcome-summary",
+      "不得假裝 transcript drill-down 已 ready，也不得由 participant votes 自行合成 verdict",
+      "完成後提交 ui-done handoff，並明確標記 residual gate 為 CW-02 transcript truth"
+    ],
+    "next": "Finalized after approved re-review: CW-03 committee board partial-activation UI is replay-clean, remains within the ratified read-only boundary, and the published request pair now points to truthful source commits.",
+    "last_update": "2026-04-21T00:46:53Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "CW-03 committee board partial activation 已重驗通過：request pair 與 API_GAP_REQUESTS 都回指真實 reviewed UI commit 29c985f5b1341513f9bf543d328fb1744327a246，BFF contract pytest 6 passed，front-end build 也在該 commit 成功。",
+      "partial activation 邊界維持正確：UI 只讀取 committee list/detail，顯示 backend-owned sponsor status 與 synthesis_summary，不暴露 sponsor command，也明確保留 CW-02 transcript truth 作為 residual gate。"
+    ],
+    "review_file": ".coordination/reviews/CW-03-committee-board-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T00:46:53Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c071078463fa02a715a310f84e1d4de7f795d929",
+      "commit_subject": "EXEC-FRONT-CW03-PARTIAL-001: finalize CW-03 partial-activation closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-FRONT-CW03-PARTIAL-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 922,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:02:37Z",
+      "resolved_at": "2026-04-20T15:19:41Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "CW-03 partial-activation UI implemented in front-ai-trading-system; build passed, ui-done handoff written, residual gate explicitly kept at CW-02 transcript truth.",
+      "status": "done",
+      "created_at": "2026-04-20T15:36:33Z",
+      "resolved_at": "2026-04-20T16:08:18Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requires follow-up; see .coordination/reviews/CW-03-committee-board-review.md. Re-publish the canonical ui-done/frontend-feedback bundle from one truthful immutable commit and fix sponsor_assignment empty-object handling before resubmitting.",
+      "status": "done",
+      "created_at": "2026-04-20T16:08:18Z",
+      "resolved_at": "2026-04-20T16:08:18Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "CW-03 front follow-up is ready for re-review. Source commit 29c985f5b1341513f9bf543d328fb1744327a246 implements the committee board partial-activation routes and fixes sponsor_assignment empty-object handling; publication commit 8bd641110a908a1109a644abf7724e0ca831bb34 publishes the paired ui-done/frontend-feedback bundle and docs/pantheon-feedback/CW-03-committee-board. Verified with npm run build in ../front-ai-trading-system.",
+      "status": "done",
+      "created_at": "2026-04-20T16:17:19Z",
+      "resolved_at": "2026-04-21T00:18:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requires one more publication fix; see .coordination/reviews/CW-03-committee-board-review.md. The remote branch is now published, but the current ui-done/frontend-feedback bundle still points source_commit at non-existent 29c985fc7ea5b61cf253815ec74e6f7d4e5e8c0e. Republish the request pair and feedback bundle with the real reviewed UI transport commit 29c985f5b1341513f9bf543d328fb1744327a246, then resubmit for review.",
+      "status": "done",
+      "created_at": "2026-04-21T00:18:52Z",
+      "resolved_at": "2026-04-21T00:18:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Republished the CW-03 request pair and feedback bundle on front branch pkt-004-detail-fix. Publication fix commit 78b714d5b252710b43467ba75a4b1f24651fbea8 updates both request source_commit fields and API_GAP_REQUESTS reviewed_source_commit to the real reviewed UI transport commit 29c985f5b1341513f9bf543d328fb1744327a246; branch is pushed to origin and ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-21T00:21:39Z",
+      "resolved_at": "2026-04-21T00:33:15Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review passed. Publication chain is now replay-clean and the CW-03 UI stays within the ratified partial-activation boundary. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-21T00:33:15Z",
+      "resolved_at": "2026-04-21T00:46:53Z"
+    }
+  ],
+  "blockers": []
+}

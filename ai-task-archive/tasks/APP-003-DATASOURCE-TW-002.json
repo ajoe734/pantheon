@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-TW-002",
+  "archived_at": "2026-04-24T16:49:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-TW-002",
+    "title": "Build Taiwan normalization pipeline for Shioaji, TWSE, TPEx, MOPS, and TEJ",
+    "summary_zh": "補齊台股 Shioaji quote 與 TWSE/TPEx/MOPS/TEJ 的 normalization pipeline，完成 symbol mapping、market segment、disclosure join。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-DATASOURCE-TW-001"
+    ],
+    "artifacts": [
+      "services/data-plane/",
+      "services/research/",
+      "DATA_SOURCE_SCOPE_MATRIX.md"
+    ],
+    "acceptance": [
+      "Taiwan symbol mapping is canonicalized across Shioaji TWSE TPEx and TEJ",
+      "market segment and exchange boundary are preserved in normalized datasets",
+      "disclosure and fundamentals joins are replay-clean and documented"
+    ],
+    "next": "Owner finalized approved Taiwan normalization pipeline task and closed it after reviewer-verified canonical market-segment normalization and replay-clean join checks.",
+    "last_update": "2026-04-24T16:49:36Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：Taiwan normalization helpers、source-boundary README 與 replay-clean join contract 整體符合 acceptance；review 中補上顯式 market_segment（OTC／上市）會被 canonicalize 成 otc／listed 的 edge case，避免 symbol mapping helper 輸出非 canonical segment。",
+      "Focused verification 重新實跑通過：python3 -m unittest services.data-plane.tests.test_data_plane_schemas -v（47 passed）、python3 services/data-plane/smoke_test.py（47/47 passed）；另行驗證 build_tw_symbol_mapping_record 對 OTC／上市 皆輸出 canonical segment。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T16:49:36Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "6e8119b6bc28c126261e3895623532fa78beefef",
+      "commit_subject": "APP-003-DATASOURCE-TW-002 finalize Taiwan normalization pipeline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-TW-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1161,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-TW-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Added Taiwan normalization pipeline helpers in services/data-plane/taiwan_reference.py for venue canonicalization, symbol mapping, market segment preservation, Shioaji raw/normalized dataset lineage, and Shioaji+TWSE/TPEx/MOPS/TEJ replay-clean joins. Documented the source-boundary/join contract in services/data-plane/README.md and verified with python3 -m unittest services.data-plane.tests.test_data_plane_schemas -v (47 passed) plus python3 services/data-plane/smoke_test.py (47/47 passed).",
+      "status": "done",
+      "created_at": "2026-04-24T16:44:09Z",
+      "resolved_at": "2026-04-24T16:47:57Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-TW-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after fixing explicit market-segment canonicalization in Taiwan symbol mapping; owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-24T16:47:57Z",
+      "resolved_at": "2026-04-24T16:49:36Z"
+    }
+  ],
+  "blockers": []
+}

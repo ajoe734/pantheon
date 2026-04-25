@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+  "archived_at": "2026-04-16T06:21:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-OSS-004-SIDECAR-REVIEW",
+    "title": "Prepare BP5-OSS-004 review packet and evidence summary",
+    "summary_zh": "平行支援 BP5-OSS-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-012",
+      "BP5-OSS-003"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-OSS-004/BP5-OSS-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized review-approved sidecar. Codex confirmed: AC-1 and AC-2 both MET, RLlib criteria-defined->version-pinned correctly recorded, five residual follow-on items accurately documented with named owners. No canonical truth was modified. Sidecar slice closed.",
+    "last_update": "2026-04-16T06:21:46Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-OSS-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 ai-task-archive/tasks/BP5-OSS-004.json、services/learning/DEFERRED_OSS_ACTIVATION_MAP.md、OSS_INTEGRATION_CHECKLIST.md、support/sidecars/BP5-OSS-004/BP5-OSS-004-SIDECAR-ACCEPTANCE.md 與已落地的 RLlib/W&B stub。review packet 對 parent closeout、AC-1/AC-2、RLlib 狀態變更與殘留 follow-on 的描述一致。建議後續只在條件成熟時 materialize 兩類 execution task：Qlib adapter+smoke（Qwen）與 RL path approval gate（Copilot）；TRL 與 W&B 仍受前置 gate 限制，暫不需立即建 task。"
+    ],
+    "review_file": "support/sidecars/BP5-OSS-004/BP5-OSS-004-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T06:21:46Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "51c993a898c0c22cbda7c7e1f5946aa4d68c8020",
+      "commit_subject": "BP5-OSS-004-SIDECAR-REVIEW: finalize review packet for BP5-OSS-004 OSS activation path",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-OSS-004-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 136,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:11:15Z",
+      "resolved_at": "2026-04-16T01:12:07Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:15:33Z",
+      "resolved_at": "2026-04-16T01:28:45Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:35:15Z",
+      "resolved_at": "2026-04-16T01:37:36Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:37:35Z",
+      "resolved_at": "2026-04-16T01:40:54Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:45:34Z",
+      "resolved_at": "2026-04-16T01:51:05Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:51:05Z",
+      "resolved_at": "2026-04-16T02:40:10Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:44:04Z",
+      "resolved_at": "2026-04-16T02:45:24Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:49:12Z",
+      "resolved_at": "2026-04-16T02:51:24Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:52:29Z",
+      "resolved_at": "2026-04-16T02:53:22Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:54:56Z",
+      "resolved_at": "2026-04-16T02:55:45Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-16T03:00:33Z",
+      "resolved_at": "2026-04-16T03:01:23Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet authored at support/sidecars/BP5-OSS-004/BP5-OSS-004-SIDECAR-REVIEW.md. Covers: parent task BP5-OSS-004 terminal status confirmed (done, commit 5166c58), AC-1 and AC-2 both verified MET, one checklist state change (RLlib criteria-defined -> version-pinned) accurately recorded, five residual follow-on items with named owners, and cross-file consistency checks across OSS_INTEGRATION_CHECKLIST.md, DEFERRED_OSS_ACTIVATION_MAP.md, and the acceptance sidecar. Please review for accuracy and confirm whether any residual follow-on items warrant new execution tasks.",
+      "status": "done",
+      "created_at": "2026-04-16T03:06:37Z",
+      "resolved_at": "2026-04-16T03:37:51Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. The packet accurately matches the archived BP5-OSS-004 closeout, the RLlib criteria-defined -> version-pinned change, and the landed RLlib/W&B stubs. Recommend future execution-task materialization only for a Qlib adapter/smoke lane (Qwen) and an RL path approval gate lane (Copilot); TRL and W&B remain gated and do not need immediate execution tasks.",
+      "status": "done",
+      "created_at": "2026-04-16T03:37:51Z",
+      "resolved_at": "2026-04-16T03:42:39Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T03:42:39Z",
+      "resolved_at": "2026-04-16T03:43:54Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T03:43:54Z",
+      "resolved_at": "2026-04-16T03:58:12Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-16T03:58:12Z",
+      "resolved_at": "2026-04-16T03:59:28Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T03:59:29Z",
+      "resolved_at": "2026-04-16T06:21:46Z"
+    }
+  ],
+  "blockers": []
+}

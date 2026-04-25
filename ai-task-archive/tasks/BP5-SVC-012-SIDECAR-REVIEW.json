@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+  "archived_at": "2026-04-16T14:25:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-012-SIDECAR-REVIEW",
+    "title": "Prepare BP5-SVC-012 review packet and evidence summary",
+    "summary_zh": "平行支援 BP5-SVC-012，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-010"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-012/BP5-SVC-012-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: review packet verified complete. Codex2 review approved — artifact inventory spot-checks cleanly, AC-1/AC-2 evidence mapping confirmed, APPROVAL_OWNER_MATRIX medium-risk policy fix documented with regression tests. Three advisory open items (OI-1 clock handoff, OI-2 rollback companion window, OI-3 manual-only guard) are non-blocking and passed to Copilot as judgment items. Packet ready for parent reviewer (Copilot) to use for BP5-SVC-012 parent review. Sidecar closed.",
+    "last_update": "2026-04-16T14:25:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-012",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "review packet 已與 canonical reviewer 對齊；artifact inventory 抽查存在；證據引用的關鍵檔案與回歸測試名稱均可在 repo 內對應。"
+    ],
+    "review_file": "support/sidecars/BP5-SVC-012/BP5-SVC-012-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T14:25:36Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "377f0d04b4d636b7fd112c1ff7567d6dac6efaf0",
+      "commit_subject": "BP5-SVC-012-SIDECAR-REVIEW: finalize sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "BP5-SVC-012-SIDECAR-REVIEW",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 214,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T08:58:14Z",
+      "resolved_at": "2026-04-16T09:00:54Z"
+    },
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T09:03:44Z",
+      "resolved_at": "2026-04-16T09:04:12Z"
+    },
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T09:04:28Z",
+      "resolved_at": "2026-04-16T09:04:57Z"
+    },
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T09:06:24Z",
+      "resolved_at": "2026-04-16T09:07:03Z"
+    },
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T09:07:03Z",
+      "resolved_at": "2026-04-16T09:08:51Z"
+    },
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T09:08:51Z",
+      "resolved_at": "2026-04-16T09:09:12Z"
+    },
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Review packet ready for Qwen review. Covers: full AC-1/AC-2 evidence mapping, confirmed policy-finding fix (APPROVAL_OWNER_MATRIX medium-risk no longer includes operator), test coverage table (39+27 all passing), 3 advisory open items (downstream clock handoff, rollback companion window, manual-only flag), and reviewer checklist for Copilot. Please review and approve or request changes.",
+      "status": "done",
+      "created_at": "2026-04-16T09:12:23Z",
+      "resolved_at": "2026-04-16T14:14:04Z"
+    },
+    {
+      "task_id": "BP5-SVC-012-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review packet aligned to the assigned sidecar reviewer and evidence references spot-check cleanly. Return to Claude for finalization and parent-review handoff.",
+      "status": "done",
+      "created_at": "2026-04-16T14:14:04Z",
+      "resolved_at": "2026-04-16T14:25:36Z"
+    }
+  ],
+  "blockers": []
+}

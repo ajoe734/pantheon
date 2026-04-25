@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-003-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T16:40:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-003-SIDECAR-ACCEPTANCE",
+    "title": "Prepare DEPLOY-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 DEPLOY-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/DEPLOY-003/DEPLOY-003-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized reviewer-approved acceptance packet; support artifact is complete and ready for Claude to absorb into DEPLOY-003 closeout.",
+    "last_update": "2026-04-17T16:40:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEPLOY-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：五服務部署表面清晰記錄，靜態驗證證據充分，運行時健康驗證正確標記為待定，範圍邊界得當維護，支援工件未修改 L1 規範文件"
+    ],
+    "review_file": "support/sidecars/DEPLOY-003/DEPLOY-003-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T16:40:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "71062eed389e3732ba26bdaaaed6246c8b0b40c1",
+      "commit_subject": "DEPLOY-003-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEPLOY-003-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 458,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-003-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T16:18:40Z",
+      "resolved_at": "2026-04-17T16:22:39Z"
+    },
+    {
+      "task_id": "DEPLOY-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet ready at support/sidecars/DEPLOY-003/DEPLOY-003-SIDECAR-ACCEPTANCE.md. It captures the five-service deploy surface, compose/static validation evidence, and the remaining live-health proof still needed on parent task DEPLOY-003.",
+      "status": "done",
+      "created_at": "2026-04-17T16:27:23Z",
+      "resolved_at": "2026-04-17T16:36:03Z"
+    },
+    {
+      "task_id": "DEPLOY-003-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: acceptance packet accurately maps the five-service deploy surface with valid static validation evidence; runtime health correctly marked as pending parent owner verification; sidecar scope boundary properly maintained with no canonical truth modifications.",
+      "status": "done",
+      "created_at": "2026-04-17T16:36:03Z",
+      "resolved_at": "2026-04-17T16:40:28Z"
+    }
+  ],
+  "blockers": []
+}

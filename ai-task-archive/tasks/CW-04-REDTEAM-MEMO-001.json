@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "task_id": "CW-04-REDTEAM-MEMO-001",
+  "archived_at": "2026-04-19T19:55:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CW-04-REDTEAM-MEMO-001",
+    "title": "Publish Red-team Memo read model and governance handoff authority",
+    "summary_zh": "為 CW-04 補齊 consult memo list/detail、session-to-memo mapping 與 canInitiateGovernanceReview authority。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "CW-02-TRANSCRIPT-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "memo list and detail routes are published",
+      "session to memo mapping is explicit",
+      "governance handoff authority is backend shaped"
+    ],
+    "next": "Owner finalized approved task. All three acceptance criteria met: memo list/detail routes published in docs/bff/CW-04-redteam-memo.md, session-to-memo mapping is explicit, canInitiateGovernanceReview authority is backend-shaped via allowedActions. Four example payloads in docs/examples/CW-04-redteam-memo.json. PACKET_FAMILY.md readiness gate updated. Review approved by Codex2.",
+    "last_update": "2026-04-19T19:55:59Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已核對 CW-04 契約、範例 payload 與 PACKET_FAMILY gate 一致性；另補正 example 中 degraded list 的 surface 狀態，現在與 task brief 與契約文案一致。|三項 acceptance 均已滿足：memo list/detail 已發布、session_to_memo_mapping 明確、governance handoff authority 由 backend-shaped allowedActions 提供。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T19:55:59Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "aac182d6c3b6c5a52a67a3fd93e92fd549e08e6d",
+      "commit_subject": "CW-04-REDTEAM-MEMO-001 finalize: publish red-team memo read model and governance handoff authority",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- docs/bff/CW-04-redteam-memo.md": "list/detail routes, ConsultMemo read model, session-to-memo mapping, canInitiateGovernanceReview authority",
+        "- docs/examples/CW-04-redteam-memo.json": "four payloads (published list, published detail, draft detail, degraded list)",
+        "- PACKET_FAMILY.md": "CW-04 readiness gate updated to pending-bff",
+        "LLM-Agent": "Claude",
+        "Task-ID": "CW-04-REDTEAM-MEMO-001",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 754,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:10:02Z",
+      "resolved_at": "2026-04-19T18:26:52Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:32:53Z",
+      "resolved_at": "2026-04-19T18:33:28Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:35:27Z",
+      "resolved_at": "2026-04-19T18:51:45Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-19T18:51:45Z",
+      "resolved_at": "2026-04-19T19:00:07Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:03:20Z",
+      "resolved_at": "2026-04-19T19:03:33Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:07:33Z",
+      "resolved_at": "2026-04-19T19:08:41Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:30:21Z",
+      "resolved_at": "2026-04-19T19:31:24Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:33:34Z",
+      "resolved_at": "2026-04-19T19:34:56Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:34:56Z",
+      "resolved_at": "2026-04-19T19:36:10Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:36:10Z",
+      "resolved_at": "2026-04-19T19:44:04Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:47:20Z",
+      "resolved_at": "2026-04-19T19:47:55Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "CW-04 Red-team Memo contract published. docs/bff/CW-04-redteam-memo.md defines list/detail routes, ConsultMemo read model, session-to-memo mapping, and canInitiateGovernanceReview authority. docs/examples/CW-04-redteam-memo.json covers four payloads (published list, published detail, draft detail, degraded list). PACKET_FAMILY.md readiness gate flipped to pending-bff. All three acceptance criteria met. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-19T19:52:07Z",
+      "resolved_at": "2026-04-19T19:53:54Z"
+    },
+    {
+      "task_id": "CW-04-REDTEAM-MEMO-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "CW-04 review approved. Contract bundle is coherent after aligning the degraded list example with the published degradation semantics. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T19:53:54Z",
+      "resolved_at": "2026-04-19T19:55:59Z"
+    }
+  ],
+  "blockers": []
+}

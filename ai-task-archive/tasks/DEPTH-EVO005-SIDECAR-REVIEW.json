@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "DEPTH-EVO005-SIDECAR-REVIEW",
+  "archived_at": "2026-04-18T23:37:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPTH-EVO005-SIDECAR-REVIEW",
+    "title": "Prepare DEPTH-EVO005 review packet and evidence summary",
+    "summary_zh": "平行支援 DEPTH-EVO005，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Blueprint Depth",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DEPTH-EVO004"
+    ],
+    "artifacts": [
+      "support/sidecars/DEPTH-EVO005/DEPTH-EVO005-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet and closed the handoff slice.",
+    "last_update": "2026-04-18T23:37:32Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEPTH-EVO005",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar packet approved: acceptance-criteria matrix is accurate, line refs verified, 38-test run confirmed, non-blocking residuals properly scoped. Packet is sufficient for owner closeout of DEPTH-EVO005."
+    ],
+    "review_file": "support/sidecars/DEPTH-EVO005/DEPTH-EVO005-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T23:37:32Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "f2900ff826f0707cafdaf95421d9869a4e59b550",
+      "commit_subject": "DEPTH-EVO005-SIDECAR-REVIEW: finalize review packet handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEPTH-EVO005-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 667,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPTH-EVO005-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T22:59:33Z",
+      "resolved_at": "2026-04-18T23:00:36Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T23:05:27Z",
+      "resolved_at": "2026-04-18T23:06:02Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T23:08:34Z",
+      "resolved_at": "2026-04-18T23:09:52Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T23:12:02Z",
+      "resolved_at": "2026-04-18T23:12:39Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review/finalize packet refreshed for review_approved parent state; includes durability evidence, verified 38-test run, and owner closeout command for DEPTH-EVO005.",
+      "status": "done",
+      "created_at": "2026-04-18T23:15:07Z",
+      "resolved_at": "2026-04-18T23:34:08Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet is complete and accurate. All evidence verified. Approving and returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-18T23:34:08Z",
+      "resolved_at": "2026-04-18T23:37:32Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "SVC-CP-RTR-001",
+  "archived_at": "2026-04-17T16:37:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CP-RTR-001",
+    "title": "Wire control-plane/router into docker-compose",
+    "summary_zh": "將 control-plane/router 加入 docker-compose.yml：補 compose entry（Dockerfile 已存在）、PORT env、depends_on（operator-bff/governance）、healthcheck。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "[\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"docker compose up router 後 healthcheck 通過\"",
+      "\"router service 出現在 docker-compose.yml\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized router compose wiring after review approval; PORT/depends_on/healthcheck verified and docker compose config passes.",
+    "last_update": "2026-04-17T16:37:10Z",
+    "review_notes_zh": [
+      "審查通過：router compose entry 完整，PORT/depends_on/healthcheck 均正確",
+      "persona service_healthy 依賴已補齊（reopen 要求滿足）"
+    ],
+    "review_file": ".coordination/reviews/SVC-CP-RTR-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T16:37:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "2501e61b5382d4422c74b9b1923b5886ca075a3f",
+      "commit_subject": "SVC-CP-RTR-001 wire router into docker-compose",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-CP-RTR-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 458,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CP-RTR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "router service entry added to docker-compose.yml. Build: services/control-plane/router/Dockerfile (context: services/control-plane/router), PERSONA_URL=http://persona:8002, depends_on operator-bff+governance (service_healthy), healthcheck GET /health on port 8001, host port 18003. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-17T15:16:06Z",
+      "resolved_at": "2026-04-17T16:04:34Z"
+    },
+    {
+      "task_id": "SVC-CP-RTR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: router uses PERSONA_URL=http://persona:8002 but does not depend_on persona. Add persona: service_healthy so compose startup cannot expose router healthy before its only upstream dispatcher is ready; keep existing operator-bff/governance deps if still desired.",
+      "status": "done",
+      "created_at": "2026-04-17T16:04:34Z",
+      "resolved_at": "2026-04-17T16:04:34Z"
+    },
+    {
+      "task_id": "SVC-CP-RTR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T16:04:37Z",
+      "resolved_at": "2026-04-17T16:04:37Z"
+    },
+    {
+      "task_id": "SVC-CP-RTR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Updated router compose config: added PORT=8001, added depends_on persona with service_healthy, retained operator-bff/governance health gates, and verified docker compose config passes.",
+      "status": "done",
+      "created_at": "2026-04-17T16:22:14Z",
+      "resolved_at": "2026-04-17T16:34:11Z"
+    },
+    {
+      "task_id": "SVC-CP-RTR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: router compose entry complete with correct PORT, depends_on (persona/operator-bff/governance with service_healthy), healthcheck, and port mapping. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-17T16:34:11Z",
+      "resolved_at": "2026-04-17T16:37:10Z"
+    }
+  ],
+  "blockers": []
+}

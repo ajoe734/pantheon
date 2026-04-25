@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-21T20:34:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare EXEC-REBASE-RW05-KW23-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 EXEC-REBASE-RW05-KW23-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "EXEC-BFF-KW03-001"
+    ],
+    "artifacts": [
+      "support/sidecars/EXEC-REBASE-RW05-KW23-001/EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar handoff packet and closed it. Support artifact confirms RW-05, KW-02, and KW-03 are route-live with published module handoff specs; only module-scoped coordination packet publication remains unverified for parent-lane follow-up.",
+    "last_update": "2026-04-21T20:34:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-REBASE-RW05-KW23-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 已在 review 階段刷新為目前 repo 真相；KW-03 的 FRONTEND_CHANGE_SPEC 已存在，舊的缺檔結論已移除",
+      "三個模組的 route-live 與 handoff spec 發布均已核對；目前僅剩 module-scoped coordination response packets 未在 repo 中證明，不阻擋此 support artifact 收尾"
+    ],
+    "review_file": "support/sidecars/EXEC-REBASE-RW05-KW23-001/EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T20:34:36Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "8893ae762fdf163a2458606c9876477cdc15dbcb",
+      "commit_subject": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF add support handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 981,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T20:07:22Z",
+      "resolved_at": "2026-04-21T20:18:28Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T20:18:28Z",
+      "resolved_at": "2026-04-21T20:19:02Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T20:20:32Z",
+      "resolved_at": "2026-04-21T20:21:38Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support packet added at support/sidecars/EXEC-REBASE-RW05-KW23-001/EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF.md. Verified route-live truth for RW-05, KW-02, and KW-03; flagged that KW-03 handoff bundle is claimed by canonical-facing docs but the actual handoff directory/file is absent, and noted that .coordination dispatch packets are absent for all three modules.",
+      "status": "done",
+      "created_at": "2026-04-21T20:24:39Z",
+      "resolved_at": "2026-04-21T20:32:30Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW05-KW23-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer refreshed the sidecar packet to current repo truth: RW-05, KW-02, and KW-03 all have live BFF contracts and published module handoff specs; only module-scoped coordination packet publication remains unverified. Owner may finalize this support artifact.",
+      "status": "done",
+      "created_at": "2026-04-21T20:32:30Z",
+      "resolved_at": "2026-04-21T20:34:36Z"
+    }
+  ],
+  "blockers": []
+}

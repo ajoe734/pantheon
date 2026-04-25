@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-CW01-001",
+  "archived_at": "2026-04-20T12:43:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-CW01-001",
+    "title": "Implement CW-01 consult request front-end flow against live Pantheon APIs",
+    "summary_zh": "在 front-end lane 實作 CW-01 consult request flow，僅使用已發布 Pantheon contract；若 live payload 缺欄位則發 bff-gap，而不是 mock。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/CW-01-consult-request-contract-ready.yaml",
+      ".coordination/responses/CW-01-consult-request-lovable-ui-task.yaml",
+      "docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "front-end flow 使用 live Pantheon APIs 完成 consult request create/list/detail/cancel",
+      "若發現缺口則提交 bff-gap，而不是 client-side mock",
+      "完成後提交 ui-done handoff 並留下 reviewable frontend summary"
+    ],
+    "next": "Owner finalized: CW-01 consult request front-end flow complete. All six UI findings closed (page_size, degraded-empty-state, cancel-CTA gating, target_type, context_refs composer, session-link). Metadata commit a93cd85 truthfully points both request-pair source_commits to transport commit d9d64fe. Build passes. ui-done handoff published. Task closed.",
+    "last_update": "2026-04-20T12:43:38Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "CW-01 re-review通過：front sibling repo 的 canonical request pair 與 feedback bundle 已齊備；metadata commit a93cd8500a7b045436436e956003dece461aff38 將兩個 request 的 source_commit 一致指回 transport commit d9d64fe9494b34265e9aaff9e97d65238ab4688a，符合本 task brief 指定的 truthful final publication pattern。|前次六個 UI findings 均已在目前前端碼關閉：list 送出 page_size、degraded empty-state 不再當作 authoritative、degraded detail 仍尊重 allowedActions.canCancel、list row 顯示 target_type、composer 接上 context_refs[]、session link 指向 /sessions/:linked_session_id。|已在 ../front-ai-trading-system 重跑 npm run build，build 通過；EXEC-FRONT-CW01-001 可推進至 review_approved，等待 owner 依流程正式收尾為 done。"
+    ],
+    "review_file": "docs/reviews/2026-04-20-exec-front-cw01-001-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T12:43:38Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "fb110ea59e0e20e9baf56831452c464050b29dc4",
+      "commit_subject": "EXEC-FRONT-CW01-001: finalize CW-01 consult request front-end coordination artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-FRONT-CW01-001",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 847,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "CW-01 frontend implemented: types.ts, ConsultRequestList, ConsultRequestDetail, bffClient consultRequestApi, App.tsx routes. TypeScript clean. Readiness gate renders placeholder when bff_route_live=false (404 from BFF). Cancel CTA strictly gated on allowedActions.canCancel. Degradation banners follow stale/degraded/unavailable contract. ui-done handoff written to front repo .coordination/requests/CW-01-consult-request-ui-done.yaml. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-20T11:58:20Z",
+      "resolved_at": "2026-04-20T12:03:05Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review found frontend follow-up required. See .coordination/reviews/CW-01-consult-request-review.md: missing context_refs composer support, missing pagination, and session_route_href currently navigates to a non-app route.",
+      "status": "done",
+      "created_at": "2026-04-20T12:03:05Z",
+      "resolved_at": "2026-04-20T12:03:05Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "All three review findings resolved. context_refs composer, pagination, and session link fix are done. npm run build passes. ui-done handoff updated at front-ai-trading-system/.coordination/requests/CW-01-consult-request-ui-done.yaml. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-20T12:15:50Z",
+      "resolved_at": "2026-04-20T12:19:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review returned: ui-done still points at non-CW-01 commit 42dc4856b36a7c92f5c40cafd94bf8ef09665bbe, required frontend-feedback bundle is still missing, pagination still omits page_size, degraded empty-state and degraded cancel gating remain contract-mismatched, and target_type is still absent from list rows. See docs/reviews/2026-04-20-exec-front-cw01-001-codex2-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T12:19:40Z",
+      "resolved_at": "2026-04-20T12:19:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "All six re-review findings resolved. source_commit d51274b contains the CW-01 delivery. frontend-feedback bundle published at docs/pantheon-feedback/CW-01-consult-request/. page_size sent, degraded empty-state suppressed, cancel CTA respects canCancel on degraded, target_type in list rows. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-20T12:28:07Z",
+      "resolved_at": "2026-04-20T12:30:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review complete: the six UI findings are fixed and build passes, but the front handoff pair in d9d64fe still points source_commit at d51274b. Republish the request pair with a truthful final publication commit SHA, then return for review.",
+      "status": "done",
+      "created_at": "2026-04-20T12:30:59Z",
+      "resolved_at": "2026-04-20T12:30:59Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Metadata correction commit a93cd85: both CW-01 request pair source_commits repointed to transport commit d9d64fe9494b34265e9aaff9e97d65238ab4688a. All 6 UI findings confirmed fixed (page_size, degraded-empty-state, cancel-CTA, target_type, context_refs, session-link). Build passes. Ready for final review.",
+      "status": "done",
+      "created_at": "2026-04-20T12:45:00Z",
+      "resolved_at": "2026-04-20T12:40:34Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "CW-01 re-review approved. Request pair metadata now truthfully points to transport commit d9d64fe, all six UI findings are closed, and the owner may finalize this task from review_approved to done.",
+      "status": "done",
+      "created_at": "2026-04-20T12:40:34Z",
+      "resolved_at": "2026-04-20T12:43:38Z"
+    }
+  ],
+  "blockers": []
+}

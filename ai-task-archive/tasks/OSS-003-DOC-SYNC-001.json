@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "OSS-003-DOC-SYNC-001",
+  "archived_at": "2026-04-22T14:59:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-003-DOC-SYNC-001",
+    "title": "Reconcile OSS maturity docs with current Qlib TRL and OpenClaw evidence",
+    "summary_zh": "把 Qlib TRL OpenClaw 的成熟度文件對齊到目前 smoke-tested 與 governed evidence，消除 checklist 與 matrix 互相打架的情況。",
+    "phase": "Execution / OSS Evidence Sync",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+      "integrations/openclaw/integration.md"
+    ],
+    "acceptance": [
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md matches current Qlib TRL and OpenClaw evidence",
+      "DEFERRED_OSS_ACTIVATION_MAP.md no longer understates landed adapters and smoke paths",
+      "No canonical OSS doc disagrees on the maturity tier for those rows"
+    ],
+    "next": "Owner finalized approved doc sync. OpenClaw/Qlib/TRL maturity tiers now align across checklist, matrix, and deferred activation map; review artifact recorded in docs/reviews/2026-04-22-oss-003-doc-sync-001-claude2-review.md.",
+    "last_update": "2026-04-22T14:59:22Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "OpenClaw 對齊 governed、Qlib 與 TRL 對齊 smoke-tested，三份 canonical OSS doc（checklist、maturity matrix、deferred activation map）maturity tier 一致，剩餘文字皆為 activation gate / runtime adoption 而非 production-active claim。",
+      "Deferred activation map 把 Qlib 由 criteria-defined 修正為 smoke-tested 並更新 pyqlib 0.9.6，TRL 維持 smoke-tested 未被降級。",
+      "非阻塞 caveat：integrations/qlib/integration.md 標題 wording、services/learning/trl/requirements.txt 內 pyqlib 0.9.1 註解、TRL ownership 跨檔 wording drift；皆屬 evidence-detail 漂移而非 tier 衝突，已記錄於 sidecar review packet。"
+    ],
+    "review_file": "docs/reviews/2026-04-22-oss-003-doc-sync-001-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T14:59:22Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "c45c13352dced8c55094bcb31fbd2c5523257ac8",
+      "commit_subject": "OSS-003-DOC-SYNC-001 sync OSS maturity docs",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-003-DOC-SYNC-001",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1071,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-003-DOC-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T05:56:47Z",
+      "resolved_at": "2026-04-22T06:03:51Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:09:23Z",
+      "resolved_at": "2026-04-22T07:36:33Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:36:33Z",
+      "resolved_at": "2026-04-22T07:47:17Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:47:17Z",
+      "resolved_at": "2026-04-22T08:18:03Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Doc sync ready for review. OpenClaw now reads governed, Qlib and TRL now read smoke-tested, and the remaining text keeps activation gates separate from production-path claims.",
+      "status": "done",
+      "created_at": "2026-04-22T08:28:48Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Doc sync ready for review. OpenClaw now reads governed, Qlib and TRL now read smoke-tested, and the remaining text keeps activation gates separate from production-path claims.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T14:53:35Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Doc sync verified: matrix, checklist, and deferred activation map agree on OpenClaw=governed and Qlib/TRL=smoke-tested, and the remaining text now keeps activation gates separate from production-path claims. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T14:53:35Z",
+      "resolved_at": "2026-04-22T14:59:22Z"
+    }
+  ],
+  "blockers": []
+}

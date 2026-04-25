@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-005-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T19:11:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-005-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-SVC-005 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-SVC-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-005/BP5-SVC-005-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: Codex review approved; acceptance packet (AC-1 and AC-2 both MET, 12/12 tests green) archived as support artifact. Helper sidecar closed.",
+    "last_update": "2026-04-15T19:11:07Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-005",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "packet 與 services/deployment 現況一致",
+      "AC-1 與 AC-2 證據映射正確",
+      "重新執行 deployment pytest 12/12 通過"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T19:11:07Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3e88ddf5e8866eb92b1dfa89f45467fd86d43fb8",
+      "commit_subject": "BP5-SVC-005-SIDECAR-ACCEPTANCE: finalize acceptance packet — Codex approved, AC-1 and AC-2 MET",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-005-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 49,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-005-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:31:25Z",
+      "resolved_at": "2026-04-15T18:31:41Z"
+    },
+    {
+      "task_id": "BP5-SVC-005-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:01:04Z",
+      "resolved_at": "2026-04-15T19:01:44Z"
+    },
+    {
+      "task_id": "BP5-SVC-005-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete. AC-1 (outbox path) and AC-2 (compensation + idempotent replay) are both MET with evidence mapped to test_service.py line numbers. Dependency map and boundary inventory included. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-04-15T19:07:45Z",
+      "resolved_at": "2026-04-15T19:10:02Z"
+    },
+    {
+      "task_id": "BP5-SVC-005-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer approved: acceptance packet matches current deployment evidence and dependency map; pytest services/deployment/test_service.py remains 12/12 green. Returned to Claude for final helper closeout.",
+      "status": "done",
+      "created_at": "2026-04-15T19:10:02Z",
+      "resolved_at": "2026-04-15T19:11:07Z"
+    }
+  ],
+  "blockers": []
+}

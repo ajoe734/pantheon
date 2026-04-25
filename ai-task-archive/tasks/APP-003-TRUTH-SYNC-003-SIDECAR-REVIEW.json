@@ -1,0 +1,3351 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T05:26:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-TRUTH-SYNC-003 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-TRUTH-SYNC-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Archive Truth Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the support-only review packet after Gemini approval. Evidence remains aligned with the archived parent snapshot, residual execution packet, WORKBENCH backlog, and Lovable SA, and the packet now matches the live reviewer/finalize state without reopening canonical truth.",
+    "last_update": "2026-04-24T05:26:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-TRUTH-SYNC-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 通過審查：(1) 僅包含 support/sidecars/ artifact，未修改任何 canonical truth；(2) 證據與 parent archive snapshot、WORKBENCH backlog 及 Lovable SA 的 rebaseline 現況一致；(3) 雖然 packet header 仍標註 Codex3 為 reviewer (因 auto-reassignment 產生的輕微 drift)，但不影響內容真實性。",
+      "Packet 核對完成，可作為 parent APP-003-TRUTH-SYNC-003 的支援證據材料。"
+    ],
+    "review_file": "support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T05:26:49Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "dfb00b46c34c9af376f0c540095ff05a5dd8b5ba",
+      "commit_subject": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW sync sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+        "Reviewer": "Gemini"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1214,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-23T13:24:31Z",
+      "resolved_at": "2026-04-23T13:32:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-23T13:32:01Z",
+      "resolved_at": "2026-04-23T13:38:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Prepared support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Packet revalidates the archived parent against the current backlog, Lovable SA, and residual execution packet, and explicitly marks current-work coverage as archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-23T13:42:57Z",
+      "resolved_at": "2026-04-23T13:57:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T13:57:24Z",
+      "resolved_at": "2026-04-23T13:57:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:57:38Z",
+      "resolved_at": "2026-04-23T13:58:07Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:58:07Z",
+      "resolved_at": "2026-04-23T13:58:34Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:58:34Z",
+      "resolved_at": "2026-04-23T13:59:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:59:02Z",
+      "resolved_at": "2026-04-23T13:59:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:59:28Z",
+      "resolved_at": "2026-04-23T13:59:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:59:58Z",
+      "resolved_at": "2026-04-23T14:00:26Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:00:26Z",
+      "resolved_at": "2026-04-23T14:00:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:00:55Z",
+      "resolved_at": "2026-04-23T14:01:21Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:01:21Z",
+      "resolved_at": "2026-04-23T14:04:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Updated the support-only review packet to reflect the current Codex3 reviewer assignment and revalidated the archive/backlog/Lovable-SA evidence boundaries. Please review for support-only scope discipline and packet accuracy.",
+      "status": "done",
+      "created_at": "2026-04-23T14:04:01Z",
+      "resolved_at": "2026-04-23T14:04:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T14:04:44Z",
+      "resolved_at": "2026-04-23T14:05:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T14:05:14Z",
+      "resolved_at": "2026-04-23T14:05:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:05:28Z",
+      "resolved_at": "2026-04-23T14:05:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:05:57Z",
+      "resolved_at": "2026-04-23T14:06:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:06:44Z",
+      "resolved_at": "2026-04-23T14:07:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:07:49Z",
+      "resolved_at": "2026-04-23T14:08:36Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:08:36Z",
+      "resolved_at": "2026-04-23T14:09:12Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:09:12Z",
+      "resolved_at": "2026-04-23T14:09:40Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:09:40Z",
+      "resolved_at": "2026-04-23T14:10:09Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:10:09Z",
+      "resolved_at": "2026-04-23T14:10:36Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:10:36Z",
+      "resolved_at": "2026-04-23T14:11:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:11:05Z",
+      "resolved_at": "2026-04-23T14:11:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:11:32Z",
+      "resolved_at": "2026-04-23T14:12:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:12:00Z",
+      "resolved_at": "2026-04-23T14:12:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:12:28Z",
+      "resolved_at": "2026-04-23T14:30:56Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Updated the support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md, corrected reviewer targeting to Codex2, and revalidated the archive snapshot, residual execution packet, backlog wording, Lovable SA wording, and planning-session provenance without reopening canonical truth or rereading current-work.md. Ready for reviewer check.",
+      "status": "done",
+      "created_at": "2026-04-23T14:30:56Z",
+      "resolved_at": "2026-04-23T14:32:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T14:32:11Z",
+      "resolved_at": "2026-04-23T14:34:15Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Updated the support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md to match the live reviewer reassignment to Codex3, and revalidated that the packet remains support-only with archive-backed current-work limitations preserved. Ready for reviewer check.",
+      "status": "done",
+      "created_at": "2026-04-23T14:34:15Z",
+      "resolved_at": "2026-04-23T14:35:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T14:35:08Z",
+      "resolved_at": "2026-04-23T14:35:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T14:35:52Z",
+      "resolved_at": "2026-04-23T14:36:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:36:06Z",
+      "resolved_at": "2026-04-23T14:36:37Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:36:37Z",
+      "resolved_at": "2026-04-23T14:37:04Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:37:04Z",
+      "resolved_at": "2026-04-23T14:37:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:37:33Z",
+      "resolved_at": "2026-04-23T14:38:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:38:01Z",
+      "resolved_at": "2026-04-23T14:38:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:38:29Z",
+      "resolved_at": "2026-04-23T14:38:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:38:55Z",
+      "resolved_at": "2026-04-23T14:39:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:39:24Z",
+      "resolved_at": "2026-04-23T14:39:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:39:50Z",
+      "resolved_at": "2026-04-23T14:40:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:40:19Z",
+      "resolved_at": "2026-04-23T14:40:46Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:40:46Z",
+      "resolved_at": "2026-04-23T14:41:15Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:41:15Z",
+      "resolved_at": "2026-04-23T14:41:41Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:41:41Z",
+      "resolved_at": "2026-04-23T14:42:10Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:42:10Z",
+      "resolved_at": "2026-04-23T14:42:37Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:42:37Z",
+      "resolved_at": "2026-04-23T14:43:51Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:43:51Z",
+      "resolved_at": "2026-04-23T14:45:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:45:08Z",
+      "resolved_at": "2026-04-23T14:45:45Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:45:45Z",
+      "resolved_at": "2026-04-23T14:46:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:46:17Z",
+      "resolved_at": "2026-04-23T14:46:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:46:44Z",
+      "resolved_at": "2026-04-23T14:47:26Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:47:26Z",
+      "resolved_at": "2026-04-23T14:49:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed the support-only review packet to match the live reviewer reassignment to Codex2, revalidated the parent archive snapshot, residual execution packet, backlog wording, Lovable SA wording, planning-session provenance, and kept current-work coverage explicitly archive-backed rather than freshly revalidated. Ready for reviewer check.",
+      "status": "done",
+      "created_at": "2026-04-23T14:49:29Z",
+      "resolved_at": "2026-04-23T14:51:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T14:51:52Z",
+      "resolved_at": "2026-04-23T15:13:12Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed the support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md so its reviewer metadata matches the live Codex3 assignment, and revalidated the archive snapshot, residual execution packet, backlog wording, Lovable SA wording, and planning-session provenance without rereading current-work.md or reopening canonical truth. Ready for reviewer check.",
+      "status": "done",
+      "created_at": "2026-04-23T15:13:12Z",
+      "resolved_at": "2026-04-23T15:14:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T15:14:47Z",
+      "resolved_at": "2026-04-23T15:15:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T15:15:29Z",
+      "resolved_at": "2026-04-23T15:15:43Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:15:43Z",
+      "resolved_at": "2026-04-23T15:16:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:16:14Z",
+      "resolved_at": "2026-04-23T15:16:41Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:16:41Z",
+      "resolved_at": "2026-04-23T15:17:10Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:17:10Z",
+      "resolved_at": "2026-04-23T15:17:36Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:17:36Z",
+      "resolved_at": "2026-04-23T15:18:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:18:06Z",
+      "resolved_at": "2026-04-23T15:18:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:18:33Z",
+      "resolved_at": "2026-04-23T15:19:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:19:01Z",
+      "resolved_at": "2026-04-23T15:19:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:19:28Z",
+      "resolved_at": "2026-04-23T15:20:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:20:29Z",
+      "resolved_at": "2026-04-23T15:21:40Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:21:40Z",
+      "resolved_at": "2026-04-23T15:22:16Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:22:16Z",
+      "resolved_at": "2026-04-23T15:22:45Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:22:45Z",
+      "resolved_at": "2026-04-23T15:23:15Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:23:15Z",
+      "resolved_at": "2026-04-23T15:23:41Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:23:41Z",
+      "resolved_at": "2026-04-23T15:24:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:24:11Z",
+      "resolved_at": "2026-04-23T15:24:37Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:24:37Z",
+      "resolved_at": "2026-04-23T15:25:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:25:06Z",
+      "resolved_at": "2026-04-23T15:25:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:25:32Z",
+      "resolved_at": "2026-04-23T15:43:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed the support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md so its reviewer metadata now matches the live Codex2 assignment. Revalidated the archive snapshot, residual execution packet, backlog wording, Lovable SA wording, and planning-session provenance; current-work coverage remains explicitly archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-23T15:43:52Z",
+      "resolved_at": "2026-04-23T15:45:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet is refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Reviewer metadata now matches the live Codex2 assignment, and I revalidated the archive snapshot, residual execution packet, backlog wording, Lovable SA wording, and planning-session provenance without rereading current-work.md or reopening canonical truth. Please review the packet as a narrow evidence and boundary check; current-work coverage remains explicitly archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-23T15:45:44Z",
+      "resolved_at": "2026-04-23T15:46:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T15:46:27Z",
+      "resolved_at": "2026-04-23T15:46:48Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:46:48Z",
+      "resolved_at": "2026-04-23T15:47:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:47:17Z",
+      "resolved_at": "2026-04-23T15:47:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:47:44Z",
+      "resolved_at": "2026-04-23T15:48:12Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:48:12Z",
+      "resolved_at": "2026-04-23T15:48:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:48:39Z",
+      "resolved_at": "2026-04-23T15:49:10Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:49:10Z",
+      "resolved_at": "2026-04-23T15:49:36Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:49:36Z",
+      "resolved_at": "2026-04-23T15:55:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed the support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md so its reviewer metadata now matches the live Codex3 assignment. Revalidated the archive snapshot, residual execution packet, backlog wording, Lovable SA wording, and planning-session provenance without rereading current-work.md; current-work coverage remains explicitly archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-23T15:55:32Z",
+      "resolved_at": "2026-04-23T15:59:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T15:59:55Z",
+      "resolved_at": "2026-04-23T16:00:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T16:00:39Z",
+      "resolved_at": "2026-04-23T16:00:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:00:53Z",
+      "resolved_at": "2026-04-23T16:01:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:01:25Z",
+      "resolved_at": "2026-04-23T16:01:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:01:53Z",
+      "resolved_at": "2026-04-23T16:06:30Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Reviewer metadata now matches the live Codex2 assignment, and I revalidated the archive snapshot, residual execution packet, backlog wording, Lovable SA wording, and planning-session provenance without rereading current-work.md or reopening canonical truth. Please review this as a narrow evidence and boundary check; current-work coverage remains explicitly archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-23T16:06:30Z",
+      "resolved_at": "2026-04-23T16:08:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Rechecked the support packet after wake: archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current backlog wording, Lovable SA wording, and the planning-session provenance all still match the packet. No support-only edits were needed; please review for evidence accuracy and boundary discipline, with current-work coverage still treated as archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-23T16:08:00Z",
+      "resolved_at": "2026-04-23T16:08:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T16:08:27Z",
+      "resolved_at": "2026-04-23T16:08:45Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:08:45Z",
+      "resolved_at": "2026-04-23T16:12:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Rechecked the support-only packet after wake. Archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and the OSS-004D planning provenance still match the packet. No support-artifact edits were needed; please review for evidence accuracy, support-only scope, and the explicit current-work archive-backed limitation.",
+      "status": "done",
+      "created_at": "2026-04-23T16:12:49Z",
+      "resolved_at": "2026-04-23T16:13:26Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T16:13:26Z",
+      "resolved_at": "2026-04-23T16:13:40Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:13:40Z",
+      "resolved_at": "2026-04-23T16:17:31Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after live revalidation of the archive snapshot, residual execution packet, backlog wording, Lovable SA wording, checkpoint commit 2c42f7e, and planning-session provenance. Please review this as a narrow evidence and boundary check; current-work coverage remains explicitly archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-23T16:17:31Z",
+      "resolved_at": "2026-04-23T16:18:07Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T16:18:07Z",
+      "resolved_at": "2026-04-23T16:23:18Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Reviewer metadata now matches the live Codex3 assignment, and I revalidated the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance without rereading current-work.md or reopening canonical truth. Please review for support-artifact completeness, evidence accuracy, and the explicit archive-backed current-work limitation.",
+      "status": "done",
+      "created_at": "2026-04-23T16:23:18Z",
+      "resolved_at": "2026-04-23T16:27:35Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after live revalidation of the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Reviewer wording now stays within current durable state only, and current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T16:27:35Z",
+      "resolved_at": "2026-04-23T16:29:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T16:29:05Z",
+      "resolved_at": "2026-04-23T16:29:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T16:29:50Z",
+      "resolved_at": "2026-04-23T16:36:23Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Last revalidated 2026-04-23T16:35:46Z after wake: current durable reviewer routing still points to Codex3, and I rechecked the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance without rereading current-work.md or reopening canonical truth. Please review for support-artifact completeness, evidence accuracy, and the explicit archive-backed current-work limitation.",
+      "status": "done",
+      "created_at": "2026-04-23T16:36:23Z",
+      "resolved_at": "2026-04-23T16:39:43Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T16:39:10Z against the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet reviewer-routing language now stays on durable  + owner-to-reviewer handoff state instead of a superseded reassignment timestamp; current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T16:39:43Z",
+      "resolved_at": "2026-04-23T16:40:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T16:39:10Z against the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet reviewer-routing language now stays on durable review plus owner-to-reviewer handoff state instead of a superseded reassignment timestamp; current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T16:40:08Z",
+      "resolved_at": "2026-04-23T16:41:16Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex3 to Claude2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T16:41:16Z",
+      "resolved_at": "2026-04-23T16:41:30Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:41:30Z",
+      "resolved_at": "2026-04-23T16:41:59Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:41:59Z",
+      "resolved_at": "2026-04-23T16:42:26Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:42:26Z",
+      "resolved_at": "2026-04-23T16:42:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:42:58Z",
+      "resolved_at": "2026-04-23T16:43:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:43:25Z",
+      "resolved_at": "2026-04-23T16:43:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:43:55Z",
+      "resolved_at": "2026-04-23T16:44:21Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:44:21Z",
+      "resolved_at": "2026-04-23T16:44:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude to Gemini after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:44:52Z",
+      "resolved_at": "2026-04-23T16:45:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T16:45:55Z",
+      "resolved_at": "2026-04-23T16:46:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:46:28Z",
+      "resolved_at": "2026-04-23T16:47:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:47:28Z",
+      "resolved_at": "2026-04-23T16:48:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:48:06Z",
+      "resolved_at": "2026-04-23T16:48:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:48:33Z",
+      "resolved_at": "2026-04-23T16:49:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:49:02Z",
+      "resolved_at": "2026-04-23T16:49:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:49:29Z",
+      "resolved_at": "2026-04-23T16:50:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:50:00Z",
+      "resolved_at": "2026-04-23T16:50:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:50:27Z",
+      "resolved_at": "2026-04-23T16:50:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:50:55Z",
+      "resolved_at": "2026-04-23T16:51:22Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:51:22Z",
+      "resolved_at": "2026-04-23T16:51:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:51:50Z",
+      "resolved_at": "2026-04-23T16:53:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Reviewer metadata now matches the live Codex2 assignment, and I revalidated the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance without rereading current-work.md or reopening canonical truth. Please review for support-artifact completeness, evidence accuracy, and the explicit archive-backed current-work limitation.",
+      "status": "done",
+      "created_at": "2026-04-23T16:53:38Z",
+      "resolved_at": "2026-04-23T16:54:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T16:54:11Z",
+      "resolved_at": "2026-04-23T16:54:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:54:25Z",
+      "resolved_at": "2026-04-23T16:54:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:54:53Z",
+      "resolved_at": "2026-04-23T16:55:22Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:55:22Z",
+      "resolved_at": "2026-04-23T16:55:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:55:55Z",
+      "resolved_at": "2026-04-23T16:56:23Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T16:56:23Z",
+      "resolved_at": "2026-04-23T17:18:45Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T17:17:53Z against the live reviewer state in ai-status.json, the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet now matches reviewer Codex3 and explicitly keeps current-work coverage archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T17:18:45Z",
+      "resolved_at": "2026-04-23T17:21:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Rechecked this support-only review packet after wake. The parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance still match support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. No support-artifact edits were needed; please review for evidence accuracy, support-only boundary discipline, and the explicit archive-backed current-work limitation.",
+      "status": "done",
+      "created_at": "2026-04-23T17:21:39Z",
+      "resolved_at": "2026-04-23T17:22:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T17:22:33Z",
+      "resolved_at": "2026-04-23T17:23:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T17:23:49Z",
+      "resolved_at": "2026-04-23T17:44:40Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T17:44:18Z against the live reviewer state in ai-status.json, the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet remains support-only, keeps current-work coverage archive-backed rather than freshly revalidated, and is ready for reviewer evidence and boundary check.",
+      "status": "done",
+      "created_at": "2026-04-23T17:44:40Z",
+      "resolved_at": "2026-04-23T17:47:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex3 to Claude2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T17:47:11Z",
+      "resolved_at": "2026-04-23T17:47:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:47:47Z",
+      "resolved_at": "2026-04-23T17:50:13Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T17:49:52Z against the live reviewer state in ai-status.json, the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet now matches reviewer Codex2 and explicitly keeps current-work coverage archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T17:50:13Z",
+      "resolved_at": "2026-04-23T17:50:51Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T17:50:51Z",
+      "resolved_at": "2026-04-23T17:51:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:51:05Z",
+      "resolved_at": "2026-04-23T17:51:34Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:51:34Z",
+      "resolved_at": "2026-04-23T17:52:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:52:00Z",
+      "resolved_at": "2026-04-23T17:52:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:52:29Z",
+      "resolved_at": "2026-04-23T17:52:56Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:52:56Z",
+      "resolved_at": "2026-04-23T17:53:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:53:24Z",
+      "resolved_at": "2026-04-23T17:53:51Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:53:51Z",
+      "resolved_at": "2026-04-23T17:54:20Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:54:20Z",
+      "resolved_at": "2026-04-23T17:54:46Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:54:46Z",
+      "resolved_at": "2026-04-23T17:55:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude to Gemini after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:55:17Z",
+      "resolved_at": "2026-04-23T17:56:12Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T17:56:12Z",
+      "resolved_at": "2026-04-23T17:56:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:56:25Z",
+      "resolved_at": "2026-04-23T17:56:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:56:53Z",
+      "resolved_at": "2026-04-23T17:57:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:57:19Z",
+      "resolved_at": "2026-04-23T17:57:54Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:57:54Z",
+      "resolved_at": "2026-04-23T17:58:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:58:24Z",
+      "resolved_at": "2026-04-23T17:58:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:58:50Z",
+      "resolved_at": "2026-04-23T17:59:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T17:59:52Z",
+      "resolved_at": "2026-04-23T18:00:59Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T18:00:59Z",
+      "resolved_at": "2026-04-23T18:01:35Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T18:01:35Z",
+      "resolved_at": "2026-04-23T18:02:03Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T18:02:03Z",
+      "resolved_at": "2026-04-23T18:02:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T18:02:32Z",
+      "resolved_at": "2026-04-23T18:24:10Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T18:23:16Z against the live reviewer state in ai-status.json, the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet now matches reviewer Codex3 and explicitly keeps current-work coverage archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T18:24:10Z",
+      "resolved_at": "2026-04-23T18:28:46Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T18:28:21Z after wake against the live reviewer state in ai-status.json, the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. No evidence drift was found; current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T18:28:46Z",
+      "resolved_at": "2026-04-23T18:29:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T18:29:39Z",
+      "resolved_at": "2026-04-23T18:30:21Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T18:30:21Z",
+      "resolved_at": "2026-04-23T18:52:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T18:51:06Z against the live reviewer state in ai-status.json, the parent archive snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. No evidence drift was found; current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T18:52:02Z",
+      "resolved_at": "2026-04-23T18:54:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T18:54:20Z against ai-status.json, the parent archive snapshot, checkpoint commit 2c42f7e subject, the residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. No evidence drift was found; current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T18:54:57Z",
+      "resolved_at": "2026-04-23T18:56:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T18:56:28Z",
+      "resolved_at": "2026-04-23T18:58:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T19:03:00Z against ai-status.json, the archived parent snapshot, checkpoint commit 2c42f7e subject, the residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. No evidence drift was found; current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T18:58:02Z",
+      "resolved_at": "2026-04-23T18:58:36Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T18:58:36Z",
+      "resolved_at": "2026-04-23T18:58:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T18:58:50Z",
+      "resolved_at": "2026-04-23T18:59:35Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T18:59:35Z",
+      "resolved_at": "2026-04-23T19:00:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:00:44Z",
+      "resolved_at": "2026-04-23T19:01:34Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude to Gemini after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:01:34Z",
+      "resolved_at": "2026-04-23T19:02:35Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T19:02:35Z",
+      "resolved_at": "2026-04-23T19:02:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:02:49Z",
+      "resolved_at": "2026-04-23T19:03:18Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:03:18Z",
+      "resolved_at": "2026-04-23T19:03:45Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:03:45Z",
+      "resolved_at": "2026-04-23T19:04:16Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:04:16Z",
+      "resolved_at": "2026-04-23T19:04:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:04:44Z",
+      "resolved_at": "2026-04-23T19:05:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:05:17Z",
+      "resolved_at": "2026-04-23T19:05:45Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:05:45Z",
+      "resolved_at": "2026-04-23T19:06:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:06:17Z",
+      "resolved_at": "2026-04-23T19:06:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:06:44Z",
+      "resolved_at": "2026-04-23T19:07:12Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:07:12Z",
+      "resolved_at": "2026-04-23T19:07:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:07:39Z",
+      "resolved_at": "2026-04-23T19:08:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:08:08Z",
+      "resolved_at": "2026-04-23T19:08:34Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:08:34Z",
+      "resolved_at": "2026-04-23T19:09:07Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:09:07Z",
+      "resolved_at": "2026-04-23T19:09:36Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:09:36Z",
+      "resolved_at": "2026-04-23T19:10:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:10:02Z",
+      "resolved_at": "2026-04-23T19:10:31Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:10:31Z",
+      "resolved_at": "2026-04-23T19:10:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:10:57Z",
+      "resolved_at": "2026-04-23T19:11:43Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:11:43Z",
+      "resolved_at": "2026-04-23T19:33:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T19:32:40Z against ai-status.json, the archived parent snapshot, checkpoint commit 2c42f7e subject, the residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Please review for support-artifact completeness, evidence accuracy, support-only boundary discipline, and the explicit archive-backed current-work limitation.",
+      "status": "done",
+      "created_at": "2026-04-23T19:33:58Z",
+      "resolved_at": "2026-04-23T19:38:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T19:38:19Z",
+      "resolved_at": "2026-04-23T19:38:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T19:38:55Z",
+      "resolved_at": "2026-04-23T19:40:42Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T19:40:14Z against ai-status.json, the archived parent snapshot, checkpoint commit 2c42f7e subject, the residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet now matches reviewer Codex2 and keeps current-work coverage explicitly archive-backed rather than freshly revalidated. Please review for support-artifact completeness, evidence accuracy, support-only boundary discipline, and the explicit current-work limitation.",
+      "status": "done",
+      "created_at": "2026-04-23T19:40:42Z",
+      "resolved_at": "2026-04-23T19:41:15Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T19:41:15Z",
+      "resolved_at": "2026-04-23T19:41:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:41:28Z",
+      "resolved_at": "2026-04-23T19:41:56Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:41:56Z",
+      "resolved_at": "2026-04-23T19:42:23Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:42:23Z",
+      "resolved_at": "2026-04-23T19:42:51Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:42:51Z",
+      "resolved_at": "2026-04-23T19:43:18Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:43:18Z",
+      "resolved_at": "2026-04-23T19:43:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:43:47Z",
+      "resolved_at": "2026-04-23T19:44:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:44:14Z",
+      "resolved_at": "2026-04-23T19:44:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:44:44Z",
+      "resolved_at": "2026-04-23T19:45:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:45:11Z",
+      "resolved_at": "2026-04-23T19:45:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:45:38Z",
+      "resolved_at": "2026-04-23T19:46:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:46:05Z",
+      "resolved_at": "2026-04-23T19:46:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:46:33Z",
+      "resolved_at": "2026-04-23T19:46:59Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:46:59Z",
+      "resolved_at": "2026-04-23T19:47:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:47:32Z",
+      "resolved_at": "2026-04-23T19:48:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:48:27Z",
+      "resolved_at": "2026-04-23T19:49:31Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:49:31Z",
+      "resolved_at": "2026-04-23T19:50:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:50:24Z",
+      "resolved_at": "2026-04-23T19:50:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:50:57Z",
+      "resolved_at": "2026-04-23T19:51:23Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:51:23Z",
+      "resolved_at": "2026-04-23T19:51:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:51:52Z",
+      "resolved_at": "2026-04-23T19:52:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:52:19Z",
+      "resolved_at": "2026-04-23T19:52:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:52:47Z",
+      "resolved_at": "2026-04-23T19:53:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:53:14Z",
+      "resolved_at": "2026-04-23T19:53:43Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude to Codex3 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T19:53:43Z",
+      "resolved_at": "2026-04-23T20:16:03Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated on 2026-04-23T20:15:30Z against ai-status assignment, archived parent APP-003-TRUTH-SYNC-003 snapshot, docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, LOVABLE_MASTER_SA.md, and phase7 planning provenance via OSS-004D. Packet now matches reviewer Codex3, stays support-only, and explicitly keeps current-work coverage archive-backed rather than freshly revalidated. Please review for packet accuracy and boundary discipline only; do not reopen the archived parent scope.",
+      "status": "done",
+      "created_at": "2026-04-23T20:16:03Z",
+      "resolved_at": "2026-04-23T20:19:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated on 2026-04-23T20:17:53Z against ai-status assignment, the archived parent APP-003-TRUTH-SYNC-003 snapshot, checkpoint commit 2c42f7e subject, docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. No evidence drift found; current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for packet accuracy and boundary discipline only; do not reopen the archived parent scope.",
+      "status": "done",
+      "created_at": "2026-04-23T20:19:14Z",
+      "resolved_at": "2026-04-23T20:20:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T20:20:17Z",
+      "resolved_at": "2026-04-23T20:21:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T20:21:00Z",
+      "resolved_at": "2026-04-23T20:41:20Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T20:43:06Z against ai-status assignment, the archived parent APP-003-TRUTH-SYNC-003 snapshot, checkpoint commit 2c42f7e subject, docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. Packet now correctly states the wake-time lifecycle as in_progress with reviewer Codex3, and current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for packet accuracy, support-only boundary discipline, and acceptable reviewer-routing wording.",
+      "status": "done",
+      "created_at": "2026-04-23T20:44:01Z",
+      "resolved_at": "2026-04-23T21:05:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T21:04:13Z against the live ai-status task entry, task brief, archived parent APP-003-TRUTH-SYNC-003 snapshot, checkpoint commit 2c42f7e subject, docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. Packet now explicitly separates the 2026-04-23T20:43:06Z wake-time in_progress state from the current review state while keeping reviewer Codex3 unchanged, and current-work coverage remains explicitly archive-backed rather than freshly revalidated. Please review for packet accuracy, support-only boundary discipline, and acceptable reviewer-routing wording.",
+      "status": "done",
+      "created_at": "2026-04-23T21:05:02Z",
+      "resolved_at": "2026-04-23T21:06:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 terminal: -- 2026-04-23 21:26:04 Orchestrator: `APP-003-CW04-PUBLICATION-REPLAY-001` - 2026-04-23 21:11:33 · Orchestrator · worker_failed · .orchestrator/logs/20260423T055207518799Z-claude2-",
+      "status": "done",
+      "created_at": "2026-04-23T21:06:02Z",
+      "resolved_at": "2026-04-23T21:07:51Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T21:34:00Z against the live ai-status task entry, task brief, archived parent APP-003-TRUTH-SYNC-003 snapshot, checkpoint commit 2c42f7e subject, docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. Packet now matches the live reviewer reassignment to Codex2, explicitly separates the earlier 2026-04-23T20:43:06Z Codex3 wake-time state from the current review state, and keeps current-work coverage archive-backed rather than freshly revalidated. Please review for packet accuracy, support-only boundary discipline, and reviewer-routing wording.",
+      "status": "done",
+      "created_at": "2026-04-23T21:07:51Z",
+      "resolved_at": "2026-04-23T21:08:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T21:08:29Z",
+      "resolved_at": "2026-04-23T21:27:56Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T21:27:01Z against the live ai-status task entry, task brief, archived parent APP-003-TRUTH-SYNC-003 snapshot, checkpoint commit 2c42f7e subject, docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. Packet now matches the current durable review state under reviewer Codex3, explicitly treats the brief Codex2 reassignment as superseded, and keeps current-work coverage archive-backed rather than freshly revalidated. Please review for packet accuracy, support-only boundary discipline, and reviewer-routing wording.",
+      "status": "done",
+      "created_at": "2026-04-23T21:27:56Z",
+      "resolved_at": "2026-04-23T21:29:23Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T21:29:23Z",
+      "resolved_at": "2026-04-23T21:30:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T21:30:06Z",
+      "resolved_at": "2026-04-23T21:30:20Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:30:20Z",
+      "resolved_at": "2026-04-23T21:30:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:30:49Z",
+      "resolved_at": "2026-04-23T21:31:15Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:31:15Z",
+      "resolved_at": "2026-04-23T21:31:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:31:44Z",
+      "resolved_at": "2026-04-23T21:32:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:32:11Z",
+      "resolved_at": "2026-04-23T21:32:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:32:39Z",
+      "resolved_at": "2026-04-23T21:33:15Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:33:15Z",
+      "resolved_at": "2026-04-23T21:33:41Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:33:41Z",
+      "resolved_at": "2026-04-23T21:34:13Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:34:13Z",
+      "resolved_at": "2026-04-23T21:34:40Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:34:40Z",
+      "resolved_at": "2026-04-23T21:35:09Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:35:09Z",
+      "resolved_at": "2026-04-23T21:35:36Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:35:36Z",
+      "resolved_at": "2026-04-23T21:36:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:36:05Z",
+      "resolved_at": "2026-04-23T21:36:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:36:32Z",
+      "resolved_at": "2026-04-23T21:37:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:37:02Z",
+      "resolved_at": "2026-04-23T21:37:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:37:49Z",
+      "resolved_at": "2026-04-23T21:39:03Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:39:03Z",
+      "resolved_at": "2026-04-23T21:39:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:39:53Z",
+      "resolved_at": "2026-04-23T21:40:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:40:28Z",
+      "resolved_at": "2026-04-23T21:40:56Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:40:56Z",
+      "resolved_at": "2026-04-23T21:41:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:41:24Z",
+      "resolved_at": "2026-04-23T21:41:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T21:41:52Z",
+      "resolved_at": "2026-04-23T21:44:13Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated at 2026-04-23T21:43:25Z against the live ai-status task entry, task brief, archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet, WORKBENCH_DELIVERY_BACKLOG.md, LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. Please review for packet accuracy, support-only boundary discipline, and acceptance of the explicit current-work archive-backed limitation only.",
+      "status": "done",
+      "created_at": "2026-04-23T21:44:13Z",
+      "resolved_at": "2026-04-23T21:47:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 terminal: -- 2026-04-23 21:26:04 Orchestrator: `APP-003-CW04-PUBLICATION-REPLAY-001` - 2026-04-23 21:11:33 · Orchestrator · worker_failed · .orchestrator/logs/20260423T055207518799Z-claude2-",
+      "status": "done",
+      "created_at": "2026-04-23T21:47:01Z",
+      "resolved_at": "2026-04-23T22:07:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated at 2026-04-23T22:06:09Z against the live ai-status task entry, task brief, archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet, WORKBENCH_DELIVERY_BACKLOG.md, LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. Packet now matches the current durable review routing under Codex3, explicitly treats the interim Codex2 reassignment as superseded, and keeps current-work coverage archive-backed rather than freshly revalidated. Please review for packet accuracy, support-only boundary discipline, and acceptance of the explicit current-work limitation only.",
+      "status": "done",
+      "created_at": "2026-04-23T22:07:05Z",
+      "resolved_at": "2026-04-23T22:10:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated at 2026-04-23T22:10:08Z against the live ai-status task entry, task brief, archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet, WORKBENCH_DELIVERY_BACKLOG.md, LOVABLE_MASTER_SA.md, and OSS-004D planning provenance. No evidence drift found; packet remains support-only, keeps current-work coverage archive-backed rather than freshly revalidated, and is ready for Codex3 review.",
+      "status": "done",
+      "created_at": "2026-04-23T22:10:47Z",
+      "resolved_at": "2026-04-23T22:12:02Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T22:12:02Z",
+      "resolved_at": "2026-04-23T22:12:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T22:12:33Z",
+      "resolved_at": "2026-04-23T22:35:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T22:35:49Z",
+      "resolved_at": "2026-04-23T22:37:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Reviewer metadata and lifecycle wording now match the current durable routing to Codex2; wake-time Codex3 state is preserved as historical context only. Packet remains support-only, keeps current-work coverage archive-backed rather than freshly revalidated, and is ready for Codex2 review on packet accuracy and boundary discipline.",
+      "status": "done",
+      "created_at": "2026-04-23T22:37:38Z",
+      "resolved_at": "2026-04-23T22:38:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T22:38:27Z",
+      "resolved_at": "2026-04-23T22:39:04Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:39:04Z",
+      "resolved_at": "2026-04-23T22:40:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:40:17Z",
+      "resolved_at": "2026-04-23T22:41:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:41:00Z",
+      "resolved_at": "2026-04-23T22:41:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:41:28Z",
+      "resolved_at": "2026-04-23T22:41:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:41:58Z",
+      "resolved_at": "2026-04-23T22:42:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:42:25Z",
+      "resolved_at": "2026-04-23T22:42:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:42:53Z",
+      "resolved_at": "2026-04-23T22:43:20Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:43:20Z",
+      "resolved_at": "2026-04-23T22:43:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:43:49Z",
+      "resolved_at": "2026-04-23T22:44:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:44:19Z",
+      "resolved_at": "2026-04-23T22:44:46Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude2 to Gemini after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:44:46Z",
+      "resolved_at": "2026-04-23T22:45:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T22:45:44Z",
+      "resolved_at": "2026-04-23T22:45:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:45:57Z",
+      "resolved_at": "2026-04-23T22:46:31Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:46:31Z",
+      "resolved_at": "2026-04-23T22:46:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:46:58Z",
+      "resolved_at": "2026-04-23T22:47:26Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:47:26Z",
+      "resolved_at": "2026-04-23T22:47:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:47:53Z",
+      "resolved_at": "2026-04-23T22:48:22Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:48:22Z",
+      "resolved_at": "2026-04-23T22:48:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:48:49Z",
+      "resolved_at": "2026-04-23T22:49:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:49:17Z",
+      "resolved_at": "2026-04-23T22:49:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:49:44Z",
+      "resolved_at": "2026-04-23T22:50:13Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:50:13Z",
+      "resolved_at": "2026-04-23T22:50:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T22:50:55Z",
+      "resolved_at": "2026-04-23T23:12:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated 2026-04-23T23:12:09Z against the live task entry, task brief, archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet framing, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. Packet now matches reviewer Codex3, keeps current-work coverage explicitly archive-backed rather than freshly revalidated, and is ready for reviewer evidence and boundary check.",
+      "status": "done",
+      "created_at": "2026-04-23T23:12:58Z",
+      "resolved_at": "2026-04-23T23:18:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after a narrow revalidation at 2026-04-23T23:16:09Z. No evidence drift found versus the live task entry, task brief, archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, or OSS-004D planning provenance. Please review for packet accuracy, support-only boundary discipline, and acceptance of the explicit current-work archive-backed limitation only.",
+      "status": "done",
+      "created_at": "2026-04-23T23:18:19Z",
+      "resolved_at": "2026-04-23T23:19:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T23:19:38Z",
+      "resolved_at": "2026-04-23T23:20:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T23:20:06Z",
+      "resolved_at": "2026-04-23T23:21:46Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md. Revalidated at 2026-04-23T23:24:00Z against the live sidecar task entry, task brief, archived parent snapshot, and planning provenance; reviewer metadata and lifecycle wording now match the current durable Codex2 routing, while earlier Codex3 routing is preserved as superseded history only. Please review for packet accuracy, support-only boundary discipline, and acceptance of the explicit current-work archive-backed limitation only.",
+      "status": "done",
+      "created_at": "2026-04-23T23:21:46Z",
+      "resolved_at": "2026-04-23T23:22:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T23:22:27Z",
+      "resolved_at": "2026-04-23T23:22:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:22:47Z",
+      "resolved_at": "2026-04-23T23:23:16Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:23:16Z",
+      "resolved_at": "2026-04-23T23:23:42Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:23:42Z",
+      "resolved_at": "2026-04-23T23:24:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:24:14Z",
+      "resolved_at": "2026-04-23T23:24:40Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:24:40Z",
+      "resolved_at": "2026-04-23T23:25:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:25:08Z",
+      "resolved_at": "2026-04-23T23:25:35Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:25:35Z",
+      "resolved_at": "2026-04-23T23:26:04Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:26:04Z",
+      "resolved_at": "2026-04-23T23:26:30Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:26:30Z",
+      "resolved_at": "2026-04-23T23:26:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:26:58Z",
+      "resolved_at": "2026-04-23T23:27:43Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:27:43Z",
+      "resolved_at": "2026-04-23T23:28:48Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:28:48Z",
+      "resolved_at": "2026-04-23T23:29:37Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:29:37Z",
+      "resolved_at": "2026-04-23T23:30:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:30:11Z",
+      "resolved_at": "2026-04-23T23:30:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:30:38Z",
+      "resolved_at": "2026-04-23T23:31:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:31:06Z",
+      "resolved_at": "2026-04-23T23:31:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:31:33Z",
+      "resolved_at": "2026-04-23T23:32:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:32:01Z",
+      "resolved_at": "2026-04-23T23:32:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:32:27Z",
+      "resolved_at": "2026-04-23T23:32:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:32:55Z",
+      "resolved_at": "2026-04-23T23:33:22Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:33:22Z",
+      "resolved_at": "2026-04-23T23:33:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:33:50Z",
+      "resolved_at": "2026-04-23T23:34:16Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:34:16Z",
+      "resolved_at": "2026-04-23T23:34:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude to Codex3 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T23:34:47Z",
+      "resolved_at": "2026-04-23T23:56:53Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after a narrow revalidation at 2026-04-23T23:55:59Z. Verified the live sidecar routing now points to reviewer Codex3, and revalidated the archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and planning-session provenance without rereading current-work.md or reopening canonical truth. Please review for packet accuracy, support-only boundary discipline, and acceptance of the explicit current-work archive-backed limitation only.",
+      "status": "done",
+      "created_at": "2026-04-23T23:56:53Z",
+      "resolved_at": "2026-04-24T00:00:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after a narrow revalidation at 2026-04-24T00:00:09Z. No evidence drift found versus the live task entry, task brief, archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, or planning-session provenance. Please review for packet accuracy, support-only boundary discipline, and acceptance of the explicit current-work archive-backed limitation only.",
+      "status": "done",
+      "created_at": "2026-04-24T00:00:33Z",
+      "resolved_at": "2026-04-24T00:01:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-24T00:01:49Z",
+      "resolved_at": "2026-04-24T00:02:22Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T00:02:22Z",
+      "resolved_at": "2026-04-24T00:04:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after narrow revalidation at 2026-04-24T00:03:24Z. Reviewer metadata and lifecycle wording now match the live durable Codex2 routing; no evidence drift found versus the task brief, live task entry, archived parent snapshot, checkpoint commit 2c42f7e subject, residual execution packet, WORKBENCH backlog wording, Lovable SA wording, or OSS-004D planning provenance. Please review for packet accuracy, support-only boundary discipline, and acceptance of the explicit current-work archive-backed limitation only.",
+      "status": "done",
+      "created_at": "2026-04-24T00:04:08Z",
+      "resolved_at": "2026-04-24T00:05:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-24T00:05:01Z",
+      "resolved_at": "2026-04-24T00:05:35Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:05:35Z",
+      "resolved_at": "2026-04-24T00:06:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:06:27Z",
+      "resolved_at": "2026-04-24T00:07:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:07:01Z",
+      "resolved_at": "2026-04-24T00:07:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:07:28Z",
+      "resolved_at": "2026-04-24T00:07:58Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:07:58Z",
+      "resolved_at": "2026-04-24T00:08:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:08:25Z",
+      "resolved_at": "2026-04-24T00:08:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:08:55Z",
+      "resolved_at": "2026-04-24T00:09:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:09:25Z",
+      "resolved_at": "2026-04-24T00:09:54Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:09:54Z",
+      "resolved_at": "2026-04-24T00:10:22Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:10:22Z",
+      "resolved_at": "2026-04-24T00:10:51Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:10:51Z",
+      "resolved_at": "2026-04-24T00:11:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:11:17Z",
+      "resolved_at": "2026-04-24T00:11:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:11:52Z",
+      "resolved_at": "2026-04-24T00:12:18Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:12:18Z",
+      "resolved_at": "2026-04-24T00:12:46Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:12:46Z",
+      "resolved_at": "2026-04-24T00:13:13Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:13:13Z",
+      "resolved_at": "2026-04-24T00:13:41Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:13:41Z",
+      "resolved_at": "2026-04-24T00:14:07Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:14:07Z",
+      "resolved_at": "2026-04-24T00:14:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:14:38Z",
+      "resolved_at": "2026-04-24T00:15:04Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:15:04Z",
+      "resolved_at": "2026-04-24T00:15:33Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:15:33Z",
+      "resolved_at": "2026-04-24T00:15:59Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:15:59Z",
+      "resolved_at": "2026-04-24T00:17:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T00:17:01Z",
+      "resolved_at": "2026-04-24T00:38:39Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed the support-only review packet in support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md against the archived parent, residual execution packet, current backlog and Lovable SA wording, and the live Codex3 reviewer routing. No canonical truth changes; current-work coverage remains archive-backed rather than freshly revalidated.",
+      "status": "done",
+      "created_at": "2026-04-24T00:43:30Z",
+      "resolved_at": "2026-04-24T01:02:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed the support-only review packet at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after narrow revalidation at 2026-04-24T01:01:02Z. The packet now matches the live review lifecycle and pending Codex-to-Codex3 handoff state, alongside the archived parent snapshot, residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance. No canonical truth changes; current-work coverage remains archive-backed only.",
+      "status": "done",
+      "created_at": "2026-04-24T01:02:00Z",
+      "resolved_at": "2026-04-24T01:06:56Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after narrow revalidation on 2026-04-24T01:05:50Z. Corrected the stale hard-coded handoff timestamp so the packet now reflects the live review state without brittle created_at coupling. No canonical truth changes; the archived parent snapshot, residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance still align, and current-work coverage remains archive-backed only. Please review for packet accuracy and support-only boundary discipline only.",
+      "status": "done",
+      "created_at": "2026-04-24T01:06:56Z",
+      "resolved_at": "2026-04-24T01:08:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T01:08:14Z",
+      "resolved_at": "2026-04-24T01:08:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T01:08:47Z",
+      "resolved_at": "2026-04-24T04:50:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Support-only review packet refreshed at support/sidecars/APP-003-TRUTH-SYNC-003/APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW.md after narrow revalidation at 2026-04-24T04:49:18Z. Evidence remains aligned across the archived parent snapshot, residual execution packet, current WORKBENCH backlog wording, current Lovable SA wording, and OSS-004D planning provenance; no canonical truth changes, and current-work coverage remains archive-backed only. Formal owner-to-reviewer handoff restored for Codex3 review.",
+      "status": "done",
+      "created_at": "2026-04-24T04:50:28Z",
+      "resolved_at": "2026-04-24T04:53:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-24T04:53:44Z",
+      "resolved_at": "2026-04-24T04:59:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization. Evidence revalidated and scope discipline confirmed.",
+      "status": "done",
+      "created_at": "2026-04-24T04:59:14Z",
+      "resolved_at": "2026-04-24T05:26:49Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "INFRA-PG-001",
+  "archived_at": "2026-04-17T18:44:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INFRA-PG-001",
+    "title": "Add PostgreSQL to docker-compose as system-wide persistent store",
+    "summary_zh": "將 PostgreSQL 加入 docker-compose.yml：加 postgres:16-alpine service、volume、初始化 SQL（建立 pantheon_app user / pantheon DB），補 DATABASE_URL env 到所有依賴服務，更新 .env.example。這是整套系統最關鍵的缺失基礎設施。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"docker-compose.yml\"",
+      "\".env.example\"",
+      "\"scripts/init-db.sql\"]"
+    ],
+    "acceptance": [
+      "[\"docker compose up postgres 後 healthcheck 通過\"",
+      "\"所有有 DATABASE_URL 的服務可連上 postgres\"",
+      "\"init-db.sql 建立 pantheon DB 和 user 成功\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: PostgreSQL service, init-db.sql schema ownership fix, .env.example, and DATABASE_URL wiring all confirmed by Codex review. All task artifacts committed and task closed.",
+    "last_update": "2026-04-17T18:44:21Z",
+    "review_notes_zh": [
+      "`POSTGRES_PORT=25432 docker compose -p infra-pg-review up -d postgres` reached healthy status in live review.",
+      "`pantheon_app` successfully ran `CREATE TABLE review_probe(id int)` and `SELECT nspname, pg_get_userbyid(nspowner) ...` showed `public` owned by `pantheon_app`."
+    ],
+    "review_file": "support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:44:21Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "557118b1bf2cb7911d5d48bf6a173989b88e6d53",
+      "commit_subject": "INFRA-PG-001: add init-db.sql and .env.example artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- scripts/init-db.sql": "idempotent SQL bootstrap mirroring init-db.sh,",
+        "- .env.example": "base infra env vars with DATABASE_URL, TELEMETRY_DB_DSN,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "INFRA-PG-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 474,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INFRA-PG-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T15:45:29Z",
+      "resolved_at": "2026-04-17T15:46:18Z"
+    },
+    {
+      "task_id": "INFRA-PG-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:26:44Z",
+      "resolved_at": "2026-04-17T17:44:08Z"
+    },
+    {
+      "task_id": "INFRA-PG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:54:13Z",
+      "resolved_at": "2026-04-17T17:56:47Z"
+    },
+    {
+      "task_id": "INFRA-PG-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All artifacts implemented and verified. Please review: (1) docker-compose.yml postgres service config, (2) DATABASE_URL coverage on all dependent services, (3) .env.example completeness, (4) scripts/init-db.sh correctness.",
+      "status": "done",
+      "created_at": "2026-04-17T18:00:35Z",
+      "resolved_at": "2026-04-17T18:30:30Z"
+    },
+    {
+      "task_id": "INFRA-PG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review failed: default init leaves pantheon DB owned by postgres, so pantheon_app cannot CREATE TABLE in schema public. Repro: POSTGRES_PORT=25432 docker compose -p infra-pg-review up -d postgres; docker exec -e PGPASSWORD=pantheon_app infra-pg-review-postgres-1 psql -h 127.0.0.1 -U pantheon_app -d pantheon -v ON_ERROR_STOP=1 -c 'create table review_probe(id int);' -> ERROR: permission denied for schema public. Please update init-db.sh so the default app DB is owned by pantheon_app or grant the required schema ownership/create privileges, then hand back for review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:30:30Z",
+      "resolved_at": "2026-04-17T18:30:30Z"
+    },
+    {
+      "task_id": "INFRA-PG-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Schema public ownership fix applied (commit 4018762). Second psql block added to init-db.sh: ALTER SCHEMA public OWNER TO pantheon_app + GRANT ALL ON SCHEMA public. Repro command from review should now succeed. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:32:28Z",
+      "resolved_at": "2026-04-17T18:40:51Z"
+    },
+    {
+      "task_id": "INFRA-PG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: postgres healthcheck and DB wiring are intact, and live repro confirms the 4018762 schema ownership fix cleared the prior `permission denied for schema public` blocker.",
+      "status": "done",
+      "created_at": "2026-04-17T18:40:51Z",
+      "resolved_at": "2026-04-17T18:44:21Z"
+    }
+  ],
+  "blockers": []
+}

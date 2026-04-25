@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-RW02-001",
+  "archived_at": "2026-04-20T01:05:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-RW02-001",
+    "title": "Re-activate RW-02 search handoff for the front-end lane",
+    "summary_zh": "核對 RW-02 search 的 handoff bundle、mirror 與 current-work 狀態，讓 front-end lane 可重新接手。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/RW-02-search-contract-ready.yaml",
+      ".coordination/responses/RW-02-search-lovable-ui-task.yaml",
+      ".coordination/responses/RW-02-search-lovable-prompt.md"
+    ],
+    "acceptance": [
+      "verify contract-ready bundle still matches current architecture truth",
+      "refresh the exact next-step note for Lovable or record a precise blocker",
+      "leave a reviewable reactivation handoff tied to RW-02-search"
+    ],
+    "next": "Owner finalized: RW-02 search reactivation bundle confirmed internally consistent. contract-ready is contract-only (bff_route_live=false, search_index_adapter_live=false), lovable-ui-task is pending-bff, lovable-prompt instructs placeholder-only build. Review evidence at .coordination/reviews/RW-02-search-reactivation.md. Front-end lane may resume with blocked placeholder.",
+    "last_update": "2026-04-20T01:05:43Z",
+    "task_class": "frontlane_reactivation",
+    "auto_created_by": "lovable-reactivation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:05:43Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6b87c30cc8f46a5090512f02442e38e5572d38d2",
+      "commit_subject": "LUV-REACTIVATE-RW02-001 finalize: close approved RW-02 search reactivation handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "LUV-REACTIVATE-RW02-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 779,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-RW02-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-02 reactivation verified: bundle complete and consistent. bff_route_live=false confirmed by grep (no implementation in services/control-plane/bff/*.py). lovable-ui-task.yaml status=pending-bff, lovable-prompt instructs placeholder-only build. All referenced docs exist. Review packet: .coordination/reviews/RW-02-search-reactivation.md. Disposition: APPROVED — Lovable front-end lane may resume with blocked placeholder.",
+      "status": "done",
+      "created_at": "2026-04-20T01:01:21Z",
+      "resolved_at": "2026-04-20T01:02:48Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW02-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: RW-02 search reactivation bundle is internally consistent. contract-ready remains contract-only with bff_route_live=false/search_index_adapter_live=false, lovable-ui-task is correctly pending-bff, lovable-prompt instructs placeholder-only build, and review evidence is recorded in .coordination/reviews/RW-02-search-reactivation.md. Owner should finalize.",
+      "status": "done",
+      "created_at": "2026-04-20T01:02:48Z",
+      "resolved_at": "2026-04-20T01:05:43Z"
+    }
+  ],
+  "blockers": []
+}

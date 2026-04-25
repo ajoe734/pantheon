@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "AUTO-TEST-PROMOTION-001",
+  "archived_at": "2026-04-20T06:12:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-TEST-PROMOTION-001",
+    "title": "Add service path tests for promotion service",
+    "summary_zh": "為 services/promotion 補 service-path tests，讓 promotion service 不再是零 coverage。",
+    "phase": "Execution / Auto Worker - Tests and Tech Debt",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "services/promotion/main.py"
+    ],
+    "acceptance": [
+      "promotion 有 service tests",
+      "核心 route 受測",
+      "pytest 可通過"
+    ],
+    "next": "Owner finalized approved promotion service-path test coverage after verifying pytest -q services/promotion/test_service.py passed (5 passed).",
+    "last_update": "2026-04-20T06:12:35Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "新增的 promotion service-path tests 已覆蓋 health、approval lifecycle/list filters、failed decide rollback，以及 deployment create/list 與 approval mismatch 驗證；reviewer 重新執行 pytest -q services/promotion/test_service.py，5 tests 全數通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T06:12:35Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "505fe5faa5ed762d217c1b7b2872dd0b826ef2e9",
+      "commit_subject": "AUTO-TEST-PROMOTION-001 add promotion service-path tests",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AUTO-TEST-PROMOTION-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 819,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-TEST-PROMOTION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:19:50Z",
+      "resolved_at": "2026-04-20T05:20:10Z"
+    },
+    {
+      "task_id": "AUTO-TEST-PROMOTION-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:42:31Z",
+      "resolved_at": "2026-04-20T05:50:10Z"
+    },
+    {
+      "task_id": "AUTO-TEST-PROMOTION-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T05:50:10Z",
+      "resolved_at": "2026-04-20T05:50:23Z"
+    },
+    {
+      "task_id": "AUTO-TEST-PROMOTION-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T05:58:16Z",
+      "resolved_at": "2026-04-20T05:59:01Z"
+    },
+    {
+      "task_id": "AUTO-TEST-PROMOTION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T06:04:33Z",
+      "resolved_at": "2026-04-20T06:05:27Z"
+    },
+    {
+      "task_id": "AUTO-TEST-PROMOTION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Promotion service-path tests added in services/promotion/test_service.py; covered health, approval lifecycle/list filters, failed decide state rollback, deployment create/list filters, and approval validation failures. Verified with pytest -q services/promotion/test_service.py (5 passed).",
+      "status": "done",
+      "created_at": "2026-04-20T06:08:10Z",
+      "resolved_at": "2026-04-20T06:10:40Z"
+    },
+    {
+      "task_id": "AUTO-TEST-PROMOTION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Promotion service-path tests cover the intended health, approval, and deployment paths; pytest -q services/promotion/test_service.py passes (5 passed). Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T06:10:40Z",
+      "resolved_at": "2026-04-20T06:12:35Z"
+    }
+  ],
+  "blockers": []
+}

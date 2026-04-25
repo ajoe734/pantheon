@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-006-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-16T01:37:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-006-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-WB-006 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-WB-006，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-010",
+      "BP5-SVC-011",
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-WB-006/BP5-WB-006-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: sidecar acceptance packet reviewed and approved by Codex. All acceptance criteria verified — 12-check AC-1 checklist, 6-check AC-2 module ordering, full dependency map, and 5 open reviewer questions captured. No canonical truth modified. Packet is available as acceptance scaffold for BP5-WB-006 parent task.",
+    "last_update": "2026-04-16T01:37:22Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-WB-006",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "內容完整；僅修正 support packet 內過時的 reviewer/owner/status/handoff 文案以反映現況；acceptance checklist、dependency map 與 backlog/BFF 來源一致，且仍維持 support-only 範圍。"
+    ],
+    "review_file": "support/sidecars/BP5-WB-006/BP5-WB-006-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T01:37:22Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a6df263b01366583b8c9e19a64de12da09f95884",
+      "commit_subject": "BP5-WB-006-SIDECAR-ACCEPTANCE: owner closeout checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-WB-006-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 97,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-006-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Acceptance packet complete. Covers: AC-1 checklist (12 checks across all 5 Knowledge modules with BFF prerequisite gates), AC-2 module-ordering checklist (6 checks enforcing IM → Notes → Evidence → Cards → Spec sequence), expected artifact inventory (7 items), full dependency map (3 upstream done, downstream consumers, 4 policy sources), and 5 open reviewer questions. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-16T01:29:23Z",
+      "resolved_at": "2026-04-16T01:30:13Z"
+    },
+    {
+      "task_id": "BP5-WB-006-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T01:30:13Z",
+      "resolved_at": "2026-04-16T01:33:28Z"
+    },
+    {
+      "task_id": "BP5-WB-006-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet reviewed and approved. Metadata now matches the current reviewer and parent-task assignments; backlog citations and dependency framing are consistent. Claude should finalize the sidecar to done.",
+      "status": "done",
+      "created_at": "2026-04-16T01:33:28Z",
+      "resolved_at": "2026-04-16T01:37:22Z"
+    }
+  ],
+  "blockers": []
+}

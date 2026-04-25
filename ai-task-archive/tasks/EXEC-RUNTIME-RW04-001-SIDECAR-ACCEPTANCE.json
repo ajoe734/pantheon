@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-21T19:31:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EXEC-RUNTIME-RW04-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EXEC-RUNTIME-RW04-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Runtime Refresh and Verification",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and archived it as done. Support-only packet remains aligned to the parent archived closeout and evidence chain; no canonical runtime truth changed.",
+    "last_update": "2026-04-21T19:31:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-RUNTIME-RW04-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已對照 archived parent snapshot、needs-runtime 與 frontend-feedback evidence 重新核對 sidecar packet；support-only 範圍成立。另修正 packet 內殘留的 ai-status.json 引用，避免把 archived parent truth 誤寫成 active task table。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:31:27Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "8f9b8c4f150fba63f7e0374dc8d96c7cee820427",
+      "commit_subject": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE refresh archived acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 999,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:44:34Z",
+      "resolved_at": "2026-04-21T17:45:59Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:46:32Z",
+      "resolved_at": "2026-04-21T17:48:32Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T17:49:50Z",
+      "resolved_at": "2026-04-21T17:52:03Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet and dependency map published at support/sidecars/EXEC-RUNTIME-RW04-001/EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE.md. Packet isolates parent runtime acceptance from the separate front publication blocker and is ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-21T17:54:09Z",
+      "resolved_at": "2026-04-21T19:16:26Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar packet is stale against current durable truth: parent EXEC-RUNTIME-RW04-001 is already review_approved in ai-status.json, and .coordination/responses/RW-04-experiment-launch-frontend-feedback.yaml now records can_close=true with loop_close_condition met. Update the packet to refresh the parent status snapshot and remove the claimed remaining front publication blocker, then hand back for review.",
+      "status": "done",
+      "created_at": "2026-04-21T19:16:26Z",
+      "resolved_at": "2026-04-21T19:16:26Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Refreshed support packet to match durable truth: parent EXEC-RUNTIME-RW04-001 is review_approved, frontend feedback now has can_close=true with loop_close_condition met, and the prior front publication blocker language has been removed. Support-only artifact is ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-21T19:18:57Z",
+      "resolved_at": "2026-04-21T19:24:27Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Packet stale again against current durable truth: ./scripts/ai-status.sh show EXEC-RUNTIME-RW04-001 now resolves to archived task status done at 2026-04-21T19:21:36Z, not review_approved. Refresh the support packet's parent status snapshot, review flow, and suggested disposition so it reflects parent closeout/archive truth, then hand back for review.",
+      "status": "done",
+      "created_at": "2026-04-21T19:24:27Z",
+      "resolved_at": "2026-04-21T19:24:27Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Refreshed the support packet to match archived parent truth: EXEC-RUNTIME-RW04-001 now resolves from archive as done at 2026-04-21T19:21:36Z, parent reviewer snapshot is corrected to Codex, and the packet's review flow/disposition now reflect completed closeout with delivery metadata. Support-only artifact is ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-21T19:27:28Z",
+      "resolved_at": "2026-04-21T19:30:08Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW04-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet reviewed against archived parent closeout and evidence artifacts. Support-only scope preserved, archive-source references corrected, and the packet is ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T19:30:08Z",
+      "resolved_at": "2026-04-21T19:31:27Z"
+    }
+  ],
+  "blockers": []
+}

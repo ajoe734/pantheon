@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-19T20:58:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW",
+    "title": "Prepare RW-05-ARTIFACT-COMPARE-001 review packet and evidence summary",
+    "summary_zh": "平行支援 RW-05-ARTIFACT-COMPARE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RW-04-EXPERIMENT-001"
+    ],
+    "artifacts": [
+      "support/sidecars/RW-05-ARTIFACT-COMPARE-001/RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved sidecar review packet as support-only evidence. Reviewer verification is recorded, no canonical edits were required, and the packet remains available for the parent owner to absorb into the mainline closeout if needed.",
+    "last_update": "2026-04-19T20:58:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "RW-05-ARTIFACT-COMPARE-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）Parent task RW-05-ARTIFACT-COMPARE-001 已確認 done（commit 137f846a），archive record 存在且完整；（3）三項 acceptance criteria 均已在 docs/bff/RW-05-artifact-compare.md 中明確實現：artifact list/detail routes、versioning semantics（artifact_id, version, lineage_id, parent_artifact_id, version_chain, lifecycle states）、compare diff route（field_pairs[], change_label, delta_magnitude）；（4）兩項 review 修正已吸收：example list 改為 ticket-scoped all-version retrieval、PACKET_FAMILY.md 已明確標記 field_pairs[].change_label 與 field_pairs[].delta_magnitude；（5）docs/examples/RW-05-artifact-compare.json 與 PACKET_FAMILY.md 均已確認存在。Packet 可作為 RW-05-ARTIFACT-COMPARE-001 正式 done 的支援材料。"
+    ],
+    "review_file": "support/sidecars/RW-05-ARTIFACT-COMPARE-001/RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:58:18Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "350363839d03f845434e18bf7089a3b5f8f96fce",
+      "commit_subject": "RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW finalize: fix delivery metadata checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 761,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Published sidecar review packet at support/sidecars/RW-05-ARTIFACT-COMPARE-001/RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW.md. Packet summarizes archived parent review evidence, acceptance mapping against B5, final commit 137f846, and confirms no further canonical edits are required from this support slice.",
+      "status": "done",
+      "created_at": "2026-04-19T20:44:28Z",
+      "resolved_at": "2026-04-19T20:56:16Z"
+    },
+    {
+      "task_id": "RW-05-ARTIFACT-COMPARE-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar review packet verified against archive, BFF contract, and PACKET_FAMILY.md. All three acceptance criteria confirmed met. No canonical edits required from this support slice. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-19T20:56:16Z",
+      "resolved_at": "2026-04-19T20:58:18Z"
+    }
+  ],
+  "blockers": []
+}

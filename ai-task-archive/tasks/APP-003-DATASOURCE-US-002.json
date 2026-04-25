@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-US-002",
+  "archived_at": "2026-04-24T16:46:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-US-002",
+    "title": "Promote Massive/Polygon to primary US market data and tighten IBKR boundary",
+    "summary_zh": "補齊 IBKR 更完整 market-data boundary，並把 Massive/Polygon 提升為美股主資料源。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-DATASOURCE-US-001"
+    ],
+    "artifacts": [
+      "services/data-plane/",
+      "services/execution/",
+      "DATA_SOURCE_SCOPE_MATRIX.md"
+    ],
+    "acceptance": [
+      "IBKR market-data boundary is explicitly limited and documented",
+      "Massive/Polygon becomes the governed primary US market-data path",
+      "US execution and research paths reference the same canonical symbol and dataset boundaries"
+    ],
+    "next": "Finalized after review approval: Massive / Polygon is the canonical primary US research-grade market-data path, IBKR market data is restricted to broker_execution execution-sync fallback, and focused IBKR adapter plus data-plane schema tests re-ran cleanly.",
+    "last_update": "2026-04-24T16:46:14Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：DATA_SOURCE_SCOPE_MATRIX、US reference helpers 與 IBKR adapter 對齊到同一個邊界語義；Massive / Polygon 已被明確標成 US primary research-grade 路徑，IBKR market data 只保留 broker_execution / execution-sync fallback 身分。",
+      "Focused tests 重新實跑通過：services.execution.test_ibkr_adapter 6 tests、services.data-plane.tests.test_data_plane_schemas 44 tests；未發現會阻擋 owner 收尾的回歸。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T16:46:14Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "6a18a974c887dfb4c57a8d7a58100c82f83460aa",
+      "commit_subject": "APP-003-DATASOURCE-US-002 finalize US datasource boundary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-US-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1160,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-US-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Updated DATA_SOURCE_SCOPE_MATRIX to make Massive/Polygon the primary US research-grade source and constrain IBKR market data to broker_execution fallback only. Code changes are in services/data-plane/us_equity_reference.py and services/execution/ibkr_adapter.py with focused tests passing: python3 -m unittest services.execution.test_ibkr_adapter -v and python3 -m unittest services.data-plane.tests.test_data_plane_schemas -v.",
+      "status": "done",
+      "created_at": "2026-04-24T16:39:43Z",
+      "resolved_at": "2026-04-24T16:43:24Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-US-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Massive / Polygon is now consistently marked as the primary US research-grade path, and IBKR market data is constrained to broker_execution execution-sync fallback only. Focused tests re-ran cleanly; owner can finalize this task to done.",
+      "status": "done",
+      "created_at": "2026-04-24T16:43:24Z",
+      "resolved_at": "2026-04-24T16:46:14Z"
+    }
+  ],
+  "blockers": []
+}

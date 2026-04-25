@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-21T16:15:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EXEC-FRONT-CW01-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EXEC-FRONT-CW01-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized review-approved sidecar acceptance packet. Support artifact remains limited to support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE.md and is ready for parent-owner use during EXEC-FRONT-CW01-002 closeout.",
+    "last_update": "2026-04-21T16:15:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-FRONT-CW01-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 已對齊最新 CW-01 review packet，明確區分目前真正 blocker 是 publication replay，而四項 UI contract fix 屬於 final republish commit 必須保留的已驗證內容。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T16:15:10Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "595a2e91cb571e2ad2d1d67ca7fd1ca1f6a177ac",
+      "commit_subject": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE: add acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 984,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:02:48Z",
+      "resolved_at": "2026-04-21T16:05:03Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet created at support/sidecars/EXEC-FRONT-CW01-002/EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE.md. It maps the CW-01 follow-up dependency chain, separates already-landed route-live truth from the republish-only work, and records the exact close condition: one replay-clean front commit plus the four remaining UI contract fixes.",
+      "status": "done",
+      "created_at": "2026-04-21T16:07:59Z",
+      "resolved_at": "2026-04-21T16:13:10Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-CW01-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: the acceptance packet now reconciles the newer CW-01 re-review with the older frontend-feedback/SA wording and scopes the parent follow-up to truthful publication replay plus preservation of the already-reviewed UI fixes.",
+      "status": "done",
+      "created_at": "2026-04-21T16:13:10Z",
+      "resolved_at": "2026-04-21T16:15:10Z"
+    }
+  ],
+  "blockers": []
+}

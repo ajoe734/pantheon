@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+  "archived_at": "2026-04-23T06:39:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+    "title": "Publish CW-04 module-local frontend handoff bundle",
+    "summary_zh": "把已 route-live 的 CW-04 memo surface 補成 module-local frontend handoff execution work，發布可供 supervisor 與前端直接消費的 handoff bundle，避免它繼續只停留在 support sidecar 或 readiness 備註。",
+    "phase": "Execution / Consultation Frontend Activation",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "APP-003-CW04-IMPL-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-22-pantheon-residual-followup-execution-packet.md",
+      "support/sidecars/APP-003-CW04-IMPL-001/APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md exists",
+      "Consultation readiness docs point CW-04 at the published handoff bundle",
+      "CW-04 is no longer represented as a missing-BFF blocker on active truth surfaces"
+    ],
+    "next": "Owner finalized approved task and closed it. CW-04 handoff bundle remains published at docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md, Consultation readiness surfaces point at it truthfully, and active Pantheon truth no longer represents CW-04 as a missing-BFF blocker; remaining follow-up is replay-clean front publication outside this task.",
+    "last_update": "2026-04-23T06:39:29Z",
+    "review_notes_zh": [
+      "已核對 CW-04 handoff bundle、Consultation readiness surfaces、與 contract test。docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md 已發布，docs/screens/CW-04-redteam-memo.md 僅使用 ok|degraded|unavailable surface grammar，docs/lovable/PANTHEON_FRONTEND_SA.md 與 docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md 均已同步為 route-live 並指向已發布 handoff bundle；python3 -m pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q 通過（7 passed）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T06:39:29Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1171,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T14:58:22Z",
+      "resolved_at": "2026-04-22T14:59:31Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T14:59:30Z",
+      "resolved_at": "2026-04-22T15:16:52Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T15:16:52Z",
+      "resolved_at": "2026-04-22T15:18:26Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T15:18:26Z",
+      "resolved_at": "2026-04-22T15:53:32Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T15:53:32Z",
+      "resolved_at": "2026-04-22T16:47:05Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T16:47:05Z",
+      "resolved_at": "2026-04-22T16:52:13Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Published the CW-04 module-local frontend handoff bundle at docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md with new contract-ready/lovable-ui-task/lovable-prompt plus bff-gap/ui-done templates. Synced docs/screens/CW-04-redteam-memo.md, docs/bff/CW-04-redteam-memo.md, docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md, docs/lovable/PANTHEON_FRONTEND_SA.md, docs/pantheon-handoffs/LOVABLE_MASTER_SA.md, docs/bff/PKT-consultation-workbench.md, docs/examples/PKT-consultation-workbench.json, .coordination/responses/PKT-consultation-workbench-contract-ready.yaml, and services/control-plane/bff/main.py so Consultation surfaces now reflect the published CW-04 packet instead of a missing handoff. Verified with pytest -q services/control-plane/bff/test_cw04_redteam_memo_contract.py (7 passed), pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py (2 passed), python3 -m json.tool docs/examples/PKT-consultation-workbench.json, and YAML parse checks for the new CW-04 coordination payloads.",
+      "status": "done",
+      "created_at": "2026-04-22T17:07:04Z",
+      "resolved_at": "2026-04-23T01:54:49Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:54:49Z",
+      "resolved_at": "2026-04-23T04:09:55Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T04:09:55Z",
+      "resolved_at": "2026-04-23T04:19:02Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:19:02Z",
+      "resolved_at": "2026-04-23T05:56:13Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review ready: CW-04 handoff bundle is published, Consultation readiness surfaces now point at docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md, and active truth surfaces no longer represent CW-04 as a missing-BFF blocker. Please review for review_approved.",
+      "status": "done",
+      "created_at": "2026-04-23T05:56:13Z",
+      "resolved_at": "2026-04-23T05:58:55Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T05:58:55Z",
+      "resolved_at": "2026-04-23T06:03:22Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Review ready: CW-04 handoff bundle is published at docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md; docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md, docs/lovable/PANTHEON_FRONTEND_SA.md, and .coordination/responses/CW-04-redteam-memo-contract-ready.yaml all point CW-04 at the published route-live handoff. Active truth surfaces no longer represent CW-04 as missing-BFF work; the remaining CW-04 review packet issue is replay-clean front publication in the sibling repo, not a Pantheon BFF or handoff gap.",
+      "status": "done",
+      "created_at": "2026-04-23T06:03:22Z",
+      "resolved_at": "2026-04-23T06:08:18Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T06:08:18Z",
+      "resolved_at": "2026-04-23T06:10:01Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review ready: CW-04 handoff bundle remains published at docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md; consultation readiness docs and coordination packets point at the live memo routes; active truth surfaces no longer represent CW-04 as a missing-BFF blocker. Remaining follow-up is replay-clean front publication, not a Pantheon BFF gap.",
+      "status": "done",
+      "created_at": "2026-04-23T06:10:01Z",
+      "resolved_at": "2026-04-23T06:14:48Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T06:14:48Z",
+      "resolved_at": "2026-04-23T06:19:47Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Review ready: CW-04 handoff bundle remains published at docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md, consultation readiness surfaces point at it, and docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md now aligns its memo-list fields and meta.surfaces.redteam_memo.state degradation wording with the live contract. CW-04 is no longer a Pantheon BFF gap; remaining follow-up is replay-clean front publication.",
+      "status": "done",
+      "created_at": "2026-04-23T06:19:47Z",
+      "resolved_at": "2026-04-23T06:25:00Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T06:25:00Z",
+      "resolved_at": "2026-04-23T06:27:06Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review ready for Codex2 after reviewer reassignment: docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md is published, Consultation readiness surfaces still point at it truthfully, docs/screens/CW-04-redteam-memo.md uses only ok|degraded|unavailable surface grammar, and python3 -m pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q passes (7 passed). Please review for review_approved.",
+      "status": "done",
+      "created_at": "2026-04-23T06:27:06Z",
+      "resolved_at": "2026-04-23T06:29:19Z"
+    },
+    {
+      "task_id": "APP-003-CW04-FRONTEND-HANDOFF-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: CW-04 handoff bundle is published and readiness surfaces are synced truthfully. Owner may finalize this task to done.",
+      "status": "done",
+      "created_at": "2026-04-23T06:29:19Z",
+      "resolved_at": "2026-04-23T06:39:29Z"
+    }
+  ],
+  "blockers": []
+}

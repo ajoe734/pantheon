@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001",
+  "archived_at": "2026-04-23T13:27:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-SURFACE-VALIDATION-001",
+    "title": "Track and close PKT-001 fail-closed surface validation follow-up",
+    "summary_zh": "把 PKT-001 剩餘的 front fail-closed surface validation follow-up 補成 supervisor 可追蹤 execution work，要求前端用 shared helper 驗證必要的 meta.surfaces keys 並重發更新後的 feedback bundle，避免 PKT-001 繼續停在 generic frontend follow-up。",
+    "phase": "Execution / Frontend Contract Validation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-PKT001-PUBLICATION-REPLAY-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md",
+      ".coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml",
+      "docs/pantheon-handoffs/PKT-001-deployment-review/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "PKT-001 fail-closed surface-validation follow-up is represented by a named execution task",
+      "current-work no longer leaves PKT-001 only as a generic followup note",
+      "closure criteria point at front fail-closed validation plus refreshed feedback republish"
+    ],
+    "next": "Owner finalized the approved PKT-001 residual follow-up task: execution truth now records that the remaining work is front-owned fail-closed meta.surfaces validation plus refreshed feedback republish, with no additional Pantheon-side implementation or BFF gap.",
+    "last_update": "2026-04-23T13:27:16Z",
+    "review_notes_zh": [
+      "scoped artifacts 一致確認 PKT-001 residual 已被 materialize 為具名 execution task，closure criteria 已明確收斂到前端以 shared helper fail-closed 驗證必要 meta.surfaces keys，並在之後重發 feedback bundle。",
+      "frontend feedback 與 change spec 對 required surface keys、shared helper 使用方式與 republish 條件一致，未發現新的 Pantheon 端或 BFF 實作缺口。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T13:27:16Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "9f2af03327c4d23a99fbd0ea390d48e7b8503b3b",
+      "commit_subject": "APP-003-PKT001-SURFACE-VALIDATION-001 finalize closeout metadata checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-PKT001-SURFACE-VALIDATION-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1179,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-23T13:08:47Z",
+      "resolved_at": "2026-04-23T13:08:48Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance met: PKT-001 residual is now materialized as a named execution task with explicit front fail-closed meta.surfaces validation and feedback-republish closure criteria; no further Pantheon-side implementation gap found in the scoped artifacts.",
+      "status": "done",
+      "created_at": "2026-04-23T13:10:56Z",
+      "resolved_at": "2026-04-23T13:25:21Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: scoped artifacts consistently materialize the remaining PKT-001 work as front fail-closed meta.surfaces validation plus refreshed feedback republish; no additional Pantheon-side implementation or BFF gap remains. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-23T13:25:21Z",
+      "resolved_at": "2026-04-23T13:27:16Z"
+    }
+  ],
+  "blockers": []
+}

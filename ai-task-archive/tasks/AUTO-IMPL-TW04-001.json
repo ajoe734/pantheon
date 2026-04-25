@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-TW04-001",
+  "archived_at": "2026-04-20T06:30:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-TW04-001",
+    "title": "Implement TW-04 teaching replay route family",
+    "summary_zh": "把 TW-04 teaching replay 的 list detail 與 commit discard authority 路徑做成 live BFF truth。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "docs/bff/TW-04-teaching-replay.md",
+      "docs/screens/TW-04-teaching-replay.md"
+    ],
+    "acceptance": [
+      "TW-04 replay routes 已實作",
+      "Authority 對齊 contract",
+      "測試涵蓋 replay detail 與 commit discard"
+    ],
+    "next": "Owner finalized approved TW-04 teaching replay delivery. Replay list/detail/commit/discard routes are live, contract-aligned, and verified by pytest -q services/control-plane/bff/test_tw04_teaching_replay_contract.py (32 passed).",
+    "last_update": "2026-04-20T06:30:02Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "複核完成：先前兩個 blocking gap 已關閉。commit/discard 現在用 preview_trigger 的 candidate_snapshot_at 做 guard；list/detail 的 trainer_replay surface truth 已對齊 degraded/stale semantics；allowedActions.canReplay 已存在於 list rows。pytest -q services/control-plane/bff/test_tw04_teaching_replay_contract.py 驗證 32 passed，可進入 review_approved 並交還 owner 收尾。"
+    ],
+    "review_file": "docs/reviews/2026-04-20-auto-impl-tw04-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T06:30:02Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 824,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:10:33Z",
+      "resolved_at": "2026-04-20T03:12:38Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:28:04Z",
+      "resolved_at": "2026-04-20T03:42:03Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:42:03Z",
+      "resolved_at": "2026-04-20T03:43:19Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:43:19Z",
+      "resolved_at": "2026-04-20T04:47:20Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:41:34Z",
+      "resolved_at": "2026-04-20T05:42:49Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:45:41Z",
+      "resolved_at": "2026-04-20T05:46:59Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "TW-04 replay route family is live and fully tested. All 4 routes implemented (list, detail, commit, discard). Authority model, replay-grade TeachingEvent shape, evidence_ref resolution, and replay_resolution state machine all align with docs/bff/TW-04-teaching-replay.md. 27 tests pass in test_tw04_teaching_replay_contract.py covering list, detail, event ordering, commit/discard authority, snapshot guard, and degradation. Acceptance criteria met — ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-20T05:49:03Z",
+      "resolved_at": "2026-04-20T05:52:17Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review found blocking TW-04 contract gaps. Fix missing allowedActions.canReplay on replay list rows and implement/test stale|degraded trainer_replay surface semantics before resubmitting. See docs/reviews/2026-04-20-auto-impl-tw04-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T05:52:17Z",
+      "resolved_at": "2026-04-20T05:52:17Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both blocking gaps from Codex review resolved: (1) allowedActions.canReplay added to list row projections and _tw04_replay_allowed_actions — canReplay=true when surface!=unavailable; (2) _tw04_replay_surface_state now accepts dataset_source and stored_state_override — returns stale when local_snapshot, degraded when stored session meta has degraded override; main.py list route updated to consume surface_state from read_store.list_trainer_replays (fixed the root cause of the wrong ok surface in list); 32 tests pass (27 original + 5 new covering canReplay presence, stale from local_snapshot, degraded CTA suppression, and canReplay=true in degraded state).",
+      "status": "done",
+      "created_at": "2026-04-20T06:01:25Z",
+      "resolved_at": "2026-04-20T06:07:30Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review requested: commit/discard still validate expected_candidate_snapshot_at against candidate_artifact_ref instead of the replay snapshot timestamp, and /api/v1/trainer/replay still ignores degraded surface overrides (detail=degraded while list=stale). See docs/reviews/2026-04-20-auto-impl-tw04-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T06:07:30Z",
+      "resolved_at": "2026-04-20T06:07:30Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T06:07:32Z",
+      "resolved_at": "2026-04-20T06:07:32Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T06:11:51Z",
+      "resolved_at": "2026-04-20T06:12:13Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T06:19:19Z",
+      "resolved_at": "2026-04-20T06:19:32Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T06:20:37Z",
+      "resolved_at": "2026-04-20T06:23:02Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "TW-04 replay route family is ready for review. list/detail/commit/discard are live; allowedActions.canReplay is present on list rows; replay surface truth now aligns across list/detail including degraded and stale semantics; commit/discard validate expected_candidate_snapshot_at against the replayable candidate snapshot. pytest -q services/control-plane/bff/test_tw04_teaching_replay_contract.py => 32 passed. Support packet: support/sidecars/AUTO-IMPL-TW04-001/AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF.md",
+      "status": "done",
+      "created_at": "2026-04-20T06:26:07Z",
+      "resolved_at": "2026-04-20T06:28:33Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. TW-04 replay routes, surface semantics, and snapshot guard now match the published contract; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T06:28:33Z",
+      "resolved_at": "2026-04-20T06:30:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "BP5-LUV-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-16T06:29:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-LUV-001-SIDECAR-REVIEW",
+    "title": "Prepare BP5-LUV-001 review packet and evidence summary",
+    "summary_zh": "平行支援 BP5-LUV-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP5-LUV-001/BP5-LUV-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized reviewed sidecar packet; archived support-only evidence summary with approved F-042 and PKT-001 dispositions.",
+    "last_update": "2026-04-16T06:29:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-LUV-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "F-042 followup-required 正確：c34048e/8b9d1fc5 client/types 仍與 live BFF auth、error envelope、surface-status 不相容",
+      "PKT-001 delivered 正確：checkout 阻斷已排除，contract 不變，下一步交回前端重新實作",
+      "旁鏈封包範疇聲明確認：未更動任何 canonical truth"
+    ],
+    "review_file": "support/sidecars/BP5-LUV-001/BP5-LUV-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T06:29:56Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "2782e5021243cca958974059dbf2ceeaac16fdfb",
+      "commit_subject": "BP5-LUV-001-SIDECAR-REVIEW: record closeout metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-LUV-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 154,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-LUV-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T04:44:07Z",
+      "resolved_at": "2026-04-16T04:44:37Z"
+    },
+    {
+      "task_id": "BP5-LUV-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet ready at support/sidecars/BP5-LUV-001/BP5-LUV-001-SIDECAR-REVIEW.md. Re-review should ignore the older blocker-only acceptance packet, validate that F-042 remains followup-required against source_commit c34048e client/type evidence, and confirm PKT-001 is now an explicit delivered follow-up on the restored front repo checkout.",
+      "status": "done",
+      "created_at": "2026-04-16T04:51:05Z",
+      "resolved_at": "2026-04-16T06:19:44Z"
+    },
+    {
+      "task_id": "BP5-LUV-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: F-042 followup-required disposition is correct against source_commit c34048e/8b9d1fc5 evidence; PKT-001 delivered status is correct as blocker was environmental and contract is unchanged. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-16T06:19:44Z",
+      "resolved_at": "2026-04-16T06:29:56Z"
+    }
+  ],
+  "blockers": []
+}

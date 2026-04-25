@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-RW01-001",
+  "archived_at": "2026-04-20T01:20:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-RW01-001",
+    "title": "Re-activate RW-01 research ticket handoff for the front-end lane",
+    "summary_zh": "核對 RW-01 research ticket 的 handoff bundle、mirror 與 current-work 狀態，讓 front-end lane 可重新接手。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/RW-01-research-ticket-contract-ready.yaml",
+      ".coordination/responses/RW-01-research-ticket-lovable-ui-task.yaml",
+      ".coordination/responses/RW-01-research-ticket-lovable-prompt.md"
+    ],
+    "acceptance": [
+      "verify contract-ready bundle still matches current architecture truth",
+      "refresh the exact next-step note for Lovable or record a precise blocker",
+      "leave a reviewable reactivation handoff tied to RW-01-research-ticket"
+    ],
+    "next": "RW-01 reactivation handoff finalized: bundle, mirror, and current-work remain aligned; front-end lane stays queued until bff_route_live is confirmed.",
+    "last_update": "2026-04-20T01:20:15Z",
+    "task_class": "frontlane_reactivation",
+    "auto_created_by": "lovable-reactivation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "RW-01 reactivation bundle 通過審查：7 件 artifacts 全數確認存在；contract 端點與 BFF doc 一致，無架構漂移；bff_route_live:false 是唯一 blocker，已在 review 文件中精確記錄；board/mirror 與 coordination bundle 狀態一致。Disposition: REACTIVATION READY — PENDING BFF GATE。"
+    ],
+    "review_file": ".coordination/reviews/RW-01-research-ticket-reactivation.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:20:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a3b5c0aa712188fd7f0504d2504eff6fa725d534",
+      "commit_subject": "LUV-REACTIVATE-RW01-001 finalize: close approved RW-01 reactivation handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "LUV-REACTIVATE-RW01-001",
+        "LLM-Agent": "Codex",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 782,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:57:43Z",
+      "resolved_at": "2026-04-20T00:59:36Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:59:36Z",
+      "resolved_at": "2026-04-20T01:00:39Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:03:23Z",
+      "resolved_at": "2026-04-20T01:05:37Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:05:37Z",
+      "resolved_at": "2026-04-20T01:07:31Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:11:00Z",
+      "resolved_at": "2026-04-20T01:13:40Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:13:40Z",
+      "resolved_at": "2026-04-20T01:14:56Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reactivation handoff reviewed: bundle, coordination mirror, and current-work all align for RW-01. BFF gate remains the only blocker; see .coordination/reviews/RW-01-research-ticket-reactivation.md.",
+      "status": "done",
+      "created_at": "2026-04-20T01:17:06Z",
+      "resolved_at": "2026-04-20T01:17:54Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-RW01-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: bundle complete, architecture aligned, BFF gate correctly recorded. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-20T01:17:54Z",
+      "resolved_at": "2026-04-20T01:20:15Z"
+    }
+  ],
+  "blockers": []
+}

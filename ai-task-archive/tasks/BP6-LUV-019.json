@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "task_id": "BP6-LUV-019",
+  "archived_at": "2026-04-17T06:57:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-LUV-019",
+    "title": "Execute PKT-008-rollback-review through Lovable and integrate into the frontend",
+    "summary_zh": "觸發 PKT-008-rollback-review 至 Lovable 執行，完成整合 loop",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/PKT-008-rollback-review-lovable-ui-task.yaml",
+      ".coordination/responses/PKT-008-rollback-review-contract-ready.yaml"
+    ],
+    "acceptance": [
+      "PKT-008-rollback-review 達到 loop-complete"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "PKT-008-rollback-review loop 已依 review evidence 正式收尾；Pantheon 路由、ApproveRollback/RejectRollback 命令、replay-clean 前端請求對與交付封包均已驗證完成，任務關閉為 done。",
+    "last_update": "2026-04-17T06:57:57Z",
+    "review_notes_zh": [
+      "PKT-008 rollback-review 已完成 replay-clean 前端請求對、Pantheon rollback-review 路由與 ApproveRollback/RejectRollback 命令驗證，當前封包達成 loop-complete。"
+    ],
+    "review_file": ".coordination/reviews/BP6-LUV-019-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T06:57:57Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "2c3d94ea1bd019e7a85182a54acdd3bfdba124c5",
+      "commit_subject": "BP6-LUV-019: finalize PKT-008 rollback review closure",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP6-LUV-019",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 380,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:36:22Z",
+      "resolved_at": "2026-04-17T02:58:06Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:59:33Z",
+      "resolved_at": "2026-04-17T03:29:59Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:29:59Z",
+      "resolved_at": "2026-04-17T05:04:44Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T05:34:59Z",
+      "resolved_at": "2026-04-17T06:06:45Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T06:08:56Z",
+      "resolved_at": "2026-04-17T06:09:46Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T06:14:25Z",
+      "resolved_at": "2026-04-17T06:22:17Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PKT-008 rollback review frontend implementation is ready for review: added Governance Rollback Review screen, shared BFF client/types, mirrored feedback bundle, and ui-done in pantheon/front repos; npm run build passed in ../front-ai-trading-system; reviewer should verify PKT-008 contract parity, degraded position-data approval gating, and command envelopes.",
+      "status": "done",
+      "created_at": "2026-04-17T06:30:28Z",
+      "resolved_at": "2026-04-17T06:37:24Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review failed: see .coordination/reviews/BP6-LUV-019-review.md. Blocking issues: Pantheon still does not serve GET /api/v1/operator/rollback-review/{rollback_id} and the BFF command path still lacks ApproveRollback/RejectRollback; the advertised front source_commit 87340e96ce4247ccc177e8dff7579e804991b895 is not replay-clean and the canonical PKT-008 frontend-feedback request is still missing. I marked .coordination/responses/PKT-008-rollback-review-lovable-ui-task.yaml followup-required and wrote .coordination/requests/PKT-008-rollback-review-needs-runtime.yaml. Next cycle: publish the existing PKT-008 route/command support in Pantheon, then require a replay-clean front republish of frontend-feedback/ui-done from a Git-visible commit containing the rollback review UI files and feedback bundle.",
+      "status": "done",
+      "created_at": "2026-04-17T06:37:24Z",
+      "resolved_at": "2026-04-17T06:37:24Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PKT-008 runtime and replay follow-up is ready for re-review: Pantheon now serves GET /api/v1/operator/rollback-review/{rollback_id}, accepts ApproveRollback/RejectRollback on POST /api/v1/operator/commands, and targeted BFF tests passed (pytest services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_pkt008_rollback_review_contract.py -q; python3 services/control-plane/bff/smoke_test.py). Front repo replay artifacts were republished and mirrored: UI bundle commit 73d2b83549564e22cdd1b462a3fe5601db675071 contains GovernanceRollbackReview.tsx, shared client/type wiring, feedback bundle, frontend-feedback, and ui-done; follow-up commit bfb87a98dfe6f89c366ddb047a5d4d44bdb9e48a points frontend-feedback.source_commit back to that published UI commit. Pantheon mirror now includes .coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml, refreshed ui-done, and the PKT-008 feedback bundle for reviewer replay.",
+      "status": "done",
+      "created_at": "2026-04-17T06:46:16Z",
+      "resolved_at": "2026-04-17T06:56:04Z"
+    },
+    {
+      "task_id": "BP6-LUV-019",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PKT-008-rollback-review is loop-complete. Review evidence is recorded in .coordination/reviews/BP6-LUV-019-review.md, docs/pantheon-delivery/PKT-008-rollback-review/, and .coordination/responses/PKT-008-rollback-review-backend-delivery.yaml; owner can finalize the approved task to done.",
+      "status": "done",
+      "created_at": "2026-04-17T06:56:04Z",
+      "resolved_at": "2026-04-17T06:57:57Z"
+    }
+  ],
+  "blockers": []
+}

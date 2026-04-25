@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+  "archived_at": "2026-04-24T17:32:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-CRYPTO-001",
+    "title": "Implement Kraken and CoinGecko crypto integration",
+    "summary_zh": "完成 Kraken venue-scoped 執行與 CoinGecko 參考資料串接。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/execution/",
+      "services/data-plane/",
+      "services/research/",
+      "DATA_SOURCE_SCOPE_MATRIX.md"
+    ],
+    "acceptance": [
+      "Kraken execution and market-data integration lands",
+      "CoinGecko reference path is wired without becoming execution truth",
+      "crypto venue-scoped canonical mapping is documented and implemented"
+    ],
+    "next": "Owner finalized approved crypto datasource integration task after reviewer re-approval; Kraken execution, CoinGecko reference wiring, and distinct Kraken last/close semantics are closed as done.",
+    "last_update": "2026-04-24T17:32:37Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已確認 KrakenAdapter.normalize_quote() 會保留 payload 提供的 distinct last/close，且在單欄位輸入時仍維持 fallback 行為",
+      "已確認 Kraken→CoinGecko join regression 改為使用真實 CoinGeckoClient.normalize_asset(...).to_dict() 輸出，reviewer repro 現在回傳 quote_last=64321.1、quote_close=64320.4、joined_quote_close=64320.4",
+      "已重跑 python3 -m unittest services.execution.test_kraken_adapter services.research.adapters.test_adapters services.data-plane.tests.test_data_plane_schemas -v（80 tests）與 python3 services/data-plane/smoke_test.py（47/47），無阻塞性問題"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-datasource-crypto-001-codex-rereview.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T17:32:37Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "46ed8abf092fa13a60420d69348956c3573a42ae",
+      "commit_subject": "APP-003-DATASOURCE-CRYPTO-001 finalize crypto datasource integration",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-CRYPTO-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1180,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:34:22Z",
+      "resolved_at": "2026-04-24T16:35:50Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:46:23Z",
+      "resolved_at": "2026-04-24T16:47:03Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Kraken execution adapter, CoinGecko reference client, crypto data-plane helpers, and Kraken canonical LEAN symbol mapping landed. Tests passed: services/execution/test_kraken_adapter.py, services/execution/test_ibkr_adapter.py, services/execution/test_shioaji_adapter.py, services/research/adapters/test_adapters.py, services/data-plane/tests/test_data_plane_schemas.py.",
+      "status": "done",
+      "created_at": "2026-04-24T16:55:22Z",
+      "resolved_at": "2026-04-24T17:00:43Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer found a blocking mismatch in the new CoinGecko->Kraken path: normalize_asset() emits asset symbols like BTC, but join_kraken_quote_with_reference() looks up pair symbols like BTCUSD and fails on real output. See docs/reviews/2026-04-24-app-003-datasource-crypto-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-24T17:00:43Z",
+      "resolved_at": "2026-04-24T17:00:43Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Fixed the CoinGecko->Kraken join mismatch by resolving Kraken quote pairs through their base asset before reference lookup, so CoinGecko normalize_asset() output with symbol=BTC now joins truthfully to BTCUSD quotes. Regression coverage now uses real CoinGeckoClient.normalize_asset() output instead of a synthetic BTCUSD metadata row. Verified with: python3 -c reproduction -> coingecko_id=bitcoin; python3 -m unittest services.data-plane.tests.test_data_plane_schemas -v; python3 -m unittest services.research.adapters.test_adapters services.execution.test_kraken_adapter -v (78 tests passed).",
+      "status": "done",
+      "created_at": "2026-04-24T17:06:19Z",
+      "resolved_at": "2026-04-24T17:11:21Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Symbol join fix verified, but KrakenAdapter.normalize_quote() still emits 'last' while join_kraken_quote_with_reference() reads 'close'; direct adapter->join repro yields quote_close=None. Align that payload contract and add regression coverage using KrakenAdapter.normalize_quote(...).to_dict().",
+      "status": "done",
+      "created_at": "2026-04-24T17:11:21Z",
+      "resolved_at": "2026-04-24T17:11:21Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Aligned Kraken normalize_quote payload contract so adapter snapshots emit both last and close, and added adapter->join regression coverage using KrakenAdapter.normalize_quote(...).to_dict(). Verified with python3 -m unittest services.execution.test_kraken_adapter -v and python3 -m unittest services.data-plane.tests.test_data_plane_schemas -v.",
+      "status": "done",
+      "created_at": "2026-04-24T17:13:41Z",
+      "resolved_at": "2026-04-24T17:21:57Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer returning task to owner: adapter->join price propagation is fixed, but KrakenAdapter.normalize_quote still overwrites a payload-provided close with last when both are present. See docs/reviews/2026-04-24-app-003-datasource-crypto-001-codex-review.md for reproduction and required regression coverage.",
+      "status": "done",
+      "created_at": "2026-04-24T17:21:57Z",
+      "resolved_at": "2026-04-24T17:21:57Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Preserved distinct Kraken payload last/close semantics in normalize_quote() while keeping single-field fallback behavior, and added regressions at both adapter and adapter->join boundaries using KrakenAdapter.normalize_quote(...).to_dict(). Verified with python3 -m unittest services.execution.test_kraken_adapter services.research.adapters.test_adapters services.data-plane.tests.test_data_plane_schemas -v (80 tests) plus the reviewer repro now returns quote_last=64321.1, quote_close=64320.4, joined_quote_close=64320.4.",
+      "status": "done",
+      "created_at": "2026-04-24T17:24:52Z",
+      "resolved_at": "2026-04-24T17:29:54Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer re-approval: distinct Kraken last/close semantics now preserved end-to-end, targeted suites rerun cleanly, and task is ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T17:29:54Z",
+      "resolved_at": "2026-04-24T17:32:37Z"
+    }
+  ],
+  "blockers": []
+}

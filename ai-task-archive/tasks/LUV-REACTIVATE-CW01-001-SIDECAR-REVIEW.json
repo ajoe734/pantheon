@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-20T01:35:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+    "title": "Prepare LUV-REACTIVATE-CW01-001 review packet and evidence summary",
+    "summary_zh": "平行支援 LUV-REACTIVATE-CW01-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/LUV-REACTIVATE-CW01-001/LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet and closed it. Support artifact remains review-only material for the archived CW-01 blocked reactivation closeout.",
+    "last_update": "2026-04-20T01:35:09Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LUV-REACTIVATE-CW01-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審核通過：sidecar 僅整理 support artifact，未修改 canonical truth；packet 對 archived parent task、三份 CW-01 handoff artifact、contract-ready 的 bff_route_live=false，以及 services/control-plane/bff/main.py 中 CW-01 missing_contracts 的描述皆與目前 repo 狀態一致。"
+    ],
+    "review_file": "support/sidecars/LUV-REACTIVATE-CW01-001/LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:35:09Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "31814355c7720a66c34cad2360a90361e1f3c782",
+      "commit_subject": "LUV-REACTIVATE-EW04-001 finalize: close approved EW-04 inspiration-graph reactivation handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "LUV-REACTIVATE-EW04-001",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 788,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:40:43Z",
+      "resolved_at": "2026-04-20T00:42:54Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T00:53:52Z",
+      "resolved_at": "2026-04-20T00:56:58Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:00:31Z",
+      "resolved_at": "2026-04-20T01:08:47Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:12:29Z",
+      "resolved_at": "2026-04-20T01:14:09Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T01:19:05Z",
+      "resolved_at": "2026-04-20T01:20:40Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready: support artifact added at support/sidecars/LUV-REACTIVATE-CW01-001/LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW.md. It summarizes the archived CW-01 reactivation closeout, confirms the three handoff artifacts remain intact, and shows the BFF gate is still truthful with bff_route_live=false and consult-request routes still listed as missing in services/control-plane/bff/main.py.",
+      "status": "done",
+      "created_at": "2026-04-20T01:22:48Z",
+      "resolved_at": "2026-04-20T01:33:51Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-CW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: sidecar packet truthfully captures the archived CW-01 blocked-reactivation closeout and can return to Codex2 for finalization when needed.",
+      "status": "done",
+      "created_at": "2026-04-20T01:33:51Z",
+      "resolved_at": "2026-04-20T01:35:09Z"
+    }
+  ],
+  "blockers": []
+}

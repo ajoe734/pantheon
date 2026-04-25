@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+  "archived_at": "2026-04-24T10:14:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+    "title": "Finish PKT-001 and PKT-003 front-owned follow-up bundle",
+    "summary_zh": "以 2026-04-24 follow-up prompt 收斂 PKT-001 / PKT-003 剩餘前端跟進工作；需要時回寫 bff-gap，否則補齊 truthful feedback bundle 與 ui-done / frontend-feedback。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "../front-ai-trading-system/docs/lovable/2026-04-24-pkt001-pkt003-followup-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/PKT-001-deployment-review-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/PKT-003-post-incident-review-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/requests/PKT-001-deployment-review-frontend-feedback.yaml",
+      "../front-ai-trading-system/.coordination/requests/PKT-003-post-incident-review-frontend-feedback.yaml"
+    ],
+    "acceptance": [
+      "Use the combined PKT-001 and PKT-003 follow-up prompt as the packet source",
+      "Keep source_commit truthful across ui-done and frontend-feedback",
+      "Stop and emit canonical bff-gap if a required live field is missing"
+    ],
+    "next": "Owner finalized reviewed PKT-001 + PKT-003 follow-up bundle; source_commit anchors remain truthful on c94f63082eae1667ed919353d62c85180d7bafba and c9b03d7ba1439db4f956c56106925675a98f8512 with no new PKT-001/PKT-003 bff-gap required.",
+    "last_update": "2026-04-24T10:14:57Z",
+    "task_class": "frontend_feedback_followup",
+    "auto_created_by": "2026-04-24-frontend-feedback-followup-materialization",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "PKT-001 fail-closed 已接上 findMissingSurfaceFields() 並覆蓋 deployment_plans/allowedActions 與 deployment_plan/approval_decision/allowedActions/latestRun/review/runtime_binding 全數 surface key，UI_DECISIONS.md 路由文字同步 /operator/deployment-review",
+      "PKT-003 去除 meta.staleness.reason 硬性檢查、types 調整為 served_from 必填與 last_known_at/max_age_minutes 可選，incident_updated 已同步套用到列表與選取的 detail/state，延遲更新 footer 與 PKT-005-sse-substrate-bff-gap 告警都有落地",
+      "source_commit c94f630 與 c9b03d7 都在 pkt-004-detail-fix 上、且 diff 與 ui-done/frontend-feedback 所述一致，API_GAP_REQUESTS 雙邊 no_open_gaps 符合 prompt 要求"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T10:14:57Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "b1ee405d8c4e8096f73f1313092722a33ca3abff",
+      "commit_subject": "APP-003-PKT001-PKT003-FOLLOWUP-001 finalize closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1243,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:20:39Z",
+      "resolved_at": "2026-04-24T07:26:01Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:26:01Z",
+      "resolved_at": "2026-04-24T07:38:13Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:38:13Z",
+      "resolved_at": "2026-04-24T07:44:46Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:44:45Z",
+      "resolved_at": "2026-04-24T07:45:24Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T08:43:50Z",
+      "resolved_at": "2026-04-24T08:44:36Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T08:54:28Z",
+      "resolved_at": "2026-04-24T08:55:17Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T08:55:16Z",
+      "resolved_at": "2026-04-24T09:02:02Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T09:02:02Z",
+      "resolved_at": "2026-04-24T09:11:36Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PKT-001 remains replay-clean via snapshot c94f63082eae1667ed919353d62c85180d7bafba and republish 675f1cc59be537455e776113be9ad8a45fa44208. PKT-003 is now replay-clean via snapshot c9b03d7ba1439db4f956c56106925675a98f8512 and republish 1df4a64, with truthful ui-done/frontend-feedback plus refreshed API_GAP_REQUESTS, LOVABLE_CHANGE_FEEDBACK, and QA_STATUS. ./node_modules/.bin/tsc --noEmit --pretty false passed in front-ai-trading-system. No new PKT-001 or PKT-003 bff-gap is required; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-24T09:17:19Z",
+      "resolved_at": "2026-04-24T09:21:23Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed the reviewer packet: PKT-001 remains replay-clean via snapshot c94f63082eae1667ed919353d62c85180d7bafba and republish 675f1cc59be537455e776113be9ad8a45fa44208, and PKT-003 is replay-clean via snapshot c9b03d7ba1439db4f956c56106925675a98f8512 and republish 1df4a64caa174d0b458c539b391f3380882224db. support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-ACCEPTANCE.md now matches the current bundle. ./node_modules/.bin/tsc --noEmit --pretty false passed in front-ai-trading-system. No new PKT-001 or PKT-003 bff-gap is required; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-24T09:21:23Z",
+      "resolved_at": "2026-04-24T09:27:19Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T09:27:19Z",
+      "resolved_at": "2026-04-24T09:27:33Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T09:27:33Z",
+      "resolved_at": "2026-04-24T09:32:11Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer packet added at support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-REVIEW.md. PKT-001 remains replay-clean via snapshot c94f63082eae1667ed919353d62c85180d7bafba and republish 675f1cc59be537455e776113be9ad8a45fa44208; PKT-003 remains replay-clean via snapshot c9b03d7ba1439db4f956c56106925675a98f8512 and republish 1df4a64caa174d0b458c539b391f3380882224db. Current frontend-feedback anchors are truthful, ./node_modules/.bin/tsc --noEmit --pretty false passed in front-ai-trading-system, and no new PKT-001 or PKT-003 bff-gap is indicated. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-24T09:32:11Z",
+      "resolved_at": "2026-04-24T09:32:56Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T09:32:56Z",
+      "resolved_at": "2026-04-24T09:33:42Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T09:33:42Z",
+      "resolved_at": "2026-04-24T09:56:51Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex2 to Gemini after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-24T09:56:51Z",
+      "resolved_at": "2026-04-24T09:57:21Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T09:57:21Z",
+      "resolved_at": "2026-04-24T09:57:35Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T09:57:35Z",
+      "resolved_at": "2026-04-24T10:02:27Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed PKT-001 + PKT-003 follow-up bundle: fail-closed surface keys wired via shared helper, PKT-005 staleness shape applied, incident_updated reconciled into detail state, delayed-update footer and SSE bff-gap surfacing both present, source_commits truthful on pkt-004-detail-fix",
+      "status": "done",
+      "created_at": "2026-04-24T10:02:27Z",
+      "resolved_at": "2026-04-24T10:14:57Z"
+    }
+  ],
+  "blockers": []
+}

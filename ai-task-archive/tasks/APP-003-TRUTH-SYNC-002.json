@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-002",
+  "archived_at": "2026-04-22T15:28:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-002",
+    "title": "Clean secondary backlog and coordination truth drift after the main rebaseline",
+    "summary_zh": "清掉 primary truth sync 之後仍殘留的 backlog / blueprint / coordination 文案漂移，讓次級 truth surfaces 不再低估目前 repo 狀態。",
+    "phase": "Execution / Secondary Truth Sync",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md",
+      ".coordination/responses/PKT-knowledge-workbench-contract-ready.yaml",
+      ".coordination/requests/PKT-knowledge-workbench-ui-done.yaml",
+      ".coordination/responses/PKT-consultation-workbench-contract-ready.yaml"
+    ],
+    "acceptance": [
+      "No active truth surface still points KW-01 at AUTO-HARDEN-KW01-001",
+      "The blueprint working source no longer lists archived EXEC-CLOSEOUT-FRONTEND-002 as a current lane item",
+      "PKT-knowledge-workbench and PKT-consultation-workbench coordination artifacts no longer claim their module families are blocked on net-new BFF routes"
+    ],
+    "next": "Owner finalized approved secondary truth sync. Acceptance remains green: KW-01 backlog now points at APP-003-KW01-HARDEN-001, the blueprint working source no longer lists archived EXEC-CLOSEOUT-FRONTEND-002 as a live lane, and the PKT knowledge/consultation overview packets now reflect route-live BFF reality; the reviewer caveat stays confined to a closed historical UI-done record.",
+    "last_update": "2026-04-22T15:28:33Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "三條 acceptance 全部 PASS：WORKBENCH_DELIVERY_BACKLOG.md 的 KW-01 已指向 APP-003-KW01-HARDEN-001；blueprint working source 不再把 archived EXEC-CLOSEOUT-FRONTEND-002 當 current lane；PKT-knowledge-workbench / PKT-consultation-workbench overview packet 不再把 module family 描述成 blocked on net-new BFF。scripts/coordination_drift_guard.py 與 scripts/test_coordination_drift_guard.py 皆通過。",
+      "非阻塞 caveat：PKT-knowledge-workbench-ui-done.yaml:45 仍留有原 front follow_up_requested 的 blocked wording，但該檔已 status=closed、blocking=false、pantheon_disposition=loop-complete，資訊僅屬 historical request，drift guard 不會誤判。後續若要收尾可單獨重寫該行，不必退回這次 task。"
+    ],
+    "review_file": "docs/reviews/2026-04-22-app-003-truth-sync-002-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:28:33Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1154,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T08:28:58Z",
+      "resolved_at": "2026-04-22T09:24:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Secondary truth sync is complete for review. The PKT knowledge and consultation overview packets no longer flatten module families into net-new-BFF blockers, the knowledge ui-done request now scopes its block to coordination replay rather than module readiness, the stale frontend closeout execution packet is marked executed/archived instead of active, and the route-live residual packet now reflects the current reviewer assignment plus the corrected KW-01 hardening gate wording. Verification was by targeted repo search because this change set is doc and coordination truth only.",
+      "status": "done",
+      "created_at": "2026-04-22T09:31:15Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Secondary truth sync is complete for review. The PKT knowledge and consultation overview packets no longer flatten module families into net-new-BFF blockers, the knowledge ui-done request now scopes its block to coordination replay rather than module readiness, the stale frontend closeout execution packet is marked executed/archived instead of active, and the route-live residual packet now reflects the current reviewer assignment plus the corrected KW-01 hardening gate wording. Verification was by targeted repo search because this change set is doc and coordination truth only.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:07:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Secondary truth sync verified: backlog, blueprint working source, and PKT knowledge/consultation overview packets all reflect current route-live reality; drift guard passes. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T15:07:38Z",
+      "resolved_at": "2026-04-22T15:28:33Z"
+    }
+  ],
+  "blockers": []
+}

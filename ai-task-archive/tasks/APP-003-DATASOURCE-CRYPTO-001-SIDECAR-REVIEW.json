@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T18:17:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-DATASOURCE-CRYPTO-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-DATASOURCE-CRYPTO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet and closed it. Support-only review packet remains aligned with the archived parent closeout and current rerun evidence.",
+    "last_update": "2026-04-24T18:17:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-DATASOURCE-CRYPTO-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "sidecar review packet 對齊 archived parent closeout、兩段 blocker 解決鏈與 runtime surface；維持 support-only 未重開 parent",
+      "本地重跑 80 unittest + 47/47 smoke + adapter→join 重現 quote_last=64321.1 / quote_close=64320.4 / joined_quote_close=64320.4 通過"
+    ],
+    "review_file": "support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T18:17:34Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "e0bed082a55e247b33c90b69eab605b653baddb9",
+      "commit_subject": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1176,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet ready at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW.md. Support-only handoff: parent archived done state, blocker-resolution chain, companion acceptance evidence, and current reruns are summarized; verification rerun in this pass: 80 tests, 47/47 smoke, direct distinct-price repro passed.",
+      "status": "done",
+      "created_at": "2026-04-24T17:47:07Z",
+      "resolved_at": "2026-04-24T17:47:51Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet ready at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW.md. Support-only sidecar: summarizes parent rereview chain (asset/pair join mismatch -> adapter/join payload contract -> lossy last/close -> final approval), cites archived parent record and rereview file, and records reruns 80 unittest + 47/47 smoke + distinct-price repro quote_last=64321.1/quote_close=64320.4/joined_quote_close=64320.4. No canonical truth mutated.",
+      "status": "done",
+      "created_at": "2026-04-24T17:47:51Z",
+      "resolved_at": "2026-04-24T17:49:28Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet refreshed and ready at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW.md. Support-only sidecar: packet now matches live review status, preserves the archived parent blocker-resolution chain, cites the archived closeout and rereview record, and records reruns 80 unittest + 47/47 smoke + distinct-price repro quote_last=64321.1/quote_close=64320.4/joined_quote_close=64320.4. No canonical truth mutated.",
+      "status": "done",
+      "created_at": "2026-04-24T17:49:28Z",
+      "resolved_at": "2026-04-24T17:56:30Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet refreshed and ready at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW.md. Support-only sidecar: packet matches live review status, preserves the archived parent blocker-resolution chain, cites the archived closeout and rereview record, and records reruns 80 unittest + 47/47 smoke + distinct-price repro quote_last=64321.1/quote_close=64320.4/joined_quote_close=64320.4. No canonical truth mutated.",
+      "status": "done",
+      "created_at": "2026-04-24T17:56:30Z",
+      "resolved_at": "2026-04-24T17:57:07Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T17:57:07Z",
+      "resolved_at": "2026-04-24T18:01:06Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet verified against archived parent closeout, rereview record, landed kraken_adapter/crypto_reference surfaces, and local rerun of the 80-unittest + 47/47 smoke + distinct-price repro bundle; remains support-only and does not reopen parent.",
+      "status": "done",
+      "created_at": "2026-04-24T18:01:06Z",
+      "resolved_at": "2026-04-24T18:15:19Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T18:15:19Z",
+      "resolved_at": "2026-04-24T18:17:35Z"
+    }
+  ],
+  "blockers": []
+}

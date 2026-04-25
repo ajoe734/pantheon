@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "DEPTH-REBASE-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-19T16:33:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPTH-REBASE-001-SIDECAR-REVIEW",
+    "title": "Prepare DEPTH-REBASE-001 review packet and evidence summary",
+    "summary_zh": "平行支援 DEPTH-REBASE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Wave 1 - State Rebaseline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "STATE-REBASE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/DEPTH-REBASE-001/DEPTH-REBASE-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved sidecar review packet. Support artifact is complete and ready for parent owner reference during DEPTH-REBASE-001 closeout.",
+    "last_update": "2026-04-19T16:33:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEPTH-REBASE-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 sidecar packet 與 task brief、review record、ai-status 現況；support artifact 範圍正確，分類摘要與 parent closeout posture 一致，且已修正來源敘述避免把 parent status 誤寫成 ai-status 直接可證。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T16:33:18Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3411b4008f2f6436ce91b245130174af4b31bca0",
+      "commit_subject": "DEPTH-REBASE-001-SIDECAR-REVIEW: finalize support packet handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "DEPTH-REBASE-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 692,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPTH-REBASE-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T16:22:28Z",
+      "resolved_at": "2026-04-19T16:24:43Z"
+    },
+    {
+      "task_id": "DEPTH-REBASE-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T16:24:42Z",
+      "resolved_at": "2026-04-19T16:25:03Z"
+    },
+    {
+      "task_id": "DEPTH-REBASE-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet is ready at support/sidecars/DEPTH-REBASE-001/DEPTH-REBASE-001-SIDECAR-REVIEW.md. It summarizes the parent DEPTH-REBASE-001 evidence, preserves the approved classification set, and gives a narrow closeout posture for parent finalization without changing canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-19T16:26:48Z",
+      "resolved_at": "2026-04-19T16:30:34Z"
+    },
+    {
+      "task_id": "DEPTH-REBASE-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewed sidecar packet, tightened source attribution, and approved it as a support-only handoff for parent closeout.",
+      "status": "done",
+      "created_at": "2026-04-19T16:30:34Z",
+      "resolved_at": "2026-04-19T16:33:19Z"
+    }
+  ],
+  "blockers": []
+}

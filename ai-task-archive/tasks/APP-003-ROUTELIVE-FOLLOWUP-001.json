@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+  "archived_at": "2026-04-24T11:31:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+    "title": "Finish route-live residual follow-up bundle for RW-05 KW-03 KW-05",
+    "summary_zh": "沿用 route-live activation prompt，但只聚焦仍在 frontend_feedback_reviewed_followup 的 RW-05 / KW-03 / KW-05；完成前端補件、重發，或在 live payload 缺欄位時回寫 canonical bff-gap。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "../front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/RW-05-artifact-compare-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/KW-03-evidence-refs-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/KW-05-strategy-spec-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/requests/RW-05-artifact-compare-frontend-feedback.example.yaml"
+    ],
+    "acceptance": [
+      "Use the route-live activation prompt only for the unresolved RW-05 and KW follow-up subset",
+      "Do not reopen already loop-complete features in the same packet",
+      "Return truthful ui-done frontend-feedback or bff-gap results for the unresolved subset"
+    ],
+    "next": "Owner finalized approved task and closed it. Front repo commit 1a1a42e now truthfully closes the route-live follow-up subset: KW-03 and KW-05 reference the real reviewed UI commit 6321613cff3c49b11a7619e0f9170217a27a7b17, and RW-05 correctly returns the canonical bff-gap instead of stale completion files.",
+    "last_update": "2026-04-24T11:31:19Z",
+    "task_class": "frontend_feedback_followup",
+    "auto_created_by": "2026-04-24-frontend-feedback-followup-materialization",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "重新檢查 front repo 的 1a1a42e route-live bundle 後，確認 KW-03 與 KW-05 已改為真實可重播的 UI commit。",
+      "RW-05 已改回 canonical bff-gap，且 KW-05 feedback 不再 overclaim insight citations。"
+    ],
+    "review_file": ".coordination/reviews/APP-003-ROUTELIVE-FOLLOWUP-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T11:31:19Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "3ffeb752b3a72766d3a693a77570b9cafd4967fc",
+      "commit_subject": "APP-003-ROUTELIVE-FOLLOWUP-001 finalize closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-ROUTELIVE-FOLLOWUP-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1261,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Implemented route-live RW-05, KW-03, and KW-05 frontend surfaces in front-ai-trading-system; routes, sidebar, breadcrumb, and BFF client compile cleanly under vite build and are ready for Gemini review.",
+      "status": "done",
+      "created_at": "2026-04-24T07:36:41Z",
+      "resolved_at": "2026-04-24T07:38:00Z"
+    },
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T07:38:00Z",
+      "resolved_at": "2026-04-24T07:38:40Z"
+    },
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude2 to Codex after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T07:38:40Z",
+      "resolved_at": "2026-04-24T07:44:44Z"
+    },
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review rejected: front-ai-trading-system builds locally from a dirty working tree on top of HEAD 139081f, but the required Git-visible ui-done/frontend-feedback pairs and feedback bundles for RW-05, KW-03, and KW-05 are missing; the new route-live pages are still untracked, so owner must publish one reviewed commit with matching source_commit for each completed slice or emit truthful bff-gap files instead.",
+      "status": "done",
+      "created_at": "2026-04-24T07:44:44Z",
+      "resolved_at": "2026-04-24T07:44:44Z"
+    },
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Published the unresolved route-live follow-up bundle in front-ai-trading-system. UI slice commit 6321613 activates RW-05, KW-03, and KW-05 route-live surfaces; handoff bundle commit d875e93 adds the Git-visible ui-done/frontend-feedback pairs plus feedback bundles, all pointing source_commit to 6321613 for truthful replay.",
+      "status": "done",
+      "created_at": "2026-04-24T10:18:43Z",
+      "resolved_at": "2026-04-24T10:49:29Z"
+    },
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reopen: the route-live bundle is not truthful yet. All RW-05 / KW-03 / KW-05 request pairs and API_GAP_REQUESTS.json files publish invalid source_commit 6321613e18b058b16731d1ea2828fcf173f957d6 instead of the real UI commit 6321613cff3c49b11a7619e0f9170217a27a7b17; RW-05 still has a live list compare-authority contract blocker; KW-05 feedback still overclaims insight-citation rendering. See .coordination/reviews/APP-003-ROUTELIVE-FOLLOWUP-001-review.md.",
+      "status": "done",
+      "created_at": "2026-04-24T10:49:29Z",
+      "resolved_at": "2026-04-24T10:49:29Z"
+    },
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Republished truthful route-live bundle in front repo at 1a1a42e on origin/pkt-004-detail-fix: KW-03 and KW-05 now point to real UI commit 6321613cff3c49b11a7619e0f9170217a27a7b17, KW-05 feedback no longer claims insight-citation rendering, and RW-05 completion files were replaced by canonical bff-gap for missing artifacts[].allowedActions.canCompare on GET /api/v1/artifacts. Please re-review against commit 1a1a42e / origin/pkt-004-detail-fix.",
+      "status": "done",
+      "created_at": "2026-04-24T10:54:01Z",
+      "resolved_at": "2026-04-24T11:29:31Z"
+    },
+    {
+      "task_id": "APP-003-ROUTELIVE-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: front repo commit 1a1a42e now returns truthful route-live follow-up artifacts for RW-05 / KW-03 / KW-05. Owner should finalize this task to done.",
+      "status": "done",
+      "created_at": "2026-04-24T11:29:31Z",
+      "resolved_at": "2026-04-24T11:31:20Z"
+    }
+  ],
+  "blockers": []
+}

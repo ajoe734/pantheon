@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-22T14:33:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-003-CW04-IMPL-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-003-CW04-IMPL-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Consultation Workbench Completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "APP-003-CW02-IMPL-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-CW04-IMPL-001/APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the support-only CW-04 BFF/frontend handoff packet after Claude2 approval; routes, projection, and contract proof are live, while GAP-004 module-local frontend bundle and DRIFT-005 screen-spec wording remain open for parent-lane absorption.",
+    "last_update": "2026-04-22T14:33:02Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-CW04-IMPL-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "所有聲明（路由、projection、契約測試、截圖 spec drift、缺少 module-local handoff bundle）與 repo 現況一致",
+      "只新增 support artifact，沒改 canonical truth",
+      "GAP-004 與 DRIFT-005 仍標記為 open，沒 overclaim 為 frontend-ready",
+      "frontend truth boundary 正確分離 meta.staleness 與 meta.surfaces.redteam_memo.state"
+    ],
+    "review_file": ".coordination/reviews/APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T14:33:02Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "a66b27a3826dfda3cbbec74a566c46f5b66a8e3c",
+      "commit_subject": "APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF publish support handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1066,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:16:27Z",
+      "resolved_at": "2026-04-22T07:17:56Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Prepared support-only CW-04 BFF/frontend handoff packet at support/sidecars/APP-003-CW04-IMPL-001/APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF.md. Packet captures the current repo truth: contract/example/screen/family bundle exist, public memo routes/read-store projection/tests/frontend handoff bundle do not, and frontend must use meta.staleness for freshness rather than treating stale as a surface state.",
+      "status": "done",
+      "created_at": "2026-04-22T07:29:05Z",
+      "resolved_at": "2026-04-22T14:30:44Z"
+    },
+    {
+      "task_id": "APP-003-CW04-IMPL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved — packet is support-only, all factual claims verified against current repo (routes live at main.py:7211/7253, projection helpers and consult_memos dataset in read_store.py, test_cw04_redteam_memo_contract.py at 259 lines), GAP-004 and DRIFT-005 correctly held as still-open follow-ups, returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T14:30:44Z",
+      "resolved_at": "2026-04-22T14:33:02Z"
+    }
+  ],
+  "blockers": []
+}

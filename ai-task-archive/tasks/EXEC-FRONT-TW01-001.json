@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-TW01-001",
+  "archived_at": "2026-04-21T02:13:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-TW01-001",
+    "title": "Implement TW-01 teaching dialog front-end flow against live Pantheon APIs",
+    "summary_zh": "在 front-end lane 實作 teaching dialog flow，對齊 session lifecycle、allowedActions.canSendMessage 與 backend-owned event ordering。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/TW-01-teaching-dialog-contract-ready.yaml",
+      ".coordination/responses/TW-01-teaching-dialog-lovable-ui-task.yaml",
+      "docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "teaching dialog UI 對齊 create/list/detail/message 四條 live routes",
+      "前端不得本地重排 event order 或覆寫 allowedActions truth",
+      "完成後提交 ui-done handoff"
+    ],
+    "next": "Owner finalized approved TW-01 teaching dialog delivery. Git-visible review and closeout records now back the replayable front commit 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f, while stale mirrored request copies remain documented in the sidecar discrepancy packet rather than blocking closure.",
+    "last_update": "2026-04-21T02:13:09Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "兩個 review finding 已完成修正並重驗通過：session composer 現已支援可選 context_refs[]，而 ui-done 指向的 source_commit 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f 可重播 UI 與完整 feedback bundle。"
+    ],
+    "review_file": "docs/reviews/2026-04-20-exec-front-tw01-001-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T02:13:09Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "320e483a2008873896bd92fb27a8de2fbd42166a",
+      "commit_subject": "EXEC-FRONT-TW01-001: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-FRONT-TW01-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 925,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:06:09Z",
+      "resolved_at": "2026-04-20T13:15:57Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:25:24Z",
+      "resolved_at": "2026-04-20T13:38:04Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:38:04Z",
+      "resolved_at": "2026-04-20T13:53:08Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "TW-01 teaching dialog UI implemented: TeachingDialogList at /trainer/sessions, TeachingDialogDetail at /trainer/sessions/:session_id, types.ts, and tw01Api in bffClient.ts. Build + ESLint passed. source_commit d94fa2e46b13be5d723689e7964c17433b23afbd in front-ai-trading-system. Pending-BFF placeholder renders until Pantheon confirms routes are live. ui-done at .coordination/requests/TW-01-teaching-dialog-ui-done.yaml.",
+      "status": "done",
+      "created_at": "2026-04-20T14:03:29Z",
+      "resolved_at": "2026-04-20T14:05:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Changes requested: session composer still omits optional context_refs[] from the published create contract, and ui-done source_commit d94fa2e46b13be5d723689e7964c17433b23afbd is not replayable because it does not contain the required docs/pantheon-feedback/TW-01-teaching-dialog/ bundle. See docs/reviews/2026-04-20-exec-front-tw01-001-codex2-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T14:05:56Z",
+      "resolved_at": "2026-04-20T14:05:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Both review findings addressed. (1) context_refs[] optional input added to session composer — state, parsing, POST body inclusion, and clear-on-success all wired. (2) source_commit updated to 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f which contains UI work, feedback bundle, and context_refs fix. Pantheon-side feedback bundle written to docs/pantheon-feedback/TW-01-teaching-dialog/. Please re-review.",
+      "status": "done",
+      "created_at": "2026-04-20T14:12:00Z",
+      "resolved_at": "2026-04-20T14:14:52Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review passed. context_refs[] support and replayable feedback-bundle evidence are both present in source_commit 9d0478269bb43780bc4d6f2ca16e4b9230b0de8f. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T14:14:52Z",
+      "resolved_at": "2026-04-21T01:29:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T01:29:56Z",
+      "resolved_at": "2026-04-21T02:13:10Z"
+    }
+  ],
+  "blockers": []
+}

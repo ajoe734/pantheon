@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "KW-04-INSIGHT-001",
+  "archived_at": "2026-04-19T20:30:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "KW-04-INSIGHT-001",
+    "title": "Publish Insight Card aggregation and detail contract",
+    "summary_zh": "為 KW-04 補齊 insight aggregation endpoint、card detail 與 filter taxonomy，讓 insight card 從概念層進到 BFF-owned synthesis surface。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "KW-03-EVIDENCE-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "insight aggregation and detail endpoints are published",
+      "filter taxonomy is backend owned",
+      "card synthesis no longer relies on client side joins"
+    ],
+    "next": "Owner finalized approved task. All three acceptance criteria verified: aggregation and detail endpoints published in docs/bff/KW-04-insight-cards.md, filter taxonomy backend-owned via filter_metadata, and card synthesis is fully BFF-owned with no client-side joins. Codex review approved and artifacts self-consistent.",
+    "last_update": "2026-04-19T20:30:12Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已核對 KW-04 BFF contract、example payload 與 PACKET_FAMILY readiness；aggregation/detail route、backend-owned filter taxonomy、BFF-owned synthesis contract 皆成立。\\n已同步修正 example payload 的 evidence route_href 為 /knowledge/evidence/*，並更新 PANTHEON_FRONTEND_SA 的 KW-04 readiness，避免仍把 Insight Cards 當成 blocked。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:30:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "0a8bccb579b5dc2b03852fc2ddaa489ab2ad3310",
+      "commit_subject": "KW-04-INSIGHT-001: publish Insight Card aggregation and detail contract",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "KW-04-INSIGHT-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 759,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "KW-04-INSIGHT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF contract, example payloads, and PACKET_FAMILY update published. All three acceptance criteria met: (1) insight aggregation GET /api/v1/knowledge/insights and detail GET /api/v1/knowledge/insights/{insight_id} endpoints defined; (2) filter taxonomy (tag, linked-entity, recency) is backend-owned via filter_metadata; (3) card synthesis eliminates client-side joins — all synthesis is BFF-owned. KW-04 Lovable readiness gate is now true.",
+      "status": "done",
+      "created_at": "2026-04-19T20:25:16Z",
+      "resolved_at": "2026-04-19T20:28:31Z"
+    },
+    {
+      "task_id": "KW-04-INSIGHT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. KW-04 insight contract and example payload are now self-consistent; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T20:28:31Z",
+      "resolved_at": "2026-04-19T20:30:12Z"
+    }
+  ],
+  "blockers": []
+}

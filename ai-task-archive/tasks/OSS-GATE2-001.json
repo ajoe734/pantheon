@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "OSS-GATE2-001",
+  "archived_at": "2026-04-18T06:00:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-GATE2-001",
+    "title": "Write Gate 2 evidence packs for statsmodels, QuantLib, vectorbt to claim 'governed' status",
+    "summary_zh": "statsmodels/QuantLib/vectorbt 三者均為 smoke-tested，要升級到 governed 需補充 Gate 2 evidence：integrations/{statsmodels,quantlib,vectorbt}/governance.md（promotion/permissions/rollback 如何套用）與 integrations/{statsmodels,quantlib,vectorbt}/smoke_test.md（可重現的 smoke test 紀錄）。",
+    "phase": "Execution / OSS Governance",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "integrations/statsmodels/integration.md",
+      "integrations/quantlib/integration.md",
+      "integrations/vectorbt/integration.md",
+      "OSS_INTEGRATION_CHECKLIST.md"
+    ],
+    "acceptance": [
+      "integrations/statsmodels/governance.md 和 integrations/statsmodels/smoke_test.md 存在且內容完整",
+      "integrations/quantlib/governance.md 和 integrations/quantlib/smoke_test.md 存在且內容完整",
+      "integrations/vectorbt/governance.md 和 integrations/vectorbt/smoke_test.md 存在且內容完整",
+      "OSS_INTEGRATION_CHECKLIST.md 三者狀態更新為 governed"
+    ],
+    "next": "Finalized Gate 2 evidence packs for statsmodels, QuantLib, and vectorbt; checklist now records all three integrations as governed with reviewed governance and smoke-test evidence.",
+    "last_update": "2026-04-18T06:00:10Z",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已核對 integrations/{statsmodels,quantlib,vectorbt}/{integration,governance,smoke_test}.md 與 OSS_INTEGRATION_CHECKLIST.md 的 governed 更新。;2026-04-18 spot check：3 個 smoke 與 3 組 pytest 全部通過，結果與 evidence 記錄一致。;statsmodels pytest 仍有既有 datetime.utcnow() deprecation warnings，但不影響本次 governed 驗收。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T06:00:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "df2754472c729a7a8f02fb8cf5f05bc9f0239c72",
+      "commit_subject": "OSS-GATE2-001: finalize governed evidence pack closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OSS-GATE2-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 541,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-GATE2-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-18T05:46:20Z",
+      "resolved_at": "2026-04-18T05:47:30Z"
+    },
+    {
+      "task_id": "OSS-GATE2-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T05:48:12Z",
+      "resolved_at": "2026-04-18T05:48:53Z"
+    },
+    {
+      "task_id": "OSS-GATE2-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Gate 2 evidence packs added for statsmodels, QuantLib, and vectorbt; smoke and unit coverage revalidated on 2026-04-18; integration docs and OSS checklist updated to governed.",
+      "status": "done",
+      "created_at": "2026-04-18T05:56:26Z",
+      "resolved_at": "2026-04-18T05:58:27Z"
+    },
+    {
+      "task_id": "OSS-GATE2-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer approval complete: Gate 2 evidence pack verified on 2026-04-18. Owner should finalize this task from review_approved to done.",
+      "status": "done",
+      "created_at": "2026-04-18T05:58:27Z",
+      "resolved_at": "2026-04-18T06:00:11Z"
+    }
+  ],
+  "blockers": []
+}

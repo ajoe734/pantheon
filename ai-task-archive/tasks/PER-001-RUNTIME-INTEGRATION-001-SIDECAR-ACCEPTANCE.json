@@ -1,0 +1,284 @@
+{
+  "version": 1,
+  "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-23T05:30:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare PER-001-RUNTIME-INTEGRATION-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 PER-001-RUNTIME-INTEGRATION-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Persona Runtime Integration",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved support-only acceptance packet after syncing reviewer/lifecycle truth with Claude review approval; sidecar closed without reopening the archived parent or canonical runtime truth.",
+    "last_update": "2026-04-23T05:30:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PER-001-RUNTIME-INTEGRATION-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 僅新增 support artifact，未修改 L1 canonical、runtime 程式、registry 或 governance 檔",
+      "Parent (archived 2026-04-22T15:15:03Z, commit 156f94d) 三個 acceptance targets 與目前 persona/router/web 實作一致：persona 走 OpenClaw 並在失敗時回 [persona runtime degraded]、router 以 classification_owner=persona 為權威且 _classify_intent_local 僅於 degraded 路徑、web SSE 明示 streaming=disabled",
+      "重跑 targeted tests 匹配 packet：persona 7 passed(3 subtests) / router 7 passed / web 3 passed",
+      "Section 6 的 reviewer rejection boundary（不以未實作 token streaming 為由否決、不把 degraded 等同 placeholder）與 archived parent review 立場一致"
+    ],
+    "review_file": "support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T05:30:31Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "409e3582c6fc10f07cf0fa5698adf9ccc39486b7",
+      "commit_subject": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE finalize sidecar acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1166,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T10:17:18Z",
+      "resolved_at": "2026-04-22T10:18:04Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet added at support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md. It maps the parent's three runtime-closure targets to current persona/router/web behavior, re-verifies targeted tests (7+7+3 passed) plus temporary-target py_compile for 4 files, and sets the reviewer boundary around truthful degraded behavior versus fake placeholders.",
+      "status": "done",
+      "created_at": "2026-04-22T10:28:40Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Support-only acceptance packet added at support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md. It maps the parent's three runtime-closure targets to current persona/router/web behavior, re-verifies targeted tests (7+7+3 passed) plus temporary-target py_compile for 4 files, and sets the reviewer boundary around truthful degraded behavior versus fake placeholders.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-23T00:10:06Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:10:06Z",
+      "resolved_at": "2026-04-23T01:52:40Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:52:40Z",
+      "resolved_at": "2026-04-23T02:02:29Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Requeued to Codex3 review so Gemini can stay focused on the critical RW-01 closure lane.",
+      "status": "done",
+      "created_at": "2026-04-23T02:02:29Z",
+      "resolved_at": "2026-04-23T02:35:08Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed the support-only acceptance packet to match current truth: parent PER-001-RUNTIME-INTEGRATION-001 is archived done on 2026-04-22T15:15:03Z (commit 156f94d, reviewer Claude), sidecar reviewer is Codex3, and targeted verification was rerun on 2026-04-23 with persona 7 passed (3 subtests), router 7 passed, web 3 passed, plus temporary-target py_compile for 4 files. Packet scope remains support-only and does not reopen parent runtime truth.",
+      "status": "done",
+      "created_at": "2026-04-23T02:35:08Z",
+      "resolved_at": "2026-04-23T02:36:05Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Qwen OAuth free tier discontinued",
+      "status": "done",
+      "created_at": "2026-04-23T02:36:05Z",
+      "resolved_at": "2026-04-23T02:51:43Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T02:51:43Z",
+      "resolved_at": "2026-04-23T02:58:49Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet refreshed after task-scoped revalidation. Targeted verification rerun on 2026-04-23 remains green: persona 7 passed (3 subtests), router 7 passed, web 3 passed, plus temporary PYTHONPYCACHEPREFIX py_compile for 4 files. Packet stays support-only, aligned to archived parent PER-001-RUNTIME-INTEGRATION-001, and is ready for Codex3 review.",
+      "status": "done",
+      "created_at": "2026-04-23T02:59:07Z",
+      "resolved_at": "2026-04-23T03:24:40Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T03:24:40Z",
+      "resolved_at": "2026-04-23T03:26:40Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed the acceptance packet to match the current reviewer reassignment to Codex2. Support-only scope is unchanged; 2026-04-23 narrow verification remains persona 7 passed (3 subtests), router 7 passed, web 3 passed, plus temporary py_compile for 4 files.",
+      "status": "done",
+      "created_at": "2026-04-23T03:26:40Z",
+      "resolved_at": "2026-04-23T03:27:33Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T03:27:33Z",
+      "resolved_at": "2026-04-23T03:44:08Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-04-23T03:44:08Z",
+      "resolved_at": "2026-04-23T04:20:03Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet revalidated for the current auto-reassigned review. support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md remains support-only, aligned to archived parent PER-001-RUNTIME-INTEGRATION-001, and still matches fresh narrow verification on 2026-04-23: persona 7 passed (3 subtests), router 7 passed, web 3 passed, plus temporary PYTHONPYCACHEPREFIX py_compile for 4 files. Please review the packet as support material only and do not reopen canonical runtime truth or the archived parent closeout.",
+      "status": "done",
+      "created_at": "2026-04-23T04:20:03Z",
+      "resolved_at": "2026-04-23T04:21:24Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet revalidated for the current auto-reassigned review. support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md remains support-only, aligned to archived parent PER-001-RUNTIME-INTEGRATION-001, and still matches fresh narrow verification on 2026-04-23: persona 7 passed (3 subtests), router 7 passed, web 3 passed, plus temporary PYTHONPYCACHEPREFIX py_compile for 4 files. Please review the packet as support material only and do not reopen canonical runtime truth or the archived parent closeout.",
+      "status": "done",
+      "created_at": "2026-04-23T04:21:24Z",
+      "resolved_at": "2026-04-23T04:22:00Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T04:22:00Z",
+      "resolved_at": "2026-04-23T04:22:15Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:22:15Z",
+      "resolved_at": "2026-04-23T04:22:43Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude to Codex3 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:22:43Z",
+      "resolved_at": "2026-04-23T05:04:27Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed the support-only acceptance packet for the current Codex3 review handoff. Re-ran the narrow verification suite with unchanged results: persona 7 passed (3 subtests), router 7 passed, web 3 passed, and py_compile succeeded for the four runtime surfaces. Packet now matches ai-status reviewer/lifecycle truth and is ready for review.",
+      "status": "done",
+      "created_at": "2026-04-23T05:04:27Z",
+      "resolved_at": "2026-04-23T05:07:55Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Revalidated the support-only acceptance packet for the current Codex3 review handoff. Narrow verification rerun on 2026-04-23 stayed unchanged: persona 7 passed (3 subtests), router 7 passed, web 3 passed, and py_compile succeeded for the four runtime surfaces. Packet remains aligned to the archived parent closeout and current ai-status reviewer/lifecycle truth; ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-23T05:07:55Z",
+      "resolved_at": "2026-04-23T05:08:33Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex3 to Claude2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T05:08:33Z",
+      "resolved_at": "2026-04-23T05:08:46Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T05:08:46Z",
+      "resolved_at": "2026-04-23T05:11:23Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only acceptance packet reviewed. Parent truth, behavioral surfaces, and test rerun all match. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-23T05:11:23Z",
+      "resolved_at": "2026-04-23T05:30:31Z"
+    }
+  ],
+  "blockers": []
+}

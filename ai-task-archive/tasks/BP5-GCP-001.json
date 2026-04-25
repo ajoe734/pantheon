@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "BP5-GCP-001",
+  "archived_at": "2026-04-16T18:26:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-GCP-001",
+    "title": "Stand up workload identity and Secret Manager baseline",
+    "summary_zh": "先把 Workload Identity Federation、service accounts、Secret Manager namespace 與 deploy-time secret flow 落成可執行 baseline。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-CICD-002"
+    ],
+    "artifacts": [
+      "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md",
+      "docs/remote-dev-gcp-vm.md"
+    ],
+    "acceptance": [
+      "workload identity and secret flow are explicit and executable for nonprod deployment",
+      "identity and secret ownership are documented as environment truth, not as local setup lore"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Checkpoint: committed the nonprod GCP baseline bootstrap and environment-truth docs for WIF, runtime service accounts, and Secret Manager secret-level IAM; review-approved delivery is now closed.",
+    "last_update": "2026-04-16T18:26:01Z",
+    "review_notes_zh": [
+      "審查通過。WIF、SA 三條 runtime lane、Secret Manager namespace 與 secret-level IAM binding 均完整且 idempotent；部署文件（§19 v2 doc + remote-dev nonprod section）把身份與 secret 所有權明確寫成環境真相而非 local setup 口訣。dry-run 時 PROJECT_NUMBER 警告路徑因 capture 回傳 exit 0 而無法到達（只是 usability 小缺口，非阻礙），文件已有正確 workaround。兩條驗收條件均達到。",
+      "後續可追蹤：dry-run 路徑補 PROJECT_NUMBER 空值明顯提示（屬 BP5-GCP-002 或 follow-on）"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T18:26:01Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6b73bad9638742059625089eeaeb567217c4a9ce",
+      "commit_subject": "BP5-GCP-001: add nonprod GCP identity baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP5-GCP-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 253,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-GCP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation ready for review. Added repo-local nonprod GCP baseline bootstrap (WIF, pantheon-cloud-build SA, runtime SAs, secret-level Secret Manager IAM), documented operator flow in deployment and remote-dev docs, and fixed dry-run project-number handling so WIF output stays explicit during rehearsal.",
+      "status": "done",
+      "created_at": "2026-04-16T18:22:32Z",
+      "resolved_at": "2026-04-16T18:24:14Z"
+    },
+    {
+      "task_id": "BP5-GCP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: WIF, runtime SAs, secret namespace and secret-level IAM are explicit and executable; operator flow is documented as environment truth in v2 deploy doc and remote-dev doc. Minor dry-run warning unreachability is follow-on, not a blocker.",
+      "status": "done",
+      "created_at": "2026-04-16T18:24:14Z",
+      "resolved_at": "2026-04-16T18:26:01Z"
+    }
+  ],
+  "blockers": []
+}

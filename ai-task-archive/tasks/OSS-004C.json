@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "OSS-004C",
+  "archived_at": "2026-04-19T00:46:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-004C",
+    "title": "Run integrated governed paper execution acceptance for EP4",
+    "summary_zh": "執行並封存一次整合式 governed paper acceptance：approval -> deployment -> runtime binding -> paper execution -> telemetry -> incident/health -> kill-switch/rollback。",
+    "phase": "Phase 7: EP4 Proof Run",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "OSS-004A",
+      "OSS-004B"
+    ],
+    "artifacts": [],
+    "acceptance": [
+      "one integrated EP4 acceptance run is archived||evidence covers approval runtime telemetry incident and rollback together"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "phase": "phase7",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+      "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-19T00:46:27Z",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md",
+      "initial_materialization_task_ids": "OSS-004A,OSS-004B,OSS-004C,OSS-004D"
+    },
+    "status": "done",
+    "next": "Owner finalized approved EP4 governed paper acceptance; evidence archived at docs/deployment/evidence/ep4-governed-paper/20260419T003720Z and telemetry trace 404 was documented as a non-blocking local read-model gap.",
+    "last_update": "2026-04-19T00:46:36Z",
+    "review_notes_zh": [
+      "EP4 八平面完整通過：approval->deployment->runtime binding->paper execution->telemetry->incident/health->kill-switch->rollback 均有對應 evidence 且 overall_result=pass",
+      "telemetry trace 404 已如實記錄為 local dev read-model gap，非 ingest 失敗，counter 遞增證明可接受",
+      "OSS-004D 解鎖"
+    ],
+    "review_file": ".coordination/reviews/OSS-004C-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T00:46:36Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "993e1df380a403ce4b7615bbd08f1496c7be9080",
+      "commit_subject": "OSS-004C: finalize governed paper acceptance",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-004C",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 674,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-004C",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T00:13:05Z",
+      "resolved_at": "2026-04-19T00:13:44Z"
+    },
+    {
+      "task_id": "OSS-004C",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T00:14:35Z",
+      "resolved_at": "2026-04-19T00:15:54Z"
+    },
+    {
+      "task_id": "OSS-004C",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T00:15:54Z",
+      "resolved_at": "2026-04-19T00:16:57Z"
+    },
+    {
+      "task_id": "OSS-004C",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Integrated EP4 governed paper packet archived at docs/deployment/evidence/ep4-governed-paper/20260419T003720Z (see README.md and summary.json). Key result: approval -> deployment -> runtime binding -> paper execution -> telemetry -> incident/health -> kill-switch -> pause_then_replace rollback all passed. Caveat: telemetry event trace read endpoints returned 404 on the repo-current local ingest path, so telemetry proof is accepted-ingest plus counter evidence rather than event-trace projection.",
+      "status": "done",
+      "created_at": "2026-04-19T00:38:22Z",
+      "resolved_at": "2026-04-19T00:40:55Z"
+    },
+    {
+      "task_id": "OSS-004C",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All eight EP4 proof planes pass (approval, deployment, runtime binding, paper execution, telemetry counter, incident/health, kill-switch, rollback). Telemetry trace 404 correctly documented as a non-blocking local dev read-model gap. Evidence bundle complete at docs/deployment/evidence/ep4-governed-paper/20260419T003720Z/. Returning to Codex for finalization. OSS-004D unblocked.",
+      "status": "done",
+      "created_at": "2026-04-19T00:40:55Z",
+      "resolved_at": "2026-04-19T00:46:37Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "DEPTH-EVO005",
+  "archived_at": "2026-04-19T00:01:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPTH-EVO005",
+    "title": "Implement kill switch fast-path through runtime-manager (EVO-005)",
+    "summary_zh": "DEVELOPMENT_WORKBREAKDOWN EVO-005：Kill Switch 和 Safe Mode 的 emergency fast-path 必須繞過正常 governance review queue、但仍流過 runtime-manager；audit trail 保留；kill-switch latency 目標在 benchmark scenario 下驗證。",
+    "phase": "Execution / Blueprint Depth",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DEPTH-EVO004"
+    ],
+    "artifacts": [
+      "services/runtime-manager/main.py",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
+    ],
+    "acceptance": [
+      "Kill Switch 和 Safe Mode 透過 runtime-manager fast-path endpoint 可觸發，不需走 governance review queue",
+      "觸發後 audit log 仍記錄完整 trail",
+      "latency benchmark test 存在且 pass",
+      "EVO-005 正式關閉"
+    ],
+    "next": "Owner finalized: all 38 tests pass (kill-switch fast-path, safe-mode state machine, audit trail, latency benchmark ≤5ms, cross-instance durability, corrupt-snapshot recovery). Review approved by Codex after durability hardening (commit d0eb7ec). EVO-005 officially closed.",
+    "last_update": "2026-04-19T00:01:05Z",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer recheck 通過：補上 kill_switch.json 原子覆寫與壞檔隔離，避免 durability sidecar 半寫入或損毀時把 runtime-manager 啟動卡死。|驗證通過：cross-instance safe-mode/audit durability、manual safe-mode advance persistence、corrupt snapshot recovery；services/runtime-manager/test_runtime_manager.py 現在 38 tests 全綠。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T00:01:05Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "12afcdb47053fc50810a796a2887fb2c604f8489",
+      "commit_subject": "DEPTH-EVO005: owner closure checkpoint — kill-switch fast-path finalized",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "DEPTH-EVO005",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 675,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPTH-EVO005",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Kill-switch fast-path implementation complete. Added 26 tests covering: (1) KillSwitchController unit tests — classify/dispatch, action selection, safe-mode state machine, audit trail; (2) service-layer dispatch, audit trail, safe-mode advance, invalid-reason rejection; (3) HTTP route tests for all three kill-switch endpoints (dispatch, safe-mode GET/POST, audit-log) with auth guard and field validation; (4) latency benchmark over 1000 iterations passes ≤5 ms/iter target. All 34 tests pass. Commit: 46ceec6. All EVO-005 acceptance criteria met.",
+      "status": "done",
+      "created_at": "2026-04-18T22:44:17Z",
+      "resolved_at": "2026-04-18T22:59:02Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-18T22:59:02Z",
+      "resolved_at": "2026-04-18T23:02:43Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review found a blocker: kill-switch safe-mode and audit trail are process-local only, so restart/worker switch loses state. See services/execution/runtime-manager/review_evo005_codex_zh.md and restore durability before re-review.",
+      "status": "done",
+      "created_at": "2026-04-18T23:02:43Z",
+      "resolved_at": "2026-04-18T23:02:43Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Durability fix complete (commit d0eb7ec). Added dump_state/load_state to KillSwitchController; RuntimeManagerService now writes kill_switch.json before acking every dispatch and safe-mode advance; new service instances load from that file on init. Three cross-instance regression tests added and all 37 tests pass. Reproduction case from review now shows svc2 reads back correct safe-mode and audit count. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-18T23:06:50Z",
+      "resolved_at": "2026-04-18T23:10:41Z"
+    },
+    {
+      "task_id": "DEPTH-EVO005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer recheck passed after durability hardening; kill-switch fast-path now persists safely across restarts and tolerates corrupt snapshots. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-18T23:10:41Z",
+      "resolved_at": "2026-04-19T00:01:06Z"
+    }
+  ],
+  "blockers": []
+}

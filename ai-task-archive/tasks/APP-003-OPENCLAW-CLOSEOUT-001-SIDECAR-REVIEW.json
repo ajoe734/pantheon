@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T19:49:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-OPENCLAW-CLOSEOUT-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-OPENCLAW-CLOSEOUT-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-DATASOURCE-US-001",
+      "APP-003-DATASOURCE-OPS-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-OPENCLAW-CLOSEOUT-001/APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only sidecar review packet after reviewer approval. Packet stays non-canonical, preserves the parent archive/review/evidence alignment, and closes only this helper slice.",
+    "last_update": "2026-04-24T19:49:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-OPENCLAW-CLOSEOUT-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "sidecar packet 僅作 reviewer/archival support，未重開 parent lifecycle，界線正確。",
+      "已核對 parent archive、approved parent review、repo-authoritative closeout packet 與 human-gate manifest，且重跑 run-operator-checklist 與 pytest services/execution/test_kraken_adapter.py 均通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:49:29Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1182,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T19:06:12Z",
+      "resolved_at": "2026-04-24T19:41:11Z"
+    },
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/APP-003-OPENCLAW-CLOSEOUT-001/APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-REVIEW.md. It truthfully records that parent task APP-003-OPENCLAW-CLOSEOUT-001 is already archived done at ai-task-archive/tasks/APP-003-OPENCLAW-CLOSEOUT-001.json, the human-gate manifest exists at docs/deployment/evidence/ep5-human-gate-input/20260424T185046Z/human-gate-packet.json, run-operator-checklist now passes, pytest services/execution/test_kraken_adapter.py passes, and event-trace status remains packetized. Sidecar scope stays support-only and does not reopen or re-approve the parent.",
+      "status": "done",
+      "created_at": "2026-04-24T19:43:21Z",
+      "resolved_at": "2026-04-24T19:45:12Z"
+    },
+    {
+      "task_id": "APP-003-OPENCLAW-CLOSEOUT-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar review packet verified as support-only and accurate; parent archive/review/evidence align, run-operator-checklist passes, pytest services/execution/test_kraken_adapter.py passes, and event-trace status remains packetized. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T19:45:12Z",
+      "resolved_at": "2026-04-24T19:49:29Z"
+    }
+  ],
+  "blockers": []
+}

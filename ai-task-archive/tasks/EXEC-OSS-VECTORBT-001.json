@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "EXEC-OSS-VECTORBT-001",
+  "archived_at": "2026-04-21T02:06:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-OSS-VECTORBT-001",
+    "title": "Advance vectorbt next-wave execution readiness",
+    "summary_zh": "延續 vectorbt activation/materialization 基線，把下一波 execution readiness、adapter boundary 與 smoke-test path 收斂成可執行工作。",
+    "phase": "Execution / OSS Next Wave",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/vectorbt/ACTIVATION_CRITERIA.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
+    ],
+    "acceptance": [
+      "vectorbt next-wave scope 與 readiness gap 被明確列出",
+      "adapter / smoke-test / governed I/O 邊界清楚",
+      "留下可 review 的 execution-ready plan 或 patch set"
+    ],
+    "next": "Owner finalized approved vectorbt next-wave readiness closeout in commit 55dc017 after re-review confirmed exact zero-padded ISO date validation, synced governed evidence docs, and passing focused verification for adapter tests, smoke path, and worker fallback.",
+    "last_update": "2026-04-21T02:06:16Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Vectorbt rereview 通過：adapter 現已強制精確 zero-padded YYYY-MM-DD 日期格式、回歸測試涵蓋 reviewer repro，且 integrations/vectorbt/integration.md 已同步到實作中的 artifact_bundle / registry_entry 契約。Focused verification 與原 reviewer repros 全數通過，owner 可正式 finalize 為 done。"
+    ],
+    "review_file": "docs/reviews/2026-04-21-exec-oss-vectorbt-001-codex-rereview.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T02:06:16Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "55dc017fb9404d95f0d420be9932c80cc9d157e7",
+      "commit_subject": "EXEC-OSS-VECTORBT-001: finalize governed vectorbt readiness",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-OSS-VECTORBT-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 925,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:28:25Z",
+      "resolved_at": "2026-04-20T13:45:46Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Vectorbt governed baseline closeout ready for review: added worker entrypoint, sample dataset, CI smoke job, and synced maturity/activation docs to the implemented smoke-tested baseline. Verified with python3 services/research/vectorbt/smoke_test.py, python3 -m pytest services/research/vectorbt/test_adapter.py -q, and python3 services/research/vectorbt/worker.py.",
+      "status": "done",
+      "created_at": "2026-04-20T13:51:12Z",
+      "resolved_at": "2026-04-21T01:47:11Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested per docs/reviews/2026-04-21-exec-oss-vectorbt-001-codex-review.md: enforce date validation in GovernedVectorbtInputAdapter, add regression tests, and sync integrations/vectorbt/integration.md to the implemented artifact/registry contract.",
+      "status": "done",
+      "created_at": "2026-04-21T01:47:11Z",
+      "resolved_at": "2026-04-21T01:47:11Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Vectorbt reopen fixes are ready for review: GovernedVectorbtInputAdapter now rejects missing/malformed YYYY-MM-DD dates, regression tests cover both paths, and integrations/vectorbt/integration.md matches the implemented artifact_bundle and registry_entry contract. Revalidated with python3 -m pytest services/research/vectorbt/test_adapter.py -q (30 passed, 5 subtests passed), python3 services/research/vectorbt/smoke_test.py, and python3 services/research/vectorbt/worker.py.",
+      "status": "done",
+      "created_at": "2026-04-21T01:50:39Z",
+      "resolved_at": "2026-04-21T01:55:25Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requested changes: GovernedVectorbtInputAdapter still accepts non-zero-padded dates like 2024-1-1 because datetime.strptime('%Y-%m-%d') is lenient, so the adapter does not actually enforce the documented YYYY-MM-DD contract. Tighten validation to require exact zero-padded ISO dates and add regression coverage for 2024-1-1/2024-01-1 style inputs before re-handoff.",
+      "status": "done",
+      "created_at": "2026-04-21T01:55:25Z",
+      "resolved_at": "2026-04-21T01:55:25Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reopen fix is ready for review: GovernedVectorbtInputAdapter now enforces exact zero-padded YYYY-MM-DD dates, rejecting 2024-1-1 and 2024-01-1 before parsing. Added regression coverage for both malformed inputs and revalidated with python3 -m pytest services/research/vectorbt/test_adapter.py -q (32 passed, 5 subtests passed), python3 services/research/vectorbt/smoke_test.py, and python3 services/research/vectorbt/worker.py.",
+      "status": "done",
+      "created_at": "2026-04-21T01:58:16Z",
+      "resolved_at": "2026-04-21T02:03:11Z"
+    },
+    {
+      "task_id": "EXEC-OSS-VECTORBT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review passed: exact zero-padded ISO date validation now matches the documented boundary, regression coverage and evidence docs are synced, and focused verification plus the prior reviewer repros all pass. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-21T02:03:11Z",
+      "resolved_at": "2026-04-21T02:06:17Z"
+    }
+  ],
+  "blockers": []
+}

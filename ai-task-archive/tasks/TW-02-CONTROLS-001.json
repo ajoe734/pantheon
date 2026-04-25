@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "TW-02-CONTROLS-001",
+  "archived_at": "2026-04-19T19:33:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TW-02-CONTROLS-001",
+    "title": "Publish Trainer control-state and patch validation contract",
+    "summary_zh": "為 TW-02 補齊 controls read route、patch write route、validation response 與 control diff shape，讓 trainer controls 從 demo shell 進到真實 contract。",
+    "phase": "Execution / Wave 3 - Module Contract Expansion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "TW-01-FOUNDATION-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "controls route and patch route are published",
+      "validation and warning semantics are explicit",
+      "control diffs come from backend responses"
+    ],
+    "next": "Owner finalized approved TW-02 controls contract. Controls read/patch routes, validation semantics, and backend-owned control diffs are published; task is closed and ready for downstream BFF implementation.",
+    "last_update": "2026-04-19T19:33:51Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：（1）BFF 合約完整發布 GET controls 與 POST patch 兩條路由，包含 ControlParameter schema、四種 control_type、三種 allowed_range 形式、validation/warning/rejection 語義，以及 updated_controls 作為 backend-owned diff source；（2）screen spec 完整覆蓋五個頁面區塊、狀態表與降級表，與 BFF 合約一致；（3）example payloads JSON 驗證通過，四種回應分支齊全；（4）PACKET_FAMILY.md 與 PANTHEON_FRONTEND_SA.md 均已正確標記為 contract-published / pending-bff。三個 acceptance criteria 全數通過，無需修改。"
+    ],
+    "review_file": "docs/reviews/TW-02-CONTROLS-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T19:33:51Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "e52e09832a6589d138d3a5344ea86b9638752c36",
+      "commit_subject": "TW-02-CONTROLS-001 finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "TW-02-CONTROLS-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 749,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TW-02-CONTROLS-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "TW-02 contract ready for review. Deliverables: (1) docs/bff/TW-02-parameter-controls.md — published GET /api/v1/trainer/sessions/{session_id}/controls and POST /api/v1/trainer/sessions/{session_id}/patch, ControlParameter schema, explicit validation/rejection semantics, allowedActions.canPatchControls, and backend-owned diff shape; (2) docs/screens/TW-02-parameter-controls.md — production screen gate and UI behavior for controls, validation, degradation, and inline diff; (3) docs/examples/TW-02-parameter-controls.json — controls read, success/warning/invalid patch responses, and degraded example; (4) synced docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md and docs/lovable/PANTHEON_FRONTEND_SA.md so TW-02 now reads as contract-published / pending-bff instead of blocked. Validation: python3 -m json.tool docs/examples/TW-02-parameter-controls.json",
+      "status": "done",
+      "created_at": "2026-04-19T19:25:05Z",
+      "resolved_at": "2026-04-19T19:31:39Z"
+    },
+    {
+      "task_id": "TW-02-CONTROLS-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three acceptance criteria pass. Controls and patch routes are published, validation/warning semantics are explicit, and control diffs are backend-owned. Contract is complete and ready for BFF implementation.",
+      "status": "done",
+      "created_at": "2026-04-19T19:31:39Z",
+      "resolved_at": "2026-04-19T19:33:51Z"
+    }
+  ],
+  "blockers": []
+}

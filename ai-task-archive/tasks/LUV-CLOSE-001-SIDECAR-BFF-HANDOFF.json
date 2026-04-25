@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-17T14:19:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare LUV-CLOSE-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LUV-CLOSE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Lovable Closeout",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/LUV-CLOSE-001/LUV-CLOSE-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved sidecar BFF/frontend handoff packet. Support artifact committed at 5c1bf93 and task archived as done for parent-owner follow-up routing.",
+    "last_update": "2026-04-17T14:19:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LUV-CLOSE-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：packet 準確反映 LUV-CLOSE-001 存檔結果，BFF gap 解決狀態（resolved: true）、前端 commit 鏈（60f366e/dea4186/9a2996d）、SSE boundary deviation 記錄與 follow-up map（IDR-GAP-002/IDR-GAP-001）均經驗證正確，符合 support-only 限制，未修改任何 canonical truth。"
+    ],
+    "review_file": "support/sidecars/LUV-CLOSE-001/LUV-CLOSE-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T14:19:18Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "5c1bf9302feac46a734e6b2f14842ed790c1e722",
+      "commit_subject": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF: add BFF/frontend handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 431,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:00:26Z",
+      "resolved_at": "2026-04-17T12:00:50Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:02:20Z",
+      "resolved_at": "2026-04-17T12:03:06Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:03:52Z",
+      "resolved_at": "2026-04-17T12:04:29Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:08:18Z",
+      "resolved_at": "2026-04-17T12:09:37Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:12:05Z",
+      "resolved_at": "2026-04-17T12:12:28Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:13:15Z",
+      "resolved_at": "2026-04-17T12:14:08Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:15:46Z",
+      "resolved_at": "2026-04-17T12:16:56Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:18:50Z",
+      "resolved_at": "2026-04-17T12:42:25Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:42:25Z",
+      "resolved_at": "2026-04-17T12:43:14Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:43:59Z",
+      "resolved_at": "2026-04-17T12:44:40Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:47:01Z",
+      "resolved_at": "2026-04-17T12:47:48Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T12:54:00Z",
+      "resolved_at": "2026-04-17T12:55:16Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T13:19:22Z",
+      "resolved_at": "2026-04-17T13:20:33Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T13:31:26Z",
+      "resolved_at": "2026-04-17T13:32:03Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T13:32:33Z",
+      "resolved_at": "2026-04-17T13:32:57Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T13:46:37Z",
+      "resolved_at": "2026-04-17T13:47:53Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T13:50:22Z",
+      "resolved_at": "2026-04-17T13:52:35Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T13:58:04Z",
+      "resolved_at": "2026-04-17T13:59:11Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Prepared support-only BFF/frontend handoff packet at support/sidecars/LUV-CLOSE-001/LUV-CLOSE-001-SIDECAR-BFF-HANDOFF.md. Packet is anchored to archived parent truth, resolved PKT-002 BFF gap evidence, final replayable frontend transport commits (60f366e/dea4186/9a2996d), and the accepted follow-up map for IDR-GAP-002 and IDR-GAP-001. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-04-17T14:16:19Z",
+      "resolved_at": "2026-04-17T14:17:32Z"
+    },
+    {
+      "task_id": "LUV-CLOSE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar packet approved. All claims verified against ai-task-archive/tasks/LUV-CLOSE-001.json and .coordination/requests/PKT-002-incident-detail-bff-gap.yaml. BFF gap resolution, frontend transport commits, SSE boundary disposition, and follow-up map are accurate. Support-only constraint honoured. Returning to Codex2 for done finalization.",
+      "status": "done",
+      "created_at": "2026-04-17T14:17:32Z",
+      "resolved_at": "2026-04-17T14:19:18Z"
+    }
+  ],
+  "blockers": []
+}

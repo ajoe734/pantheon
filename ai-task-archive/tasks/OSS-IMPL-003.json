@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "OSS-IMPL-003",
+  "archived_at": "2026-04-17T22:47:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-IMPL-003",
+    "title": "Implement vectorbt governed adapter with smoke test",
+    "summary_zh": "實作 vectorbt governed adapter：在 services/research/vectorbt/ 建立 GovernedVectorbtAdapter（backtesting / portfolio analytics 路徑）、StubBackend、governed output shape、smoke test、unit tests。OSS_INTEGRATION_CHECKLIST 中 vectorbt 從 not-started 推進到 smoke-tested。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"services/research/vectorbt/adapter/vectorbt_adapter.py\"",
+      "\"services/research/vectorbt/smoke_test.py\"",
+      "\"services/research/vectorbt/test_adapter.py\"",
+      "\"OSS_INTEGRATION_CHECKLIST.md\"]"
+    ],
+    "acceptance": [
+      "[\"unit tests 全部通過\"",
+      "\"smoke test 產生 registry-ready artifact（artifact_state=draft）\"",
+      "\"OSS checklist vectorbt 狀態更新為 smoke-tested\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "vectorbt governed adapter complete: 28/28 unit tests pass, smoke test produces registry-ready artifact (artifact_state=draft, vectorbt_backtest family). OSS checklist updated to smoke-tested.",
+    "last_update": "2026-04-17T22:47:14Z",
+    "review_notes_zh": [
+      "本地重跑 vectorbt smoke test 與 28 個 unittest 全數通過，acceptance 三項皆成立。reversed-date regression 已擴充為驗證 AAA 五個 per_instrument_metrics key；目前 checklist 也已更新為 28 tests。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T22:47:14Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "4402d2b70ee6fcd79ae75f0308035c4db217becc",
+      "commit_subject": "OSS-IMPL-003: finalize vectorbt governed adapter closeout and fix DEPLOY deps",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "OSS-IMPL-003",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 475,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-IMPL-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All artifacts delivered: vectorbt_adapter.py (GovernedVectorbtInputAdapter + StubVectorbtBackend + VectorbtBackend), smoke_test.py (passes, assertions OK), test_adapter.py (26/26 pass after syntax fix). OSS_INTEGRATION_CHECKLIST.md advanced from version-pinned to smoke-tested. Please review for acceptance.",
+      "status": "done",
+      "created_at": "2026-04-17T17:45:17Z",
+      "resolved_at": "2026-04-17T18:53:35Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: GovernedVectorbtInputAdapter currently ignores per-instrument date ordering and preserves caller record order at services/research/vectorbt/adapter/vectorbt_adapter.py:127-159, so unsorted OHLCV input can silently change backtest results. Fresh repro on current snapshot: reversing AAA records changes stub total_return from 0.008743 to 0.0 while smoke/unit tests still pass. Sort or validate records chronologically per instrument and add regression coverage before returning to review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:53:35Z",
+      "resolved_at": "2026-04-17T18:53:35Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Date-ordering fix complete. GovernedVectorbtInputAdapter now sorts per-instrument bars by ISO date field before storing (vectorbt_adapter.py:127-165). Two regression tests added to test_adapter.py: reversed-date input produces identical ohlcv_by_instrument bars, and identical per-instrument backtest metrics. 28/28 unit tests pass, smoke test OK. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:56:52Z",
+      "resolved_at": "2026-04-17T19:00:30Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: expand the reversed-date regression to assert the full AAA per_instrument_metrics payload rather than only total_return, and refresh the vectorbt OSS checklist evidence from 26 to 28 passing tests so the artifact matches current verification.",
+      "status": "done",
+      "created_at": "2026-04-17T19:00:30Z",
+      "resolved_at": "2026-04-17T19:00:30Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Expanded reversed-date regression to assert all 5 AAA per_instrument_metrics keys (total_return, sharpe_ratio, max_drawdown, trade_count, num_bars) via subTest loop. Refreshed OSS checklist evidence from 26 to 28 passing tests. 28/28 pass, 5 subtests pass. Committed 449bcb9. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T19:01:53Z",
+      "resolved_at": "2026-04-17T19:11:14Z"
+    },
+    {
+      "task_id": "OSS-IMPL-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after re-running smoke test and 28 unit tests locally; the per-instrument date sort fix and expanded five-metric regression coverage satisfy the reopened acceptance checks.",
+      "status": "done",
+      "created_at": "2026-04-17T19:11:14Z",
+      "resolved_at": "2026-04-17T22:47:14Z"
+    }
+  ],
+  "blockers": []
+}

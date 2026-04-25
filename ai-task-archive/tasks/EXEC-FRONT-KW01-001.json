@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-KW01-001",
+  "archived_at": "2026-04-20T15:05:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-KW01-001",
+    "title": "Implement KW-01 institutional memory front-end flow against live Pantheon APIs",
+    "summary_zh": "在 front-end lane 實作 KW-01 institutional memory list/detail flow，使用既有 handoff bundle 與 live BFF routes。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/KW-01-institutional-memory-contract-ready.yaml",
+      ".coordination/responses/KW-01-institutional-memory-lovable-ui-task.yaml",
+      "docs/pantheon-handoffs/KW-01-institutional-memory/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "institutional memory list/detail UI 對齊已發布 contract",
+      "若 payload 缺欄位則發 bff-gap，而不是用 placeholder 偽造資料",
+      "完成後提交 ui-done handoff"
+    ],
+    "next": "Owner finalized approved KW-01 institutional memory UI task. Contract, handoff bundle, and accepted review record are now closed as done.",
+    "last_update": "2026-04-20T15:05:06Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過，KW-01 UI 與已發布 contract 對齊",
+      "已驗證前端 lint/build 與 KW-01 BFF contract test",
+      "部署環境的 route_href/source_event.href 仍需 runtime 驗證",
+      "handoff 提到的 feedback commit 2820e443 在本地 repo 歷史中不存在，已以實際 artifact 與 UI commit 為準"
+    ],
+    "review_file": ".orchestrator/reviews/EXEC-FRONT-KW01-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T15:05:06Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "f32dfc46083f2485e829029d91a60cd4f32a52ff",
+      "commit_subject": "EXEC-FRONT-KW01-001: finalize institutional memory UI closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-FRONT-KW01-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 900,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned EXEC-FRONT-KW01-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T11:48:46Z",
+      "resolved_at": "2026-04-20T11:58:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:05:47Z",
+      "resolved_at": "2026-04-20T12:06:28Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:14:31Z",
+      "resolved_at": "2026-04-20T12:14:51Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:25:18Z",
+      "resolved_at": "2026-04-20T12:25:51Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:45:43Z",
+      "resolved_at": "2026-04-20T12:53:42Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "KW-01 institutional memory list/detail UI is implemented in front-ai-trading-system, build passed, targeted eslint passed, and completion handoff file is written for review.",
+      "status": "done",
+      "created_at": "2026-04-20T13:01:50Z",
+      "resolved_at": "2026-04-20T13:30:37Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: ui-done source_commit is not replayable because KW-01 files remain uncommitted in front-ai-trading-system, and the required docs/pantheon-feedback/KW-01-institutional-memory/ bundle is missing. See docs/reviews/2026-04-20-exec-front-kw01-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T13:30:37Z",
+      "resolved_at": "2026-04-20T13:30:37Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "KW-01 replayability fixed. Front repo commits: ba560610044d5f11c97b2b48cfb5b7621d812e4e (UI) and 2820e4439a7f7e2c1f83b99d4af5904eb36551dc (feedback bundle). ui-done now points at the replayable UI commit, and docs/pantheon-feedback/KW-01-institutional-memory/ is published.",
+      "status": "done",
+      "created_at": "2026-04-20T13:40:20Z",
+      "resolved_at": "2026-04-20T15:03:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. KW-01 institutional memory UI matches the published contract; owner should finalize after any desired live-environment link checks.",
+      "status": "done",
+      "created_at": "2026-04-20T15:03:21Z",
+      "resolved_at": "2026-04-20T15:05:06Z"
+    }
+  ],
+  "blockers": []
+}

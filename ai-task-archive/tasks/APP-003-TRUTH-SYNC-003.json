@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-003",
+  "archived_at": "2026-04-23T13:32:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-003",
+    "title": "Rebaseline backlog and SA truth against archived completions",
+    "summary_zh": "把 archive done 狀態回寫到 backlog、Lovable SA 與 tracked-feature truth，清掉仍把已完成 hardening 或 route-live activation 寫成未收尾的文案漂移。",
+    "phase": "Execution / Archive Truth Rebaseline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md",
+      "current-work.md"
+    ],
+    "acceptance": [
+      "WORKBENCH_DELIVERY_BACKLOG and LOVABLE_MASTER_SA no longer treat archived-done Pantheon tasks as active residuals",
+      "tracked-feature truth explains any route-live modules that remain outside explicit feature rows",
+      "post-closeout surfaces no longer understate current archive reality"
+    ],
+    "next": "Owner finalized archive-truth rebaseline after checkpoint commit 2c42f7e updated the backlog, Lovable SA, residual execution packet, and regenerated current-work so archive-done hardening and route-live activation publication lanes no longer appear as active Pantheon residuals.",
+    "last_update": "2026-04-23T13:32:09Z",
+    "review_notes_zh": [
+      "已核對 backlog 與 Lovable SA：不再把 archive-done 的 hardening 或 route-live activation publication lanes 誤寫成開放中的 Pantheon residual。另修正 current-work 生成邏輯，現在只會列出真正不在 coordination feature rows 裡的 archive-done route-live modules（CW-02、RW-05、KW-02/KW-03/KW-04/KW-05、TW-02），不再與表內既有 feature rows 衝突。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T13:32:09Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "2c42f7e88e9884a3abefe48265770b9e578d7f24",
+      "commit_subject": "APP-003-TRUTH-SYNC-003 finalize archive truth rebaseline checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-TRUTH-SYNC-003",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1177,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-23T13:09:17Z",
+      "resolved_at": "2026-04-23T13:09:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance met: WORKBENCH_DELIVERY_BACKLOG and LOVABLE_MASTER_SA no longer present archived-done hardening or route-live activation publication lanes as open Pantheon residuals, and current-work now explicitly explains the archive-done route-live modules that sit outside coordination feature rows (CW-02, RW-02/RW-04/RW-05, KW-02/KW-03/KW-04/KW-05, TW-01/TW-02/TW-04).",
+      "status": "done",
+      "created_at": "2026-04-23T13:16:59Z",
+      "resolved_at": "2026-04-23T13:29:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: backlog and Lovable SA now match the archive-done closeout reality, and regenerated current-work only calls out route-live activation modules that truly remain outside coordination feature rows. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-23T13:29:24Z",
+      "resolved_at": "2026-04-23T13:32:09Z"
+    }
+  ],
+  "blockers": []
+}

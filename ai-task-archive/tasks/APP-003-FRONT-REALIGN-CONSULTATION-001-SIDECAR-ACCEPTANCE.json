@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "task_id": "APP-003-FRONT-REALIGN-CONSULTATION-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T05:46:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-003-FRONT-REALIGN-CONSULTATION-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-FRONT-REALIGN-CONSULTATION-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-FRONT-REALIGN-CONSULTATION-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Realignment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-FRONT-REALIGN-CONSULTATION-001/APP-003-FRONT-REALIGN-CONSULTATION-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Parent APP-003-FRONT-REALIGN-CONSULTATION-001 is archived done; this support-only sidecar is obsolete and is archived without further work.",
+    "last_update": "2026-04-24T05:46:07Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-FRONT-REALIGN-CONSULTATION-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

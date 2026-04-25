@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "BP5-CICD-001",
+  "archived_at": "2026-04-15T16:29:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-CICD-001",
+    "title": "Implement GitHub Actions stage-0 CI and changed-path gating",
+    "summary_zh": "先把 repo 入口的 GitHub Actions stage-0 CI、changed-path builds、service matrix 與 baseline checks 落成可執行 pipeline。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      ".github/",
+      "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md"
+    ],
+    "acceptance": [
+      "GitHub Actions validates the service matrix and changed-path rules without hidden manual assumptions",
+      "stage-0 CI is explicit enough to gate image-producing builds and deployment candidates"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized stage-0 CI delivery after owner recheck: commit 4b03245 records the workflow/matrix/helper/test implementation, validate passes, 6 unit tests pass, and the approved review notes remain logged as non-blocking follow-ups.",
+    "last_update": "2026-04-15T16:29:27Z",
+    "review_notes_zh": [
+      "審查通過",
+      "N1: changed-build-dry-run 缺少 setup-python 步驟（非阻塞）",
+      "N2: target.id 未加字元白名單，有 shell injection 風險（非阻塞，建議後續補 regex 驗證）"
+    ],
+    "review_file": ".coordination/reviews/BP5-CICD-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T16:29:27Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "4b03245b528c00ce15843b1215bf803238e16003",
+      "commit_subject": "BP5-CICD-001: add stage-0 CI pipeline and gating",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-CICD-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 47,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-CICD-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T15:51:29Z",
+      "resolved_at": "2026-04-15T15:51:54Z"
+    },
+    {
+      "task_id": "BP5-CICD-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Implemented stage-0 CI matrix/workflow/helpers. Validated matrix/doc sync, changed-path detection, unit tests, and router Docker build dry run. Containerized run-baseline reaches existing BFF smoke regression in services/control-plane/bff/smoke_test.py: concurrent modification expected 409 but returned 202.",
+      "status": "done",
+      "created_at": "2026-04-15T16:20:08Z",
+      "resolved_at": "2026-04-15T16:20:42Z"
+    },
+    {
+      "task_id": "BP5-CICD-001",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Gemini to Qwen after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-15T16:20:42Z",
+      "resolved_at": "2026-04-15T16:23:40Z"
+    },
+    {
+      "task_id": "BP5-CICD-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-15T16:23:40Z",
+      "resolved_at": "2026-04-15T16:27:10Z"
+    },
+    {
+      "task_id": "BP5-CICD-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CI pipeline validated: matrix covers all 14 Wave 1 service IDs, all 6 tests pass, changed-path gating and fallback logic are correct. Two non-blocking follow-up notes left in review file. Approved and returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T16:27:10Z",
+      "resolved_at": "2026-04-15T16:29:27Z"
+    }
+  ],
+  "blockers": []
+}

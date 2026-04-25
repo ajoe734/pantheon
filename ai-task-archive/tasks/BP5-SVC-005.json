@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-005",
+  "archived_at": "2026-04-15T18:41:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-005",
+    "title": "Realize the deployment orchestration saga with outbox and inbox consistency",
+    "summary_zh": "把跨 service 的 deploy/rollback orchestration 從文件約束落成 saga、outbox/inbox、idempotent consumer 與 compensation path。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-004"
+    ],
+    "artifacts": [
+      "services/deployment/",
+      "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md"
+    ],
+    "acceptance": [
+      "deployment writes and event publication use an explicit transactional outbox path",
+      "cross-service deploy and rollback flows document and test compensation and idempotent replay behavior"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized after review approval. Re-ran 12 deployment pytest cases plus deployment smoke coverage; delivery commit 37ed952 records the DEP-002 outbox, inbox, replay, and compensation API surface.",
+    "last_update": "2026-04-15T18:41:42Z",
+    "review_notes_zh": [
+      "全部 12 個 pytest 通過",
+      "outbox 事務路徑符合 CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY",
+      "inbox 去重與 out_of_order 邏輯符合 EVENT_ORDERING_AND_DELIVERY_GUARANTEES",
+      "補償矩陣覆蓋四個 saga step，owner-scoped 寫入邊界清晰"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-005-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T18:41:42Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "37ed9520342f8997a2db59b34a310c6f4bfa894b",
+      "commit_subject": "BP5-SVC-005: realize deployment orchestration saga",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-005",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 53,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. services/deployment now exposes DEP-002 dispatch, saga progress, compensation, outbox, and inbox APIs on top of DEP-001 planning. Verified with pytest services/deployment/test_service.py -q and /snap/google-cloud-cli/436/platform/bundledpythonunix/bin/python3.13 services/deployment/smoke_test.py.",
+      "status": "done",
+      "created_at": "2026-04-15T18:36:40Z",
+      "resolved_at": "2026-04-15T18:39:09Z"
+    },
+    {
+      "task_id": "BP5-SVC-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 12 tests pass. Both acceptance criteria met. Outbox transaction, inbox idempotency, and compensation paths all comply with L1 policy. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T18:39:09Z",
+      "resolved_at": "2026-04-15T18:41:42Z"
+    }
+  ],
+  "blockers": []
+}

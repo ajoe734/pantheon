@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T17:49:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+    "title": "Prepare LUV-REVIEW-009 acceptance packet and dependency map",
+    "summary_zh": "平行支援 LUV-REVIEW-009，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Lovable Review Closeout",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/LUV-REVIEW-009/LUV-REVIEW-009-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet refreshed to the reviewer-approved PKT-004 closeout snapshot and support-only finalize handoff is complete.",
+    "last_update": "2026-04-17T17:49:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LUV-REVIEW-009",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "sidecar packet 已刷新為最新 acceptance 快照；缺少 LOVABLE_CHANGE_FEEDBACK.md 不再是最佳摘要，parent blocker 現況為 dead CTA routes 與單一 Git-visible transport anchor 尚未成立。"
+    ],
+    "review_file": "support/sidecars/LUV-REVIEW-009/LUV-REVIEW-009-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T17:49:54Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "dbaa7e18ba835d78045d8bb7fe865b4d3fbfe441",
+      "commit_subject": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE: refresh acceptance sidecar packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 466,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T15:31:49Z",
+      "resolved_at": "2026-04-17T15:32:51Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:09:02Z",
+      "resolved_at": "2026-04-17T16:11:02Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:12:00Z",
+      "resolved_at": "2026-04-17T16:12:26Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T16:18:13Z",
+      "resolved_at": "2026-04-17T16:19:33Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:21:17Z",
+      "resolved_at": "2026-04-17T16:21:42Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:33:07Z",
+      "resolved_at": "2026-04-17T16:33:45Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:36:07Z",
+      "resolved_at": "2026-04-17T16:37:52Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:39:41Z",
+      "resolved_at": "2026-04-17T16:49:01Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T16:49:01Z",
+      "resolved_at": "2026-04-17T16:49:55Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:17:31Z",
+      "resolved_at": "2026-04-17T17:20:34Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance sidecar packet created at support/sidecars/LUV-REVIEW-009/LUV-REVIEW-009-SIDECAR-ACCEPTANCE.md. Packet captures the current dependency map and the remaining bundle-completeness blocker for PKT-004; ready for reviewer verification.",
+      "status": "done",
+      "created_at": "2026-04-17T17:22:37Z",
+      "resolved_at": "2026-04-17T17:37:22Z"
+    },
+    {
+      "task_id": "LUV-REVIEW-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed to match the current PKT-004 parent review. Sidecar scope remains support-only; returned to Codex2 for final done transition when this helper can be closed.",
+      "status": "done",
+      "created_at": "2026-04-17T17:37:22Z",
+      "resolved_at": "2026-04-17T17:49:54Z"
+    }
+  ],
+  "blockers": []
+}

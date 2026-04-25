@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-RW02-001",
+  "archived_at": "2026-04-20T03:52:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-RW02-001",
+    "title": "Implement RW-02 research search BFF route",
+    "summary_zh": "把 RW-02 search contract 落到 live BFF route 與 index adapter wiring，讓 search 不再停在 pending-bff。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "docs/bff/RW-02-search.md",
+      "docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "RW-02 route 已實作",
+      "Filter 與 pagination 由 backend 擁有",
+      "測試涵蓋 query 與 empty state"
+    ],
+    "next": "Owner finalized approved RW-02 delivery after isolated owner checkpoint commit. Search route, backend-owned filters/pagination, adapter degradation semantics, and targeted contract/regression tests were already review-approved.",
+    "last_update": "2026-04-20T03:52:32Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：RW-02 route 已實作，所有 4 個 contract test 通過；filter 與 pagination 由 backend 擁有；error shape 對齊 contract（400/503）；adapter state degradation 邏輯正確；index adapter wiring 完整；RW-01 regression 通過（6/6）。test_rw03_analysis_contract.py 不存在是此任務前的既有缺口，非 RW-02 造成的 regression。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T03:52:32Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "75b21401cc564375e69c03038adaf04642654192",
+      "commit_subject": "AUTO-IMPL-RW02-001 finalize owner checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "AUTO-IMPL-RW02-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 797,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned AUTO-IMPL-RW02-001 away from sidecar-only lane Qwen; owner Qwen -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T03:08:41Z",
+      "resolved_at": "2026-04-20T03:09:10Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented RW-02 live BFF search route and adapter wiring. Verified with pytest services/control-plane/bff/test_rw02_search_contract.py -q and RW-01/RW-03 regressions.",
+      "status": "done",
+      "created_at": "2026-04-20T03:18:51Z",
+      "resolved_at": "2026-04-20T03:21:45Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: ERROR: file or directory not found: services/control-plane/bff/test_rw03_analysis_contract.py",
+      "status": "done",
+      "created_at": "2026-04-20T03:21:45Z",
+      "resolved_at": "2026-04-20T03:27:42Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-RW02-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 4 RW-02 contract tests pass, RW-01 regressions pass, adapter wiring complete, filter/pagination backend-owned. test_rw03 absence is pre-existing, not a regression from this work. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-20T03:27:42Z",
+      "resolved_at": "2026-04-20T03:52:32Z"
+    }
+  ],
+  "blockers": []
+}

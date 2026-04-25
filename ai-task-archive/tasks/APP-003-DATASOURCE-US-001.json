@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-US-001",
+  "archived_at": "2026-04-24T16:31:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-US-001",
+    "title": "Implement IBKR and Massive/Polygon US source integration",
+    "summary_zh": "完成美股 IBKR 執行與 Massive/Polygon 主資料源串接，收斂 EP5 canary 的美股主路徑。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/execution/",
+      "services/data-plane/",
+      "docs/deployment/ep5-canary-ready/",
+      "DATA_SOURCE_SCOPE_MATRIX.md"
+    ],
+    "acceptance": [
+      "IBKR execution adapter path lands with governed secrets boundary",
+      "Massive/Polygon ingest contract or adapter lands for US market data",
+      "EP5 canary docs reference the truthful US execution/data-source boundary"
+    ],
+    "next": "Owner finalized the approved US datasource slice after commit b9dd029; IBKR execution boundary, Massive/Polygon helpers, and EP5 canary datasource docs are now closed as done.",
+    "last_update": "2026-04-24T16:31:12Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：IBKR execution adapter、Massive/Polygon US helper、source_class 對齊與 EP5 canary docs 一致；本地複驗 unittest 與 data-plane smoke test 通過。",
+      "本次 approval 僅覆蓋 APP-003-DATASOURCE-US-001 的 US slice；共享測試檔中的 Taiwan helper 覆蓋仍由 APP-003-DATASOURCE-TW-001 繼續追蹤。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-datasource-us-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T16:31:12Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "b9dd029dea5b1f7e08066a82c0128418c0236c97",
+      "commit_subject": "APP-003-DATASOURCE-US-001 implement US datasource boundary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-US-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1160,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-US-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented the US datasource slice: added an IBKR execution/market-data boundary adapter, added Massive/Polygon-oriented US data-plane normalization helpers, aligned RawDataset source_class to the canonical scope matrix values, updated EP5 canary docs with the truthful US broker vs research-data boundary, and passed targeted verification (IBKR adapter 6 tests, data-plane schema suite 44 tests, data-plane smoke 47 checks).",
+      "status": "done",
+      "created_at": "2026-04-24T16:22:10Z",
+      "resolved_at": "2026-04-24T16:26:58Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-US-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved for the US datasource slice; returned to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T16:26:58Z",
+      "resolved_at": "2026-04-24T16:31:14Z"
+    }
+  ],
+  "blockers": []
+}

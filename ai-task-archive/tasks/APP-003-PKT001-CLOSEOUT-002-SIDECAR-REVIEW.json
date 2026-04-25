@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T05:47:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-003-PKT001-CLOSEOUT-002-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-PKT001-CLOSEOUT-002 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-PKT001-CLOSEOUT-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Frontend Contract Validation",
+    "owner": "Codex",
+    "reviewer": "Codex3",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-PKT001-CLOSEOUT-002/APP-003-PKT001-CLOSEOUT-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Parent APP-003-PKT001-CLOSEOUT-002 is archived done; this support-only sidecar is obsolete and is archived without further work.",
+    "last_update": "2026-04-24T05:47:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-PKT001-CLOSEOUT-002",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

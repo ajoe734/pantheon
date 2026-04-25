@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-24T11:43:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-003-PKT002-FOLLOWUP-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-003-PKT002-FOLLOWUP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-PKT002-FOLLOWUP-001/APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Auto-generated support handoff is obsolete: parent closeout APP-003-PKT002-FOLLOWUP-001 finished without needing a separate sidecar lifecycle, and the referenced BFF-handoff artifact was never materialized as a standalone packet.",
+    "last_update": "2026-04-24T11:43:06Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-PKT002-FOLLOWUP-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "sidecar handoff packet 已對齊最新 reviewer evidence，並修正 parent owner/reviewer metadata。",
+      "三個 PKT-002 surface 現在皆為 loop-complete / close；目前 Git-visible request files 仍一致釘在 reviewed source snapshot 82b1ceb76a7de4f8e49b5f08c0b9fcb865f52bd9。",
+      "此 sidecar 不開新 BFF gap，只交回 parent owner 作 closeout replay guide。"
+    ],
+    "terminal_outcome": "superseded",
+    "superseded_by": "APP-003-PKT002-FOLLOWUP-001"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T08:33:28Z",
+      "resolved_at": "2026-04-24T08:59:07Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T08:59:06Z",
+      "resolved_at": "2026-04-24T10:28:26Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support packet ready at support/sidecars/APP-003-PKT002-FOLLOWUP-001/APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF.md: incident-detail is replay-clean, incident-home remains route-blocked, incident-action-drawer remains PKT-005 sequencing-blocked, and no new Pantheon BFF gap is warranted from current evidence.",
+      "status": "done",
+      "created_at": "2026-04-24T10:30:18Z",
+      "resolved_at": "2026-04-24T11:32:17Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Copilot to Claude2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-24T11:32:17Z",
+      "resolved_at": "2026-04-24T11:33:02Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude2 to Codex after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T11:33:02Z",
+      "resolved_at": "2026-04-24T11:42:32Z"
+    },
+    {
+      "task_id": "APP-003-PKT002-FOLLOWUP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar handoff packet updated to current closeout truth: all three PKT-002 surfaces are loop-complete on reviewed source snapshot 82b1ceb, no new BFF gap is justified, and owner Codex2 can use this packet as the final replay/closeout guide.",
+      "status": "done",
+      "created_at": "2026-04-24T11:42:32Z",
+      "resolved_at": "2026-04-24T11:43:06Z"
+    }
+  ],
+  "blockers": []
+}

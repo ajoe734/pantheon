@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-TW04-001",
+  "archived_at": "2026-04-21T19:56:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-TW04-001",
+    "title": "Refresh TW-04 teaching replay frontend handoff and coordination bundle",
+    "summary_zh": "補齊 TW-04 teaching replay 的前端 handoff / coordination bundle，讓 replay list/detail/commit/discard 的 live truth 能被前端 lane 接手。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/TW-04-teaching-replay.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md"
+    ],
+    "acceptance": [
+      "TW-04 frontend handoff bundle 補齊",
+      "authority / evidence-link semantics 在 handoff 中正確表達",
+      "coordination / backlog truth 同步完成"
+    ],
+    "next": "TW-04 handoff activation finalized: frontend bundle is published, runtime and bff-gap evidence are recorded, and backlog truth now marks the replay surface route-live and frontend-handoff-ready.",
+    "last_update": "2026-04-21T19:56:02Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過｜TW-04 handoff bundle 完整，authority/evidence-link 語意正確表達，backlog truth 同步完成",
+      "OPS-TW04-001 runtime refresh 仍 pending，但不 blocking（workspace bff-gap 已解決）",
+      "前端 lane 可解鎖執行 EXEC-FRONT-TW04-001"
+    ],
+    "review_file": "docs/reviews/EXEC-REBASE-TW04-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:56:02Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "afd59857c9fa043622ac4a1f5d2981a7c1b2beb0",
+      "commit_subject": "EXEC-REBASE-TW04-001 publish TW-04 handoff bundle",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-REBASE-TW04-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 980,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned EXEC-REBASE-TW04-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T11:51:32Z",
+      "resolved_at": "2026-04-20T12:40:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "TW-04 coordination bundle created: contract-ready (status:live) and lovable-ui-task (status:ready) for GET /api/v1/trainer/replay list and detail routes.",
+      "status": "done",
+      "created_at": "2026-04-20T12:50:00Z",
+      "resolved_at": "2026-04-20T12:48:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: TW-04 is not ready for approval yet. The claimed frontend handoff bundle is still missing (no docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md and no TW-04 bff-gap/ui-done templates), screen_id is inconsistent across the screen spec/prompt/ui-task, and backlog/packet docs still say pending-bff. Please complete the handoff bundle and sync the remaining truth sources, then re-submit. See docs/reviews/2026-04-20-exec-rebase-tw04-001-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T12:48:16Z",
+      "resolved_at": "2026-04-20T12:48:16Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:08:01Z",
+      "resolved_at": "2026-04-21T02:12:23Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T02:16:42Z",
+      "resolved_at": "2026-04-21T02:21:37Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T05:43:50Z",
+      "resolved_at": "2026-04-21T05:45:19Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "TW-04 teaching replay handoff bundle refreshed for review: BFF/screen/packet truth now mark the route family live, coordination YAML publishes all four replay routes plus action-layer semantics, and handoff wording consistently uses event.evidence_ref instead of evidence_links[]. Verified via targeted rg plus YAML parse for the TW-04 coordination files.",
+      "status": "done",
+      "created_at": "2026-04-21T05:53:49Z",
+      "resolved_at": "2026-04-21T17:41:42Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T17:41:42Z",
+      "resolved_at": "2026-04-21T17:44:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-TW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: TW-04 handoff bundle complete, authority/evidence-link semantics correctly expressed, backlog truth synced. Evidence route topology gap raised and resolved in workspace. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T17:44:03Z",
+      "resolved_at": "2026-04-21T19:56:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "BP5-GCP-002",
+  "archived_at": "2026-04-16T18:35:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-GCP-002",
+    "title": "Stand up Cloud SQL, Pub/Sub, ingress, and nonprod environment foundation",
+    "summary_zh": "把 Cloud SQL、Pub/Sub、ingress、network boundary、nonprod environment split 與 runtime prerequisites 落成可執行 foundation。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-GCP-001"
+    ],
+    "artifacts": [
+      "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md",
+      "docs/remote-dev-gcp-vm.md"
+    ],
+    "acceptance": [
+      "nonprod environment baseline is explicit and provisionable for the platform runtime",
+      "environment identity, secret, data, event, and ingress backbones are tied to executable setup steps"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized BP5-GCP-002 after approved review. Delivery commit 1a237b9 adds scripts/gcp_nonprod_foundation.sh plus the matching nonprod foundation/operator docs in Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md and docs/remote-dev-gcp-vm.md. Verified with bash -n and --dry-run render; operator follow-up remains to create DB users and secret versions during first environment bootstrap.",
+    "last_update": "2026-04-16T18:35:06Z",
+    "review_notes_zh": [
+      "審查通過：腳本 8 步冪等 bootstrap 完整覆蓋 identity/secret/data/event/ingress 五個 backbone；secret-level IAM 最小權限正確；dry-run 通過；Section 19.8 與 remote-dev doc 同步更新與腳本行為一致",
+      "後續：operator 需自行補 secret versions 與 DB user，Cloud Run/GKE 綁定在第一次 deploy 時生效"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T18:35:06Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1a237b93ef57ff93216583df60770f3e83461c75",
+      "commit_subject": "BP5-GCP-002: add nonprod runtime foundation bootstrap",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP5-GCP-002",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 254,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-GCP-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented BP5-GCP-002 with scripts/gcp_nonprod_foundation.sh and doc updates in Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md plus docs/remote-dev-gcp-vm.md. The new bootstrap provisions dev/sandbox split runtime identities and secrets, nonprod VPC/subnets, private-service-access, private Cloud SQL instances, Pub/Sub backbone topics/subscriptions, VPC connectors, and internal-only Cloud Run deploy prerequisites. Verified with bash -n and a full --dry-run render.",
+      "status": "done",
+      "created_at": "2026-04-16T18:32:00Z",
+      "resolved_at": "2026-04-16T18:33:34Z"
+    },
+    {
+      "task_id": "BP5-GCP-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: gcp_nonprod_foundation.sh correctly provisions dev/sandbox VPC, PSA, private Cloud SQL, Pub/Sub backbone, VPC connectors, and internal-only ingress prerequisites. All acceptance criteria met. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-16T18:33:34Z",
+      "resolved_at": "2026-04-16T18:35:06Z"
+    }
+  ],
+  "blockers": []
+}

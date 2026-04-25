@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "OSS-NEXT-005",
+  "archived_at": "2026-04-17T04:38:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-NEXT-005",
+    "title": "Materialize the vectorbt backend into a named execution-ready task family",
+    "summary_zh": "把 vectorbt 從 not-started 轉成具體任務：完成 source selection、version pin、governed adapter 設計與 smoke-test 計畫。",
+    "phase": "Phase 6: OSS Ecosystem Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+    ],
+    "acceptance": [
+      "vectorbt has a selected source, proposed pin, governed adapter boundary, and smoke-test plan",
+      "the backend no longer lives only as a maturity-matrix mention without a real task cut"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized after review approval: vectorbt now has a committed materialization baseline (source selection, pin, governed adapter boundary, smoke-test plan, matrix/checklist alignment) at dc3e4a3; follow-on adapter implementation remains a separate ownership assignment.",
+    "last_update": "2026-04-17T04:38:11Z",
+    "review_notes_zh": [
+      "審查通過：source selection、version pin、governed adapter boundary、smoke-test plan 全部到位，與 Qlib/TRL pattern 一致",
+      "後續追蹤：follow-on adapter 實作任務需指派給新 owner"
+    ],
+    "review_file": "docs/reviews/oss-next-005-vectorbt-materialization-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T04:38:11Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "dc3e4a31560ab9f1bf0d642ea242898bce4ebcc8",
+      "commit_subject": "OSS-NEXT-005: finalize vectorbt materialization baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-NEXT-005",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 340,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-NEXT-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:00:41Z",
+      "resolved_at": "2026-04-17T03:02:14Z"
+    },
+    {
+      "task_id": "OSS-NEXT-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "vectorbt materialization baseline is aligned for review: owner/reviewer metadata now matches ai-status, RESEARCH_BACKEND_MATURITY_MATRIX.md reflects vectorbt as version-pinned activation-ready, and docs/reviews/2026-04-17-next-wave-implementation-plan.md no longer assigns OSS-NEXT-005 to the wrong owner. Please review the vectorbt baseline docs and status alignment for approval.",
+      "status": "done",
+      "created_at": "2026-04-17T03:07:18Z",
+      "resolved_at": "2026-04-17T03:08:50Z"
+    },
+    {
+      "task_id": "OSS-NEXT-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review required change: OSS_INTEGRATION_CHECKLIST.md is listed as a task artifact but has no vectorbt component row. statsmodels (OSS-NEXT-006) and QuantLib (OSS-NEXT-007) both have checklist entries — add a matching vectorbt row under the Component Inventory table with status=version-pinned and the follow-on work description (governed input adapter, stub/real backend split, smoke test, governance evidence pack). All other artifacts pass: RESEARCH_BACKEND_MATURITY_MATRIX.md, ACTIVATION_CRITERIA.md, integrations/vectorbt/integration.md, requirements.txt, next-wave-implementation-plan.md ownership are all correct.",
+      "status": "done",
+      "created_at": "2026-04-17T03:08:50Z",
+      "resolved_at": "2026-04-17T03:08:50Z"
+    },
+    {
+      "task_id": "OSS-NEXT-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Added the missing vectorbt Component Inventory row in OSS_INTEGRATION_CHECKLIST.md with status=version-pinned, pinned package/version, approved scope, activation owner, and the required follow-on work wording from the review request.",
+      "status": "done",
+      "created_at": "2026-04-17T03:10:46Z",
+      "resolved_at": "2026-04-17T03:29:57Z"
+    },
+    {
+      "task_id": "OSS-NEXT-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all materialization artifacts present and consistent; returning to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-04-17T03:29:57Z",
+      "resolved_at": "2026-04-17T04:38:11Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-003-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T19:01:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-003-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-SVC-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-SVC-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-003/BP5-SVC-003-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: acceptance packet verified against repo state, 25 tests passing, dependency map accurate, OQ-1 policy nuance documented. Sidecar support artifact committed; does not modify canonical truth.",
+    "last_update": "2026-04-15T19:01:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "helper packet corrected to repo state: route evidence, test count, dependency map, and closeout wording refreshed",
+      "fresh reviewer pytest run passed 25/25; stale TestClient cache noted; medium-risk authority nuance preserved as advisory note"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T19:01:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "2da9627c6e75f1adeb0638e6423484ca23754d9f",
+      "commit_subject": "BP5-SVC-003-SIDECAR-ACCEPTANCE: add acceptance packet sidecar",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-003-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 53,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T17:21:48Z",
+      "resolved_at": "2026-04-15T17:22:38Z"
+    },
+    {
+      "task_id": "BP5-SVC-003-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete. Sections: AC-1/AC-2 checklist (both met), 24-test coverage map, dependency map (BP5-SVC-004 most critical downstream), 4 open questions (OQ-1: write-authority matrix vs L1 policy; OQ-2: Dockerfile; OQ-3: TestClient lastfailed; OQ-4: contract.md location). Packet is advisory only — does not modify canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-15T17:26:19Z",
+      "resolved_at": "2026-04-15T17:46:54Z"
+    },
+    {
+      "task_id": "BP5-SVC-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet corrected to repo state; owner may finalize helper task to done.",
+      "status": "done",
+      "created_at": "2026-04-15T17:46:54Z",
+      "resolved_at": "2026-04-15T19:01:10Z"
+    }
+  ],
+  "blockers": []
+}

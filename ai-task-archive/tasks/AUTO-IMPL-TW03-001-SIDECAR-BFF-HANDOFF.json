@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-20T05:24:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AUTO-IMPL-TW03-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AUTO-IMPL-TW03-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AUTO-IMPL-TW03-001/AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF handoff packet to done. Support artifact remains limited to support/sidecars and is ready for parent-owner absorption into TW-03 review closeout as needed.",
+    "last_update": "2026-04-20T05:24:57Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AUTO-IMPL-TW03-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar BFF handoff packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）TW-03 GET/POST preview routes 存在（main.py:4853-4891 和 4894-4952），read_store 投影邏輯在 5563-5688 確認；（3）9 個 pytest tests 全部通過（contract shape、eval_id polling、refresh dedupe、preview-unavailable）；（4）已修正 Section 3 和 4.1 中的 stale 行號（4720-4815 → 4853-4952）。Operator journey、surface state 語義、前端 consume rules 均正確。Packet 可作為 TW-03 post-implementation 前端交接的支援材料。"
+    ],
+    "review_file": "support/sidecars/AUTO-IMPL-TW03-001/AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T05:24:57Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1a14152a8a2163baeca6728201117551b80d0464",
+      "commit_subject": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF align TW-03 handoff packet metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 809,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Prepared support/sidecars/AUTO-IMPL-TW03-001/AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF.md with TW-03 landed route semantics, query/state matrix, operator journey, frontend wiring checklist, and local pytest verification (TW-03 plus adjacent TW-01 trainer slices).",
+      "status": "done",
+      "created_at": "2026-04-20T04:57:57Z",
+      "resolved_at": "2026-04-20T05:01:37Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated support/sidecars/AUTO-IMPL-TW03-001/AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF.md against current repo state; pytest services/control-plane/bff/test_tw03_before_after_compare_contract.py services/control-plane/bff/test_tw01_teaching_dialog_contract.py passed (9 passed in 2.02s). Packet remains support-only and ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-20T05:01:37Z",
+      "resolved_at": "2026-04-20T05:03:23Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated support/sidecars/AUTO-IMPL-TW03-001/AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF.md against current repo state; pytest services/control-plane/bff/test_tw03_before_after_compare_contract.py services/control-plane/bff/test_tw01_teaching_dialog_contract.py passed (9 passed in 2.48s). Packet remains support-only and ready for sidecar review.",
+      "status": "done",
+      "created_at": "2026-04-20T05:03:23Z",
+      "resolved_at": "2026-04-20T05:04:17Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex2 to Qwen after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-20T05:04:17Z",
+      "resolved_at": "2026-04-20T05:05:51Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-20T05:05:51Z",
+      "resolved_at": "2026-04-20T05:08:47Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW03-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar BFF handoff packet reviewed and approved. All acceptance criteria met: support-only artifact, tests pass (9/9), TW-03 routes confirmed in source. Stale main.py line references corrected in Sections 3 and 4.1 during review. Returning to Codex for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-20T05:08:47Z",
+      "resolved_at": "2026-04-20T05:24:57Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "LUV-BFF-GAP-EW05-001",
+  "archived_at": "2026-04-20T01:03:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-BFF-GAP-EW05-001",
+    "title": "Resolve or reframe the open EW-05 mutation-review BFF gap",
+    "summary_zh": "釐清 EW-05 mutation review 的 open BFF gap 是否仍成立，並把 required backend delta 寫成可執行 closure path。",
+    "phase": "Execution / BFF Gap Resolution",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/requests/EW-05-mutation-review-bff-gap.yaml",
+      ".coordination/responses/EW-05-mutation-review-contract-ready.yaml",
+      ".coordination/responses/EW-05-mutation-review-lovable-ui-task.yaml",
+      ".coordination/responses/EW-05-mutation-review-lovable-prompt.md"
+    ],
+    "acceptance": [
+      "inspect the open BFF gap packet and the current EW-05 handoff bundle",
+      "either close the gap with evidence or restate the exact missing backend contract",
+      "leave a truthful unblock path for the front-end lane"
+    ],
+    "next": "Owner finalized approved task and closed it. EW-05 mutation-review BFF gap is resolved; live route, command vocabulary, refreshed handoff bundle, and local pytest evidence are recorded in .coordination/reviews/EW-05-mutation-review-bff-gap-resolution.md.",
+    "last_update": "2026-04-20T01:03:16Z",
+    "task_class": "bff_gap_resolution",
+    "auto_created_by": "lovable-reactivation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已重跑 services/control-plane/bff/test_ew05_mutation_review_contract.py、test_governance_command_submission.py 與 test_command_executor.py，29 passed；review packet 對 live route、command vocabulary 與 frontend handoff 狀態的描述成立。"
+    ],
+    "review_file": ".coordination/reviews/EW-05-mutation-review-bff-gap-resolution.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:03:16Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "bca4bd8e2a53a4c79327ab93d59f0bfd6d0a1536",
+      "commit_subject": "LUV-BFF-GAP-EW05-001 finalize: close approved EW-05 mutation-review BFF gap",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LUV-BFF-GAP-EW05-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 778,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-BFF-GAP-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T00:42:43Z",
+      "resolved_at": "2026-04-20T00:45:28Z"
+    },
+    {
+      "task_id": "LUV-BFF-GAP-EW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "EW-05 BFF gap resolved and bundle refreshed. Verified live GET /api/v1/operator/mutation-review/{decision_id}, live ApproveMutation/RejectMutation command vocabulary, and passing pytest evidence in services/control-plane/bff/test_ew05_mutation_review_contract.py, test_governance_command_submission.py, and test_command_executor.py. Review packet: .coordination/reviews/EW-05-mutation-review-bff-gap-resolution.md",
+      "status": "done",
+      "created_at": "2026-04-20T00:50:38Z",
+      "resolved_at": "2026-04-20T01:01:28Z"
+    },
+    {
+      "task_id": "LUV-BFF-GAP-EW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: EW-05 mutation-review BFF gap is resolved; live read route, ApproveMutation/RejectMutation vocabulary, refreshed handoff bundle, and local pytest evidence all verified. Owner should finalize.",
+      "status": "done",
+      "created_at": "2026-04-20T01:01:28Z",
+      "resolved_at": "2026-04-20T01:03:16Z"
+    }
+  ],
+  "blockers": []
+}

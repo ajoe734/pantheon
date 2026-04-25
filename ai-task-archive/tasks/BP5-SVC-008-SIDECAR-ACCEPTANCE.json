@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-008-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T21:26:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-008-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-SVC-008 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-SVC-008，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-007"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-008/BP5-SVC-008-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar acceptance packet after Claude review approval. Support artifact remains limited to support/sidecars/BP5-SVC-008/BP5-SVC-008-SIDECAR-ACCEPTANCE.md; parent-owner absorption remains a Claude decision.",
+    "last_update": "2026-04-15T21:26:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-008",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過，兩項 follow-on 已記錄（replace 切換順序倒置 + liquidate_then_replace 回傳 lineage 提前轉移 ownership）；均不阻斷本 slice 收尾",
+      "後續追蹤：refactor replace 為 create-then-retire 模式；liquidate_then_replace response 持有舊 binding ID 或 sentinel 直到 zero-position 確認"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-008-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T21:26:55Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c55d027fe9caaac3393a8af999b8fab10f16f027",
+      "commit_subject": "BP5-SVC-008-SIDECAR-ACCEPTANCE: finalize status checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-008-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 73,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet ready at support/sidecars/BP5-SVC-008/BP5-SVC-008-SIDECAR-ACCEPTANCE.md. Re-ran python3 services/runtime-manager/smoke_test.py: 72/72 PASS. Please review the packet's two semantic edge callouts: replace cutover ordering and liquidate_then_replace ownership-transfer timing against L1 rollback policy.",
+      "status": "done",
+      "created_at": "2026-04-15T21:01:28Z",
+      "resolved_at": "2026-04-15T21:10:43Z"
+    },
+    {
+      "task_id": "BP5-SVC-008-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed two semantic edges: replace ordering inversion and liquidate_then_replace immediate ownership transfer in response payload. Both accepted for this slice with follow-on items logged in review file. Smoke coverage 72/72 confirmed. Packet is well-scoped. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T21:10:43Z",
+      "resolved_at": "2026-04-15T21:26:55Z"
+    }
+  ],
+  "blockers": []
+}

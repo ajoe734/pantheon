@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-001",
+  "archived_at": "2026-04-15T16:11:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-001",
+    "title": "Lock the deployable service baseline and single-VM topology",
+    "summary_zh": "鎖定 service、compose、cloud 路徑共用的 baseline：ports、env names、volume mounts、health surfaces、profile 邊界與 owner split。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "depends_on": [],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md",
+      "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md"
+    ],
+    "acceptance": [
+      "single-VM and future cloud deployment use one explicit port/env/volume contract",
+      "runtime-control, governance, evidence, BFF, and delivery-platform boundaries are documented without overlap"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized approved baseline: Wave 1 service boundary split and the single-VM/cloud port-env-volume-profile contract are now locked in the v2 deployment design.",
+    "last_update": "2026-04-15T16:11:45Z",
+    "review_notes_zh": [
+      "AC-1 通過：Sections 4.3-4.7 提供完整的 port/env/volume/compose-profile contract，單 VM 與 cloud continuity 皆有明確定義",
+      "AC-2 通過：Section 4.2 的 service boundary table 明確列出 runtime-control/governance-api/evidence/BFF/delivery-platform 的職責與不擁有的 truth，phase4 的 OQ-1/OQ-2/OQ-3 皆已決議",
+      "Sidecar acceptance packet (Claude) 的 5 個 open questions 中，OQ-1/OQ-2/OQ-3 已在 v2 文件中解決，OQ-4/OQ-5 屬 BP5-SVC-015 與 BP5-SVC-002 的 scope，不阻擋 BP5-SVC-001 關閉"
+    ],
+    "review_file": "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T16:11:45Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "87157c9b5bd983a3e1caa3c8cb30db79ae9c9014",
+      "commit_subject": "BP5-SVC-001: record approved delivery marker",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-001",
+        "Reviewer": "Qwen"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 38,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Please review the Wave 1 baseline contract landed in Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md. It resolves the runtime-control vs governance split, locks the port/health/env/volume/profile contract, and marks web/cron as optional profiles for the single-VM honesty gate.",
+      "status": "done",
+      "created_at": "2026-04-15T15:47:09Z",
+      "resolved_at": "2026-04-15T16:00:14Z"
+    },
+    {
+      "task_id": "BP5-SVC-001",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Gemini to Qwen after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-15T16:00:14Z",
+      "resolved_at": "2026-04-15T16:08:49Z"
+    },
+    {
+      "task_id": "BP5-SVC-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: both acceptance criteria met. Port/env/volume contract (AC-1) and service boundary split (AC-2) are comprehensively documented in the v2 deployment design.",
+      "status": "done",
+      "created_at": "2026-04-15T16:08:49Z",
+      "resolved_at": "2026-04-15T16:11:45Z"
+    }
+  ],
+  "blockers": []
+}

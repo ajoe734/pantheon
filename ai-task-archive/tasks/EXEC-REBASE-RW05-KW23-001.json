@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-RW05-KW23-001",
+  "archived_at": "2026-04-21T20:29:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-RW05-KW23-001",
+    "title": "Rebaseline RW-05, KW-02, and KW-03 to route-live truth and open their frontend handoff bundles",
+    "summary_zh": "把 RW-05、KW-02、KW-03 從舊的 pending-BFF / placeholder wording rebaseline 到 route-live truth，並為 research compare 與 knowledge notes/evidence 補齊可交給前端 lane 的 handoff bundle。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "EXEC-BFF-KW03-001"
+    ],
+    "artifacts": [
+      "docs/bff/RW-05-artifact-compare.md",
+      "docs/bff/KW-02-research-notes.md",
+      "docs/bff/KW-03-evidence-refs.md",
+      "docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md",
+      "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md",
+      "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md"
+    ],
+    "acceptance": [
+      "RW-05",
+      "KW-02",
+      "and KW-03 are no longer described as pending BFF where the live routes already exist||frontend-facing handoff materials for /research/compare",
+      "/knowledge/notes",
+      "and /knowledge/evidence are published or explicitly opened for the UI lane||route-live readiness truth is synchronized across packet family and frontend SA surfaces"
+    ],
+    "next": "Owner finalized approved task: RW-05, KW-02, and KW-03 are all route-live with handoff bundles published; all artifact surfaces synchronized. Closing.",
+    "last_update": "2026-04-21T20:29:55Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：KW-02 與 KW-03 的 FRONTEND_CHANGE_SPEC 已補齊，原本 KW-03 handoff path 不存在的真缺口已解除",
+      "本次核對範圍是 handoff/doc truth sync；未執行自動化測試"
+    ],
+    "review_file": "docs/reviews/2026-04-21-exec-rebase-rw05-kw23-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T20:29:55Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "71be8d1e164c8e06df81dbbccda3f32972743d48",
+      "commit_subject": "EXEC-REBASE-RW05-KW23-001 finalize rebaseline: RW-05, KW-02, KW-03 all route-live with handoff bundles",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-REBASE-RW05-KW23-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 981,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-RW05-KW23-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-05 was already complete. Created FRONTEND_CHANGE_SPEC.md for KW-02 Research Notes and KW-03 Evidence Refs — both cover API shapes, component structure, degradation handling, link-resolution semantics, and completion handoff instructions against live BFF routes. PACKET_FAMILY.md files and LOVABLE_MASTER_SA/PANTHEON_FRONTEND_SA were already up to date. Committed 7af7b6e.",
+      "status": "done",
+      "created_at": "2026-04-21T20:23:32Z",
+      "resolved_at": "2026-04-21T20:27:26Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW05-KW23-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. KW-02 and KW-03 handoff bundles now exist and route-live readiness remains synchronized across packet family and frontend SA surfaces; returned to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T20:27:26Z",
+      "resolved_at": "2026-04-21T20:29:55Z"
+    }
+  ],
+  "blockers": []
+}

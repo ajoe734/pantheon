@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "OSS-004B",
+  "archived_at": "2026-04-19T00:02:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-004B",
+    "title": "Replace bootstrap paper runtime with final truthful paper execution package",
+    "summary_zh": "把 VM-2 bootstrap paper runtime 換成最終 truthful paper execution package 或 signal-consumer path，讓 DEPLOY-009 不再只停在 bootstrap health。",
+    "phase": "Phase 7: EP4 Proof Raising",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "OSS-004A"
+    ],
+    "artifacts": [],
+    "acceptance": [
+      "bootstrap wrapper replaced or formally retired||paper execution package is the truthful EP4 substrate"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "phase": "phase7",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+      "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-19T00:01:47Z",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md",
+      "initial_materialization_task_ids": "OSS-004A,OSS-004B,OSS-004C,OSS-004D"
+    },
+    "status": "done",
+    "next": "Owner finalized approved task after landing truthful paper execution package commit 20c902d; bootstrap paper role now dispatches to paper_runtime, DEPLOY-009 smoke/docs/env align to stub_mode=false, and targeted py_compile + 12 lean_runtime tests passed.",
+    "last_update": "2026-04-19T00:02:52Z",
+    "review_notes_zh": [
+      "py_compile clean; 12 unittest passes (test_signal_consumer + test_runtime_identity + test_paper_runtime); bootstrap dispatches to paper_runtime.main() for pantheon-paper-execution-runtime role; health endpoint returns 200 with runtime_package=paper_execution_runtime, stub_mode=false, paper_execution_ready=true, signal_consumer_ready=true; docker-compose.exec.yml sets PANTHEON_RUNTIME_ROLE=pantheon-paper-execution-runtime; smoke test script updated to validate stub_mode=false; all acceptance criteria met."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T00:02:52Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "20c902d7cad521ef64d5ee61042c75aec27bfa8a",
+      "commit_subject": "OSS-004B: replace bootstrap paper runtime with truthful package",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-004B",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 663,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-004B",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T23:35:02Z",
+      "resolved_at": "2026-04-18T23:36:54Z"
+    },
+    {
+      "task_id": "OSS-004B",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Bootstrap wrapper retired for the paper runtime role. Added a truthful paper execution runtime package with a concrete pending-signal store adapter, simulated paper fills, runtime-manager binding lookup, telemetry-ready envelopes, and runtime health/admin routes. Updated docker-compose.exec.yml, env/prod-exec.env.example, scripts/smoke_test_dual_vm.sh, and deployment docs to stop claiming bootstrap-only behavior. Verification: python3 -m unittest services.execution.lean_runtime.test_signal_consumer services.execution.lean_runtime.test_runtime_identity services.execution.lean_runtime.test_paper_runtime; python3 -m py_compile services/execution/lean_runtime/pending_signal_store.py services/execution/lean_runtime/paper_runtime.py services/execution/lean_runtime/runtime_bootstrap.py services/execution/lean_runtime/test_paper_runtime.py; timeout 2s env SIGNAL_STORE_URL='' PANTHEON_RUNTIME_ROLE='pantheon-paper-execution-runtime' PANTHEON_RUNTIME_MANAGER_URL='http://runtime-manager:8081' PANTHEON_RUNTIME_MANAGER_TOKEN='runtime-control-internal' PANTHEON_WORKSPACE_REF='workspace-paper' PANTHEON_AUTH_PROFILE_REF='auth-profile-paper' PANTHEON_PAPER_RUNTIME_ID='paper-runtime-001' python3 services/execution/lean_runtime/runtime_bootstrap.py",
+      "status": "done",
+      "created_at": "2026-04-18T23:52:11Z",
+      "resolved_at": "2026-04-18T23:58:02Z"
+    },
+    {
+      "task_id": "OSS-004B",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review passed. Bootstrap retired for paper role; truthful paper runtime package delivers concrete signal-consumer path, simulated fills, binding lookup, telemetry envelopes, and health/admin routes. All tests green. DEPLOY-009 no longer stuck at bootstrap-only health.",
+      "status": "done",
+      "created_at": "2026-04-18T23:58:02Z",
+      "resolved_at": "2026-04-19T00:02:53Z"
+    }
+  ],
+  "blockers": []
+}

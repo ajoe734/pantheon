@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RW01-HARDEN-001",
+  "archived_at": "2026-04-23T02:17:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RW01-HARDEN-001",
+    "title": "Harden RW-01 production reads away from local snapshot fallback",
+    "summary_zh": "把 RW-01 的正常讀路徑收斂到 service-backed truth，避免 full blueprint 完成宣稱仍建立在 local snapshot fallback 上。",
+    "phase": "Execution / Research Workbench Hardening",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_rw01_research_ticket_contract.py"
+    ],
+    "acceptance": [
+      "RW-01 production reads prefer service backed truth",
+      "RW-01 normal path no longer needs local snapshot fallback",
+      "Contract and regression tests cover fresh degraded and unavailable states"
+    ],
+    "next": "Owner finalized after revalidation: public GET /api/v1/research/tickets/{ticket_id} still disables snapshot/local fallback, read_store keeps helper fallback opt-in only for non-public callers, and pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.56s). RW-01 hardening is now closed as done without reopening the frontend loop.",
+    "last_update": "2026-04-23T02:17:49Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T02:17:49Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1172,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned APP-003-RW01-HARDEN-001 away from sidecar-only lane Qwen; reviewer Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-22T05:42:56Z",
+      "resolved_at": "2026-04-22T05:54:51Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T05:54:51Z",
+      "resolved_at": "2026-04-22T06:11:28Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:16:10Z",
+      "resolved_at": "2026-04-22T07:17:43Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-01 detail reads now require service-backed truth; fresh/degraded/unavailable regression coverage added and targeted BFF tests pass.",
+      "status": "done",
+      "created_at": "2026-04-22T07:23:39Z",
+      "resolved_at": "2026-04-22T07:26:34Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude to Gemini after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:26:34Z",
+      "resolved_at": "2026-04-22T08:28:29Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "RW-01 public detail reads now require service-backed truth. GET /api/v1/research/tickets/{ticket_id} disables snapshot and local fallback, seeded-only detail fails closed with 404, and pytest services/control-plane/bff/test_rw01_research_ticket_contract.py passes with fresh/degraded/unavailable regression coverage.",
+      "status": "done",
+      "created_at": "2026-04-22T08:28:29Z",
+      "resolved_at": "2026-04-22T13:59:29Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Reviewer rebalanced to Gemini so the review queue can keep moving while Codex2 is quota-paused. Please continue review from the current task state and artifacts.",
+      "status": "done",
+      "created_at": "2026-04-22T13:59:29Z",
+      "resolved_at": "2026-04-22T14:01:00Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer rebalanced to Claude so the review queue can keep moving while Codex2 and Gemini are quota-constrained. Please continue review from the current task state and artifacts.",
+      "status": "done",
+      "created_at": "2026-04-22T14:01:00Z",
+      "resolved_at": "2026-04-22T14:01:31Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:01:31Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:00:45Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-22: GET /api/v1/research/tickets/{ticket_id} still disables snapshot/local fallback in services/control-plane/bff/main.py, read_store helper fallback remains opt-in only, and pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passes (8 passed). Review can focus on service-backed precedence, seeded-only detail returning 404, and truthful degraded/unavailable list signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T15:00:45Z",
+      "resolved_at": "2026-04-22T15:55:19Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-22: GET /api/v1/research/tickets/{ticket_id} still disables snapshot/local fallback in services/control-plane/bff/main.py, read_store helper fallback remains opt-in only for non-public callers, and pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py still passes (8 passed). Review can close on service-backed precedence, seeded-only detail returning 404, and truthful degraded/unavailable signaling. Evidence: support/sidecars/APP-003-RW01-HARDEN-001/APP-003-RW01-HARDEN-001-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-04-22T15:55:19Z",
+      "resolved_at": "2026-04-22T17:21:35Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T17:21:26Z: public GET /api/v1/research/tickets/{ticket_id} still calls get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False); read_store fallback remains opt-in outside the public route boundary; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 1.98s). Approve when ready if service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling still look correct.",
+      "status": "done",
+      "created_at": "2026-04-22T17:21:35Z",
+      "resolved_at": "2026-04-22T17:38:39Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T17:31:00Z: public GET /api/v1/research/tickets/{ticket_id} still calls get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False); read_store fallback remains opt-in outside the public route boundary; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 4.20s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T17:38:39Z",
+      "resolved_at": "2026-04-22T17:55:52Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T17:55:00Z: GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py; read_store helper fallback remains opt-in only outside the public route boundary; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 1.97s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T17:55:52Z",
+      "resolved_at": "2026-04-22T19:05:22Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-22: GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py, seeded-only detail still fails closed with 404, and pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.02s). Review can close on service-backed precedence plus truthful degraded/unavailable signaling; sidecar evidence remains support/sidecars/APP-003-RW01-HARDEN-001/APP-003-RW01-HARDEN-001-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-04-22T19:05:22Z",
+      "resolved_at": "2026-04-22T20:15:10Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T20:17Z: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py; read_store helper fallback remains opt-in outside the public route boundary in services/control-plane/bff/read_store.py; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.08s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling; evidence remains support/sidecars/APP-003-RW01-HARDEN-001/APP-003-RW01-HARDEN-001-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-04-22T20:15:10Z",
+      "resolved_at": "2026-04-22T20:32:25Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T20:36Z: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py; read_store helper fallback remains opt-in outside the public route boundary in services/control-plane/bff/read_store.py; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.03s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling; evidence remains support/sidecars/APP-003-RW01-HARDEN-001/APP-003-RW01-HARDEN-001-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-04-22T20:32:25Z",
+      "resolved_at": "2026-04-22T20:49:48Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T20:44Z: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py; read_store helper fallback remains opt-in outside the public route boundary in services/control-plane/bff/read_store.py; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.06s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling; evidence remains support/sidecars/APP-003-RW01-HARDEN-001/APP-003-RW01-HARDEN-001-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-04-22T20:49:48Z",
+      "resolved_at": "2026-04-22T21:07:07Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T21:11Z: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py; read_store helper fallback remains opt-in outside the public route boundary in services/control-plane/bff/read_store.py; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.72s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling; evidence remains support/sidecars/APP-003-RW01-HARDEN-001/APP-003-RW01-HARDEN-001-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-04-22T21:07:07Z",
+      "resolved_at": "2026-04-22T21:58:44Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T22:03Z: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py:7363-7367; read_store helper fallback remains opt-in only in services/control-plane/bff/read_store.py:5419-5437; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.03s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T21:58:44Z",
+      "resolved_at": "2026-04-22T22:15:44Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T22:16Z: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py:7363-7367; read_store helper fallback remains opt-in only in services/control-plane/bff/read_store.py:5419-5437; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.59s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T22:15:44Z",
+      "resolved_at": "2026-04-22T22:33:04Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated at 2026-04-22T22:38Z: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py:7363-7367; read_store helper fallback remains opt-in only in services/control-plane/bff/read_store.py:5419-5437; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 2.04s). Review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T22:33:04Z",
+      "resolved_at": "2026-04-22T23:09:40Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:09:40Z",
+      "resolved_at": "2026-04-22T23:17:19Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "2026-04-22T23:24Z owner revalidation complete: public GET /api/v1/research/tickets/{ticket_id} in services/control-plane/bff/main.py still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False); services/control-plane/bff/read_store.py keeps fallback opt-in only for non-public callers; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 1.96s). No owner patch needed; review can close on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T23:17:19Z",
+      "resolved_at": "2026-04-22T23:19:56Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "2026-04-22T23:24Z owner revalidation reconfirmed: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py; read_store helper fallback remains opt-in only for non-public callers in services/control-plane/bff/read_store.py; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again on 2026-04-22 (8 passed in 2.07s). No owner patch needed; please approve on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T23:19:56Z",
+      "resolved_at": "2026-04-22T23:21:54Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "2026-04-22T23:31Z owner revalidation reconfirmed: public GET /api/v1/research/tickets/{ticket_id} still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False) in services/control-plane/bff/main.py; read_store helper fallback remains opt-in only for non-public callers in services/control-plane/bff/read_store.py; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again on 2026-04-22 (8 passed in 3.51s). No owner patch needed; please approve on service-backed precedence, seeded-only detail 404, and truthful degraded/unavailable signaling.",
+      "status": "done",
+      "created_at": "2026-04-22T23:21:54Z",
+      "resolved_at": "2026-04-22T23:23:52Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "2026-04-22T23:34Z owner revalidation reconfirmed: public GET /api/v1/research/tickets/{ticket_id} in services/control-plane/bff/main.py still calls read_store.get_research_ticket(..., include_snapshot_fallback=False, include_local_fallback=False); services/control-plane/bff/read_store.py keeps snapshot/local fallback opt-in only for non-public callers; pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again on 2026-04-22 (8 passed in 2.08s). Evidence still supports service-backed precedence, seeded-only detail 404, and truthful fresh/degraded/unavailable signaling; no owner patch needed.",
+      "status": "done",
+      "created_at": "2026-04-22T23:23:52Z",
+      "resolved_at": "2026-04-22T23:25:55Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:50:52Z",
+      "resolved_at": "2026-04-23T02:15:37Z"
+    },
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Supervisor resumed APP-003-RW01-HARDEN-001 for finalize after successful dispatch.",
+      "status": "done",
+      "created_at": "2026-04-23T02:15:37Z",
+      "resolved_at": "2026-04-23T02:17:49Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "APP-003-RW01-HARDEN-001",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "2026-04-22T23:34Z owner revalidation complete: public GET /api/v1/research/tickets/{ticket_id} still disables snapshot/local fallback in services/control-plane/bff/main.py, read_store fallback remains opt-in only for non-public callers in services/control-plane/bff/read_store.py, and pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py passed again (8 passed in 1.95s). Code path is ready to close, but reviewer Codex2 has not recorded review_approved because repeated review_ready_dispatch workers exited before terminal status.",
+      "status": "resolved",
+      "created_at": "2026-04-22T23:25:55Z",
+      "resolved_at": "2026-04-23T01:50:52Z"
+    }
+  ]
+}

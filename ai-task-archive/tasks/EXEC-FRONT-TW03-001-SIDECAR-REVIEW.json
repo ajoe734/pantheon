@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-22T01:08:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+    "title": "Prepare EXEC-FRONT-TW03-001 review packet and evidence summary",
+    "summary_zh": "平行支援 EXEC-FRONT-TW03-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "EXEC-REBASE-TW03-001"
+    ],
+    "artifacts": [
+      "support/sidecars/EXEC-FRONT-TW03-001/EXEC-FRONT-TW03-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: sidecar review packet corrected and approved at ed8db5d/dbc4a16. All four Codex re-review blocking findings documented as resolved. Evidence summary, surface state matrix, and 12-item reviewer checklist verified. No canonical truth modified.",
+    "last_update": "2026-04-22T01:08:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-FRONT-TW03-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 已校正 published request pair 歸屬、changed_files 精度與 self-referential SHA 說明；ed8db5d / dbc4a16 的 request pair、validator、polling dependency 與 replayContract.ts 證據已重核對，且僅修改 support artifact，sidecar 可進入 review_approved。"
+    ],
+    "review_file": "support/sidecars/EXEC-FRONT-TW03-001/EXEC-FRONT-TW03-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T01:08:44Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "69acc24ad72d98619d0c8c2edcdef2ff01f17762",
+      "commit_subject": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW finalize: update sidecar packet to ed8db5d",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 998,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T21:48:39Z",
+      "resolved_at": "2026-04-21T21:49:53Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete at support/sidecars/EXEC-FRONT-TW03-001/EXEC-FRONT-TW03-001-SIDECAR-REVIEW.md. All three parent-task acceptance criteria verified pass at source_commit 0a8e6fe. Surface state matrix (5 BFF branches, 4 degradation states), changed-files list, BFF contract alignment, and inherited caveats (DRIFT-TW03-001/002, CAVEAT-TW03-003) are all documented. Reviewer checklist (10 items) ready. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-21T21:52:10Z",
+      "resolved_at": "2026-04-21T22:00:10Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer addendum added in support/sidecars/EXEC-FRONT-TW03-001/EXEC-FRONT-TW03-001-SIDECAR-REVIEW.md. Packet overstates parent acceptance: TrainerBeforeAfterCompare.tsx keeps stale preview rendered after poll/manual-refresh contract gaps and does not recreate polling when poll_interval_ms changes. Return to Claude for packet update and parent-lane follow-up.",
+      "status": "done",
+      "created_at": "2026-04-21T22:00:10Z",
+      "resolved_at": "2026-04-21T22:00:10Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet updated: both Codex findings (bff-gap stale surface cleared on null-set + poll_interval_ms added to effect deps) are documented as resolved at source_commit d1fe9917deef22cfd0c656e1210eff06abd1cd83. Reviewer addendum in Section 1 documents resolution. All 10 checklist items in Section 7 reference the updated commit. Ready for Codex to review updated packet and approve sidecar.",
+      "status": "done",
+      "created_at": "2026-04-21T22:09:54Z",
+      "resolved_at": "2026-04-21T22:10:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet updated: both Codex findings (bff-gap stale surface cleared on null-set + poll_interval_ms added to effect deps) are documented as resolved at source_commit d1fe9917deef22cfd0c656e1210eff06abd1cd83. Reviewer addendum in Section 1 documents resolution. All 10 checklist items in Section 7 reference the updated commit. Ready for Codex to review updated packet and approve sidecar.",
+      "status": "done",
+      "created_at": "2026-04-21T22:10:12Z",
+      "resolved_at": "2026-04-21T22:27:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet still overstates approval readiness. Re-review confirms d1fe991 is not replay-clean or Git-visible and TrainerBeforeAfterCompare.tsx still leaves required TW-03 subfield validation incomplete. Update support/sidecars/EXEC-FRONT-TW03-001/EXEC-FRONT-TW03-001-SIDECAR-REVIEW.md to match the blocking findings in .coordination/reviews/TW-03-before-after-compare-review.md.",
+      "status": "done",
+      "created_at": "2026-04-21T22:27:21Z",
+      "resolved_at": "2026-04-21T22:27:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet updated: Sections 1/2/3/7 now reference canonical implementation commit ed8db5d. All four Codex re-review blockers are documented as resolved in Section 9. Expanded 12-item reviewer checklist guides audit of ed8db5d vs dbc4a16 commit split, including self-referential SHA explanation. Ready for Codex to review packet and approve sidecar.",
+      "status": "done",
+      "created_at": "2026-04-21T22:46:06Z",
+      "resolved_at": "2026-04-21T23:05:00Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW03-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet corrected for request-pair attribution and changed-files precision, revalidated against ed8db5d/dbc4a16, and is ready for owner finalize.",
+      "status": "done",
+      "created_at": "2026-04-21T23:05:00Z",
+      "resolved_at": "2026-04-22T01:08:44Z"
+    }
+  ],
+  "blockers": []
+}

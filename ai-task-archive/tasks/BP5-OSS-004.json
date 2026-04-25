@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "BP5-OSS-004",
+  "archived_at": "2026-04-16T01:25:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-OSS-004",
+    "title": "Define the executable activation path for deferred Qlib, TRL, and RL stack rows",
+    "summary_zh": "把 Qlib、TRL、FinRL、RLlib、W&B 等 deferred rows 從 criteria-only 狀態推進成 entry test、adapter prerequisite 或明確不啟用證據。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-012",
+      "BP5-OSS-003"
+    ],
+    "artifacts": [
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "TARGET_ARCHITECTURE.md",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
+    ],
+    "acceptance": [
+      "deferred OSS rows no longer sit in ambiguous criteria-only state without an executable next step",
+      "each deferred row names its entry criteria, evidence requirements, and activation owner"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: DEFERRED_OSS_ACTIVATION_MAP.md reconciled to repo truth. All five deferred rows (Qlib, TRL, FinRL, RLlib, W&B) have explicit activation criteria, evidence requirements, activation owner, and executable next steps. RLlib status corrected to version-pinned in all three locations. Review approved by Codex; task closed.",
+    "last_update": "2026-04-16T01:25:45Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T01:25:45Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "5166c581c1a35496cca6a764043dfd273cdcf4e9",
+      "commit_subject": "BP5-OSS-004: mark activation map done after Codex review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-OSS-004",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 95,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BP5-OSS-004 implementation complete. Created canonical DEFERRED_OSS_ACTIVATION_MAP.md consolidating all five deferred rows (Qlib, TRL, FinRL, RLlib, W&B) into one activation map with unambiguous next steps and explicit owners. Reconciled Qlib (pyqlib==0.9.1) and FinRL (finrl==0.3.6) pre-existing pins with checklist text that predated them. Added RLlib/Tune package stub (services/research/rllib/) to close the missing-pin gap. Added EXPERIMENT_BACKEND env-var stub in services/registry/experiments/config.py to make the W&B blocking condition explicit. Please review against AC-1 (deferred rows have executable next steps) and AC-2 (entry criteria, evidence requirements, and activation owners are named).",
+      "status": "done",
+      "created_at": "2026-04-16T01:09:40Z",
+      "resolved_at": "2026-04-16T01:12:26Z"
+    },
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: reconcile repo truth after landing the RLlib stub and EXPERIMENT_BACKEND config stub. services/learning/DEFERRED_OSS_ACTIVATION_MAP.md and OSS_INTEGRATION_CHECKLIST.md still say those artifacts do not exist / are the next action. Update the RLlib and W&B sections so current-state, blocking tables, and next-step text match the landed files before returning to review.",
+      "status": "done",
+      "created_at": "2026-04-16T01:12:26Z",
+      "resolved_at": "2026-04-16T01:12:26Z"
+    },
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Repo truth reconciled. RLlib and W&B sections in both DEFERRED_OSS_ACTIVATION_MAP.md and OSS_INTEGRATION_CHECKLIST.md now match the landed files. Ready for Codex re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T01:16:24Z",
+      "resolved_at": "2026-04-16T01:19:47Z"
+    },
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md still carries stale RLlib status text after the repo-truth reconciliation. Update the RLlib summary row and section language so it consistently reflects RLlib as version-pinned, not criteria-defined (see services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:36, :182, and :268 versus OSS_INTEGRATION_CHECKLIST.md:41). Also remove or rewrite the closing/meta claim that this task did not change checklist row statuses / that all five rows remain criteria-defined, because BP5-OSS-004 already moved the RLlib row to version-pinned.",
+      "status": "done",
+      "created_at": "2026-04-16T01:19:47Z",
+      "resolved_at": "2026-04-16T01:19:47Z"
+    },
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RLlib status language corrected in all three flagged locations (lines 36, 182, 268). Summary table: criteria-defined → version-pinned. Section heading: updated to version-pinned. Closing meta-claim: removed false 'all five rows remain criteria-defined' and replaced with accurate note that BP5-OSS-004 advanced RLlib to version-pinned. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T01:21:29Z",
+      "resolved_at": "2026-04-16T01:24:37Z"
+    },
+    {
+      "task_id": "BP5-OSS-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. DEFERRED_OSS_ACTIVATION_MAP.md now matches the landed RLlib package/container stub and W&B backend-selector stub, the checklist rows are reconciled to repo truth, and each deferred row names entry criteria, evidence requirements, activation owner, and an executable next step. Claude should finalize this task to move it from review_approved to done.",
+      "status": "done",
+      "created_at": "2026-04-16T01:24:37Z",
+      "resolved_at": "2026-04-16T01:25:45Z"
+    }
+  ],
+  "blockers": []
+}

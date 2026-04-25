@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "SVC-CAP-001",
+  "archived_at": "2026-04-17T18:05:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CAP-001",
+    "title": "Add Dockerfile and compose entry for capital service",
+    "summary_zh": "為 services/capital/ 建立 Dockerfile 和 docker-compose.yml entry：補齊 build context、PORT env、healthcheck，讓 capital 服務可被 compose 啟動。capital/main.py 已存在，只缺容器化包裝。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"services/capital/Dockerfile\"",
+      "\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"docker compose up capital 後 /__health__ 回傳 200\"",
+      "\"capital service 出現在 docker-compose.yml\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Artifacts verified and committed: services/capital/Dockerfile staged and committed under SVC-CAP-001; docker-compose.yml capital entry already present. Task complete.",
+    "last_update": "2026-04-17T18:05:25Z",
+    "review_notes_zh": [
+      "已由 reviewer 重新執行 docker compose up -d --build capital 驗證；容器 healthy，http://127.0.0.1:18092/health 回 200。",
+      "ai-status 內 parent acceptance 仍寫 /__health__，但 task brief、compose healthcheck、capital 實作與 live evidence 一致使用 /health；此差異視為 wording drift，不阻擋核准。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:05:25Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "5916270382b34bc4678ea0d7eb9dbc575cf4a8a6",
+      "commit_subject": "SVC-CAP-001: add capital service Dockerfile",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Add Dockerfile for services/capital with python": "3.11-slim base, uvicorn",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-CAP-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 471,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CAP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T15:35:43Z",
+      "resolved_at": "2026-04-17T17:10:59Z"
+    },
+    {
+      "task_id": "SVC-CAP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Dockerfile and docker-compose entry created for capital service (port 8092, capital-data volume, /health endpoint). Cross-service import from services/control-plane/governance/ resolved via full build context (same pattern as governance service). Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-17T17:12:45Z",
+      "resolved_at": "2026-04-17T18:02:17Z"
+    },
+    {
+      "task_id": "SVC-CAP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: capital Dockerfile and compose wiring were revalidated with docker compose up -d --build capital, healthy container state, and /health returning 200. Owner can finalize using the /health runtime evidence.",
+      "status": "done",
+      "created_at": "2026-04-17T18:02:17Z",
+      "resolved_at": "2026-04-17T18:05:25Z"
+    }
+  ],
+  "blockers": []
+}

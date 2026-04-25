@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-23T02:54:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-003-RW03-HARDEN-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-003-RW03-HARDEN-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Research Workbench Hardening",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-RW01-HARDEN-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-RW03-HARDEN-001/APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only RW-03 BFF/frontend handoff packet after reviewer approval; packet is archived as done and ready for the parent owner to consume as a scope guard during backend truth-hardening.",
+    "last_update": "2026-04-23T02:54:53Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-RW03-HARDEN-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only handoff packet is scope-safe, matches the current RW-03 route/live contract, and correctly narrows the remaining gap to production-path local snapshot fallback truth-hardening."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T02:54:53Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "febb8a279f3a3c479a34b642383242dfb4728719",
+      "commit_subject": "APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF finalize sidecar handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1165,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Created support/sidecars/APP-003-RW03-HARDEN-001/APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF.md. It narrows the open RW-03 issue to production-path local snapshot fallback, documents current service-first but still fallback-capable list/detail behavior, preserves the existing RW-03 frontend contract and handoff bundle as stable, and frames review around backend truth-hardening rather than frontend scope expansion.",
+      "status": "done",
+      "created_at": "2026-04-23T02:49:04Z",
+      "resolved_at": "2026-04-23T02:53:20Z"
+    },
+    {
+      "task_id": "APP-003-RW03-HARDEN-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: support-only packet is accurate, keeps the frontend contract stable, and correctly frames the remaining RW-03 work as backend truth-hardening. Owner can finalize when ready.",
+      "status": "done",
+      "created_at": "2026-04-23T02:53:20Z",
+      "resolved_at": "2026-04-23T02:54:54Z"
+    }
+  ],
+  "blockers": []
+}

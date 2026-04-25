@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-17T04:27:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-TEST-001-SIDECAR-REVIEW",
+    "title": "Prepare BP6-TEST-001 review packet and evidence summary",
+    "summary_zh": "平行支援 BP6-TEST-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP6-TEST-001/BP6-TEST-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar review packet is finalized at support/sidecars/BP6-TEST-001/BP6-TEST-001-SIDECAR-REVIEW.md. It preserves the support-only boundary, matches the archived BP6-TEST-001 delivery commit 121c9adb59993d6e5d61c3b6b7c53df0d67382c9, and records the reproduced verification results (8 tests OK + 138/138 smoke checks).",
+    "last_update": "2026-04-17T04:27:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-TEST-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 sidecar packet 與 ai-task-archive/tasks/BP6-TEST-001.json、delivery commit 121c9adb59993d6e5d61c3b6b7c53df0d67382c9 以及目前工作區的 rerun 結果一致。;已重跑 python3 -m unittest services/runtime-manager/test_runtime_manager.py 與 python3 services/runtime-manager/smoke_test.py；結果分別為 8 tests OK 與 138/138 checks passed。;此 slice 僅新增 support artifact，未修改 canonical truth 或 runtime/registry/governance 主線實作。"
+    ],
+    "review_file": "support/sidecars/BP6-TEST-001/BP6-TEST-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T04:27:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "4fd3043dc49bce629cedb8be1d16f954703bc85d",
+      "commit_subject": "BP6-TEST-001-SIDECAR-REVIEW: finalize support review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP6-TEST-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 341,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:32:10Z",
+      "resolved_at": "2026-04-17T03:34:10Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:43:30Z",
+      "resolved_at": "2026-04-17T03:47:26Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:53:44Z",
+      "resolved_at": "2026-04-17T03:54:08Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T04:00:07Z",
+      "resolved_at": "2026-04-17T04:03:01Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T04:05:29Z",
+      "resolved_at": "2026-04-17T04:09:45Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T04:09:45Z",
+      "resolved_at": "2026-04-17T04:10:18Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T04:11:00Z",
+      "resolved_at": "2026-04-17T04:12:12Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready: parent BP6-TEST-001 archive, delivery commit 121c9adb59993d6e5d61c3b6b7c53df0d67382c9, and rerun verification (8 unit tests + 138/138 smoke checks) are consolidated in support/sidecars/BP6-TEST-001/BP6-TEST-001-SIDECAR-REVIEW.md.",
+      "status": "done",
+      "created_at": "2026-04-17T04:13:52Z",
+      "resolved_at": "2026-04-17T04:25:44Z"
+    },
+    {
+      "task_id": "BP6-TEST-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: sidecar packet matches the archived BP6-TEST-001 outcome, delivery commit 121c9adb59993d6e5d61c3b6b7c53df0d67382c9, and current rerun verification (8 tests OK + 138/138 smoke checks); returning to Codex2 for final close-out.",
+      "status": "done",
+      "created_at": "2026-04-17T04:25:44Z",
+      "resolved_at": "2026-04-17T04:27:28Z"
+    }
+  ],
+  "blockers": []
+}

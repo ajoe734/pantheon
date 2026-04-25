@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "task_id": "EXEC-BFF-RW05-001",
+  "archived_at": "2026-04-21T01:32:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-BFF-RW05-001",
+    "title": "Implement RW-05 artifact compare BFF routes from the ratified contract",
+    "summary_zh": "實作 RW-05 artifact list / detail / compare BFF route family，對齊已 ratify 的 version ancestry、immutability、compare semantics。",
+    "phase": "Execution / BFF Implementation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/RW-05-artifact-compare.md",
+      "docs/examples/RW-05-artifact-compare.json",
+      "MODULE_READINESS_RATIFICATION_2026-04-20.md"
+    ],
+    "acceptance": [
+      "實作 artifact list / detail / compare route family 並維持 backend-owned diff / version ancestry semantics",
+      "不得把 compare computation 推回前端，也不得改寫 published degradation / pagination contract",
+      "完成後補 contract verification 與 next-action truth"
+    ],
+    "next": "Owner finalized approved RW-05 artifact compare slice; contract docs, example payload, and live route semantics are aligned, and verification passed.",
+    "last_update": "2026-04-21T01:32:43Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "RW-05 artifact list 排序語義、contract example 與 live route 已對齊；example JSON 可正確解析，且 RW-05/RW-03/RW-04 合約測試皆通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-21-exec-bff-rw05-001-codex-rereview.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T01:32:43Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6f690cc70f4ad596d30d3de6a7c39b55dd3d94a3",
+      "commit_subject": "EXEC-BFF-RW05-001: record finalize metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-BFF-RW05-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 933,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:04:40Z",
+      "resolved_at": "2026-04-20T14:05:07Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:27:47Z",
+      "resolved_at": "2026-04-20T15:37:35Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "RW-05 artifact list/detail/compare routes implemented with backend-composed version_chain and compare diff; contract tests and adjacent RW-03/RW-04 regression checks passed.",
+      "status": "done",
+      "created_at": "2026-04-20T15:44:28Z",
+      "resolved_at": "2026-04-21T00:57:06Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review blocked; see docs/reviews/2026-04-21-exec-bff-rw05-001-codex-review.md. Align RW-05 artifact list ordering so the contract artifacts and live route agree: either document descending backend order and update docs/examples/RW-05-artifact-compare.json, or change the route/test back to the example's ascending order before resubmitting.",
+      "status": "done",
+      "created_at": "2026-04-21T00:57:06Z",
+      "resolved_at": "2026-04-21T00:57:06Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "RW-05 artifact list ordering contract is now explicit: docs/bff/RW-05-artifact-compare.md documents backend-owned newest-first ordering, docs/examples/RW-05-artifact-compare.json matches the live route, and pytest -q services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_rw04_experiment_launch_contract.py all pass.",
+      "status": "done",
+      "created_at": "2026-04-21T01:00:00Z",
+      "resolved_at": "2026-04-21T01:18:56Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review blocked; docs/examples/RW-05-artifact-compare.json is malformed JSON at line 60. Remove the stray closing brace, revalidate with python3 -m json.tool, and resubmit for review.",
+      "status": "done",
+      "created_at": "2026-04-21T01:18:56Z",
+      "resolved_at": "2026-04-21T01:18:56Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Removed the malformed trailing object/comma in docs/examples/RW-05-artifact-compare.json, revalidated with python3 -m json.tool, and re-ran pytest -q services/control-plane/bff/test_rw05_artifact_compare_contract.py (5 passed). Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-21T01:21:06Z",
+      "resolved_at": "2026-04-21T01:30:10Z"
+    },
+    {
+      "task_id": "EXEC-BFF-RW05-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "RW-05 artifact compare contract now aligns across docs, examples, and live routes; example JSON parses cleanly and verification tests pass. Ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T01:30:10Z",
+      "resolved_at": "2026-04-21T01:32:43Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-CRYPTO-002",
+  "archived_at": "2026-04-24T18:21:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-CRYPTO-002",
+    "title": "Add Kraken WebSocket realtime and execution-sync integration",
+    "summary_zh": "補齊 Kraken WebSocket 即時資料與 execution sync，避免只停在 REST。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-DATASOURCE-CRYPTO-001"
+    ],
+    "artifacts": [
+      "services/execution/",
+      "services/data-plane/",
+      "DATA_SOURCE_SCOPE_MATRIX.md"
+    ],
+    "acceptance": [
+      "Kraken WebSocket path lands for realtime market data",
+      "execution-sync logic is aligned with REST snapshots",
+      "crypto venue-scoped runtime can replay websocket-backed state truthfully"
+    ],
+    "next": "Owner finalized approved Kraken websocket execution-sync integration and closed the task.",
+    "last_update": "2026-04-24T18:21:57Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已驗證共享 Kraken pair parsing/base-asset extraction 可覆蓋 MATICGBP 等非硬編碼 suffix。",
+      "已驗證 websocket-backed execution sync 與 data-plane reference join 會保留 replay metadata，且 pytest/unittest 驗證皆通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-datasource-crypto-002-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T18:21:57Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "d3e37488e2412fdab54bb0d1ce87f2122d3feb67",
+      "commit_subject": "APP-003-DATASOURCE-CRYPTO-002 add Kraken websocket execution sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-CRYPTO-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1171,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T17:52:09Z",
+      "resolved_at": "2026-04-24T17:52:55Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T18:01:36Z",
+      "resolved_at": "2026-04-24T18:02:18Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Kraken websocket subscription, websocket/rest execution-sync reconciliation, and replay metadata propagation are implemented. Verification: python3 -m unittest services.execution.test_kraken_adapter -v (10/10 pass) and python3 -m unittest services.data-plane.tests.test_data_plane_schemas -v (53/53 pass). Please review the Kraken adapter and crypto reference join changes for acceptance.",
+      "status": "done",
+      "created_at": "2026-04-24T18:07:15Z",
+      "resolved_at": "2026-04-24T18:11:29Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review returned to owner: Kraken pair parsing/reference join still fail outside the hard-coded quote list. Repro: python3 -c \"from services.execution.kraken_adapter import normalize_kraken_symbol; print(normalize_kraken_symbol('MATICGBP'))\" raises ValueError('unsupported Kraken pair: MATICGBP'), and join_kraken_quote_with_reference raises KeyError('missing CoinGecko metadata for MATICGBP') for MATIC/GBP.KRAKEN. Please generalize Kraken quote parsing/base-asset extraction before re-handoff.",
+      "status": "done",
+      "created_at": "2026-04-24T18:11:29Z",
+      "resolved_at": "2026-04-24T18:11:29Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Kraken pair parsing/base-asset extraction now uses a shared helper across execution + data-plane, covering non-hardcoded quote suffixes like MATICGBP. Verified with python3 -m pytest services/execution/test_kraken_adapter.py services/data-plane/tests/test_data_plane_schemas.py -q (64 passed) plus direct repros for normalize_kraken_symbol('MATICGBP') and join_kraken_quote_with_reference on MATICGBP.",
+      "status": "done",
+      "created_at": "2026-04-24T18:14:42Z",
+      "resolved_at": "2026-04-24T18:19:16Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer verified shared Kraken pair parsing, websocket-backed execution sync metadata, and the MATICGBP join repro; approved for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T18:19:16Z",
+      "resolved_at": "2026-04-24T18:21:57Z"
+    }
+  ],
+  "blockers": []
+}

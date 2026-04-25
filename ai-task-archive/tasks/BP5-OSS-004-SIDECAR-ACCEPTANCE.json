@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "BP5-OSS-004-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-16T01:06:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-OSS-004-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-OSS-004 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-OSS-004，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-012",
+      "BP5-OSS-003"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-OSS-004/BP5-OSS-004-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized BP5-OSS-004 sidecar acceptance packet: reviewer-verified deferred-row matrix, dependency map, and W&B blocking notes are recorded in support/sidecars/BP5-OSS-004/BP5-OSS-004-SIDECAR-ACCEPTANCE.md for parent-lane absorption.",
+    "last_update": "2026-04-16T01:06:57Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-OSS-004",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過 — 所有關鍵事實已驗證",
+      "W&B 阻塞條件已確認（adapter.py PRIMARY_BACKEND=mlflow，無後端選擇器)",
+      "Qlib/FinRL 封裝 stub 已確認；TRL/RLlib 無 pin 已確認",
+      "啟動擁有者缺口正確標記為 PARTIAL；父任務應解決此問題",
+      "Sidecar 範圍完整：無 L1/L2 文件被修改"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T01:06:57Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "7d85f190ef57f220a378604c2b0e400ec5258393",
+      "commit_subject": "BP5-OSS-004-SIDECAR-ACCEPTANCE: owner closeout checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-OSS-004-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 90,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet created at support/sidecars/BP5-OSS-004/BP5-OSS-004-SIDECAR-ACCEPTANCE.md. Please review the deferred-row evidence matrix, activation-owner gaps, and W&B blocking notes before parent-lane absorption.",
+      "status": "done",
+      "created_at": "2026-04-16T01:01:09Z",
+      "resolved_at": "2026-04-16T01:03:26Z"
+    },
+    {
+      "task_id": "BP5-OSS-004-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet reviewed and verified. All factual claims check out against live repo state. Row readiness matrix accurately distinguishes criteria-documented from execution-path-missing for all five deferred frameworks. W&B blocking condition confirmed via adapter.py. Activation-owner gaps correctly flagged as PARTIAL across all rows. Sidecar scope is clean — no canonical truth modified. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-16T01:03:26Z",
+      "resolved_at": "2026-04-16T01:06:57Z"
+    }
+  ],
+  "blockers": []
+}

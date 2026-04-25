@@ -1,0 +1,357 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-001",
+  "archived_at": "2026-04-22T14:53:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-001",
+    "title": "Rebaseline workbench and progress truth against current implementation",
+    "summary_zh": "把 audited repo truth 回寫到 canonical backlog 與 overview surfaces，清掉已經落地但仍被寫成 pending 的狀態漂移。",
+    "phase": "Execution / State Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "services/control-plane/bff/main.py",
+      "docs/bff/PKT-knowledge-workbench.md",
+      "docs/bff/PKT-consultation-workbench.md"
+    ],
+    "acceptance": [
+      "WORKBENCH_DELIVERY_BACKLOG.md and overview payloads match current route live truth",
+      "Knowledge and Consultation workbench overview responses stop reporting stale pending states",
+      "Current packet docs cite remaining gaps truthfully"
+    ],
+    "next": "Checkpoint: truth sync closed. WORKBENCH_DELIVERY_BACKLOG.md, the execution packet, workbench overview payloads, and live BFF routes are aligned; targeted PKT-015/016 contract pytest remains green, and remaining follow-up stays tracked in separate hardening/runtime/docs tasks.",
+    "last_update": "2026-04-22T14:53:22Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Backlog／packet／overview payload／handoffs 與 live BFF 對齊，workbench contract pytest 4 passed",
+      "剩餘 follow-up 已轉由其他 hardening/runtime/docs 任務追蹤"
+    ],
+    "review_file": "docs/reviews/2026-04-22-app-003-truth-sync-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T14:53:22Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1072,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T05:54:28Z",
+      "resolved_at": "2026-04-22T05:55:03Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T06:00:50Z",
+      "resolved_at": "2026-04-22T06:01:27Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T06:03:26Z",
+      "resolved_at": "2026-04-22T06:05:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Truth-sync complete and ready for Codex review. All Class C progress/doc drift addressed for the workbench truth surfaces: (1) _build_knowledge_workbench_overview: KW-05 promoted from contract_ready to ready with live_routes, all 5 KW modules now show route-live status, headline updated to 'KW-01 to KW-05 are route-live'; (2) WORKBENCH_DELIVERY_BACKLOG.md: KW-05 row changed from contract-ready/pending-BFF to route-live/activate-Lovable; (3) PKT-knowledge-workbench.json: module_counts 5/5/0, KW-05 status=ready + live_routes; (4) PKT-knowledge-workbench.md design rules updated; (5) test_pkt016 updated and passing. Consultation workbench was already correct (CW-01/CW-02/CW-03 ready, CW-04 contract_ready); PKT-015 passes. OSS doc sync (class D drift) remains in OSS-003-DOC-SYNC-001 which is a separate task.",
+      "status": "done",
+      "created_at": "2026-04-22T06:12:10Z",
+      "resolved_at": "2026-04-22T06:19:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review found remaining doc drift: docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md still lists CW-02 and KW-05 as open implementation gaps and still says the Consultation overview is stale; docs/pantheon-handoffs/LOVABLE_MASTER_SA.md still says KW-04 is pending BFF and KW-05 is blocked. Backlog and BFF overview truth are correct, but packet/handoff docs need one more sync pass before approval.",
+      "status": "done",
+      "created_at": "2026-04-22T06:19:14Z",
+      "resolved_at": "2026-04-22T06:19:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-22T06:20:00Z",
+      "resolved_at": "2026-04-22T06:20:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Synced the remaining stale task docs to current repo truth. docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md now treats only CW-04/TW-02 as open implementation gaps and records CW-02/KW-05 as already route-live; docs/pantheon-handoffs/LOVABLE_MASTER_SA.md now marks Knowledge as KW-01-05 route-live and narrows pending live-BFF modules to CW-04/TW-02; docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md now reflects live KW-04/KW-05 route truth instead of pending-BFF wording. Targeted rg verification found no remaining stale CW-02/KW-05/blocked-module claims in these task docs.",
+      "status": "done",
+      "created_at": "2026-04-22T06:40:46Z",
+      "resolved_at": "2026-04-22T06:48:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T06:48:57Z",
+      "resolved_at": "2026-04-22T07:06:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-22T07:06:19Z",
+      "resolved_at": "2026-04-22T07:08:59Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude to Gemini after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:08:59Z",
+      "resolved_at": "2026-04-22T07:09:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-22T07:09:47Z",
+      "resolved_at": "2026-04-22T07:22:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:22:08Z",
+      "resolved_at": "2026-04-22T07:22:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-22T07:22:44Z",
+      "resolved_at": "2026-04-22T07:25:48Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude to Gemini after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:25:48Z",
+      "resolved_at": "2026-04-22T07:27:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-22T07:27:01Z",
+      "resolved_at": "2026-04-22T07:37:21Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T07:37:21Z",
+      "resolved_at": "2026-04-22T07:44:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-22T07:44:11Z",
+      "resolved_at": "2026-04-22T08:08:13Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Synced remaining truth drift: replaced stale APP-003 closeout wording in WORKBENCH_DELIVERY_BACKLOG.md, corrected KW-01 hardening task id to APP-003-KW01-HARDEN-001, refreshed PKT-knowledge-workbench overview wording to match route-live truth, and updated this execution packet reviewer to Codex2.",
+      "status": "done",
+      "created_at": "2026-04-22T08:08:13Z",
+      "resolved_at": "2026-04-22T08:26:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T08:26:46Z",
+      "resolved_at": "2026-04-22T08:49:23Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Synced the remaining APP-003 truth drift caused by CW-04 landing: consultation backlog row, PKT-consultation overview contract, full-blueprint execution packet, and CW-008 packet-family docs now all treat CW-04 as route-live with frontend handoff/UI activation remaining. Targeted rg verification confirms TW-02 is the only remaining real implementation gap in this packet.",
+      "status": "done",
+      "created_at": "2026-04-22T08:49:23Z",
+      "resolved_at": "2026-04-22T09:42:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Wake re-check remains clean on 2026-04-22: WORKBENCH_DELIVERY_BACKLOG.md, PKT-knowledge-workbench, PKT-consultation-workbench, docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, and services/control-plane/bff/main.py still agree that CW-04 is route-live and TW-02 is the remaining implementation gap. Re-ran pytest services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py: 4 passed. If you agree the truth surfaces are now aligned, this is ready to approve.",
+      "status": "done",
+      "created_at": "2026-04-22T09:42:44Z",
+      "resolved_at": "2026-04-22T10:18:13Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Wake re-check on 2026-04-22 remains clean: WORKBENCH_DELIVERY_BACKLOG.md, PKT-knowledge-workbench, PKT-consultation-workbench, docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, and services/control-plane/bff/main.py still align on CW-04 route-live truth and TW-02 as the remaining implementation gap. Re-ran pytest services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py: 4 passed. Ready for reviewer approval if these truth surfaces look aligned.",
+      "status": "done",
+      "created_at": "2026-04-22T10:18:13Z",
+      "resolved_at": "2026-04-22T12:35:42Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Wake re-check on 2026-04-22 remains clean: docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/bff/PKT-knowledge-workbench.md, docs/bff/PKT-consultation-workbench.md, and services/control-plane/bff/main.py still align on CW-04 and TW-02 route-live truth. Re-ran pytest services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py: 9 passed. No new doc drift found; residual work remains frontend activation-closeout and the CW-04 handoff bundle, so this task remains ready for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-04-22T12:35:42Z",
+      "resolved_at": "2026-04-22T12:52:59Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Wake re-check on 2026-04-22 remains clean: docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/bff/PKT-knowledge-workbench.md, docs/bff/PKT-consultation-workbench.md, and services/control-plane/bff/main.py still align on CW-04 and TW-02 route-live truth. Re-ran pytest services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py: 9 passed. No new doc drift found; residual work remains frontend activation-closeout and the CW-04 handoff bundle, so this task remains ready for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-04-22T12:52:59Z",
+      "resolved_at": "2026-04-22T13:44:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Wake check on 2026-04-22T13:42Z remains clean: docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, WORKBENCH_DELIVERY_BACKLOG.md, docs/bff/PKT-knowledge-workbench.md, docs/bff/PKT-consultation-workbench.md, and services/control-plane/bff/main.py still align on current CW-04/KW-01..05/TW-02 route-live truth. Latest verification remains pytest services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py: 9 passed. No new doc drift found; task remains ready for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-04-22T13:44:01Z",
+      "resolved_at": "2026-04-22T13:59:04Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Reviewer rebalanced to Gemini so the review queue can keep moving while Codex2 is quota-paused. Please continue review from the current task state and artifacts.",
+      "status": "done",
+      "created_at": "2026-04-22T13:59:04Z",
+      "resolved_at": "2026-04-22T13:59:34Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-22T13:59:34Z",
+      "resolved_at": "2026-04-22T14:01:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Owner revalidated APP-003-TRUTH-SYNC-001 after review reassignment. Current repo truth is aligned across WORKBENCH_DELIVERY_BACKLOG.md, docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, docs/bff/PKT-knowledge-workbench.md, docs/bff/PKT-consultation-workbench.md, docs/examples/PKT-knowledge-workbench.json, docs/examples/PKT-consultation-workbench.json, and services/control-plane/bff/main.py. Targeted evidence: pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py and pytest -q services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py both passed.",
+      "status": "done",
+      "created_at": "2026-04-22T14:01:47Z",
+      "resolved_at": "2026-04-22T14:19:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Qwen",
+      "to": "Codex2",
+      "message": "Auto-reassigned APP-003-TRUTH-SYNC-001 away from sidecar-only lane Qwen; reviewer Qwen -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-22T14:19:16Z",
+      "resolved_at": "2026-04-22T14:20:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated current repo truth after reviewer reassignment. WORKBENCH_DELIVERY_BACKLOG.md, docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, docs/bff/PKT-knowledge-workbench.md, docs/bff/PKT-consultation-workbench.md, docs/examples/PKT-knowledge-workbench.json, docs/examples/PKT-consultation-workbench.json, and services/control-plane/bff/main.py remain aligned. Verification: pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py and pytest -q services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py both passed on 2026-04-22.",
+      "status": "done",
+      "created_at": "2026-04-22T14:20:55Z",
+      "resolved_at": "2026-04-22T14:41:40Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Wake revalidation on 2026-04-22 remains clean: WORKBENCH_DELIVERY_BACKLOG.md, docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, docs/bff/PKT-knowledge-workbench.md, docs/bff/PKT-consultation-workbench.md, docs/examples/PKT-knowledge-workbench.json, docs/examples/PKT-consultation-workbench.json, and services/control-plane/bff/main.py still agree on KW-01..05, CW-01..04, and TW-02 route-live truth. Verification on 2026-04-22: pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py -> 4 passed. No new drift found; active review baton remains with Codex2.",
+      "status": "done",
+      "created_at": "2026-04-22T14:41:40Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Wake revalidation on 2026-04-22 remains clean: WORKBENCH_DELIVERY_BACKLOG.md, docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md, docs/bff/PKT-knowledge-workbench.md, docs/bff/PKT-consultation-workbench.md, docs/examples/PKT-knowledge-workbench.json, docs/examples/PKT-consultation-workbench.json, and services/control-plane/bff/main.py still agree on KW-01..05, CW-01..04, and TW-02 route-live truth. Verification on 2026-04-22: pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py -> 4 passed. No new drift found; active review baton remains with Codex2.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T14:50:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Truth-sync verified: backlog, packet, overview payloads, and LOVABLE_MASTER_SA match live BFF; 4 pytest workbench contract tests pass. Returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T14:50:05Z",
+      "resolved_at": "2026-04-22T14:53:22Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,407 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-21T16:02:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+    "title": "Prepare EXEC-FRONT-KW01-001 review packet and evidence summary",
+    "summary_zh": "平行支援 EXEC-FRONT-KW01-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-FRONT-KW01-001/EXEC-FRONT-KW01-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet. Review packet and Claude approval are committed; no canonical truth changes were made.",
+    "last_update": "2026-04-21T16:02:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-FRONT-KW01-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：所有 evidence artifacts 確認存在，sidecar packet 結構完整，未修改 canonical truth。SHA 差異已正確標記為非阻塞，父任務封存真相完整。"
+    ],
+    "review_file": ".orchestrator/reviews/EXEC-FRONT-KW01-001-SIDECAR-REVIEW-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T16:02:54Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "13ba032c99229ffd6b62e5a3008c8f9eb48ebd99",
+      "commit_subject": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW: add review packet evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 980,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T14:57:00Z",
+      "resolved_at": "2026-04-20T15:07:16Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:08:49Z",
+      "resolved_at": "2026-04-20T15:09:21Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:25:38Z",
+      "resolved_at": "2026-04-20T15:32:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T15:34:37Z",
+      "resolved_at": "2026-04-20T15:36:13Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:07:37Z",
+      "resolved_at": "2026-04-20T16:12:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:15:24Z",
+      "resolved_at": "2026-04-20T16:15:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:16:58Z",
+      "resolved_at": "2026-04-21T00:24:41Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:26:29Z",
+      "resolved_at": "2026-04-21T00:28:09Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:28:09Z",
+      "resolved_at": "2026-04-21T00:36:47Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:38:46Z",
+      "resolved_at": "2026-04-21T00:39:05Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:54:17Z",
+      "resolved_at": "2026-04-21T00:59:42Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:02:11Z",
+      "resolved_at": "2026-04-21T01:02:40Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:14:36Z",
+      "resolved_at": "2026-04-21T01:23:02Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:11:14Z",
+      "resolved_at": "2026-04-21T03:12:36Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:14:59Z",
+      "resolved_at": "2026-04-21T03:16:13Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:16:13Z",
+      "resolved_at": "2026-04-21T03:17:16Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:23:07Z",
+      "resolved_at": "2026-04-21T03:27:23Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T03:27:23Z",
+      "resolved_at": "2026-04-21T03:28:24Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "KW-01 sidecar review packet is ready. It summarizes the archived parent closeout, review arc, evidence crosswalk, and the historical feedback-bundle SHA discrepancy without reopening parent truth.",
+      "status": "done",
+      "created_at": "2026-04-21T03:33:19Z",
+      "resolved_at": "2026-04-21T05:04:26Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:04:26Z",
+      "resolved_at": "2026-04-21T05:06:43Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T05:06:43Z",
+      "resolved_at": "2026-04-21T06:20:25Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:20:25Z",
+      "resolved_at": "2026-04-21T06:24:35Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:24:35Z",
+      "resolved_at": "2026-04-21T07:44:07Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:44:07Z",
+      "resolved_at": "2026-04-21T07:55:15Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T07:55:15Z",
+      "resolved_at": "2026-04-21T08:32:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:32:01Z",
+      "resolved_at": "2026-04-21T08:38:57Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T08:38:57Z",
+      "resolved_at": "2026-04-21T09:56:28Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T09:56:28Z",
+      "resolved_at": "2026-04-21T10:02:07Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T10:02:07Z",
+      "resolved_at": "2026-04-21T11:22:03Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:22:03Z",
+      "resolved_at": "2026-04-21T11:27:38Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T11:27:38Z",
+      "resolved_at": "2026-04-21T12:41:07Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:41:07Z",
+      "resolved_at": "2026-04-21T12:49:01Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T12:49:01Z",
+      "resolved_at": "2026-04-21T13:38:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:38:56Z",
+      "resolved_at": "2026-04-21T13:43:58Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T13:43:58Z",
+      "resolved_at": "2026-04-21T14:34:04Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:34:04Z",
+      "resolved_at": "2026-04-21T14:37:12Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T14:37:12Z",
+      "resolved_at": "2026-04-21T15:59:53Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-KW01-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet approved. All evidence artifacts verified, parent archive intact, SHA mismatch correctly flagged as non-blocking. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T15:59:53Z",
+      "resolved_at": "2026-04-21T16:02:55Z"
+    }
+  ],
+  "blockers": []
+}

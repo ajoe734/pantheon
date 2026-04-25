@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T19:01:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-DATASOURCE-TW-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-DATASOURCE-TW-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-DATASOURCE-TW-001/APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar review packet after Claude approval. Support-only review evidence is preserved in support/sidecars/APP-003-DATASOURCE-TW-001/APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW.md, with reviewer disposition recorded at docs/reviews/sidecars/2026-04-24-APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW-review.md. Parent task APP-003-DATASOURCE-TW-001 remains separate for its own finalize path.",
+    "last_update": "2026-04-24T19:01:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-DATASOURCE-TW-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 通過審查：父任務 APP-003-DATASOURCE-TW-001 確實為 review_approved（Codex2 owner / Codex reviewer），packet 引用的 10 個實作檔案與 parent 審閱文件均實際存在，與 docs/reviews/2026-04-24-app-003-datasource-tw-001-codex-review.md 的驗證命令一致",
+      "Scope 守住 support-only：只是 review evidence 包裝，未動 L1 canonical truth、runtime registry 或父任務 lifecycle。Sidecar 可交回 Codex2 收尾為 done；父任務 finalize 仍由 APP-003-DATASOURCE-TW-001 本身由 Codex2 處理"
+    ],
+    "review_file": "docs/reviews/sidecars/2026-04-24-APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:01:03Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "062a5e8507d881a1c5a0905df07a0e11af554aa6",
+      "commit_subject": "APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW finalize sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1184,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:37:14Z",
+      "resolved_at": "2026-04-24T18:55:24Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review packet ready at support/sidecars/APP-003-DATASOURCE-TW-001/APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW.md. Support-only handoff: parent task APP-003-DATASOURCE-TW-001 is already review_approved and this packet only summarizes review evidence for sidecar sign-off.",
+      "status": "done",
+      "created_at": "2026-04-24T18:57:05Z",
+      "resolved_at": "2026-04-24T18:58:59Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: sidecar review packet truthfully wraps the parent review/acceptance evidence and stays support-only. Review doc at docs/reviews/sidecars/2026-04-24-APP-003-DATASOURCE-TW-001-SIDECAR-REVIEW-review.md. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T18:58:59Z",
+      "resolved_at": "2026-04-24T19:01:04Z"
+    }
+  ],
+  "blockers": []
+}

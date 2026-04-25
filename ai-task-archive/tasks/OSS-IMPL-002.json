@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "task_id": "OSS-IMPL-002",
+  "archived_at": "2026-04-17T19:15:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-IMPL-002",
+    "title": "Implement QuantLib governed adapter with smoke test",
+    "summary_zh": "實作 QuantLib governed adapter：在 services/research/quantlib/ 建立 GovernedQuantLibAdapter（derivatives pricing / options analytics 路徑）、StubBackend、governed output shape、smoke test、unit tests。OSS_INTEGRATION_CHECKLIST 中 QuantLib 從 version-pinned 推進到 smoke-tested。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"services/research/quantlib/adapter/quantlib_adapter.py\"",
+      "\"services/research/quantlib/smoke_test.py\"",
+      "\"services/research/quantlib/test_adapter.py\"",
+      "\"OSS_INTEGRATION_CHECKLIST.md\"]"
+    ],
+    "acceptance": [
+      "[\"unit tests 全部通過\"",
+      "\"smoke test 產生 registry-ready artifact（artifact_state=draft）\"",
+      "\"OSS checklist QuantLib 狀態更新為 smoke-tested\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved QuantLib governed adapter delivery. QuantLib smoke coverage, governed output path, revised American regression, and checklist promotion are closed as done.",
+    "last_update": "2026-04-17T19:15:15Z",
+    "review_notes_zh": [
+      "已重跑 stub 與 pinned live rerun；QuantLib adapter、American binomial regression 與 smoke evidence 一致，未發現需退回的行為回歸。",
+      "default workspace 的 real-backend 測試仍以 skip 保持 CI 安全，live rerun 已補足 QuantLib 安裝環境驗證。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T19:15:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "fdbeb6e65487bac865cb6f11fcc9bdad5fb9a643",
+      "commit_subject": "OSS-IMPL-002: finalize QuantLib governed adapter closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OSS-IMPL-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 473,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:37:02Z",
+      "resolved_at": "2026-04-17T17:53:18Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:54:48Z",
+      "resolved_at": "2026-04-17T17:56:53Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "QuantLib governed adapter delivered: adapter package, smoke test, and 17 passing unit tests. Checklist advanced to smoke-tested on 2026-04-17; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:01:07Z",
+      "resolved_at": "2026-04-17T18:49:19Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: QuantLibBackend American-option finite-difference Greeks are mis-scaled at services/research/quantlib/adapter/quantlib_adapter.py:288-312. With vol_bump=0.01 and rate_bump=0.0001, current code returns materially understated vega/rho (local check on the same option: base _bs_metrics vega/rho=1.018182/0.974281 vs _finite_difference_greeks=0.010213/0.000097). Please fix the scaling to match the European-path per-1% conventions and add coverage for the real/American path before re-handoff.",
+      "status": "done",
+      "created_at": "2026-04-17T18:49:19Z",
+      "resolved_at": "2026-04-17T18:49:19Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Fixed American finite-difference Greek scaling: vega now reports per-1% vol and rho now converts 1bp bump to per-100bp convention. Added QuantLibBackend American-path test coverage with conditional skip when QuantLib is unavailable; verification: python3 -m pytest services/research/quantlib/test_adapter.py -q => 17 passed, 1 skipped, and python3 services/research/quantlib/smoke_test.py => OK.",
+      "status": "done",
+      "created_at": "2026-04-17T18:51:12Z",
+      "resolved_at": "2026-04-17T18:57:53Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: QuantLibBackend still returns mixed-model American analytics. services/research/quantlib/adapter/quantlib_adapter.py:273-311 prices American options with binomial CRR NPV but derives delta/gamma/vega/theta/rho from _bs_metrics(), which is a European Black-Scholes proxy and never bumps the American QuantLib engine. The new regression test at services/research/quantlib/test_adapter.py:176-188 only compares against the same proxy, so it cannot catch this mismatch. Either compute bumped Greeks from the same American QuantLib pricing path or reject/explicitly gate American style until supported, then refresh tests and return to review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:57:53Z",
+      "resolved_at": "2026-04-17T18:57:53Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reworked QuantLibBackend American analytics to use the same binomial CRR pricing path for NPV and finite-difference Greeks instead of mixing in _bs_metrics(). Added an independent QuantLib-backed regression test that computes expected American Greeks from bumped binomial NPV paths and asserts they diverge from the BS proxy fixture. Verification: python3 -m pytest services/research/quantlib/test_adapter.py -q => 17 passed, 1 skipped (QuantLib not installed in this workspace); python3 services/research/quantlib/smoke_test.py => OK.",
+      "status": "done",
+      "created_at": "2026-04-17T19:02:16Z",
+      "resolved_at": "2026-04-17T19:08:47Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: independent live rerun with pinned QuantLib-Python==1.18 found a real blocker. PYTHONPATH=/tmp/oss-impl-002-site python3 -m pytest services/research/quantlib/test_adapter.py -q fails at services/research/quantlib/test_adapter.py:282 because abs(expected['vega'] - baseline['vega']) is 0.009012, not > 0.01. QuantLibBackend output itself matches the bumped binomial engine expectation; the unstable part is the new proxy-divergence assertion, not the pricing path. Please make that regression stable against live QuantLib results, refresh evidence accordingly, and return to review.",
+      "status": "done",
+      "created_at": "2026-04-17T19:08:47Z",
+      "resolved_at": "2026-04-17T19:08:47Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Adjusted the American QuantLib regression to assert stable binomial-engine parity plus non-proxy behavior without a brittle vega > 0.01 threshold. Refreshed QuantLib checklist evidence. Verification: python3 -m pytest services/research/quantlib/test_adapter.py -q => 17 passed, 1 skipped; python3 services/research/quantlib/smoke_test.py => OK; PYTHONPATH=/tmp/oss-impl-002-site python3 -m pytest services/research/quantlib/test_adapter.py -q => 18 passed; PYTHONPATH=/tmp/oss-impl-002-site python3 services/research/quantlib/smoke_test.py --backend real => OK.",
+      "status": "done",
+      "created_at": "2026-04-17T19:11:12Z",
+      "resolved_at": "2026-04-17T19:14:08Z"
+    },
+    {
+      "task_id": "OSS-IMPL-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: QuantLib governed adapter, smoke coverage, and the revised American regression all verified. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-17T19:14:08Z",
+      "resolved_at": "2026-04-17T19:15:15Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "task_id": "APP-003-F042-FOLLOWUP-001",
+  "archived_at": "2026-04-24T09:31:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-F042-FOLLOWUP-001",
+    "title": "Finish F-042 promotion-review frontend follow-up",
+    "summary_zh": "沿用既有 F-042 Lovable packet，完成 promotion-review follow-up cycle；若 live payload 仍缺欄位就回寫 canonical bff-gap，否則產出 truthful ui-done / frontend-feedback。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "../front-ai-trading-system/docs/lovable/F-042-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/F-042-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/F-042-lovable-ui-task.yaml",
+      "../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml"
+    ],
+    "acceptance": [
+      "Use the repo-local F-042 prompt as the packet source",
+      "Do not invent frontend-only compensations when live payload is missing",
+      "Return truthful Git-visible ui-done or bff-gap evidence for F-042"
+    ],
+    "next": "Owner finalized approved F-042 follow-up. Closeout evidence remains truthful for the reviewed checked-in surface at d306f850a8e04982862405e4435855bf11e008e4, and no new Pantheon BFF gap is required.",
+    "last_update": "2026-04-24T09:31:24Z",
+    "task_class": "frontend_feedback_followup",
+    "auto_created_by": "2026-04-24-frontend-feedback-followup-materialization",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "已重核 F-042 feedback bundle、mirrored docs 與前端實作；d306f850a8e04982862405e4435855bf11e008e4 作為 reviewed checked-in F-042 surface 的錨點成立。",
+      "舊 reopen 理由已失效：route param、approval_decision render、auth token sync、nullable latestRun.progress fallback 皆已到位。",
+      "本輪不成立新的 Pantheon BFF gap，closeout-ready evidence 可進入 owner finalization。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T09:31:24Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1238,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:26:49Z",
+      "resolved_at": "2026-04-24T07:27:41Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:37:23Z",
+      "resolved_at": "2026-04-24T07:38:26Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Revalidated F-042 against front repo origin/main c838d968cc0f7f340b7a75969fbce8784cb05d6b. Existing feedback bundle remains tied to c34048e2e096d3fe9bde1c216c0613535d71f07d and is no longer a truthful closeout surface; current published state still shows the route-to-plan, approval-decision field, and auth-bridge issues documented in support/sidecars/APP-003-F042-FOLLOWUP-001/APP-003-F042-FOLLOWUP-001-REVALIDATION.md. Please review for reopen on the existing contract surface rather than a new Pantheon BFF gap.",
+      "status": "done",
+      "created_at": "2026-04-24T07:46:22Z",
+      "resolved_at": "2026-04-24T07:49:47Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewed the published F-042 surface against the repo-local prompt/ui-task plus support/sidecars/APP-003-F042-FOLLOWUP-001/APP-003-F042-FOLLOWUP-001-REVALIDATION.md. The current frontend-feedback bundle is stale because it still points to c34048e2e096d3fe9bde1c216c0613535d71f07d while published origin/main is c838d968cc0f7f340b7a75969fbce8784cb05d6b, and that published state still shows the route-to-plan, approval_decision render, and auth-bridge issues. Reopen this follow-up on the existing contract surface; do not treat this evidence as closeout-ready and do not open a new Pantheon BFF gap from this packet alone.",
+      "status": "done",
+      "created_at": "2026-04-24T07:49:47Z",
+      "resolved_at": "2026-04-24T07:49:47Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Updated ../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml plus docs/pantheon-feedback/F-042/* to reopen the follow-up truthfully. The bundle now points at branch commit d306f85cb7bf8c9c12376840f775f973a0cb566d, marks the older c34048e2e096d3fe9bde1c216c0613535d71f07d evidence stale, and records that route binding, approval_decision rendering, and auth-token bridging remain front-owned issues on the existing contract surface with no new Pantheon API gap requested.",
+      "status": "done",
+      "created_at": "2026-04-24T08:40:33Z",
+      "resolved_at": "2026-04-24T08:44:58Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewed the latest F-042 reopen bundle. The reopen disposition is correct and no new Pantheon BFF gap is justified, but the recorded source_commit in ../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml is not a valid front-repo object. Short commit d306f85 resolves to d306f850a8e04982862405e4435855bf11e008e4, not d306f85cb7bf8c9c12376840f775f973a0cb566d. Please correct the Git-visible commit anchor across the F-042 reopen bundle and return to review.",
+      "status": "done",
+      "created_at": "2026-04-24T08:44:58Z",
+      "resolved_at": "2026-04-24T08:44:58Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Corrected the F-042 reopen bundle source_commit anchor to the Git-visible front commit d306f850a8e04982862405e4435855bf11e008e4 across the frontend-feedback packet and supporting feedback docs; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-24T08:50:31Z",
+      "resolved_at": "2026-04-24T08:58:44Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Full hash d306f850a8e04982862405e4435855bf11e008e4 is now valid, but the F-042 reopen bundle still describes it as the latest checked-in branch commit while front repo HEAD is 139081f0e4d516494819003bd95968ecb9b86c99. Reword .coordination/requests/F-042-frontend-feedback.yaml plus the matching F-042 feedback docs to describe d306f850a8e04982862405e4435855bf11e008e4 as the reviewed checked-in F-042 surface rather than branch HEAD; see support/sidecars/APP-003-F042-FOLLOWUP-001/APP-003-F042-FOLLOWUP-001-SIDECAR-REVIEW.md.",
+      "status": "done",
+      "created_at": "2026-04-24T08:58:44Z",
+      "resolved_at": "2026-04-24T08:58:44Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T09:01:32Z",
+      "resolved_at": "2026-04-24T09:02:14Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reworded ../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml plus docs/pantheon-feedback/F-042/{LOVABLE_CHANGE_FEEDBACK,QA_STATUS}.md so d306f850a8e04982862405e4435855bf11e008e4 is described as the reviewed checked-in F-042 surface rather than branch HEAD. No new Pantheon BFF gap is requested; please review the reopen bundle on substantive accuracy only. Updated support packet: support/sidecars/APP-003-F042-FOLLOWUP-001/APP-003-F042-FOLLOWUP-001-SIDECAR-REVIEW.md.",
+      "status": "done",
+      "created_at": "2026-04-24T09:10:55Z",
+      "resolved_at": "2026-04-24T09:17:48Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated the checked-in F-042 implementation against src/App.tsx, src/pages/promotion/PromotionReview.tsx, src/auth/AuthProvider.tsx, src/lib/bffClient.ts, and src/pages/promotion/types.ts. The old reopen rationale no longer holds: routed planId support, approval_decision rendering, auth-token sync, and nullable latestRun.progress fallback are all present on reviewed commit d306f850a8e04982862405e4435855bf11e008e4. Refreshed ../front-ai-trading-system/.coordination/requests/F-042-frontend-feedback.yaml plus docs/pantheon-feedback/F-042/* to a truthful closeout-ready packet with no new Pantheon BFF gap. Please review on closeout substance only.",
+      "status": "done",
+      "created_at": "2026-04-24T09:17:48Z",
+      "resolved_at": "2026-04-24T09:18:31Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-24T09:18:31Z",
+      "resolved_at": "2026-04-24T09:18:45Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T09:18:45Z",
+      "resolved_at": "2026-04-24T09:25:14Z"
+    },
+    {
+      "task_id": "APP-003-F042-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Closeout evidence revalidated. The reviewed checked-in F-042 surface at d306f850a8e04982862405e4435855bf11e008e4 is truthful and substantively ready for owner finalization; no new Pantheon BFF gap is required.",
+      "status": "done",
+      "created_at": "2026-04-24T09:25:14Z",
+      "resolved_at": "2026-04-24T09:31:24Z"
+    }
+  ],
+  "blockers": []
+}

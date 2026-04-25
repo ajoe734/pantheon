@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+  "archived_at": "2026-04-24T11:40:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+    "title": "Finish PKT-004 and PKT-005 frontend follow-up bundle",
+    "summary_zh": "收斂 PKT-004-persona-drilldowns 與 PKT-005-degradation-banner / PKT-005-sse-substrate 的前端 follow-up；沿用各 feature 的 repo-local prompt，完成 front repo updates 或 truthful follow-up evidence。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "../front-ai-trading-system/.coordination/responses/PKT-004-persona-drilldowns-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/PKT-005-degradation-banner-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/responses/PKT-005-sse-substrate-lovable-prompt.md",
+      "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml",
+      "../front-ai-trading-system/.coordination/requests/PKT-005-degradation-banner-frontend-feedback.yaml",
+      "../front-ai-trading-system/.coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml"
+    ],
+    "acceptance": [
+      "Use the existing PKT-004 and PKT-005 prompt packets as the source of truth",
+      "Do not invent missing payload semantics client-side",
+      "Return Git-visible republish or follow-up evidence for the PKT-004 and PKT-005 bundle"
+    ],
+    "next": "Owner finalized approved mixed-disposition bundle. PKT-004 remains delivered via de1f86a -> 6c27d00, PKT-005 degradation-banner remains accepted/locked, and the residual PKT-005 SSE request-pair republish is now tracked explicitly in APP-003-PKT005-SSE-REPUBLISH-001 rather than being collapsed into this closeout.",
+    "last_update": "2026-04-24T11:40:14Z",
+    "task_class": "frontend_feedback_followup",
+    "auto_created_by": "2026-04-24-frontend-feedback-followup-materialization",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "已獨立核對 PKT-004 republish commit de1f86a 與 reviewed source 6c27d00，request pair 和 feedback bundle 均為 Git-visible 且 replay-clean",
+      "PKT-005 degradation-banner 在本 bundle 中沒有新的 reopen 依據，維持 accepted and locked 的交付判定",
+      "PKT-005 sse-substrate 仍需 follow-up，但僅限 request-pair publication truth：eb1a6cb 內嵌的 full source_commit 87088d7a1efec434483fb97d16a3c34cbe9f37cd 無法解析，應改為 87088d718dcbc6f07cc66932f44b5f16985583a9；不需重開新的 Pantheon gap"
+    ],
+    "review_file": ".coordination/reviews/APP-003-PKT004-PKT005-FOLLOWUP-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T11:40:14Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1265,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:21:37Z",
+      "resolved_at": "2026-04-24T07:27:18Z"
+    },
+    {
+      "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T07:27:18Z",
+      "resolved_at": "2026-04-24T08:55:45Z"
+    },
+    {
+      "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T08:55:45Z",
+      "resolved_at": "2026-04-24T10:19:16Z"
+    },
+    {
+      "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Updated Pantheon delivery artifacts for the PKT-004/PKT-005 bundle. PKT-004 persona-drilldowns is now recorded as delivered against request-pair commit de1f86a and reviewed source commit 6c27d00; PKT-005 degradation-banner remains unchanged and already delivered; PKT-005 sse-substrate stays followup-required, but only for publication truth: both request files at eb1a6cb name an invalid full source_commit hash and must be republished to 87088d718dcbc6f07cc66932f44b5f16985583a9. Review the updated delivery/lock notes under docs/pantheon-delivery/PKT-004-persona-drilldowns and docs/pantheon-delivery/PKT-005-sse-substrate.",
+      "status": "done",
+      "created_at": "2026-04-24T10:25:42Z",
+      "resolved_at": "2026-04-24T11:32:04Z"
+    },
+    {
+      "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-24T11:32:04Z",
+      "resolved_at": "2026-04-24T11:32:32Z"
+    },
+    {
+      "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude2 to Codex after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-24T11:32:32Z",
+      "resolved_at": "2026-04-24T11:38:10Z"
+    },
+    {
+      "task_id": "APP-003-PKT004-PKT005-FOLLOWUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: mixed-disposition bundle re-verified. PKT-004 remains replay-clean via de1f86a -> 6c27d00, PKT-005 degradation-banner stays accepted/locked, and PKT-005 sse-substrate remains the only open leg, limited to republishing the request pair from eb1a6cb with reachable source commit 87088d718dcbc6f07cc66932f44b5f16985583a9 rather than reopening a new Pantheon gap. Owner may finalize this bundle once that narrow SSE republish follow-up remains explicitly tracked.",
+      "status": "done",
+      "created_at": "2026-04-24T11:38:10Z",
+      "resolved_at": "2026-04-24T11:40:14Z"
+    }
+  ],
+  "blockers": []
+}

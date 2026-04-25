@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-19T20:43:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare CW-01-FOUNDATION-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 CW-01-FOUNDATION-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Wave 2 - Blocked Module Activation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "STATE-REBASE-001",
+      "DEPTH-REBASE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/CW-01-FOUNDATION-001/CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar handoff packet and closed it. Support-only CW-01 BFF/frontend packet is ready for parent-owner absorption.",
+    "last_update": "2026-04-19T20:43:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "CW-01-FOUNDATION-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:43:25Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a708d5bb51aa3777562bb0c8788fb6cae1faada2",
+      "commit_subject": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF finalize: record delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 760,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:05:10Z",
+      "resolved_at": "2026-04-19T17:06:03Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:26:15Z",
+      "resolved_at": "2026-04-19T17:28:08Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:40:22Z",
+      "resolved_at": "2026-04-19T17:46:07Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:46:07Z",
+      "resolved_at": "2026-04-19T17:47:28Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:50:23Z",
+      "resolved_at": "2026-04-19T17:51:37Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:53:41Z",
+      "resolved_at": "2026-04-19T18:42:36Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-19T18:52:11Z",
+      "resolved_at": "2026-04-19T18:56:20Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:56:20Z",
+      "resolved_at": "2026-04-19T18:58:56Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:08:18Z",
+      "resolved_at": "2026-04-19T19:30:34Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:30:33Z",
+      "resolved_at": "2026-04-19T19:31:35Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:33:41Z",
+      "resolved_at": "2026-04-19T20:22:25Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:29:53Z",
+      "resolved_at": "2026-04-19T20:30:08Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:31:44Z",
+      "resolved_at": "2026-04-19T20:33:42Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T20:33:41Z",
+      "resolved_at": "2026-04-19T20:33:54Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Prepared support-only CW-01 handoff packet. It consolidates the published consult-request contract bundle, confirms the consultation request routes are still absent from the live BFF, distinguishes reusable consultation session surfaces from the missing request identity surface, and records the overview-payload wording mismatch without mutating runtime.",
+      "status": "done",
+      "created_at": "2026-04-19T20:38:44Z",
+      "resolved_at": "2026-04-19T20:40:17Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar handoff packet accurately captures the CW-01 contract-published / pending-bff state, distinguishes existing consultation session surfaces from the missing consult-request routes, and stays within support-only scope.",
+      "status": "done",
+      "created_at": "2026-04-19T20:40:17Z",
+      "resolved_at": "2026-04-19T20:43:25Z"
+    }
+  ],
+  "blockers": []
+}
