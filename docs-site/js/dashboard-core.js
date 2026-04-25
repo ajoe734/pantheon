@@ -4,7 +4,10 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260413-1745";
+} from "./dashboard-config.js?v=20260416-0852";
+
+export const DISPLAY_TIME_ZONE = "Asia/Taipei";
+export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
 
 export const qs = (selector) => document.querySelector(selector);
 
@@ -62,6 +65,7 @@ export function defaultDashboardBundle() {
     },
     execution_summary: {
       ready_now: 0,
+      dependency_ready: 0,
       in_progress: 0,
       in_review: 0,
       blocked: 0,
@@ -77,6 +81,19 @@ export function defaultDashboardBundle() {
       counts: {},
       materialized_count: 0,
       proposed_execution_tasks: 0,
+    },
+    coordination_summary: {
+      last_scan_at: null,
+      counts: {
+        tracked_features: 0,
+        lovable_ready: 0,
+        mirrored_to_target_repo: 0,
+        waiting_for_lovable: 0,
+        ui_done_received: 0,
+        frontend_feedback_received: 0,
+        open_bff_gaps: 0,
+      },
+      features: [],
     },
     bridge_summary: {
       source_plane: "planning",
@@ -118,6 +135,12 @@ export function normalizeDashboardBundle(value) {
     runtime_summary: { ...base.runtime_summary, ...(value.runtime_summary || {}) },
     execution_summary: { ...base.execution_summary, ...(value.execution_summary || {}) },
     planning_summary: { ...base.planning_summary, ...(value.planning_summary || {}) },
+    coordination_summary: {
+      ...base.coordination_summary,
+      ...(value.coordination_summary || {}),
+      counts: { ...base.coordination_summary.counts, ...((value.coordination_summary || {}).counts || {}) },
+      features: Array.isArray((value.coordination_summary || {}).features) ? value.coordination_summary.features : [],
+    },
     bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
     worker_task_links: Array.isArray(value.worker_task_links) ? value.worker_task_links : [],
     truth_mismatches: Array.isArray(value.truth_mismatches) ? value.truth_mismatches : [],
@@ -180,6 +203,7 @@ export function agentLabel(value) {
   if (normalized === "claude") return "Claude";
   if (normalized === "gemini") return "Gemini";
   if (normalized === "codex") return "Codex";
+  if (normalized === "codex2") return "Codex (2)";
   if (normalized === "qwen") return "Qwen";
   if (normalized === "grok") return "Copilot";
   if (normalized === "copilot") return "Copilot";
@@ -204,7 +228,7 @@ export function logicalWorkerAgentId(worker) {
   for (const candidate of candidates) {
     const normalized = String(candidate || "").trim().toLowerCase();
     if (!normalized) continue;
-    if (["claude", "gemini", "codex", "qwen"].includes(normalized)) return normalized;
+    if (["claude", "gemini", "codex", "codex2", "qwen"].includes(normalized)) return normalized;
     if (["grok", "copilot"].includes(normalized)) return "copilot";
   }
   if (String(worker?.provider || "").toLowerCase() === "copilot") return "copilot";
@@ -234,6 +258,7 @@ export function normalizeWorkerRecords(orchState, status) {
       run_id: runId,
       logical_agent_id: logicalAgentId,
       task_status: taskStatus,
+      dispatch_mode: runtimeDispatchMode(worker),
       bucket,
       display_actor: actorLabel(logicalAgentId, worker?.provider),
     };
@@ -309,6 +334,25 @@ function normalizedActorName(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function runtimeDispatchMode(payload) {
+  const explicit = String(payload?.dispatch_mode || "").trim();
+  if (explicit) return explicit;
+  const requestSnapshot = payload?.request_snapshot && typeof payload.request_snapshot === "object" ? payload.request_snapshot : {};
+  const metadata = payload?.metadata && typeof payload.metadata === "object"
+    ? payload.metadata
+    : (requestSnapshot.metadata && typeof requestSnapshot.metadata === "object" ? requestSnapshot.metadata : {});
+  if (metadata?.planning && typeof metadata.planning === "object" && Object.keys(metadata.planning).length) {
+    return String(metadata.planning.mode || "discussion_planning");
+  }
+  if (metadata?.coordination && typeof metadata.coordination === "object" && Object.keys(metadata.coordination).length) {
+    return "coordination";
+  }
+  const reason = String(payload?.reason || requestSnapshot.reason || "").trim();
+  if (reason.startsWith("discussion_planning_")) return "discussion_planning";
+  if (reason.startsWith("coordination:")) return "coordination";
+  return "execution";
+}
+
 function expectedTaskActor(task) {
   const status = String(task?.status || "").toLowerCase();
   if (status === "review") return String(task?.reviewer || "").trim();
@@ -353,6 +397,9 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
 
     const task = taskMap.get(worker.task_id);
     if (!task) {
+      if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(worker))) {
+        continue;
+      }
       pushMismatch({
         id: `worker-task-missing:${worker.run_id}`,
         type: "worker_task_missing",
@@ -416,7 +463,7 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   for (const task of status?.tasks || []) {
     const taskStatus = String(task.status || "").toLowerCase();
     const live = liveWorkersByTask.get(task.id) || [];
-    if (["in_progress", "review"].includes(taskStatus) && live.length === 0) {
+    if (taskStatus === "in_progress" && live.length === 0) {
       pushMismatch({
         id: `active-task-without-worker:${task.id}`,
         type: "active_task_without_worker",
@@ -432,6 +479,9 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
 
   for (const event of queueEvents) {
     const hasLiveWorker = liveWorkers.some((worker) => worker.queue_event_id === event.id);
+    if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(event))) {
+      continue;
+    }
     if (["started", "manual_pending"].includes(String(event.status || "").toLowerCase()) && !hasLiveWorker) {
       pushMismatch({
         id: `queue-without-worker:${event.id}`,
@@ -517,6 +567,7 @@ export function formatTime(value) {
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
+    timeZone: DISPLAY_TIME_ZONE,
   });
 }
 

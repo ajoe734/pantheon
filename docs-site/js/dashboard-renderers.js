@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260413-1745";
+} from "./dashboard-config.js?v=20260416-0852";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -12,6 +12,7 @@ import {
   buildDependencySchedule,
   dependencyBatchState,
   deriveAgentState,
+  DISPLAY_TIME_ZONE_LABEL,
   formatTime,
   laneLabel,
   normalizeDispatchQueue,
@@ -27,7 +28,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260413-1745";
+} from "./dashboard-core.js?v=20260416-0852";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -703,6 +704,83 @@ export function renderStackList(selector, items, emptyText, formatter) {
   }
 }
 
+function coordinationStageLabel(stage) {
+  const normalized = compactWhitespace(stage || "").toLowerCase();
+  if (!normalized) return "未知";
+  if (normalized === "waiting_for_lovable") return "等待 Lovable / 前端";
+  if (normalized === "ui_done_received") return "已收 ui-done";
+  if (normalized === "frontend_feedback_received") return "已收 feedback";
+  if (normalized === "bff_gap_open") return "BFF gap 開啟";
+  if (normalized === "contract_ready") return "contract-ready";
+  return titleCase(normalized.replaceAll("_", " "));
+}
+
+export function renderLovableCoordinationSummary(dashboardBundle = null) {
+  const container = qs("#lovable-coordination");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const summary = dashboardBundle?.coordination_summary || {};
+  const counts = summary.counts || {};
+  const features = Array.isArray(summary.features) ? summary.features : [];
+
+  const summaryCard = document.createElement("article");
+  summaryCard.className = "stack-card";
+  summaryCard.innerHTML = `
+    <div class="stack-head">
+      <strong>Coordination Snapshot</strong>
+      <span class="status-pill">${formatTime(summary.last_scan_at)}</span>
+    </div>
+    <div class="lane-meta">
+      <span class="chip">追蹤 feature ${counts.tracked_features || 0}</span>
+      <span class="chip">Lovable-ready ${counts.lovable_ready || 0}</span>
+      <span class="chip">等待執行 ${counts.waiting_for_lovable || 0}</span>
+      <span class="chip">ui-done ${counts.ui_done_received || 0}</span>
+      <span class="chip">feedback ${counts.frontend_feedback_received || 0}</span>
+      <span class="chip">open BFF gap ${counts.open_bff_gaps || 0}</span>
+    </div>
+  `;
+  container.appendChild(summaryCard);
+
+  if (!features.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "目前沒有 Lovable coordination feature。";
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const feature of features) {
+    const card = document.createElement("article");
+    card.className = "stack-card";
+    const paths = Object.entries(feature.paths || {})
+      .filter(([, value]) => value)
+      .map(([label, value]) => `<code>${escapeHtml(label)}: ${escapeHtml(value)}</code>`)
+      .join("、");
+    card.innerHTML = `
+      <div class="stack-head">
+        <strong>${escapeHtml(feature.feature_id || "-")}</strong>
+        <span class="status-pill">${escapeHtml(coordinationStageLabel(feature.stage))}</span>
+      </div>
+      <p>${escapeHtml(feature.summary || feature.screen || "尚無摘要。")}</p>
+      <div class="lane-meta">
+        <span class="chip">畫面 ${escapeHtml(feature.screen || "-")}</span>
+        <span class="chip">來源 ${escapeHtml(feature.source_repo || feature.source_repo_id || "-")}</span>
+        <span class="chip">Agent ${escapeHtml(feature.target_agent || "-")}</span>
+      </div>
+      <div class="lane-meta">
+        <span class="chip">Lovable-ready ${feature.lovable_ready ? "yes" : "no"}</span>
+        <span class="chip">Mirrored ${feature.mirrored_to_target_repo ? "yes" : "no"}</span>
+        <span class="chip">ui-done ${feature.has_ui_done ? "yes" : "no"}</span>
+        <span class="chip">feedback ${feature.has_frontend_feedback ? "yes" : "no"}</span>
+      </div>
+      ${paths ? `<p class="card-copy">Artifacts：${paths}</p>` : ""}
+      <p class="card-copy">下一步：${escapeHtml(truncate(feature.next_action || "-", 180))}</p>
+    `;
+    container.appendChild(card);
+  }
+}
+
 export function renderSnapshot(snapshot) {
   const container = qs("#snapshot");
   container.innerHTML = "";
@@ -724,155 +802,32 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const container = qs("#overview-metrics");
   if (!container) return;
   const tasks = status.tasks || [];
-  const truth = buildTruthMismatches(status, orchState, approvalQueue);
-  const bundleRuntime = dashboardBundle?.runtime_summary || {};
-  const bundleExecution = dashboardBundle?.execution_summary || {};
-  const queueEvents = truth.queueEvents;
-  const approvalPending = (approvalQueue?.pending || []).length;
-  const activeWorkerRows = truth.liveWorkers.filter((w) => w.bucket === "running");
-  const activeWorkers = Number.isFinite(bundleRuntime.running_workers) ? bundleRuntime.running_workers : activeWorkerRows.length;
-  const supervisor = orchState?.supervisor || {};
-  const supervisorHeartbeat = supervisor?.last_heartbeat_at || orchState?.last_heartbeat_at || null;
-  const readyNow = tasks.filter((task) => {
-    if (String(task.status || "").toLowerCase() !== "todo") return false;
-    return (task.depends_on || []).every((depId) => String(tasks.find((candidate) => candidate.id === depId)?.status || "done").toLowerCase() === "done");
-  });
-  const activeTasks = tasks.filter((task) => ["in_progress", "review"].includes(String(task.status || "").toLowerCase()));
+  const summary = dashboardBundle?.execution_summary || {};
 
-  function renderTaskDetail(task) {
-    return `
-      <div class="metric-task-item">
-        <div class="metric-task-head">
-          <strong>${task.id}</strong>
-          <span class="status-pill status-${task.status}">${statusLabel(task.status)}</span>
-        </div>
-        <div class="metric-task-meta">
-          <span class="chip">Owner ${task.owner}</span>
-          <span class="chip">Reviewer ${task.reviewer}</span>
-        </div>
-        <p class="metric-task-copy">${truncate(task.summary_zh || task.title || "", 80)}</p>
-      </div>
-    `;
-  }
-
-  function renderQueueDetail(event) {
-    return `
-      <div class="metric-task-item">
-        <div class="metric-task-head">
-          <strong>${event.task_id || event.id || "-"}</strong>
-          <span class="status-pill status-${event.status || "pending"}">${statusLabel(event.status || "pending")}</span>
-        </div>
-        <div class="metric-task-meta">
-          <span class="chip">${actorLabel(event.logical_agent_id, event.provider)}</span>
-          <span class="chip">${event.reason || "-"}</span>
-          <span class="chip">${timeAgo(event.last_event_at || event.last_attempt_at || event.processed_at)}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderWorkerDetail(worker) {
-    const lifecycle = workerLifecycleBadge(worker);
-    return `
-      <div class="metric-task-item">
-        <div class="metric-task-head">
-          <strong>${worker.task_id || worker.run_id || "-"}</strong>
-          <span class="status-pill status-${worker.status || "running"}">${statusLabel(worker.status || "running")}</span>
-          ${lifecycle ? `<span class="chip ${lifecycle.className}">${lifecycle.label}</span>` : ""}
-        </div>
-        <div class="metric-task-meta">
-          <span class="chip">${worker.display_actor}</span>
-          <span class="chip">${worker.reason || worker.mode || "-"}</span>
-          <span class="chip">${timeAgo(worker.last_event_at || worker.started_at)}</span>
-        </div>
-      </div>
-    `;
-  }
+  // Task status counts — use bundle values where available (bundle may cover
+  // all historical waves), fall back to local task list counts.
+  const todo          = tasks.filter((t) => String(t.status || "").toLowerCase() === "todo").length;
+  const inProgress    = Number.isFinite(summary.in_progress)     ? summary.in_progress     : tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
+  const review        = Number.isFinite(summary.in_review)       ? summary.in_review       : tasks.filter((t) => String(t.status || "").toLowerCase() === "review").length;
+  const reviewApproved= Number.isFinite(summary.review_approved) ? summary.review_approved : tasks.filter((t) => String(t.status || "").toLowerCase() === "review_approved").length;
+  const done          = Number.isFinite(summary.done)            ? summary.done            : tasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
+  const blocked       = Number.isFinite(summary.blocked)         ? summary.blocked         : tasks.filter((t) => String(t.status || "").toLowerCase() === "blocked").length;
 
   const items = [
-    {
-      label: "Supervisor",
-      value: supervisorHeartbeat ? "Alive" : "No heartbeat",
-      note: supervisorHeartbeat
-        ? `Heartbeat ${timeAgo(supervisorHeartbeat)} · PID ${supervisor?.pid || "-"}`
-        : "runtime state 沒有 heartbeat，需先檢查 supervisor。",
-    },
-    {
-      label: "Running Workers",
-      value: activeWorkers,
-      note: activeWorkers ? "目前真的在跑的 live workers" : "目前沒有 live running worker",
-      details: activeWorkerRows,
-      emptyLabel: "目前沒有 active worker",
-      renderItem: renderWorkerDetail,
-    },
-    {
-      label: "Dispatch Queue",
-      value: Number.isFinite(bundleRuntime.queue_depth) ? bundleRuntime.queue_depth : queueEvents.length,
-      note: queueEvents.length ? "有事件待處理" : "目前清空",
-      details: queueEvents,
-      emptyLabel: "目前沒有 dispatch queue 項目",
-      renderItem: renderQueueDetail,
-    },
-    {
-      label: "Approval Queue",
-      value: Number.isFinite(bundleRuntime.pending_approvals) ? bundleRuntime.pending_approvals : approvalPending,
-      note: approvalPending ? "有待批准項目" : "目前清空",
-    },
-    {
-      label: "Execution Active",
-      value: Number.isFinite(bundleExecution.in_progress) ? bundleExecution.in_progress + (bundleExecution.in_review || 0) : activeTasks.length,
-      note: `Ready now ${Number.isFinite(bundleExecution.ready_now) ? bundleExecution.ready_now : readyNow.length} · Review ${Number.isFinite(bundleExecution.in_review) ? bundleExecution.in_review : tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length}`,
-      tasks: activeTasks,
-      emptyLabel: "目前沒有 active execution task",
-    },
-    {
-      label: "Truth Mismatches",
-      value: truth.counts.total,
-      note: truth.counts.total
-        ? `High ${truth.counts.high} · Medium ${truth.counts.medium}`
-        : "runtime / execution / planning 目前沒有明顯不一致",
-      details: truth.mismatches,
-      emptyLabel: "目前沒有 mismatch",
-      renderItem: (item) => `
-        <div class="metric-task-item mismatch-${item.severity}">
-          <div class="metric-task-head">
-            <strong>${item.task_id || item.worker_run_id || item.queue_event_id || "-"}</strong>
-            <span class="status-pill status-${item.severity === "high" ? "blocked" : "pending"}">${item.severity}</span>
-          </div>
-          <p class="metric-task-copy">${item.title}</p>
-          <p class="metric-task-copy">${truncate(item.summary, 90)}</p>
-          ${item.resolution_hint ? `<p class="metric-task-copy">Hint: ${truncate(item.resolution_hint, 90)}</p>` : ""}
-        </div>
-      `,
-    },
+    { label: "待開始",    value: todo,           tone: "" },
+    { label: "進行中",    value: inProgress,     tone: inProgress  ? "card-active"   : "" },
+    { label: "待審查",    value: review,         tone: review      ? "card-review"   : "" },
+    { label: "待收尾",    value: reviewApproved, tone: reviewApproved ? "card-review" : "" },
+    { label: "完成",      value: done,           tone: "card-done" },
+    { label: "阻塞",      value: blocked,        tone: blocked     ? "card-blocked"  : "" },
   ];
 
-  container.innerHTML = items.map((item) => {
-    const taskList = Array.isArray(item.tasks) ? item.tasks : [];
-    const detailList = Array.isArray(item.details) ? item.details : [];
-    const detailRender = item.renderItem || renderTaskDetail;
-    const detailRows = item.details ? detailList : taskList;
-    const detailHtml = detailRows.length
-      ? `
-        <details class="metric-details">
-          <summary>查看 ${detailRows.length} 個項目</summary>
-          <div class="metric-task-list">
-            ${detailRows.map((entry) => detailRender(entry)).join("")}
-          </div>
-        </details>
-      `
-      : (item.tasks || item.details)
-        ? `<div class="metric-empty">${item.emptyLabel || "目前沒有項目"}</div>`
-        : "";
-    return `
-      <article class="metric-card">
-        <div class="metric-label">${item.label}</div>
-        <div class="metric-value">${item.value}</div>
-        <div class="metric-note">${item.note}</div>
-        ${detailHtml}
-      </article>
-    `;
-  }).join("");
+  container.innerHTML = items.map((item) => `
+    <article class="metric-card ${item.tone}">
+      <div class="metric-label">${item.label}</div>
+      <div class="metric-value">${item.value}</div>
+    </article>
+  `).join("");
 }
 
 function executionStatusCounts(status, dashboardBundle = null) {
@@ -887,6 +842,9 @@ function executionStatusCounts(status, dashboardBundle = null) {
     blocked: Number.isFinite(summary.blocked) ? summary.blocked : tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length,
     todo: tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     readyNow: Number.isFinite(summary.ready_now) ? summary.ready_now : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
+    dependencyReady: Number.isFinite(summary.dependency_ready)
+      ? summary.dependency_ready
+      : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     liveAttached: Number.isFinite(summary.live_attached) ? summary.live_attached : 0,
     mismatchCount: Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : 0,
   };
@@ -1320,6 +1278,10 @@ export function renderPlanningOverview(planningState, status, dashboardBundle = 
   const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const decision = planningDecisionSummary(planning, status);
   const highlights = planningHighlights(planning);
+  const activeSession = dashboardBundle?.planning_summary?.active_session || {};
+  const sessionUpdatedAt = planning.updated_at || activeSession.updated_at || null;
+  const sessionScope = planning.objective || planning.summary || "這輪 planning 尚未寫入 scope 摘要。";
+  const sessionRef = planning.planning_dir || activeSession.planning_dir || planning.session_file || activeSession.session_file || "-";
 
   container.innerHTML = `
     <div class="planning-hero">
@@ -1331,6 +1293,12 @@ export function renderPlanningOverview(planningState, status, dashboardBundle = 
           </div>
           <span class="status-pill ${decision.tone}">${statusLabel(planning.status)}</span>
         </div>
+        <div class="inline-summary">
+          <span class="chip">Phase ${planning.phase || "-"}</span>
+          <span class="chip">Updated ${formatTime(sessionUpdatedAt)}</span>
+          <span class="chip">Session ref ${escapeHtml(sessionRef)}</span>
+        </div>
+        <p class="card-copy">${sessionScope}</p>
         <p class="body-copy">${decision.body}</p>
         <div class="planning-kpis">
           <span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>
@@ -1742,7 +1710,16 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
   const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const executionCounts = executionStatusCounts(status, dashboardBundle);
   const bridgePercent = proposalStats.total ? Math.round((proposalStats.materialized / proposalStats.total) * 100) : (planning.switch_gate?.ready_to_materialize ? 100 : 0);
-  const executionPercent = executionCounts.total ? Math.round((executionCounts.done / executionCounts.total) * 100) : 0;
+
+  const localTasks = status.tasks || [];
+  const localDone = localTasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
+  const currentWaveTotal = proposalStats.total > 0 ? proposalStats.total : localTasks.length;
+  const currentWaveDone = proposalStats.total > 0 ? proposalStats.done : localDone;
+  const executionPercent = currentWaveTotal ? Math.round((currentWaveDone / currentWaveTotal) * 100) : 0;
+  const historicalDone = executionCounts.done;
+  const executionNote = historicalDone > currentWaveDone
+    ? `${currentWaveDone}/${currentWaveTotal} 本波次 · 歷史共 ${historicalDone} done`
+    : `${currentWaveDone}/${currentWaveTotal} 正式完成`;
 
   const items = [
     {
@@ -1760,7 +1737,7 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
     {
       label: "Execution 完成度",
       value: `${executionPercent}%`,
-      note: `${executionCounts.done}/${executionCounts.total} 正式完成`,
+      note: executionNote,
       tone: executionCounts.blocked ? "status-review" : "status-ready",
     },
   ];
@@ -2021,12 +1998,14 @@ export function renderExecutionSummary(status, orchState, dashboardBundle = null
     if (String(task.status || "").toLowerCase() !== "todo") return false;
     return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
   }).length;
+  const dependencyReady = Number.isFinite(summary.dependency_ready) ? summary.dependency_ready : readyNow;
   const activeNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length;
   const reviewNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
   const blockedNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length;
   const attachedNow = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
   const cards = [
-    { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "前置都完成，隨時可以開工的 todo task" },
+    { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "lane 健康且目前空閒，supervisor 這一輪真的能 dispatch 的 todo task" },
+    { label: "Deps Ready", value: dependencyReady, note: "依賴都完成，但可能仍在等 lane 恢復、空出，或避開 sidecar-only/guardrail 限制" },
     { label: "In Progress", value: Number.isFinite(summary.in_progress) ? summary.in_progress : activeNow, note: "task board 上已進入 in_progress 的任務" },
     { label: "In Review", value: Number.isFinite(summary.in_review) ? summary.in_review : reviewNow, note: "正在 review lane 的任務" },
     { label: "Live Attached", value: Number.isFinite(summary.live_attached) ? summary.live_attached : attachedNow, note: "目前有 live running worker 真的掛在 task 上" },
@@ -2109,10 +2088,12 @@ export function renderBoardSummary(status, orchState, dashboardBundle = null) {
     if (String(task.status || "").toLowerCase() !== "todo") return false;
     return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
   }).length;
+  const dependencyReady = Number.isFinite(summary.dependency_ready) ? summary.dependency_ready : readyCount;
   const reviewCount = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
   const attachedCount = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
   const chips = [
     `<span class="chip">Ready ${Number.isFinite(summary.ready_now) ? summary.ready_now : readyCount}</span>`,
+    `<span class="chip">Deps ${dependencyReady}</span>`,
     `<span class="chip">Review ${Number.isFinite(summary.in_review) ? summary.in_review : reviewCount}</span>`,
     `<span class="chip">Live attached ${Number.isFinite(summary.live_attached) ? summary.live_attached : attachedCount}</span>`,
     `<span class="chip ${truth.counts.total ? "status-blocked" : ""}">Mismatch ${truth.counts.total}</span>`,
@@ -2169,6 +2150,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
         <span class="status-pill ${supervisorHeartbeat ? "status-working" : "status-blocked"}">${supervisorHeartbeat ? "運作中" : "無資料"}</span>
       <span class="chip">PID：${runtimeSummary.supervisor_pid || supervisorPid}</span>
         <span class="chip">啟動：${formatTime(supervisorStartedAt)}</span>
+      <span class="chip">絕對時間：${DISPLAY_TIME_ZONE_LABEL}</span>
       <span class="chip">Heartbeat：${timeAgo(runtimeSummary.heartbeat_at || supervisorHeartbeat)}</span>
         <span class="chip">上次掃描：${timeAgo(lastScan)}</span>
         <span class="chip">Active Workers：${activeWorkerCount}</span>
@@ -2442,6 +2424,120 @@ function dashboardFocusMode(planning) {
   return "execution";
 }
 
+const LOVABLE_STAGE_LABEL = {
+  needs_ui: "等待 Lovable 實作",
+  contract_ready: "Contract Ready",
+  waiting_for_lovable: "等待 Lovable 回傳",
+  ui_done_received: "UI Done — 待整合",
+  bff_gap_open: "BFF Gap 待解",
+  frontend_feedback_received: "Feedback 收到",
+  done: "已完成",
+};
+const LOVABLE_STAGE_TONE = {
+  needs_ui: "",
+  contract_ready: "",
+  waiting_for_lovable: "",
+  ui_done_received: "card-review",
+  bff_gap_open: "card-blocked",
+  frontend_feedback_received: "card-active",
+  done: "card-done",
+};
+
+function deriveLovableStage(f) {
+  const latestReq = f.latest_request || {};
+  const reqType = String(latestReq.type || "").replace(/-/g, "_");
+  if (reqType === "frontend_feedback") return "frontend_feedback_received";
+  if (reqType === "ui_done") return "ui_done_received";
+  const bffGapType = String((f.latest_request || {}).type || "").replace(/-/g, "_");
+  if (bffGapType === "bff_gap" && !(f.latest_request || {}).resolved) return "bff_gap_open";
+  if (f.lovable_task || f.lovable_task_path) return "waiting_for_lovable";
+  const ct = String(f.current_payload_type || f.status || "").replace(/-/g, "_");
+  if (ct === "contract_ready") return "contract_ready";
+  return "needs_ui";
+}
+
+export function renderLovableCoordination(orchState, status) {
+  const overview = qs("#lovable-overview");
+  const featureList = qs("#lovable-features");
+  const panelSummary = qs("#lovable-panel-summary");
+  if (!overview || !featureList) return;
+
+  const coord = orchState?.coordination || {};
+  const rawFeatures = coord.features || {};
+  const features = Object.values(rawFeatures);
+
+  // Build summary counts
+  const counts = { needs_ui: 0, contract_ready: 0, waiting_for_lovable: 0, ui_done_received: 0, bff_gap_open: 0, frontend_feedback_received: 0, done: 0 };
+  for (const f of features) {
+    const stage = deriveLovableStage(f);
+    const key = Object.prototype.hasOwnProperty.call(counts, stage) ? stage : "needs_ui";
+    counts[key]++;
+  }
+
+  // Map coordination tasks from status.tasks to features
+  const coordTasks = (status?.tasks || []).filter((t) => {
+    const meta = t.coordination || t.metadata?.coordination || {};
+    return meta.feature_id || String(t.task_class || "") === "coordination";
+  });
+
+  // Overview metrics
+  const metricItems = [
+    { label: "追蹤中", value: features.length, tone: "" },
+    { label: "等待中", value: counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable, tone: "" },
+    { label: "待整合", value: counts.ui_done_received, tone: counts.ui_done_received ? "card-review" : "" },
+    { label: "BFF Gap", value: counts.bff_gap_open, tone: counts.bff_gap_open ? "card-blocked" : "" },
+    { label: "整合任務", value: coordTasks.length, tone: coordTasks.length ? "card-active" : "" },
+    { label: "已完成", value: counts.done, tone: "card-done" },
+  ];
+  overview.innerHTML = metricItems.map((m) => `
+    <article class="metric-card ${m.tone}">
+      <div class="metric-label">${m.label}</div>
+      <div class="metric-value">${m.value}</div>
+    </article>
+  `).join("");
+
+  // Panel summary
+  if (panelSummary) {
+    const pending = counts.ui_done_received + counts.bff_gap_open;
+    panelSummary.textContent = pending ? `${pending} 待處理` : features.length ? "進行中" : "無追蹤項目";
+  }
+
+  if (!features.length) {
+    featureList.innerHTML = `<p class="empty">目前沒有追蹤中的 Lovable feature。</p>`;
+    return;
+  }
+
+  featureList.innerHTML = features.map((f) => {
+    const stage = deriveLovableStage(f);
+    const tone = LOVABLE_STAGE_TONE[stage] || "";
+    const stageLabel = LOVABLE_STAGE_LABEL[stage] || stage;
+    const featureId = escapeHtml(f.feature_id || "-");
+    const screen = escapeHtml(f.screen || "-");
+    const nextAction = escapeHtml(f.next_action || "");
+
+    // Find linked execution task(s)
+    const linked = coordTasks.filter((t) => {
+      const meta = t.coordination || t.metadata?.coordination || {};
+      return meta.feature_id === f.feature_id;
+    });
+    const linkedHtml = linked.length
+      ? linked.map((t) => `<span class="chip">${escapeHtml(t.id)} · ${escapeHtml(t.status)}</span>`).join(" ")
+      : "";
+
+    return `
+      <article class="stack-card ${tone}">
+        <div class="stack-head">
+          <strong>${featureId}</strong>
+          <span class="status-pill">${stageLabel}</span>
+        </div>
+        <p class="card-copy">畫面：${screen}</p>
+        ${nextAction ? `<p class="card-copy">${nextAction}</p>` : ""}
+        ${linkedHtml ? `<div class="lane-meta">${linkedHtml}</div>` : ""}
+      </article>
+    `;
+  }).join("");
+}
+
 export function applyModeVisibility(status, planningState) {
   const planning = normalizePlanningState(planningState);
   const planningPanel = qs("#planning-panel");
@@ -2462,9 +2558,7 @@ export function applyModeVisibility(status, planningState) {
     ? true
     : focusMode === "planning"
       ? false
-      : storedPreference
-        ? storedPreference === "collapsed"
-        : defaultCollapsed;
+      : true; // execution mode: always start collapsed, ignore stored preference
 
   planningPanel.hidden = shouldHidePlanning;
   planningPanel.classList.toggle("mode-collapsed", collapsed);
@@ -2475,6 +2569,8 @@ export function applyModeVisibility(status, planningState) {
 
   const summaryChips = [
     `<span class="chip">${focusMode === "planning" ? "目前焦點" : "非目前焦點"}</span>`,
+    `<span class="chip">${planning.session_id || "no-session"}</span>`,
+    `<span class="chip">Phase ${planning.phase || "-"}</span>`,
     `<span class="chip">Session ${statusLabel(planning.status)}</span>`,
     `<span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>`,
     `<span class="chip">Can materialize ${planning.switch_gate?.ready_to_materialize ? "Yes" : "No"}</span>`,

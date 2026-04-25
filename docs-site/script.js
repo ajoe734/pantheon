@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260413-1745";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260416-1340";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260413-1745";
+} from "./js/dashboard-core.js?v=20260416-1340";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -27,6 +27,8 @@ import {
   renderExecutionSectionSummary,
   renderExecutionSummary,
   renderFocusSummary,
+  renderLovableCoordination,
+  renderLovableCoordinationSummary,
   renderOverviewMetrics,
   renderPlanningArtifacts,
   renderPlanningGate,
@@ -43,9 +45,39 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260413-1745";
+} from "./js/dashboard-renderers.js?v=20260416-1340";
 
 let renderInFlight = false;
+
+function runRenderStep(label, failures, fn) {
+  try {
+    fn();
+  } catch (error) {
+    console.error(`[dashboard] ${label} failed`, error);
+    failures.push({
+      label,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function renderFailureNotice(failures) {
+  const alertStrip = qs("#alert-strip");
+  if (!alertStrip || !failures.length) return;
+  const card = document.createElement("article");
+  card.className = "alert-card alert-warning";
+  card.innerHTML = `
+    <div class="stack-head">
+      <strong>部分面板渲染失敗</strong>
+      <span class="status-pill status-blocked">${failures.length} 項</span>
+    </div>
+    <p class="card-copy">資料已載入，但有部分前端面板在瀏覽器端渲染失敗；其他區塊仍會繼續顯示。</p>
+    <ul class="note-list compact-list">
+      ${failures.slice(0, 5).map((failure) => `<li><strong>${failure.label}</strong>：${failure.message}</li>`).join("")}
+    </ul>
+  `;
+  alertStrip.prepend(card);
+}
 
 async function render({ syncFirst = false } = {}) {
   if (renderInFlight) return;
@@ -91,34 +123,37 @@ async function render({ syncFirst = false } = {}) {
     document.title = `${projectName} 協作看板`;
 
     const agentStates = deriveAgentState(status, orchState);
+    const renderFailures = [];
 
-    renderProgressBar(status.tasks);
-    renderProgressBreakdown(status, planningState, dashboardBundle);
-    renderOverviewMetrics(status, orchState, approvalQueue, dashboardBundle);
-    renderControlPlaneStrip(status, planningState, orchState, dashboardBundle);
-    renderFocusSummary(status, planningState, orchState, dashboardBundle);
-    renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle);
-    renderBridgeCard(status, planningState, dashboardBundle);
-    renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle);
-    applyModeVisibility(status, planningState);
-    renderPlanningOverview(planningState, status, dashboardBundle);
-    renderPlanningArtifacts(planningState);
-    renderPlanningRounds(planningState);
-    renderPlanningGate(planningState, status);
-    renderPlanningIssues(planningState);
-    renderPlanningProposals(planningState, status, dashboardBundle);
-    renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle);
-    renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle);
-    renderWorkload(status);
-    renderDeliveryLayers(status, planningState);
-    renderAgentLanes(status, agentStates);
-    renderExecutionSummary(status, orchState, dashboardBundle);
-    renderBoardSummary(status, orchState, dashboardBundle);
-    renderTaskBoard(status, orchState, dashboardBundle);
-    renderReviewNotes(status);
-    renderAuditStatus(status);
-    renderDependencySchedule(status);
-    renderStackList(
+    runRenderStep("progress_bar", renderFailures, () => renderProgressBar(status.tasks));
+    runRenderStep("progress_breakdown", renderFailures, () => renderProgressBreakdown(status, planningState, dashboardBundle));
+    runRenderStep("overview_metrics", renderFailures, () => renderOverviewMetrics(status, orchState, approvalQueue, dashboardBundle));
+    runRenderStep("control_plane_strip", renderFailures, () => renderControlPlaneStrip(status, planningState, orchState, dashboardBundle));
+    runRenderStep("focus_summary", renderFailures, () => renderFocusSummary(status, planningState, orchState, dashboardBundle));
+    runRenderStep("alert_strip", renderFailures, () => renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle));
+    runRenderStep("bridge_card", renderFailures, () => renderBridgeCard(status, planningState, dashboardBundle));
+    runRenderStep("execution_section_summary", renderFailures, () => renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle));
+    runRenderStep("mode_visibility", renderFailures, () => applyModeVisibility(status, planningState));
+    runRenderStep("planning_overview", renderFailures, () => renderPlanningOverview(planningState, status, dashboardBundle));
+    runRenderStep("planning_artifacts", renderFailures, () => renderPlanningArtifacts(planningState));
+    runRenderStep("planning_rounds", renderFailures, () => renderPlanningRounds(planningState));
+    runRenderStep("planning_gate", renderFailures, () => renderPlanningGate(planningState, status));
+    runRenderStep("planning_issues", renderFailures, () => renderPlanningIssues(planningState));
+    runRenderStep("planning_proposals", renderFailures, () => renderPlanningProposals(planningState, status, dashboardBundle));
+    runRenderStep("system_status", renderFailures, () => renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle));
+    runRenderStep("truth_mismatches", renderFailures, () => renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle));
+    runRenderStep("workload", renderFailures, () => renderWorkload(status));
+    runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState));
+    runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
+    runRenderStep("lovable_coordination_summary", renderFailures, () => renderLovableCoordinationSummary(dashboardBundle));
+    runRenderStep("lovable_coordination", renderFailures, () => renderLovableCoordination(orchState, status));
+    runRenderStep("execution_summary", renderFailures, () => renderExecutionSummary(status, orchState, dashboardBundle));
+    runRenderStep("board_summary", renderFailures, () => renderBoardSummary(status, orchState, dashboardBundle));
+    runRenderStep("task_board", renderFailures, () => renderTaskBoard(status, orchState, dashboardBundle));
+    runRenderStep("review_notes", renderFailures, () => renderReviewNotes(status));
+    runRenderStep("audit_status", renderFailures, () => renderAuditStatus(status));
+    runRenderStep("dependency_schedule", renderFailures, () => renderDependencySchedule(status));
+    runRenderStep("handoff_list", renderFailures, () => renderStackList(
       "#handoff-list",
       (status.handoffs || []).filter((handoff) => handoff.status !== "done"),
       "目前沒有待交接項目。",
@@ -131,8 +166,8 @@ async function render({ syncFirst = false } = {}) {
         <p class="card-copy">${handoff.message}</p>
         <p class="card-copy">${formatTime(handoff.created_at)}</p>
       `
-    );
-    renderStackList(
+    ));
+    runRenderStep("blocker_list", renderFailures, () => renderStackList(
       "#blocker-list",
       (status.blockers || []).filter((blocker) => blocker.status === "open"),
       "目前沒有阻塞項目。",
@@ -145,9 +180,10 @@ async function render({ syncFirst = false } = {}) {
         <p>等待對象：${blocker.waiting_for}</p>
         <p class="card-copy">${blocker.message}</p>
       `
-    );
-    renderSnapshot(snapshot);
-    renderActivity(combinedActivity);
+    ));
+    runRenderStep("snapshot", renderFailures, () => renderSnapshot(snapshot));
+    runRenderStep("activity", renderFailures, () => renderActivity(combinedActivity));
+    runRenderStep("render_failure_notice", renderFailures, () => renderFailureNotice(renderFailures));
   } catch (error) {
     qs("#objective").textContent = `協作資料載入失敗：${error.message}`;
   } finally {
