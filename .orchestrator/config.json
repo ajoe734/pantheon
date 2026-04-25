@@ -26,11 +26,13 @@
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
-    "auto_refresh_provider_capabilities": false
+    "auto_refresh_provider_capabilities": true
   },
   "provider_guardrails": {
     "pause_on_capacity_failure": true,
-    "capacity_pause_seconds": 900
+    "pause_on_auth_failure": true,
+    "capacity_pause_seconds": 900,
+    "auth_pause_seconds": 900
   },
   "worker_retry": {
     "enabled": true,
@@ -77,12 +79,14 @@
     "owner_fallbacks": {
       "Claude": [
         "Codex",
+        "Codex2",
         "Qwen",
         "Copilot",
         "Gemini"
       ],
       "Gemini": [
         "Codex",
+        "Codex2",
         "Qwen",
         "Claude",
         "Copilot"
@@ -103,12 +107,14 @@
       ],
       "Copilot": [
         "Codex",
+        "Codex2",
         "Qwen",
         "Claude",
         "Gemini"
       ],
       "Qwen": [
         "Codex",
+        "Codex2",
         "Claude",
         "Copilot",
         "Gemini"
@@ -117,12 +123,14 @@
     "reviewer_fallbacks": {
       "Claude": [
         "Codex",
+        "Codex2",
         "Qwen",
         "Copilot",
         "Gemini"
       ],
       "Gemini": [
         "Codex",
+        "Codex2",
         "Qwen",
         "Claude",
         "Copilot"
@@ -143,12 +151,14 @@
       ],
       "Copilot": [
         "Codex",
+        "Codex2",
         "Qwen",
         "Claude",
         "Gemini"
       ],
       "Qwen": [
         "Codex",
+        "Codex2",
         "Claude",
         "Copilot",
         "Gemini"
@@ -284,7 +294,7 @@
       "file_inbox_path": ".llm-inbox/codex.md"
     },
     "codex2": {
-      "display_name": "Codex (2)",
+      "display_name": "Codex2",
       "provider": "codex2",
       "adapter": "codex",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -401,7 +411,7 @@
       },
       "codex": {
         "cli": "codex",
-        "api_key_env": "OPENAI_API_KEY_2",
+        "codex_home": "~/.codex2",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -469,7 +479,7 @@
         "output_format": "stream-json",
         "include_partial_messages": false,
         "channel": "CI",
-        "auth_type": null,
+        "auth_type": "openai",
         "model": null,
         "model_env": "OPENAI_MODEL",
         "openai_api_key_env": "OPENAI_API_KEY",
