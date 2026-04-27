@@ -64,6 +64,20 @@ def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta()
                 "artifacts": "2026-04-19T20:12:58Z",
             },
         }
+        assert payload["meta"]["governed_evidence"]["rt-20260419-007"] == {
+            "evidence_bundle_id": "evbundle-rw02-rt-20260419-007",
+            "citations": ["ticket:rt-20260419-007"],
+            "matched_items": [
+                {
+                    "knowledge_object_id": "rt-20260419-007",
+                    "source_id": "src-rw02-rt-20260419-007",
+                    "evidence_item_id": "evi-rw02-rt-20260419-007",
+                    "content_ref": "/research/tickets/rt-20260419-007#search-index",
+                    "citation_label": "ticket:rt-20260419-007",
+                    "matched_terms": ["momentum", "decay", "volatility"],
+                }
+            ],
+        }
 
 
 def test_rw02_search_contract_applies_backend_owned_filters() -> None:

@@ -4347,6 +4347,7 @@ class ReadSurfaceStore:
         if allow_local_snapshot_fallback is None:
             allow_local_snapshot_fallback = False
         self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
+        self._last_governed_search_refs: Dict[str, Dict[str, Any]] = {}
         self._load_or_seed()
 
     def _load_or_seed(self) -> None:
@@ -7276,6 +7277,91 @@ class ReadSurfaceStore:
             },
         }
 
+    def get_last_governed_search_refs(self) -> Dict[str, Dict[str, Any]]:
+        return json.loads(json.dumps(self._last_governed_search_refs))
+
+    def _build_research_search_repository(self, documents: List[Dict[str, Any]]):
+        from services.knowledge.evidence import (
+            EvidenceBundleBuilder,
+            EvidenceItem,
+            InMemoryEvidenceRepository,
+        )
+        from services.source_ingestion.connectors import SourceRecord
+
+        repository = InMemoryEvidenceRepository()
+        builder = EvidenceBundleBuilder(repository)
+        for document in documents:
+            result_id = str(document.get("result_id") or "").strip()
+            if not result_id:
+                continue
+            match_type = str(document.get("match_type") or "document").strip().lower()
+            links = document.get("links") if isinstance(document.get("links"), dict) else {}
+            result_detail = str(
+                links.get("result_detail")
+                or (
+                    f"/research/tickets/{result_id}"
+                    if match_type == "ticket"
+                    else f"/research/{match_type}s/{result_id}"
+                )
+            )
+            source = SourceRecord(
+                source_id=f"src-rw02-{result_id}",
+                connector_id="bff-rw02-search-index",
+                source_type="internal_note",
+                title=str(document.get("title") or result_id),
+                content_ref=result_detail,
+                metadata={
+                    "provider": "pantheon-bff-read-model",
+                    "raw_uri": result_detail,
+                    "license_scope": "internal",
+                    "access_scope": ["operator", "research"],
+                    "match_type": match_type,
+                },
+                trace_id=str(document.get("trace_id") or f"trace-rw02-{result_id}"),
+            )
+            item = EvidenceItem(
+                evidence_item_id=f"evi-rw02-{result_id}",
+                source_id=source.source_id,
+                item_type="text_chunk",
+                content_ref=f"{result_detail}#search-index",
+                citation_label=f"{match_type}:{result_id}",
+                body=str(document.get("excerpt") or document.get("title") or result_id),
+                confidence=float(document.get("confidence") or 1.0),
+                access_scope=["operator", "research"],
+                trace_refs=[source.trace_id],
+                metadata={"linked_ticket_id": document.get("linked_ticket_id")},
+            )
+            bundle = builder.build_bundle(
+                source_records=[source],
+                evidence_items=[item],
+                summary=str(document.get("excerpt") or document.get("title") or result_id),
+                created_by="bff-rw02-search-index",
+                evidence_bundle_id=f"evbundle-rw02-{result_id}",
+                confidence=float(document.get("confidence") or item.confidence),
+                license_scope="internal",
+                metadata={
+                    "result_id": result_id,
+                    "match_type": match_type,
+                    "linked_ticket_id": document.get("linked_ticket_id"),
+                    "result_detail": result_detail,
+                },
+            )
+            builder.build_knowledge_object(
+                knowledge_object_id=result_id,
+                source_record=source,
+                evidence_item=item,
+                evidence_bundle=bundle,
+                title=str(document.get("title") or result_id),
+                text=str(document.get("excerpt") or document.get("search_text") or document.get("title") or result_id),
+                source_type="internal_note",
+                keywords=[match_type, str(document.get("linked_ticket_status") or "")],
+                metadata={
+                    **json.loads(json.dumps(document)),
+                    "result_detail": result_detail,
+                },
+            )
+        return repository
+
     def list_research_search_results(
         self,
         *,
@@ -7286,6 +7372,7 @@ class ReadSurfaceStore:
     ) -> List[Dict[str, Any]]:
         documents = self._read_dataset_records("research_search_documents")
         if not documents:
+            self._last_governed_search_refs = {}
             return []
 
         ticket_status_by_id = {
@@ -7293,11 +7380,10 @@ class ReadSurfaceStore:
             for ticket in self._read_dataset_records("research_tickets")
             if str(ticket.get("ticket_id") or "").strip()
         }
-        query_terms = [token for token in str(query).strip().lower().split() if token]
         cutoff_days = self._date_range_cutoff_token(date_range)
         reference_now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        projected: List[Dict[str, Any]] = []
+        eligible_documents: List[Dict[str, Any]] = []
         for document in documents:
             document_match_type = str(document.get("match_type") or "").strip().lower()
             if document_match_type not in {"ticket", "experiment", "artifact"}:
@@ -7322,26 +7408,54 @@ class ReadSurfaceStore:
                     continue
                 if (reference_now - updated_at.replace(tzinfo=None)).days >= cutoff_days:
                     continue
+            eligible_documents.append(document)
 
-            search_text = " ".join(
-                [
-                    str(document.get("title") or ""),
-                    str(document.get("excerpt") or ""),
-                    str(document.get("search_text") or ""),
-                ]
-            ).lower()
-            matched_terms = sum(1 for token in query_terms if token in search_text)
-            if matched_terms == 0:
+        from services.search import SearchAccessContext, SearchGateway, SearchRequest
+
+        repository = self._build_research_search_repository(eligible_documents)
+        gateway = SearchGateway(repository)
+        response = gateway.search(
+            SearchRequest(
+                request_id="rw02-bff-search",
+                query=query,
+                persona_id="operator-workbench",
+                workspace_id="research-workbench",
+                source_types=["internal_note"],
+                top_k=max(len(eligible_documents), 1),
+                require_citations=True,
+                trace_id="trace-rw02-bff-search",
+                filters_applied={
+                    "match_type": match_type,
+                    "status": status,
+                    "date_range": date_range,
+                },
+            ),
+            SearchAccessContext(
+                persona_id="operator-workbench",
+                workspace_id="research-workbench",
+                environment="paper",
+                access_scopes=["operator", "research"],
+                license_scopes=["internal"],
+            ),
+        )
+
+        documents_by_id = {str(document.get("result_id") or ""): document for document in eligible_documents}
+        self._last_governed_search_refs = {
+            result.result_id: {
+                "evidence_bundle_id": result.evidence_bundle_id,
+                "citations": result.citations,
+                "matched_items": result.matched_items,
+            }
+            for result in response.results
+        }
+
+        projected: List[Dict[str, Any]] = []
+        for result in response.results:
+            document = documents_by_id.get(result.result_id)
+            if not document:
                 continue
-
-            title_text = str(document.get("title") or "").lower()
-            title_hits = sum(1 for token in query_terms if token in title_text)
-            base_score = float(document.get("relevance_score") or 0.0)
-            score = round(
-                min(0.999, max(base_score, base_score + matched_terms * 0.01 + title_hits * 0.015)),
-                3,
-            )
-
+            document_match_type = str(document.get("match_type") or "").strip().lower()
+            linked_ticket_id = str(document.get("linked_ticket_id") or "").strip()
             links = document.get("links") if isinstance(document.get("links"), dict) else {}
             projected.append(
                 {
@@ -7350,7 +7464,7 @@ class ReadSurfaceStore:
                     "title": str(document.get("title") or ""),
                     "excerpt": str(document.get("excerpt") or ""),
                     "linked_ticket_id": linked_ticket_id,
-                    "relevance_score": score,
+                    "relevance_score": result.relevance_score,
                     "links": {
                         "result_detail": str(
                             links.get("result_detail")
@@ -7365,19 +7479,8 @@ class ReadSurfaceStore:
                             or f"/research/tickets/{linked_ticket_id}"
                         ),
                     },
-                    "_updated_at": updated_at or datetime.min,
                 }
             )
-
-        projected.sort(
-            key=lambda item: (
-                float(item.get("relevance_score") or 0.0),
-                item.get("_updated_at") or datetime.min,
-            ),
-            reverse=True,
-        )
-        for item in projected:
-            item.pop("_updated_at", None)
         return projected
 
     # ------------------------------------------------------------------ #

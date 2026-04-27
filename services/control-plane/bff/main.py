@@ -7595,6 +7595,9 @@ async def search_research_corpus(
             "artifacts": source_watermarks.get("artifacts"),
         },
     }
+    governed_evidence = read_store.get_last_governed_search_refs()
+    if governed_evidence:
+        meta["governed_evidence"] = governed_evidence
     return {
         "data": page_items,
         "page_info": {
