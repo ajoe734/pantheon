@@ -66,23 +66,34 @@ durable outbox, DLQ, schema-registry, replay, and persistence primitives.
 
 Command rerun from repo root on 2026-04-27 UTC for this sidecar packet:
 
-1. `pytest services/foundation/tests -q` - PASS, `8 passed in 0.19s`
+1. `pytest services/foundation/tests -q` - PASS, `10 passed in 0.16s`
 
 The current foundation package file surface is:
 
 ```text
 services/foundation/__init__.py
 services/foundation/audit.py
+services/foundation/dead_letter.py
 services/foundation/envelopes.py
 services/foundation/exceptions.py
 services/foundation/idempotency.py
+services/foundation/outbox.py
 services/foundation/policy.py
+services/foundation/replay.py
 services/foundation/README.md
+services/foundation/schema_registry.py
 services/foundation/secrets.py
 services/foundation/serialization.py
+services/foundation/tests/__init__.py
+services/foundation/tests/test_event_replay_primitives.py
 services/foundation/tests/test_primitives.py
 services/foundation/types.py
 ```
+
+Note: the expanded event replay / outbox / DLQ / schema-registry files are
+repo-current downstream foundation surface and do not expand this sidecar's
+acceptance claim for `SD-FND-001`; persistence and replay closure remain scoped
+to the downstream foundation lane identified in the dependency map.
 
 ## 5. Dependency Map
 
