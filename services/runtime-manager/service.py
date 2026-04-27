@@ -44,9 +44,11 @@ _EXEC_RM_DIR = os.getenv(
     str(Path(__file__).resolve().parent.parent.parent
         / "services" / "execution" / "runtime-manager"),
 )
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
 
-if _EXEC_RM_DIR not in sys.path:
-    sys.path.insert(0, _EXEC_RM_DIR)
+for _path in (_EXEC_RM_DIR, _REPO_ROOT):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from runtime_binding import (  # noqa: E402
     RuntimeBinding,
@@ -63,6 +65,22 @@ from kill_switch_controller import (  # noqa: E402
     KillSwitchActionType,
     KillSwitchError,
     SafeModeState,
+)
+from services.foundation import (  # noqa: E402
+    ActorRef,
+    ActorType,
+    AuditAction,
+    AuthorityScope,
+    CommandEnvelope,
+    EnvironmentName,
+    EnvironmentScope,
+    ErrorEnvelope,
+    ErrorKind,
+    IdempotencyRecord,
+    PolicyDecision,
+    PolicyDecisionValue,
+    TraceContext,
+    foundation_id,
 )
 
 __all__ = [
@@ -86,10 +104,196 @@ _STAGE_ORDER = {
     "canary": 2,
     "live": 3,
 }
+_FOUNDATION_POLICY_VERSION = "2026-04-27"
+_KILL_SWITCH_FOUNDATION_OPERATION = "runtime_manager.kill_switch.dispatch"
 
 
 def _scope_allows_stage(allowed_deployment_scope: str, target_stage: str) -> bool:
     return _STAGE_ORDER.get(allowed_deployment_scope, -1) >= _STAGE_ORDER.get(target_stage, 999)
+
+
+def _foundation_environment_scope(request: Dict[str, Any]) -> EnvironmentScope:
+    context = request.get("context") if isinstance(request.get("context"), dict) else {}
+    raw = str(
+        request.get("environment")
+        or context.get("environment")
+        or context.get("target_stage")
+        or os.getenv("PANTHEON_ENV", "dev")
+    ).strip().lower()
+    if "live" in raw:
+        name = EnvironmentName.LIVE
+    elif "canary" in raw:
+        name = EnvironmentName.CANARY
+    elif "paper" in raw:
+        name = EnvironmentName.PAPER
+    elif "sandbox" in raw:
+        name = EnvironmentName.SANDBOX
+    else:
+        name = EnvironmentName.DEV
+    return EnvironmentScope(
+        name=name,
+        region=os.getenv("PANTHEON_REGION") or None,
+        timezone=os.getenv("PANTHEON_TIMEZONE", "UTC"),
+    )
+
+
+def _foundation_actor_ref(actor_id: str) -> ActorRef:
+    return ActorRef(
+        actor_type=ActorType.USER,
+        actor_id=str(actor_id or "runtime-manager-caller").strip() or "runtime-manager-caller",
+    )
+
+
+def _upstream_trace_payload(request: Dict[str, Any]) -> Dict[str, Any]:
+    foundation = request.get("foundation") if isinstance(request.get("foundation"), dict) else {}
+    trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else None
+    if trace is None and isinstance(request.get("trace_context"), dict):
+        trace = request.get("trace_context")
+    return dict(trace or {})
+
+
+def _foundation_trace_from_request(
+    request: Dict[str, Any],
+    *,
+    environment: EnvironmentScope,
+    actor_ref: ActorRef,
+) -> TraceContext:
+    upstream_trace = _upstream_trace_payload(request)
+    idempotency_key = str(
+        request.get("idempotency_key")
+        or upstream_trace.get("idempotency_key")
+        or ""
+    ).strip() or None
+    upstream_trace_id = str(upstream_trace.get("trace_id") or "").strip()
+    correlation_id = str(upstream_trace.get("correlation_id") or "").strip() or None
+    if upstream_trace_id:
+        return TraceContext(
+            trace_id=upstream_trace_id,
+            correlation_id=correlation_id or upstream_trace_id,
+            environment=environment,
+            actor_ref=actor_ref,
+            source_system="runtime-manager",
+            request_id=str(request.get("request_id") or "").strip() or None,
+            parent_span_id=str(upstream_trace.get("parent_span_id") or "").strip() or None,
+            causation_id=str(upstream_trace.get("request_id") or "").strip() or None,
+            idempotency_key=idempotency_key,
+        )
+    return TraceContext.new(
+        environment=environment,
+        actor_ref=actor_ref,
+        source_system="runtime-manager",
+        request_id=str(request.get("request_id") or "").strip() or None,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _kill_switch_foundation_payload(request: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "operation": _KILL_SWITCH_FOUNDATION_OPERATION,
+        "reason": request.get("reason"),
+        "capital_pool_id": request.get("capital_pool_id"),
+        "binding_id": request.get("binding_id"),
+        "severity": request.get("severity"),
+        "action_override": request.get("action_override"),
+        "fallback_artifact_id": request.get("fallback_artifact_id"),
+        "fallback_artifact_version": request.get("fallback_artifact_version"),
+        "context": request.get("context") or {},
+    }
+
+
+def _build_kill_switch_foundation_context(request: Dict[str, Any]) -> Dict[str, Any]:
+    environment = _foundation_environment_scope(request)
+    actor_ref = _foundation_actor_ref(str(request.get("actor_id") or ""))
+    target_id = str(request.get("capital_pool_id") or "unknown-capital-pool").strip()
+    authority_scope = AuthorityScope(
+        action=_KILL_SWITCH_FOUNDATION_OPERATION,
+        target_type="CapitalPool",
+        target_id=target_id,
+        environment=environment,
+        capital_pool_id=target_id,
+        runtime_id=str(request.get("binding_id") or "").strip() or None,
+    )
+    trace = _foundation_trace_from_request(
+        request,
+        environment=environment,
+        actor_ref=actor_ref,
+    )
+    payload = _kill_switch_foundation_payload(request)
+    command_envelope = CommandEnvelope.new(
+        command_type=_KILL_SWITCH_FOUNDATION_OPERATION,
+        actor_ref=actor_ref,
+        authority_scope=authority_scope,
+        payload=payload,
+        trace=trace,
+        idempotency_key=str(request.get("idempotency_key") or trace.idempotency_key or "").strip() or None,
+    )
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=command_envelope.idempotency_key,
+        operation_type=_KILL_SWITCH_FOUNDATION_OPERATION,
+        target_ref=authority_scope.target_ref,
+        request_payload=payload,
+        trace_id=command_envelope.trace.trace_id,
+    )
+    policy_decision = PolicyDecision.make(
+        policy_id="runtime-manager.kill-switch.fast-path",
+        policy_version=_FOUNDATION_POLICY_VERSION,
+        decision=PolicyDecisionValue.ALLOW,
+        actor_ref=actor_ref,
+        action=_KILL_SWITCH_FOUNDATION_OPERATION,
+        target_ref=authority_scope.target_ref,
+        environment=environment,
+        trace_id=command_envelope.trace.trace_id,
+    )
+    audit_action = AuditAction.record(
+        actor_ref=actor_ref,
+        action_type="runtime_manager.kill_switch.accepted",
+        target_ref=authority_scope.target_ref,
+        environment=environment,
+        reason=str(request.get("reason") or "kill-switch dispatch"),
+        trace=command_envelope.trace,
+        payload=payload,
+        policy_decision_ref=policy_decision.decision_id,
+        metadata={"path": "RuntimeManagerService.execute_kill_switch"},
+    )
+    return {
+        "trace_context": command_envelope.trace,
+        "command_envelope": command_envelope,
+        "idempotency_record": idempotency_record,
+        "policy_decision": policy_decision,
+        "audit_action": audit_action,
+        "request_payload": payload,
+    }
+
+
+def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "trace_context": context["trace_context"].to_dict(),
+        "command_envelope": context["command_envelope"].to_dict(),
+        "idempotency_record": context["idempotency_record"].to_dict(),
+        "policy_decision": context["policy_decision"].to_dict(),
+        "audit_action": context["audit_action"].to_dict(),
+    }
+
+
+def _foundation_idempotency_conflict(
+    context: Dict[str, Any],
+    *,
+    existing_command_id: str,
+) -> ErrorEnvelope:
+    command_envelope: CommandEnvelope = context["command_envelope"]
+    idempotency_record: IdempotencyRecord = context["idempotency_record"]
+    return ErrorEnvelope(
+        error_id=foundation_id("err"),
+        error_code="IDEMPOTENCY_CONFLICT",
+        message="Idempotency key was already used with a different kill-switch payload",
+        error_kind=ErrorKind.IDEMPOTENCY_CONFLICT,
+        trace=command_envelope.trace,
+        status_code=409,
+        details={
+            "idempotency_key": idempotency_record.idempotency_key,
+            "existing_command_id": existing_command_id,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +481,7 @@ class RuntimeManagerService:
         self._store = RuntimeBindingStore(path=store_path)
         self._single_runtime_enforced = single_runtime_enforced
         self._kill_switch = KillSwitchController()
+        self._foundation_idempotency: Dict[str, Dict[str, Any]] = {}
         # Derive kill-switch store path alongside the binding store when not supplied.
         if ks_store_path is None and store_path is not None:
             ks_store_path = store_path.parent / "kill_switch.json"
@@ -610,6 +815,7 @@ class RuntimeManagerService:
         try:
             data = json.loads(self._ks_store_path.read_text())
             self._kill_switch.load_state(data)
+            self._foundation_idempotency = dict(data.get("foundation_idempotency") or {})
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, KillSwitchError):
             # Do not let a torn/corrupt sidecar brick the whole runtime-manager.
             # Quarantine the bad file and fall back to empty controller state.
@@ -625,7 +831,9 @@ class RuntimeManagerService:
         """Write kill-switch safe-mode and audit state to the durable store."""
         if self._ks_store_path:
             self._ks_store_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = json.dumps(self._kill_switch.dump_state(), indent=2)
+            state = self._kill_switch.dump_state()
+            state["foundation_idempotency"] = self._foundation_idempotency
+            payload = json.dumps(state, indent=2)
             tmp_path = self._ks_store_path.with_name(
                 f"{self._ks_store_path.name}.{uuid.uuid4().hex}.tmp"
             )
@@ -676,9 +884,32 @@ class RuntimeManagerService:
         """
         from kill_switch_controller import EmergencyTrigger, KillSwitchActionType as KSAT  # noqa: E402
 
+        foundation_context = _build_kill_switch_foundation_context(request)
+        idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+        existing = self._foundation_idempotency.get(idempotency_record.idempotency_key)
+        if existing:
+            if existing.get("request_hash") != idempotency_record.request_hash:
+                foundation_error = _foundation_idempotency_conflict(
+                    foundation_context,
+                    existing_command_id=str(existing.get("command_id") or ""),
+                )
+                raise RuntimeManagerError(json.dumps(foundation_error.to_dict(), sort_keys=True))
+            replayed = json.loads(json.dumps(existing.get("result") or {}))
+            replayed["idempotent_replay"] = True
+            return replayed
+
         reason = request.get("reason", "")
         capital_pool_id = request.get("capital_pool_id", "")
         actor_id = request.get("actor_id", "")
+        context = dict(request.get("context") or {})
+        trace_context: TraceContext = foundation_context["trace_context"]
+        context.update(
+            {
+                "foundation_trace_id": trace_context.trace_id,
+                "foundation_correlation_id": trace_context.correlation_id,
+                "foundation_command_id": foundation_context["command_envelope"].command_id,
+            }
+        )
 
         try:
             trigger = EmergencyTrigger(
@@ -687,7 +918,7 @@ class RuntimeManagerService:
                 actor_id=actor_id,
                 binding_id=request.get("binding_id"),
                 severity=request.get("severity"),
-                context=request.get("context") or {},
+                context=context,
             )
         except KillSwitchError as exc:
             raise RuntimeManagerError(f"Invalid kill-switch trigger: {exc}") from exc
@@ -714,12 +945,23 @@ class RuntimeManagerService:
         # Execute the binding action against RuntimeBinding — runtime-manager is the
         # authoritative executor for pause / liquidate / replace / terminate.
         # (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §5.2)
-        # Persist audit entry and safe-mode before acknowledging the command
-        # (contract §11.2: durable write must precede ack).
-        self._persist_ks_state()
         binding_action = self._execute_kill_switch_binding_action(outcome.command)
+        idempotency_record = idempotency_record.with_status(
+            "succeeded",
+            result_ref=f"kill_switch:{outcome.command.command_id}",
+        )
+        foundation_context["idempotency_record"] = idempotency_record
         result = outcome.to_dict()
+        result["foundation"] = _serialize_foundation_context(foundation_context)
         result["binding_action"] = binding_action
+        self._foundation_idempotency[idempotency_record.idempotency_key] = {
+            "request_hash": idempotency_record.request_hash,
+            "command_id": outcome.command.command_id,
+            "result": json.loads(json.dumps(result)),
+        }
+        # Persist audit entry, safe-mode, and idempotency before acknowledging
+        # the command (contract §11.2: durable write must precede ack).
+        self._persist_ks_state()
         return result
 
     def _execute_kill_switch_binding_action(

@@ -13,10 +13,32 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, BackgroundTasks, Header, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 sys.path.insert(0, os.path.dirname(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from services.foundation import (  # noqa: E402
+    ActorRef,
+    ActorType,
+    AuditAction,
+    AuthorityScope,
+    CommandEnvelope,
+    EnvironmentName,
+    EnvironmentScope,
+    ErrorEnvelope,
+    ErrorKind,
+    FoundationValidationError,
+    IdempotencyRecord,
+    PolicyDecision,
+    PolicyDecisionValue,
+    TraceContext,
+    foundation_id,
+)
 
 from models import (
     ApproveMutationCommandPayload,
@@ -52,6 +74,41 @@ log = logging.getLogger(__name__)
 
 app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
 
+
+def _bool_from_env(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _cors_origins_from_env() -> List[str]:
+    raw = os.getenv("PANTHEON_BFF_CORS_ORIGINS", "")
+    origins = []
+    for origin in raw.split(","):
+        cleaned = origin.strip().rstrip("/")
+        if cleaned:
+            origins.append(cleaned)
+    return origins
+
+
+_cors_origins = _cors_origins_from_env()
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Accept",
+            "Authorization",
+            "Cache-Control",
+            "Content-Type",
+            "Last-Event-ID",
+            "X-MFA-Token",
+        ],
+    )
+
 # --------------------------------------------------------------------------- #
 # Storage
 # --------------------------------------------------------------------------- #
@@ -67,6 +124,8 @@ read_store = ReadSurfaceStore(
     ),
 )
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
+
+_BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 
 # --------------------------------------------------------------------------- #
 # Auth / identity helpers
@@ -115,6 +174,9 @@ def _bff_error(
     reason: str,
     precondition_failed: Optional[str] = None,
     suggestion: Optional[str] = None,
+    foundation_error: Optional[ErrorEnvelope] = None,
+    policy_decision: Optional[PolicyDecision] = None,
+    audit_action: Optional[AuditAction] = None,
 ) -> HTTPException:
     body = ErrorResponse(
         error=BFFError(
@@ -127,7 +189,332 @@ def _bff_error(
             ),
         )
     )
-    return HTTPException(status_code=status_code, detail=body.model_dump())
+    detail = body.model_dump()
+    if foundation_error is not None:
+        detail["foundation_error"] = foundation_error.to_dict()
+    if policy_decision is not None:
+        detail["policy_decision"] = policy_decision.to_dict()
+    if audit_action is not None:
+        detail["audit_action"] = audit_action.to_dict()
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
+
+
+def _foundation_environment_scope() -> EnvironmentScope:
+    raw = os.getenv("PANTHEON_ENV", "dev").strip().lower()
+    if "live" in raw:
+        name = EnvironmentName.LIVE
+    elif "canary" in raw:
+        name = EnvironmentName.CANARY
+    elif "paper" in raw:
+        name = EnvironmentName.PAPER
+    elif "sandbox" in raw:
+        name = EnvironmentName.SANDBOX
+    else:
+        name = EnvironmentName.DEV
+    return EnvironmentScope(
+        name=name,
+        region=os.getenv("PANTHEON_REGION") or None,
+        timezone=os.getenv("PANTHEON_TIMEZONE", "UTC"),
+    )
+
+
+def _foundation_actor_ref(identity: OperatorIdentity) -> ActorRef:
+    return ActorRef(
+        actor_type=ActorType.USER,
+        actor_id=identity.operator_id,
+        roles=identity.roles,
+    )
+
+
+def _foundation_request_payload(cmd: OperatorCommand, raw_payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "route": _FOUNDATION_COMMAND_ROUTE,
+        "command": cmd.command.value,
+        "target": cmd.target.model_dump(),
+        "params": dict(cmd.params),
+        "audit_context": cmd.audit_context.model_dump(),
+        "raw_payload": raw_payload,
+    }
+
+
+def _build_foundation_trace(
+    *,
+    environment: EnvironmentScope,
+    actor_ref: ActorRef,
+    trace_id: Optional[str],
+    correlation_id: Optional[str],
+    request_id: Optional[str],
+    idempotency_key: Optional[str],
+) -> TraceContext:
+    clean_trace_id = str(trace_id or "").strip()
+    if clean_trace_id:
+        return TraceContext(
+            trace_id=clean_trace_id,
+            correlation_id=str(correlation_id or clean_trace_id).strip(),
+            environment=environment,
+            actor_ref=actor_ref,
+            source_system="pantheon-bff",
+            request_id=str(request_id or "").strip() or None,
+            idempotency_key=str(idempotency_key or "").strip() or None,
+        )
+    return TraceContext.new(
+        environment=environment,
+        actor_ref=actor_ref,
+        source_system="pantheon-bff",
+        correlation_id=str(correlation_id or "").strip() or None,
+        request_id=str(request_id or "").strip() or None,
+        idempotency_key=str(idempotency_key or "").strip() or None,
+    )
+
+
+def _build_foundation_command_context(
+    *,
+    cmd: OperatorCommand,
+    identity: OperatorIdentity,
+    raw_payload: Dict[str, Any],
+    trace_id: Optional[str],
+    correlation_id: Optional[str],
+    request_id: Optional[str],
+    idempotency_key: Optional[str],
+) -> Dict[str, Any]:
+    environment = _foundation_environment_scope()
+    actor_ref = _foundation_actor_ref(identity)
+    authority_scope = AuthorityScope(
+        action=cmd.command.value,
+        target_type=cmd.target.type.value,
+        target_id=cmd.target.id,
+        environment=environment,
+        runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
+        attributes={"route": _FOUNDATION_COMMAND_ROUTE},
+    )
+    request_payload = _foundation_request_payload(cmd, raw_payload)
+    trace = _build_foundation_trace(
+        environment=environment,
+        actor_ref=actor_ref,
+        trace_id=trace_id,
+        correlation_id=correlation_id,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+    )
+    command_envelope = CommandEnvelope.new(
+        command_type=cmd.command.value,
+        actor_ref=actor_ref,
+        authority_scope=authority_scope,
+        payload=request_payload,
+        trace=trace,
+        idempotency_key=str(idempotency_key or "").strip() or None,
+    )
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=command_envelope.idempotency_key,
+        operation_type=f"bff.{cmd.command.value}",
+        target_ref=authority_scope.target_ref,
+        request_payload=request_payload,
+        trace_id=command_envelope.trace.trace_id,
+    )
+    policy_decision = PolicyDecision.make(
+        policy_id="bff.command.admission",
+        policy_version=_BFF_FOUNDATION_POLICY_VERSION,
+        decision=PolicyDecisionValue.ALLOW,
+        actor_ref=actor_ref,
+        action=cmd.command.value,
+        target_ref=authority_scope.target_ref,
+        environment=environment,
+        trace_id=command_envelope.trace.trace_id,
+    )
+    audit_action = AuditAction.record(
+        actor_ref=actor_ref,
+        action_type="bff.command.accepted",
+        target_ref=authority_scope.target_ref,
+        environment=environment,
+        reason=cmd.audit_context.reason or "operator command admission",
+        trace=command_envelope.trace,
+        payload=request_payload,
+        policy_decision_ref=policy_decision.decision_id,
+        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+    )
+    return {
+        "command_envelope": command_envelope,
+        "trace_context": command_envelope.trace,
+        "idempotency_record": idempotency_record,
+        "policy_decision": policy_decision,
+        "audit_action": audit_action,
+        "request_payload": request_payload,
+    }
+
+
+def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "trace_context": context["trace_context"].to_dict(),
+        "command_envelope": context["command_envelope"].to_dict(),
+        "idempotency_record": context["idempotency_record"].to_dict(),
+        "policy_decision": context["policy_decision"].to_dict(),
+        "audit_action": context["audit_action"].to_dict(),
+    }
+
+
+def _extract_error_fields(exc: HTTPException) -> Dict[str, Any]:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    error = detail.get("error") if isinstance(detail.get("error"), dict) else {}
+    details = error.get("details") if isinstance(error.get("details"), dict) else {}
+    code_value = error.get("code") or ErrorCode.INVALID_PARAMS.value
+    try:
+        code = ErrorCode(code_value)
+    except ValueError:
+        code = ErrorCode.INVALID_PARAMS
+    return {
+        "status_code": exc.status_code,
+        "code": code,
+        "message": error.get("message") or str(exc.detail),
+        "reason": details.get("reason") or str(exc.detail),
+        "precondition_failed": details.get("precondition_failed"),
+        "suggestion": details.get("suggestion"),
+    }
+
+
+def _foundation_bff_error(
+    exc: HTTPException,
+    *,
+    foundation_context: Dict[str, Any],
+) -> HTTPException:
+    fields = _extract_error_fields(exc)
+    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    if fields["status_code"] == 403:
+        policy_decision = PolicyDecision.make(
+            policy_id="bff.command.admission",
+            policy_version=_BFF_FOUNDATION_POLICY_VERSION,
+            decision=PolicyDecisionValue.DENY,
+            actor_ref=command_envelope.actor_ref,
+            action=command_envelope.command_type,
+            target_ref=command_envelope.authority_scope.target_ref,
+            environment=command_envelope.authority_scope.environment,
+            trace_id=command_envelope.trace.trace_id,
+            reasons=[fields["reason"]],
+        )
+        foundation_error = ErrorEnvelope.policy_denial(
+            message=fields["message"],
+            trace=command_envelope.trace,
+            policy_decision_ref=policy_decision.decision_id,
+            details={
+                "reason": fields["reason"],
+                "precondition_failed": fields["precondition_failed"],
+            },
+        )
+        audit_action = AuditAction.record(
+            actor_ref=command_envelope.actor_ref,
+            action_type="bff.command.policy_denied",
+            target_ref=command_envelope.authority_scope.target_ref,
+            environment=command_envelope.authority_scope.environment,
+            reason=fields["reason"],
+            trace=command_envelope.trace,
+            payload=foundation_context["request_payload"],
+            policy_decision_ref=policy_decision.decision_id,
+            metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+        )
+        return _bff_error(
+            fields["status_code"],
+            fields["code"],
+            fields["message"],
+            fields["reason"],
+            precondition_failed=fields["precondition_failed"],
+            suggestion=fields["suggestion"],
+            foundation_error=foundation_error,
+            policy_decision=policy_decision,
+            audit_action=audit_action,
+        )
+
+    if fields["status_code"] in {400, 422}:
+        foundation_error = ErrorEnvelope.validation(
+            message=fields["message"],
+            trace=command_envelope.trace,
+            error_code=fields["code"].value,
+            details={
+                "reason": fields["reason"],
+                "precondition_failed": fields["precondition_failed"],
+            },
+        )
+    else:
+        foundation_error = ErrorEnvelope(
+            error_id=foundation_id("err"),
+            error_code=fields["code"].value,
+            message=fields["message"],
+            error_kind=ErrorKind.INVARIANT_VIOLATION,
+            trace=command_envelope.trace,
+            status_code=fields["status_code"],
+            details={
+                "reason": fields["reason"],
+                "precondition_failed": fields["precondition_failed"],
+            },
+        )
+    audit_action = AuditAction.record(
+        actor_ref=command_envelope.actor_ref,
+        action_type="bff.command.rejected",
+        target_ref=command_envelope.authority_scope.target_ref,
+        environment=command_envelope.authority_scope.environment,
+        reason=fields["reason"],
+        trace=command_envelope.trace,
+        payload=foundation_context["request_payload"],
+        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+    )
+    return _bff_error(
+        fields["status_code"],
+        fields["code"],
+        fields["message"],
+        fields["reason"],
+        precondition_failed=fields["precondition_failed"],
+        suggestion=fields["suggestion"],
+        foundation_error=foundation_error,
+        audit_action=audit_action,
+    )
+
+
+def _foundation_idempotency_conflict_error(
+    *,
+    foundation_context: Dict[str, Any],
+    existing_command_id: str,
+) -> HTTPException:
+    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+    message = "Idempotency key was already used with a different command payload"
+    reason = (
+        f"idempotency_key={idempotency_record.idempotency_key} is already bound "
+        f"to command {existing_command_id}"
+    )
+    foundation_error = ErrorEnvelope(
+        error_id=foundation_id("err"),
+        error_code=ErrorCode.CONCURRENT_MODIFICATION.value,
+        message=message,
+        error_kind=ErrorKind.IDEMPOTENCY_CONFLICT,
+        trace=command_envelope.trace,
+        status_code=409,
+        details={
+            "reason": reason,
+            "existing_command_id": existing_command_id,
+            "idempotency_key": idempotency_record.idempotency_key,
+        },
+    )
+    audit_action = AuditAction.record(
+        actor_ref=command_envelope.actor_ref,
+        action_type="bff.command.idempotency_conflict",
+        target_ref=command_envelope.authority_scope.target_ref,
+        environment=command_envelope.authority_scope.environment,
+        reason=reason,
+        trace=command_envelope.trace,
+        payload=foundation_context["request_payload"],
+        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+    )
+    return _bff_error(
+        409,
+        ErrorCode.CONCURRENT_MODIFICATION,
+        message,
+        reason,
+        precondition_failed="idempotency_conflict",
+        suggestion="Reuse the original payload for this key or submit with a new X-Idempotency-Key",
+        foundation_error=foundation_error,
+        audit_action=audit_action,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -157,6 +544,32 @@ _DRAWER_RUNTIME_COMMANDS = {
     CommandType.LIQUIDATE_ALL,
     CommandType.HARD_ROLLBACK,
     CommandType.ISSUE_SAFE_MODE,
+}
+_LIVE_BROKER_SIGNAL_KEYS = {
+    "account-mode",
+    "account-type",
+    "broker-mode",
+    "broker-scope",
+    "deployment-scope",
+    "deployment-stage",
+    "environment",
+    "execution-mode",
+    "order-mode",
+    "runtime-mode",
+    "scope",
+    "target-env",
+    "target-environment",
+    "target-stage",
+    "venue-mode",
+}
+_LIVE_BROKER_SIGNAL_VALUES = {
+    "ibkr-live",
+    "interactive-brokers-live",
+    "live",
+    "live-broker",
+    "prod",
+    "production",
+    "staging-live",
 }
 
 _KILL_SWITCH_REQUIRED = {"scope", "activate"}
@@ -198,6 +611,66 @@ _MUTATION_REJECTION_ROLES = {
     "medium": {"reviewer", "operator", "approver", "admin"},
     "high": {"approver", "admin"},
 }
+
+
+def _env_token(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
+def _value_contains_live_broker_signal(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_value_contains_live_broker_signal(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_value_contains_live_broker_signal(child) for child in value)
+    token = _env_token(value)
+    if token in _LIVE_BROKER_SIGNAL_VALUES:
+        return True
+    return bool(
+        re.search(r"(^|-)live($|-)", token)
+        and ("broker" in token or "ibkr" in token or "interactive-brokers" in token)
+    )
+
+
+def _payload_has_live_broker_signal(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_token = _env_token(key)
+            if (
+                key_token in _LIVE_BROKER_SIGNAL_KEYS
+                and _value_contains_live_broker_signal(child)
+            ):
+                return True
+            if _payload_has_live_broker_signal(child):
+                return True
+    elif isinstance(value, list):
+        return any(_payload_has_live_broker_signal(child) for child in value)
+    return False
+
+
+def _command_targets_live_runtime(cmd: OperatorCommand) -> bool:
+    if cmd.target.type != ObjectType.RUNTIME:
+        return False
+    target_id = _env_token(cmd.target.id)
+    return bool(re.search(r"(^|-)live($|-)", target_id))
+
+
+def _ensure_live_broker_scope_allowed(cmd: OperatorCommand, payload: Dict[str, Any]) -> None:
+    if _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False):
+        return
+    if not (_command_targets_live_runtime(cmd) or _payload_has_live_broker_signal(payload)):
+        return
+    env_name = os.getenv("PANTHEON_ENV", "dev").strip() or "dev"
+    raise _bff_error(
+        403,
+        ErrorCode.PRECONDITION_NOT_MET,
+        "Live broker scope is disabled for this BFF",
+        f"PANTHEON_ENV={env_name} has PANTHEON_LIVE_BROKER_ENABLED=false",
+        precondition_failed="live_broker_scope",
+        suggestion=(
+            "Use the staging-live BFF only after operator auth, governance, "
+            "runtime kill-switch, and broker rehearsal gates are verified"
+        ),
+    )
 
 
 def _require_admin_mfa(identity: OperatorIdentity, command_name: str) -> None:
@@ -10628,6 +11101,10 @@ async def submit_command(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
     x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """
     Submit an operator command for async execution.
@@ -10639,30 +11116,71 @@ async def submit_command(
     identity = _extract_identity(authorization)
     cmd = _normalize_operator_command_payload(payload)
 
+    foundation_context = _build_foundation_command_context(
+        cmd=cmd,
+        identity=identity,
+        raw_payload=payload,
+        trace_id=x_trace_id,
+        correlation_id=x_correlation_id,
+        request_id=x_request_id,
+        idempotency_key=x_idempotency_key,
+    )
+
     # 2. Command-specific precondition validation (role + params shape)
-    _validate_audit_context(cmd)
-    _validate_drawer_runtime_target(cmd)
-    validator = _VALIDATORS.get(cmd.command)
-    if validator:
-        validator(cmd.params, identity)
+    try:
+        _validate_audit_context(cmd)
+        _ensure_live_broker_scope_allowed(cmd, payload)
+        _validate_drawer_runtime_target(cmd)
+        validator = _VALIDATORS.get(cmd.command)
+        if validator:
+            validator(cmd.params, identity)
+    except HTTPException as exc:
+        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
     stored_params = _stored_command_params(cmd, identity)
+
+    duplicate = command_store.get_command_by_idempotency_key(
+        foundation_context["idempotency_record"].idempotency_key
+    )
+    if duplicate:
+        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
+        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
+            conflict_error = _foundation_idempotency_conflict_error(
+                foundation_context=foundation_context,
+                existing_command_id=str(duplicate.get("command_id") or ""),
+            )
+            raise conflict_error
+        return _project_command_submission_response(
+            command_id=duplicate["command_id"],
+            command=cmd.command,
+            accepted_at=duplicate.get("submitted_at") or utc_now(),
+            status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
+            staleness_warning=None,
+        )
 
     # 3. Concurrent modification check (§5.1)
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
-        raise _bff_error(
+        error = _bff_error(
             409, ErrorCode.CONCURRENT_MODIFICATION,
             "A command is already in flight for this target",
             f"Command {active[0]['command_id']} is currently {active[0]['status']}",
             precondition_failed="concurrent_safety",
             suggestion="Wait for the in-flight command to complete or time out before retrying",
         )
+        raise _foundation_bff_error(error, foundation_context=foundation_context)
 
     # 4. Degraded mode check (§7.1)
     staleness_warning = _check_read_surface_state()
 
     # 5. Persist command with full audit record
-    command_id = str(uuid.uuid4())
+    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+    idempotency_record = idempotency_record.with_status(
+        "succeeded",
+        result_ref=f"command:{command_envelope.command_id}",
+    )
+    foundation_context["idempotency_record"] = idempotency_record
+    command_id = command_envelope.command_id
     submitted_at = utc_now()
 
     # Extract raw token from Authorization header for downstream propagation
@@ -10687,6 +11205,7 @@ async def submit_command(
         "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
         "auth_token": raw_token,
         "mfa_token": mfa_token,
+        "foundation": _serialize_foundation_context(foundation_context),
     }
 
     command_store.submit_command(
@@ -10696,6 +11215,7 @@ async def submit_command(
         submitted_at=submitted_at,
         params=stored_params,
         audit_context=audit_record,
+        foundation_context=_serialize_foundation_context(foundation_context),
     )
 
     log.info(

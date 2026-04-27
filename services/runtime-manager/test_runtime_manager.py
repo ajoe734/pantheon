@@ -149,6 +149,47 @@ class RuntimeManagerServiceTests(unittest.TestCase):
         )
         self.assertIn("confirmed zero", result["position_lineage"]["note"])
 
+    def test_execute_kill_switch_emits_foundation_context_and_replays_idempotently(self):
+        request = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-foundation-ks",
+            "actor_id": "operator-foundation",
+            "idempotency_key": "idmp-runtime-ks-001",
+            "foundation": {
+                "trace_context": {
+                    "trace_id": "trace-runtime-upstream-001",
+                    "correlation_id": "corr-runtime-upstream-001",
+                    "idempotency_key": "idmp-runtime-ks-001",
+                }
+            },
+            "context": {"source": "unit-test"},
+        }
+
+        result = self.service.execute_kill_switch(request)
+
+        self.assertEqual(
+            result["foundation"]["trace_context"]["trace_id"],
+            "trace-runtime-upstream-001",
+        )
+        self.assertEqual(
+            result["command"]["metadata"]["foundation_trace_id"],
+            "trace-runtime-upstream-001",
+        )
+        self.assertEqual(
+            result["foundation"]["idempotency_record"]["idempotency_key"],
+            "idmp-runtime-ks-001",
+        )
+        self.assertEqual(result["foundation"]["idempotency_record"]["status"], "succeeded")
+        self.assertEqual(result["foundation"]["policy_decision"]["decision"], "allow")
+        self.assertEqual(result["foundation"]["audit_action"]["trace_id"], "trace-runtime-upstream-001")
+        self.assertEqual(len(self.service.get_kill_switch_audit_log()), 1)
+
+        replayed = self.service.execute_kill_switch(request)
+
+        self.assertTrue(replayed["idempotent_replay"])
+        self.assertEqual(replayed["command"]["command_id"], result["command"]["command_id"])
+        self.assertEqual(len(self.service.get_kill_switch_audit_log()), 1)
+
 
 class RuntimeManagerClientTests(unittest.TestCase):
     def setUp(self) -> None:
