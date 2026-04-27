@@ -79,6 +79,42 @@ _LINEAGE_CORPUS = {
         "projection_updated_at": "2026-04-15T12:00:00Z",
     },
     "node_sets": {
+        "source_records": [
+            {
+                "source_id": "source-http-001",
+                "created_at": "2026-04-15T11:55:00Z",
+            }
+        ],
+        "strategy_specs": [
+            {
+                "strategy_id": "strategy-http-001",
+                "source_id": "source-http-001",
+                "created_at": "2026-04-15T11:56:00Z",
+            }
+        ],
+        "experiment_runs": [
+            {
+                "run_id": "run-http-001",
+                "strategy_id": "strategy-http-001",
+                "created_at": "2026-04-15T11:57:00Z",
+            }
+        ],
+        "candidate_artifacts": [
+            {
+                "artifact_id": "artifact-123",
+                "artifact_version": "1.0.0",
+                "run_id": "run-http-001",
+                "created_at": "2026-04-15T11:58:00Z",
+            }
+        ],
+        "approval_decisions": [
+            {
+                "decision_id": "approval-http-001",
+                "target_id": "artifact-123",
+                "decision_state": "approved",
+                "created_at": "2026-04-15T11:59:00Z",
+            }
+        ],
         "capital_pools": [
             {
                 "pool_id": "pool-alpha",
@@ -96,6 +132,7 @@ _LINEAGE_CORPUS = {
         "deployment_plans": [
             {
                 "plan_id": "plan-456",
+                "approval_decision_id": "approval-http-001",
                 "capital_pool_id": "pool-alpha",
                 "binding_id": "pcb-789",
                 "artifact_id": "artifact-123",
@@ -131,6 +168,31 @@ _LINEAGE_CORPUS = {
                 "strategy_id": "strategy-http-001",
                 "registry_id": "registry-http-001",
                 "event_produced_at": "2026-04-15T12:00:30Z",
+            }
+        ],
+        "broker_order_events": [
+            {
+                "order_event_id": "boe-http-001",
+                "order_id": "order-http-001",
+                "trace_id": "trace-http-001",
+                "runtime_binding_id": _KNOWN_BINDING_ID,
+                "deployment_plan_id": "plan-456",
+                "telemetry_event_id": "evt-lineage-001",
+                "broker": "paper_broker",
+                "order_status": "submitted",
+                "created_at": "2026-04-15T12:00:31Z",
+            }
+        ],
+        "evolution_decisions": [
+            {
+                "decision_id": "evo-http-001",
+                "target_type": "candidate_artifact",
+                "target_id": "artifact-123",
+                "target_version": "1.0.0",
+                "action_type": "observe",
+                "decision_state": "approved",
+                "evidence_refs": [{"ref_type": "telemetry_summary", "ref_id": "trace-http-001"}],
+                "created_at": "2026-04-15T12:00:32Z",
             }
         ],
     },
@@ -258,8 +320,32 @@ class TestMainRoutes(unittest.TestCase):
         self.assertIn("strategy-http-001", data["refs"]["strategy_ids"])
         self.assertIn("registry-http-001", data["refs"]["registry_ids"])
 
+    def test_source_runtime_telemetry_trace_returns_200(self):
+        resp = self.client.get(
+            "/api/telemetry/lineage/traces/trace-http-001/source-runtime-telemetry"
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["target_type"], "trace")
+        self.assertEqual(data["target_id"], "trace-http-001")
+        self.assertIs(data["derived_only"], True)
+        self.assertEqual(data["missing_edges"], [])
+        self.assertEqual(data["refs"]["source_record_ids"], ["source-http-001"])
+        self.assertEqual(data["refs"]["experiment_run_ids"], ["run-http-001"])
+        self.assertEqual(data["refs"]["approval_decision_ids"], ["approval-http-001"])
+        self.assertEqual(data["refs"]["broker_order_event_ids"], ["boe-http-001"])
+        self.assertEqual(data["refs"]["evolution_decision_ids"], ["evo-http-001"])
+
     def test_missing_lineage_target_returns_404(self):
         resp = self.client.get("/api/telemetry/lineage/events/evt-does-not-exist/trace")
+        self.assertEqual(resp.status_code, 404)
+        data = resp.get_json()
+        self.assertEqual(data["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+    def test_missing_source_runtime_trace_returns_404(self):
+        resp = self.client.get(
+            "/api/telemetry/lineage/traces/trace-does-not-exist/source-runtime-telemetry"
+        )
         self.assertEqual(resp.status_code, 404)
         data = resp.get_json()
         self.assertEqual(data["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")

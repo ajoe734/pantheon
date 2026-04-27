@@ -46,6 +46,10 @@ GET   /api/telemetry/lineage/capital-pools/<pool_id>/projection
 GET   /api/telemetry/lineage/events/<event_id>/trace
     Return the derived-only telemetry event trace.
 
+GET   /api/telemetry/lineage/traces/<trace_id>/source-runtime-telemetry
+    Return the derived-only operator trace from source through runtime,
+    telemetry, broker/order lifecycle, and evolution refs.
+
 GET   /api/telemetry/lineage/plans/<plan_id>/forensic-trace
     Return the rollback-aware forensic plan trace.
 
@@ -523,6 +527,15 @@ def telemetry_event_trace(event_id: str):
     return _lineage_query_response(
         "telemetry_event_trace",
         event_id=event_id,
+    )
+
+
+@app.route("/api/telemetry/lineage/traces/<trace_id>/source-runtime-telemetry", methods=["GET"])
+def source_runtime_telemetry_trace(trace_id: str):
+    """Return the operator-facing source-to-runtime-to-telemetry trace."""
+    return _lineage_query_response(
+        "source_runtime_telemetry_trace",
+        trace_id=trace_id,
     )
 
 

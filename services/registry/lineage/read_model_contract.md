@@ -209,11 +209,15 @@ that pretend to be authoritative beyond the normalized edges.
 | `runtime_binding_projection` | `runtime_lineage_summary` | synchronous summary |
 | `capital_pool_projection` | pool-scoped lineage summary | synchronous summary |
 | `telemetry_event_trace` | one-event normalized trace | synchronous summary |
+| `source_runtime_telemetry_trace` | operator-facing trace from source / strategy / experiment through approval, deployment, runtime, broker-order lifecycle, telemetry, incident, postmortem, and evolution refs | synchronous summary |
 | `forensic_plan_trace` | rollback-aware full plan trace | forensic / async-capable |
 
 Rules:
 
 - synchronous summaries must stay within the L1 freshness and latency targets
+- `source_runtime_telemetry_trace` is still a derived read model; missing source,
+  artifact, approval, broker-order, incident, or evolution nodes must appear in
+  `missing_edges[]` / `conflict_markers[]` rather than being inferred
 - forensic traces may reconstruct more of the graph and take longer
 - no consumer is allowed to bypass the read model and re-invent deep multi-table
   joins in the BFF just because one screen needs another field
