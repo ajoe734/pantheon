@@ -28,15 +28,31 @@ In scope for this boundary:
 - `PolicyDecision`
 - `AuditAction`
 - `SecretRef`
+- `EventEnvelope`
+- `OutboxRecord`
+- `InboxReceipt`
+- `DeadLetterEntry`
+- `DeadLetterQueue`
+- `SchemaRegistryEntry`
+- `SchemaRegistry`
+- `DeadLetterReplayProcessor`
 - supporting refs and enums such as `ActorRef`, `EnvironmentScope`, and
   `AuthorityScope`
 - deterministic canonical JSON and SHA-256 checksum helpers
+- optional append-only JSONL helpers for shared outbox / DLQ records
 
 Out of scope for this boundary:
 
-- durable storage for traces, audit rows, idempotency records, outbox, or DLQ
+- database, broker, or network-backed durable storage for traces, audit rows,
+  idempotency records, outbox, or DLQ
 - policy-engine execution beyond serializable `PolicyDecision` records
 - raw secret resolution or secret value transport
 - service-specific HTTP middleware and command handlers
 
 Those adoption and persistence paths belong to later SD-FND tasks.
+
+The shared outbox / DLQ helpers are deliberately storage-light. They provide
+record shapes, deterministic serialization, optional local JSONL append/read
+helpers, schema-registry validation, and audited idempotent replay primitives.
+Service-owned stores such as telemetry ingest remain authoritative for their
+domain-specific buffering, retry, and DLQ policies.
