@@ -649,6 +649,22 @@ def evolution_redeploy():
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
 
+# ---------------------------------------------------------------------------
+# Legacy /api/internal/v1/... operator command surface
+#
+# The deployable runtime-manager owns both the canonical /api/runtimes/... and
+# the operator-facing /api/internal/v1/... command paths the BFF dispatches
+# against. The legacy `services.control_plane.internal_api` module is mounted
+# on this Flask app so command, pause, rollback, kill-switch, and consultation
+# sponsor-decision routes share the same in-process service and kill-switch
+# state. See internal_api_routes.py for the shared-state wiring.
+# ---------------------------------------------------------------------------
+
+from internal_api_routes import register_internal_api_routes  # noqa: E402
+
+register_internal_api_routes(app, _get_service)
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
     app.run(host="0.0.0.0", port=port, debug=False)
