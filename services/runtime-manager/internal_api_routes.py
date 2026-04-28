@@ -12,9 +12,12 @@ deployable runtime-manager container is the single command plane:
 * Pause/rollback/abort routes mutate the *same* in-process
   `RuntimeManagerService` instance that backs the canonical `/api/runtimes/...`
   surface; no HTTP loopback, no second store.
-* Kill-switch routes share the runtime-manager service's `KillSwitchController`,
-  so safe-mode reads from `/api/kill-switch/...` and `/api/internal/v1/kill-switch`
-  observe one truth.
+* Kill-switch routes share the runtime-manager service's
+  ``execute_kill_switch`` path so the foundation idempotency record path
+  guards both the canonical ``/api/kill-switch/dispatch`` route and the legacy
+  ``/api/internal/v1/kill-switch`` operator path. Safe-mode reads from
+  ``/api/kill-switch/...`` and ``/api/internal/v1/kill-switch`` observe one
+  truth.
 * Consultation sponsor decisions and command-state lookups reuse the legacy
   module's persistence helpers.
 
@@ -25,7 +28,9 @@ patching the module-level shims used by the legacy code.
 """
 from __future__ import annotations
 
-from typing import Callable
+import hashlib
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, Optional
 
 from flask import Flask
 
@@ -58,6 +63,59 @@ class _InProcessRuntimeManagerAdapter:
         return binding.to_dict()
 
 
+def _derive_legacy_kill_switch_key(request: Dict[str, Any]) -> str:
+    """Build a stable idempotency key for legacy operator kill-switch requests.
+
+    The BFF and operator clients do not always supply ``idempotency_key``. We
+    fingerprint the request fields that determine the side effect so two
+    identical operator requests collapse onto a single foundation idempotency
+    record instead of producing divergent kill-switch commands on retry.
+    """
+    fingerprint_fields = (
+        "reason",
+        "capital_pool_id",
+        "actor_id",
+        "binding_id",
+        "severity",
+        "action_override",
+        "fallback_artifact_id",
+        "fallback_artifact_version",
+    )
+    parts = [str(request.get(field, "") or "") for field in fingerprint_fields]
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
+    return f"legacy-ks:{digest}"
+
+
+class _DictBackedRecord(SimpleNamespace):
+    """SimpleNamespace that also exposes the original dict via ``to_dict``."""
+
+    def __init__(self, source: Dict[str, Any]) -> None:
+        super().__init__(**source)
+        self.__dict__["_source"] = dict(source)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self._source)
+
+
+def _build_outcome_namespace(result: Dict[str, Any]) -> SimpleNamespace:
+    """Reconstruct a ``KillSwitchOutcome``-shaped object from a service result."""
+    from kill_switch_controller import SafeModeState  # noqa: WPS433 — local import
+
+    command_dict = dict(result.get("command", {}) or {})
+    audit_dict = dict(result.get("audit_entry", {}) or {})
+    safe_mode_value = result.get("safe_mode_after") or SafeModeState.NORMAL.value
+    try:
+        safe_mode_after = SafeModeState(safe_mode_value)
+    except ValueError:
+        safe_mode_after = SafeModeState.NORMAL
+    return SimpleNamespace(
+        command=_DictBackedRecord(command_dict),
+        audit_entry=_DictBackedRecord(audit_dict),
+        safe_mode_after=safe_mode_after,
+        idempotent_replay=bool(result.get("idempotent_replay")),
+    )
+
+
 class _SharedKillSwitchProxy:
     """Forward attribute access to the runtime-manager kill-switch controller.
 
@@ -65,17 +123,18 @@ class _SharedKillSwitchProxy:
     ``_controller`` global. By installing this proxy, every legacy access falls
     through to the live controller exposed by the current `RuntimeManagerService`.
 
-    State-mutating calls (``dispatch``, ``advance_safe_mode``) are wrapped so
-    the runtime-manager's durable kill-switch snapshot is rewritten after each
-    legacy operator command. Without this, legacy ``/api/internal/v1/kill-switch``
-    callers would update only in-memory state and lose it on container restart.
+    Two state-mutating calls are intercepted:
 
-    Note: the service's ``execute_kill_switch`` idempotency-record path is not
-    replicated here. Convergence with the durable foundation idempotency layer
-    is tracked separately.
+    * ``dispatch`` is converged through ``service.execute_kill_switch`` so the
+      legacy ``/api/internal/v1/kill-switch`` path uses the same foundation
+      idempotency record path as ``/api/kill-switch/dispatch``. The proxy
+      reconstructs a ``KillSwitchOutcome``-shaped namespace from the service
+      response so legacy callers (which expect ``outcome.command``,
+      ``outcome.audit_entry``, ``outcome.safe_mode_after``) continue to work.
+    * ``advance_safe_mode`` is forwarded but the durable kill-switch snapshot
+      is rewritten after each successful call so safe-mode state survives
+      container restarts.
     """
-
-    _PERSIST_AFTER = frozenset({"dispatch", "advance_safe_mode"})
 
     def __init__(self, service_factory: Callable[[], RuntimeManagerService]) -> None:
         self._service_factory = service_factory
@@ -83,13 +142,59 @@ class _SharedKillSwitchProxy:
     def __getattr__(self, name):
         service = self._service_factory()
         attr = getattr(service._kill_switch, name)
-        if name in self._PERSIST_AFTER and callable(attr):
+        if name == "advance_safe_mode" and callable(attr):
             def _wrapped(*args, **kwargs):
                 result = attr(*args, **kwargs)
                 service._persist_ks_state()
                 return result
             return _wrapped
         return attr
+
+    # Explicit override: legacy callers do ``ctrl.dispatch(trigger, ...)``.
+    # We rewrite the call into a service-level execute_kill_switch invocation
+    # so the foundation idempotency record path is the single execution lane
+    # for emergency commands.
+    def dispatch(
+        self,
+        trigger,
+        *,
+        action_override=None,
+        fallback_artifact_id: Optional[str] = None,
+        fallback_artifact_version: Optional[str] = None,
+    ):
+        service = self._service_factory()
+        request: Dict[str, Any] = {
+            "reason": trigger.reason,
+            "capital_pool_id": trigger.capital_pool_id,
+            "actor_id": trigger.actor_id,
+            "context": dict(getattr(trigger, "context", {}) or {}),
+        }
+        if getattr(trigger, "binding_id", None):
+            request["binding_id"] = trigger.binding_id
+        if getattr(trigger, "severity", None) is not None:
+            request["severity"] = trigger.severity
+        if action_override is not None:
+            value = getattr(action_override, "value", action_override)
+            request["action_override"] = value
+        if fallback_artifact_id is not None:
+            request["fallback_artifact_id"] = fallback_artifact_id
+        if fallback_artifact_version is not None:
+            request["fallback_artifact_version"] = fallback_artifact_version
+
+        # Caller-supplied idempotency_key wins; otherwise we derive a stable
+        # key from the request fingerprint so identical requests replay through
+        # the foundation idempotency record path instead of producing divergent
+        # side-effects.
+        explicit_key = request["context"].pop("idempotency_key", None) or request["context"].pop(
+            "PANTHEON_IDEMPOTENCY_KEY", None
+        )
+        if explicit_key:
+            request["idempotency_key"] = str(explicit_key).strip() or None
+        if not request.get("idempotency_key"):
+            request["idempotency_key"] = _derive_legacy_kill_switch_key(request)
+
+        result = service.execute_kill_switch(request)
+        return _build_outcome_namespace(result)
 
 
 def register_internal_api_routes(

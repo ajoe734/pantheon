@@ -69,9 +69,15 @@ GET   /__health__
 
 Authentication
 --------------
-All write routes require a Bearer token in the Authorization header.
-Token content is not validated in v1 (stub — integration tests use any
-non-empty token).  Add JWT validation before production.
+All routes require ``Authorization: Bearer <token>``. Tokens are validated by
+``services.runtime_auth_inbound`` and may be either a HS256 JWT
+(``PANTHEON_RUNTIME_JWT_SECRET`` configured) or a structured legacy token
+shaped ``actor_id[:role1,role2]`` when ``PANTHEON_RUNTIME_AUTH_MODE`` is
+``permissive`` (default). Strict mode rejects unsigned tokens. Critical write
+paths (kill-switch, safe-mode advance, evolution follow-through) additionally
+enforce MFA via ``X-MFA-Token`` (six-digit OTP) when
+``PANTHEON_RUNTIME_MFA_REQUIRED=true``. RBAC is enforced per route by the
+``require_authn`` decorator below.
 
 Environment variables
 ---------------------
@@ -112,6 +118,12 @@ if _EXEC_RM_DIR not in sys.path:
     sys.path.insert(0, _EXEC_RM_DIR)
 from runtime_binding import RuntimeBindingError  # noqa: E402
 
+# Make sibling repo modules importable when this file runs as ``main``.
+_REPO_ROOT_FOR_AUTH = str(Path(__file__).resolve().parent.parent.parent)
+if _REPO_ROOT_FOR_AUTH not in sys.path:
+    sys.path.insert(0, _REPO_ROOT_FOR_AUTH)
+from services.runtime_auth_inbound import require_authn  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # App and service bootstrap
 # ---------------------------------------------------------------------------
@@ -142,24 +154,14 @@ def _get_service() -> RuntimeManagerService:
 
 
 # ---------------------------------------------------------------------------
-# Auth helper
+# Auth helpers
 # ---------------------------------------------------------------------------
 
-def _require_bearer():
-    """Return (token, None) on success or (None, error_response) on failure."""
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return None, (
-            jsonify({"error": {"code": "401", "message": "Unauthorized: missing Bearer token"}}),
-            401,
-        )
-    token = auth.split(None, 1)[1]
-    if not token:
-        return None, (
-            jsonify({"error": {"code": "401", "message": "Unauthorized: empty token"}}),
-            401,
-        )
-    return token, None
+# Role bundles enforced per route. Centralised so operator policy changes touch
+# one location instead of every route handler.
+_OPERATOR_ROLES = ("operator", "admin", "approver", "reviewer", "risk_owner")
+_APPROVER_ROLES = ("approver", "admin", "risk_owner")
+_INCIDENT_ROLES = ("operator", "admin", "risk_owner")
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +174,7 @@ def health():
 
 
 @app.route("/api/runtimes/deploy", methods=["POST"])
+@require_authn(roles=_OPERATOR_ROLES)
 def deploy():
     """Create a RuntimeBinding from a DeploymentPlan descriptor.
 
@@ -183,10 +186,6 @@ def deploy():
       - stage consistency
       - single-runtime rule (via store)
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
 
     required_fields = [
@@ -220,12 +219,9 @@ def deploy():
 
 
 @app.route("/api/runtime-bindings", methods=["GET"])
+@require_authn(roles=_OPERATOR_ROLES)
 def list_bindings():
     """List RuntimeBindings, optionally filtered by pool_id or plan_id."""
-    _, err = _require_bearer()
-    if err:
-        return err
-
     pool_id = request.args.get("pool_id")
     plan_id = request.args.get("plan_id")
 
@@ -244,12 +240,9 @@ def list_bindings():
 
 
 @app.route("/api/runtime-bindings/<binding_id>", methods=["GET"])
+@require_authn(roles=_OPERATOR_ROLES)
 def get_binding(binding_id):
     """Read a single RuntimeBinding by id."""
-    _, err = _require_bearer()
-    if err:
-        return err
-
     svc = _get_service()
     binding = svc.get(binding_id)
     if binding is None:
@@ -261,12 +254,9 @@ def get_binding(binding_id):
 
 
 @app.route("/api/runtime-bindings/<binding_id>/retire", methods=["POST"])
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
 def retire_binding(binding_id):
     """Retire (terminal-terminate) a RuntimeBinding."""
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
     retired_at = body.get("retired_at")
 
@@ -282,15 +272,12 @@ def retire_binding(binding_id):
 
 
 @app.route("/api/runtime-bindings/<binding_id>/transition", methods=["POST"])
+@require_authn(roles=_OPERATOR_ROLES)
 def transition_binding(binding_id):
     """Advance a binding through the allowed status state machine.
 
     Body: { "new_status": "pending_pause" | "paused" | "active" | "failed" | "retired" }
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
     new_status = body.get("new_status", "")
     if not new_status:
@@ -308,12 +295,9 @@ def transition_binding(binding_id):
 
 
 @app.route("/api/runtimes/<pool_id>/active", methods=["GET"])
+@require_authn(roles=_OPERATOR_ROLES)
 def get_active_binding(pool_id):
     """Return the single active RuntimeBinding for a capital pool."""
-    _, err = _require_bearer()
-    if err:
-        return err
-
     svc = _get_service()
     try:
         binding = svc.get_active_for_pool(pool_id)
@@ -330,6 +314,7 @@ def get_active_binding(pool_id):
 
 
 @app.route("/api/rollback", methods=["POST"])
+@require_authn(roles=_INCIDENT_ROLES, mfa_required=True)
 def execute_rollback():
     """Execute a canonical rollback action.
 
@@ -350,10 +335,6 @@ def execute_rollback():
 
     Returns 201 with { action_type, old_binding, new_binding, cutover_at, position_lineage }.
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
 
     required_fields = [
@@ -386,16 +367,13 @@ def execute_rollback():
 
 
 @app.route("/api/rollback/history", methods=["GET"])
+@require_authn(roles=_OPERATOR_ROLES)
 def rollback_history():
     """Return all bindings that have a rollback_parent set (i.e. replacement bindings).
 
     Optional query params:
       pool_id — filter by capital_pool_id
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     pool_id = request.args.get("pool_id")
 
     svc = _get_service()
@@ -412,6 +390,7 @@ def rollback_history():
 
 
 @app.route("/api/kill-switch/dispatch", methods=["POST"])
+@require_authn(roles=_INCIDENT_ROLES, mfa_required=True)
 def kill_switch_dispatch():
     """Emergency kill-switch fast path.
 
@@ -425,10 +404,6 @@ def kill_switch_dispatch():
 
     Returns 200 with { command, audit_entry, safe_mode_after }.
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
 
     required_fields = ["reason", "capital_pool_id", "actor_id"]
@@ -452,12 +427,9 @@ def kill_switch_dispatch():
 
 
 @app.route("/api/kill-switch/<pool_id>/safe-mode", methods=["GET"])
+@require_authn(roles=_OPERATOR_ROLES)
 def get_safe_mode(pool_id):
     """Return the current SafeModeState for a capital pool."""
-    _, err = _require_bearer()
-    if err:
-        return err
-
     svc = _get_service()
     try:
         state = svc.get_safe_mode(pool_id)
@@ -467,16 +439,13 @@ def get_safe_mode(pool_id):
 
 
 @app.route("/api/kill-switch/<pool_id>/safe-mode", methods=["POST"])
+@require_authn(roles=_INCIDENT_ROLES, mfa_required=True)
 def advance_safe_mode(pool_id):
     """Manually advance the safe-mode state for a capital pool (governance recovery path).
 
     Body: { target_state, actor_id, [note] }
     Returns 200 with { capital_pool_id, safe_mode_state }.
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
 
     required_fields = ["target_state", "actor_id"]
@@ -503,12 +472,9 @@ def advance_safe_mode(pool_id):
 
 
 @app.route("/api/kill-switch/audit-log", methods=["GET"])
+@require_authn(roles=_OPERATOR_ROLES)
 def kill_switch_audit_log():
     """Return all kill-switch audit entries for this service instance."""
-    _, err = _require_bearer()
-    if err:
-        return err
-
     svc = _get_service()
     try:
         entries = svc.get_kill_switch_audit_log()
@@ -518,6 +484,7 @@ def kill_switch_audit_log():
 
 
 @app.route("/api/evolution/freeze", methods=["POST"])
+@require_authn(roles=_APPROVER_ROLES, mfa_required=True)
 def evolution_freeze():
     """Execute runtime follow-through for an approved evolution freeze decision.
 
@@ -533,10 +500,6 @@ def evolution_freeze():
     Returns 200 with { evolution_decision_id, deployment_plan_id, plan_runtime_action,
                        binding, actor_id, executed_at, note }.
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
 
     required_fields = [
@@ -564,6 +527,7 @@ def evolution_freeze():
 
 
 @app.route("/api/evolution/retrain", methods=["POST"])
+@require_authn(roles=_APPROVER_ROLES, mfa_required=True)
 def evolution_retrain():
     """Record dispatch of an approved retrain/revalidate EvolutionDecision.
 
@@ -578,10 +542,6 @@ def evolution_retrain():
     Returns 200 with { evolution_decision_id, action_type, artifact_id, actor_id,
                        dispatched_at, routing_ref, note }.
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
 
     required_fields = [
@@ -606,6 +566,7 @@ def evolution_retrain():
 
 
 @app.route("/api/evolution/redeploy", methods=["POST"])
+@require_authn(roles=_APPROVER_ROLES, mfa_required=True)
 def evolution_redeploy():
     """Execute redeploy follow-through after an approved evolution decision.
 
@@ -622,10 +583,6 @@ def evolution_redeploy():
     Returns 201 with { evolution_decision_id, binding, actor_id,
                        redeployed_at, note }.
     """
-    _, err = _require_bearer()
-    if err:
-        return err
-
     body = request.get_json(force=True) or {}
 
     required_fields = ["evolution_decision_id", "deployment_plan"]

@@ -498,7 +498,7 @@ class TestProtectedInternalAPIConsultationServiceBoundary(unittest.TestCase):
     @staticmethod
     def _headers():
         return {
-            "Authorization": "Bearer runtime-operator:mfa",
+            "Authorization": "Bearer runtime-operator:approver",
             "X-MFA-Token": "123456",
             "Content-Type": "application/json",
         }

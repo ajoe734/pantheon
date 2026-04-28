@@ -1,8 +1,9 @@
 """Protected Internal API for APP-002 Incident Control Path.
 
 Implements endpoints for pause, rollback, kill-switch, and deployment approval
-with real execution through the runtime-manager fast path. Authentication and
-MFA are lightweight stubs suitable for integration and unit testing.
+with real execution through the runtime-manager fast path. Authentication is
+delegated to ``services.runtime_auth_inbound`` so this surface and the
+deployable runtime-manager share the same JWT/RBAC/MFA contract.
 
 Incident control actions (pause / rollback / kill-switch) are executed through
 the authoritative KillSwitchController and runtime-manager service path, with
@@ -26,6 +27,15 @@ from services.consultation.models import (
     MemoStatus,
 )
 from services.consultation.store import ConsultationStore
+from services.runtime_auth_inbound import (
+    AuthError,
+    require_authn,
+    validate_request_auth,
+)
+
+# urllib import is local to keep the module Flask-only at import time.
+import urllib.error
+import urllib.request
 
 app = Flask(__name__)
 
@@ -156,6 +166,107 @@ def _record_command(command_id: str, record: dict):
     state = _load_commands()
     state[command_id] = record
     _save_commands(state)
+
+
+# --------------------------------------------------------------------------- #
+# Deployment-plane approval authority client
+#
+# The legacy approve-deployment route used to fabricate placeholder approval
+# ids. Production hardening (SVC-RUNTIME-HARDENING) routes the call through
+# the authoritative deployment service plan-status API:
+#
+#   POST /api/deployment/plans/{plan_id}/status   (draft → approved | rejected)
+#
+# The deployment service owns the DeploymentPlan lifecycle and carries the
+# upstream governance ``approval_decision_id`` on each plan record. The
+# governance ApprovalDecision API operates on artifact-level targets
+# (``model_artifact``, ``strategy_spec``, etc.) — it cannot represent a
+# DeploymentPlan target, so this route does not hand-roll a governance
+# transition. Operators who need to record a governance decision use the
+# separate ``ApproveDecision`` command instead.
+# --------------------------------------------------------------------------- #
+
+_DEPLOYMENT_REQUEST_TIMEOUT = int(
+    os.getenv("PANTHEON_DEPLOYMENT_API_TIMEOUT_SECONDS", "10")
+)
+
+
+class _DeploymentApiError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int = 502, error_code: str = "DEPLOYMENT_API_ERROR"):
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+
+
+def _deployment_base_url() -> str:
+    """Resolve the deployment service base URL from compose-wired env vars."""
+    for env_name in (
+        "PANTHEON_DEPLOYMENT_API_URL",
+        "PANTHEON_DEPLOYMENT_SERVICE_URL",
+    ):
+        value = str(os.getenv(env_name, "")).strip()
+        if value:
+            return value.rstrip("/")
+    return ""
+
+
+def _deployment_request(method: str, url: str, payload: dict | None = None) -> dict:
+    """Issue a deployment API request and return the parsed JSON body.
+
+    Test surface: this function is patched directly in unit tests so the route
+    behaviour can be exercised without requiring a live deployment service.
+    """
+    body = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=_DEPLOYMENT_REQUEST_TIMEOUT) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        try:
+            payload_dict = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            payload_dict = {}
+        message = (
+            payload_dict.get("detail")
+            or payload_dict.get("message")
+            or f"deployment API returned HTTP {exc.code}"
+        )
+        if exc.code == 404:
+            raise _DeploymentApiError(
+                str(message),
+                status_code=404,
+                error_code="DEPLOYMENT_PLAN_NOT_FOUND",
+            ) from exc
+        if exc.code == 422:
+            raise _DeploymentApiError(
+                str(message),
+                status_code=422,
+                error_code="DEPLOYMENT_API_VALIDATION_ERROR",
+            ) from exc
+        if exc.code == 400:
+            # The deployment service returns 400 for invalid status transitions
+            # (e.g. trying to re-approve a plan that is already executing).
+            raise _DeploymentApiError(
+                str(message),
+                status_code=409,
+                error_code="DEPLOYMENT_PLAN_INVALID_TRANSITION",
+            ) from exc
+        raise _DeploymentApiError(
+            str(message),
+            status_code=exc.code,
+            error_code="DEPLOYMENT_API_HTTP_ERROR",
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise _DeploymentApiError(
+            f"deployment API unavailable: {getattr(exc, 'reason', exc)}",
+            status_code=503,
+            error_code="DEPLOYMENT_API_UNAVAILABLE",
+        ) from exc
 
 
 def _consultation_data_dir() -> Path | None:
@@ -398,20 +509,40 @@ def _add_seconds(iso_ts: str, seconds: int) -> str:
     return (dt + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
 
 
-def require_bearer_token(required: bool = True):
+# Role bundles enforced for the legacy operator command surface. We share the
+# same defaults as the deployable runtime-manager so a single token can drive
+# both paths during a hot-cutover.
+_OPERATOR_ROLES = ("operator", "admin", "approver", "reviewer", "risk_owner")
+_INCIDENT_ROLES = ("operator", "admin", "risk_owner")
+_APPROVER_ROLES = ("approver", "admin", "risk_owner")
+
+
+def require_bearer_token(required: bool = True, *, roles=None, mfa_required: bool = False):
+    """Compat shim around the shared inbound-auth contract.
+
+    Existing callsites use ``@require_bearer_token()`` without arguments. The
+    additional keyword arguments let new routes opt into RBAC/MFA without
+    introducing yet another decorator.
+    """
+
     def decorator(func):
         def wrapper(*args, **kwargs):
-            auth = request.headers.get("Authorization", "")
-            if not auth.startswith("Bearer "):
-                if required:
-                    return jsonify({"error": {"code": "401", "message": "Unauthorized: missing Bearer token"}}), 401
-                else:
+            try:
+                ctx = validate_request_auth(
+                    authorization=request.headers.get("Authorization", ""),
+                    mfa_header=request.headers.get("X-MFA-Token", ""),
+                    required_roles=roles,
+                    mfa_required=mfa_required,
+                )
+            except AuthError as exc:
+                if not required and exc.status_code == 401 and not request.headers.get("Authorization", ""):
                     return func(*args, **kwargs)
-            token = auth.split(None, 1)[1]
-            # NOTE: In real implementation validate JWT signature and claims.
-            if not token:
-                return jsonify({"error": {"code": "401", "message": "Unauthorized: empty token"}}), 401
-            request._validated_token = token
+                payload, status = exc.as_response()
+                return jsonify(payload), status
+            request._auth_context = ctx
+            request._validated_token = ctx.actor_id
+            if ctx.mfa_verified:
+                request._mfa_token = ctx.mfa_token
             return func(*args, **kwargs)
 
         wrapper.__name__ = func.__name__
@@ -421,8 +552,13 @@ def require_bearer_token(required: bool = True):
 
 
 def require_mfa_if_present(func):
+    """Validate ``X-MFA-Token`` format when supplied, but do not require it.
+
+    Strict MFA enforcement is now expressed by passing ``mfa_required=True`` to
+    ``require_bearer_token`` (and gated by ``PANTHEON_RUNTIME_MFA_REQUIRED``).
+    """
+
     def wrapper(*args, **kwargs):
-        # For critical endpoints, X-MFA-Token header must be a 6-digit OTP
         mfa = request.headers.get("X-MFA-Token", "")
         if mfa:
             if not re.fullmatch(r"\d{6}", mfa):
@@ -435,15 +571,97 @@ def require_mfa_if_present(func):
 
 
 @app.route("/api/internal/v1/deployments/<plan_id>/approve", methods=["POST"])
-@require_bearer_token()
-@require_mfa_if_present
+@require_bearer_token(roles=_APPROVER_ROLES, mfa_required=True)
 def approve_deployment(plan_id):
+    """Record an operator deployment approval through the deployment service.
+
+    Production hardening (SVC-RUNTIME-HARDENING): no placeholder approval ids
+    are minted. The DeploymentPlan lifecycle is owned by the deployment
+    service, so this route advances the plan via the canonical
+    ``POST /api/deployment/plans/{plan_id}/status`` endpoint and returns the
+    plan's existing ``approval_decision_id`` (which references the upstream
+    governance ApprovalDecision recorded when the plan was created).
+
+    The governance ApprovalDecision API operates on artifact-level targets
+    (``model_artifact``, ``strategy_spec``, ...) and cannot represent a
+    DeploymentPlan target, so this command does not invoke it directly.
+    Operators who need to record a fresh governance decision use the separate
+    ``ApproveDecision`` command.
+    """
     body = request.get_json() or {}
-    decision = body.get("approval_decision", "approve")
-    verification_timestamp = body.get("verification_timestamp") or datetime.utcnow().isoformat() + "Z"
-    # Create a placeholder approval decision id
-    approval_id = f"ad-{plan_id}-{int(datetime.utcnow().timestamp())}"
-    command_id = f"cmd-{approval_id}"
+    decision = str(body.get("approval_decision", "approve")).strip().lower()
+    # The deployment service plan-status enum is approved | rejected | aborted.
+    # ``approved_with_conditions`` collapses to ``approved`` here because the
+    # plan-level state machine does not represent conditional approvals;
+    # condition tracking belongs on the upstream governance ApprovalDecision
+    # (already recorded by the time the plan exists) or the operator's note.
+    if decision in {"approve", "approved", "approved_with_conditions", "approve_with_conditions"}:
+        target_status = "approved"
+    elif decision in {"reject", "rejected"}:
+        target_status = "rejected"
+    else:
+        return jsonify({
+            "error": {
+                "code": "INVALID_APPROVAL_DECISION",
+                "message": "approval_decision must be approve, reject, or approved_with_conditions",
+            }
+        }), 400
+
+    base_url = _deployment_base_url()
+    if not base_url:
+        return jsonify({
+            "error": {
+                "code": "DEPLOYMENT_API_UNCONFIGURED",
+                "message": (
+                    "ApproveDeployment requires PANTHEON_DEPLOYMENT_API_URL to "
+                    "point at the authoritative deployment service. Placeholder "
+                    "approval ids are no longer minted."
+                ),
+            }
+        }), 503
+
+    ctx = getattr(request, "_auth_context", None)
+    actor_id = (
+        body.get("actor_id")
+        or (ctx.actor_id if ctx else None)
+        or "internal-api-operator"
+    )
+    actor_role = body.get("actor_role")
+    if not actor_role and ctx is not None:
+        for preferred in ("approver", "admin", "risk_owner"):
+            if preferred in ctx.roles:
+                actor_role = preferred
+                break
+        if not actor_role and ctx.roles:
+            actor_role = next(iter(sorted(ctx.roles)))
+    if not actor_role:
+        actor_role = "approver"
+
+    try:
+        plan_resp = _deployment_request(
+            "POST",
+            f"{base_url}/api/deployment/plans/{plan_id}/status",
+            {"status": target_status},
+        )
+    except _DeploymentApiError as exc:
+        return jsonify({
+            "error": {
+                "code": exc.error_code,
+                "message": str(exc),
+            }
+        }), exc.status_code
+
+    approval_decision_id = (
+        str(body.get("approval_decision_id") or "").strip()
+        or str(plan_resp.get("approval_decision_id") or "").strip()
+    )
+    state_after = plan_resp.get("status") or target_status
+    verification_timestamp = (
+        body.get("verification_timestamp")
+        or datetime.utcnow().isoformat() + "Z"
+    )
+    audit_id = f"audit-deploy-approve-{plan_id}-{int(datetime.now(timezone.utc).timestamp())}"
+    command_id = f"cmd-deploy-approve-{plan_id}-{int(datetime.now(timezone.utc).timestamp())}"
     record = {
         "command_id": command_id,
         "type": "ApproveDeployment",
@@ -451,11 +669,14 @@ def approve_deployment(plan_id):
         "status": "executed",
         "submitted_at": datetime.utcnow().isoformat() + "Z",
         "result": {
-            "approval_decision_id": approval_id,
+            "approval_decision_id": approval_decision_id,
             "target_plan_id": plan_id,
-            "state_after": "approved" if decision == "approve" else "rejected",
-            "audit_id": f"audit-{approval_id}",
+            "state_after": state_after,
+            "audit_id": audit_id,
             "verification_timestamp": verification_timestamp,
+            "actor_id": actor_id,
+            "actor_role": actor_role,
+            "deployment_plan": plan_resp,
         },
         "error": None,
     }
@@ -463,12 +684,14 @@ def approve_deployment(plan_id):
     return (
         jsonify(
             {
-                "approval_decision_id": approval_id,
+                "approval_decision_id": approval_decision_id,
                 "target_plan_id": plan_id,
-                "state_after": "approved" if decision == "approve" else "rejected",
-                "audit_id": f"audit-{approval_id}",
+                "state_after": state_after,
+                "audit_id": audit_id,
                 "command_id": command_id,
                 "verification_timestamp": verification_timestamp,
+                "actor_id": actor_id,
+                "actor_role": actor_role,
             }
         ),
         202,
@@ -476,8 +699,7 @@ def approve_deployment(plan_id):
 
 
 @app.route("/api/internal/v1/consultations/committees/<committee_id>/sponsor-decision", methods=["POST"])
-@require_bearer_token()
-@require_mfa_if_present
+@require_bearer_token(roles=_APPROVER_ROLES, mfa_required=True)
 def record_committee_sponsor_decision(committee_id):
     body = request.get_json() or {}
     sponsor_decision = str(body.get("sponsor_decision") or "").strip().lower()
@@ -543,8 +765,7 @@ def record_committee_sponsor_decision(committee_id):
 
 
 @app.route("/api/internal/v1/runtimes/<binding_id>/pause", methods=["POST"])
-@require_bearer_token()
-@require_mfa_if_present
+@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
 def pause_runtime(binding_id):
     """Pause/resume a runtime binding through the real RuntimeBinding state machine.
 
@@ -751,8 +972,7 @@ def pause_runtime(binding_id):
 
 
 @app.route("/api/internal/v1/rollbacks/execute", methods=["POST"])
-@require_bearer_token()
-@require_mfa_if_present
+@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
 def execute_rollback():
     """Execute rollback through the RuntimeBinding state machine.
 
@@ -977,8 +1197,7 @@ def list_rollbacks():
 
 
 @app.route("/api/internal/v1/rollbacks/<rollback_id>/abort", methods=["POST"])
-@require_bearer_token()
-@require_mfa_if_present
+@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
 def abort_rollback(rollback_id):
     """Abort a rollback command (records audit trail only)."""
     body = request.get_json() or {}
@@ -1040,8 +1259,7 @@ def kill_switch_status():
 
 
 @app.route("/api/internal/v1/kill-switch", methods=["POST"])
-@require_bearer_token()
-@require_mfa_if_present
+@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
 def kill_switch():
     """Activate or deactivate kill-switch through the KillSwitchController.
 
