@@ -29,6 +29,7 @@ MEMORY_URL = os.getenv("MEMORY_URL", "http://127.0.0.1:8086")
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://127.0.0.1:8087")
 OPTIMIZER_URL = os.getenv("OPTIMIZER_URL", "http://127.0.0.1:8088")
 PROMOTION_URL = os.getenv("PROMOTION_URL", "http://127.0.0.1:8089")
+SEARCH_URL = os.getenv("SEARCH_URL", "http://127.0.0.1:8098")
 
 OPERATOR_TOKEN = "Bearer smoke-operator:operator"
 APPROVER_TOKEN = "Bearer smoke-approver:approver"
@@ -122,6 +123,7 @@ def main() -> int:
     _wait_for_health("registry", f"{REGISTRY_URL}/__health__")
     _wait_for_health("optimizer-svc", f"{OPTIMIZER_URL}/__health__")
     _wait_for_health("promotion", f"{PROMOTION_URL}/__health__")
+    _wait_for_health("search-svc", f"{SEARCH_URL}/health")
 
     status, matrix = _request_json("GET", f"{GOVERNANCE_URL}/api/governance/write-authority")
     if status != 200 or "matrix" not in (matrix or {}):
@@ -226,6 +228,52 @@ def main() -> int:
     if status != 201:
         raise RuntimeError(f"postmortem creation failed: {status} {postmortem}")
     print("ok  postmortem evidence service created a linked postmortem")
+
+    search_body = {
+        "request_id": f"search-smoke-{suffix}",
+        "trace_id": f"trace-search-smoke-{suffix}",
+        "query": "momentum volatility",
+        "persona_id": "operator-workbench",
+        "workspace_id": "research-workbench",
+        "source_types": ["internal_note"],
+        "filters_applied": {"smoke": "honest-stack"},
+        "access_context": {
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "environment": "paper",
+            "access_scopes": ["operator", "research"],
+            "license_scopes": ["internal"],
+        },
+        "documents": [
+            {
+                "result_id": f"search-doc-{suffix}",
+                "match_type": "ticket",
+                "title": "Search smoke note",
+                "excerpt": "Momentum volatility evidence should survive governed search.",
+                "content_ref": f"/research/tickets/search-doc-{suffix}",
+                "relevance_score": 0.8,
+            },
+            {
+                "result_id": f"search-private-{suffix}",
+                "match_type": "ticket",
+                "title": "Private search smoke note",
+                "excerpt": "Momentum volatility evidence that should be filtered.",
+                "content_ref": f"/research/tickets/search-private-{suffix}",
+                "access_scope": ["risk-committee"],
+                "relevance_score": 0.99,
+            },
+        ],
+    }
+    status, search_result = _request_json("POST", f"{SEARCH_URL}/api/search/query", body=search_body)
+    if status != 200 or [item.get("result_id") for item in search_result.get("results", [])] != [f"search-doc-{suffix}"]:
+        raise RuntimeError(f"search-svc governed query failed: {status} {search_result}")
+    status, search_snapshot = _request_json(
+        "GET",
+        f"{SEARCH_URL}/api/search/snapshots/{search_body['request_id']}",
+    )
+    if status != 200 or search_snapshot.get("snapshot", {}).get("request_id") != search_body["request_id"]:
+        raise RuntimeError(f"search-svc did not replay index snapshot: {status} {search_snapshot}")
+    print("ok  search-svc applied governed filters and replayed search refs")
 
     status, guidance = _request_json(
         "GET",

@@ -192,6 +192,34 @@ def _http_json_get(
         return False, None
 
 
+def _http_json_post(
+    base_url: str,
+    path: str,
+    *,
+    body: Dict[str, Any],
+    headers: Optional[Dict[str, str]] = None,
+) -> tuple[bool, Any]:
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **(headers or {}),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_service_timeout_seconds()) as response:
+            text = response.read().decode("utf-8").strip()
+            if not text:
+                return True, None
+            return True, json.loads(text)
+    except (urllib.error.HTTPError, OSError, ValueError, json.JSONDecodeError):
+        return False, None
+
+
 def _auth_headers_from_spec(spec: Dict[str, Any]) -> Dict[str, str]:
     token_env = str(spec.get("auth_token_env") or "").strip()
     if not token_env:
@@ -8011,6 +8039,9 @@ class ReadSurfaceStore:
     def _rw02_search_index_store_path(self) -> Path:
         return self._path.parent / "source_evidence" / "rw02-search-index.jsonl"
 
+    def _search_service_url(self) -> Optional[str]:
+        return _base_url_from_env(("PANTHEON_SEARCH_API_URL", "PANTHEON_SEARCH_SERVICE_URL"))
+
     def _build_research_search_repository(self, documents: List[Dict[str, Any]]):
         from services.knowledge.evidence import (
             EvidenceBundleBuilder,
@@ -8110,6 +8141,146 @@ class ReadSurfaceStore:
             scoped_repository.add_knowledge_object(knowledge_object)
         return scoped_repository
 
+    def _rw02_search_service_payload(
+        self,
+        *,
+        query: str,
+        match_type: str,
+        status: Optional[str],
+        date_range: Optional[str],
+        eligible_documents: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        documents: List[Dict[str, Any]] = []
+        for document in eligible_documents:
+            result_id = str(document.get("result_id") or "").strip()
+            if not result_id:
+                continue
+            document_match_type = str(document.get("match_type") or "document").strip().lower()
+            links = document.get("links") if isinstance(document.get("links"), dict) else {}
+            result_detail = str(
+                links.get("result_detail")
+                or (
+                    f"/research/tickets/{result_id}"
+                    if document_match_type == "ticket"
+                    else f"/research/{document_match_type}s/{result_id}"
+                )
+            )
+            documents.append(
+                {
+                    **json.loads(json.dumps(document)),
+                    "result_id": result_id,
+                    "match_type": document_match_type,
+                    "source_type": "internal_note",
+                    "content_ref": result_detail,
+                    "citation_label": f"{document_match_type}:{result_id}",
+                    "evidence_bundle_id": f"evbundle-rw02-{result_id}",
+                    "evidence_item_id": f"evi-rw02-{result_id}",
+                    "license_scope": "internal",
+                    "access_scope": ["operator", "research"],
+                    "environment_scope": ["paper"],
+                    "keywords": [document_match_type, str(document.get("linked_ticket_status") or "")],
+                    "relevance_score": float(document.get("relevance_score") or 0.0),
+                }
+            )
+        return {
+            "request_id": "rw02-bff-search",
+            "trace_id": "trace-rw02-bff-search",
+            "query": query,
+            "documents": documents,
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "source_types": ["internal_note"],
+            "environment": "paper",
+            "top_k": max(len(documents), 1),
+            "require_citations": True,
+            "filters_applied": {
+                "match_type": match_type,
+                "status": status,
+                "date_range": date_range,
+            },
+            "access_context": {
+                "persona_id": "operator-workbench",
+                "workspace_id": "research-workbench",
+                "environment": "paper",
+                "access_scopes": ["operator", "research"],
+                "license_scopes": ["internal"],
+            },
+        }
+
+    def _list_research_search_results_from_service(
+        self,
+        *,
+        query: str,
+        match_type: str,
+        status: Optional[str],
+        date_range: Optional[str],
+        eligible_documents: List[Dict[str, Any]],
+    ) -> Optional[List[Dict[str, Any]]]:
+        base_url = self._search_service_url()
+        if not base_url:
+            return None
+        available, payload = _http_json_post(
+            base_url,
+            "/api/search/query",
+            body=self._rw02_search_service_payload(
+                query=query,
+                match_type=match_type,
+                status=status,
+                date_range=date_range,
+                eligible_documents=eligible_documents,
+            ),
+        )
+        if not available or not isinstance(payload, dict):
+            self._last_governed_search_refs = {}
+            return []
+
+        documents_by_id = {str(document.get("result_id") or ""): document for document in eligible_documents}
+        results = [item for item in payload.get("results") or [] if isinstance(item, dict)]
+        self._last_governed_search_refs = {
+            str(result.get("result_id") or ""): {
+                "evidence_bundle_id": result.get("evidence_bundle_id"),
+                "citations": list(result.get("citations") or []),
+                "matched_items": list(result.get("matched_items") or []),
+            }
+            for result in results
+            if str(result.get("result_id") or "").strip()
+        }
+
+        projected: List[Dict[str, Any]] = []
+        for result in results:
+            result_id = str(result.get("result_id") or "")
+            document = documents_by_id.get(result_id)
+            if not document:
+                continue
+            document_match_type = str(document.get("match_type") or "").strip().lower()
+            linked_ticket_id = str(document.get("linked_ticket_id") or "").strip()
+            links = document.get("links") if isinstance(document.get("links"), dict) else {}
+            projected.append(
+                {
+                    "result_id": result_id,
+                    "match_type": document_match_type,
+                    "title": str(document.get("title") or ""),
+                    "excerpt": str(document.get("excerpt") or ""),
+                    "linked_ticket_id": linked_ticket_id,
+                    "relevance_score": float(result.get("relevance_score") or 0.0),
+                    "links": {
+                        "result_detail": str(
+                            links.get("result_detail")
+                            or (
+                                f"/research/tickets/{result_id}"
+                                if document_match_type == "ticket"
+                                else f"/research/{document_match_type}s/{result_id}"
+                            )
+                        ),
+                        "linked_ticket_detail": str(
+                            links.get("linked_ticket_detail")
+                            or f"/research/tickets/{linked_ticket_id}"
+                        ),
+                    },
+                }
+            )
+        return projected
+
     def list_research_search_results(
         self,
         *,
@@ -8157,6 +8328,16 @@ class ReadSurfaceStore:
                 if (reference_now - updated_at.replace(tzinfo=None)).days >= cutoff_days:
                     continue
             eligible_documents.append(document)
+
+        service_results = self._list_research_search_results_from_service(
+            query=query,
+            match_type=match_type,
+            status=status,
+            date_range=date_range,
+            eligible_documents=eligible_documents,
+        )
+        if service_results is not None:
+            return service_results
 
         from services.search import JsonlSearchIndexStore, SearchAccessContext, SearchGateway, SearchRequest
 
