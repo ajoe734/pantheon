@@ -1,0 +1,171 @@
+{
+  "status": "ok",
+  "generated_at": "2026-04-26T13:50:00Z",
+  "host": "10.140.0.5",
+  "port": 7496,
+  "client_id": 110,
+  "connected_at": "2026-04-26T13:49:49Z",
+  "next_valid_order_id": 1,
+  "open_order_count": 0,
+  "open_orders": [],
+  "status_events": [],
+  "errors": [
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2110,
+      "error": "Connectivity between Trader Workstation and server is broken. It will be restored automatically.",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2105,
+      "error": "HMDS data farm connection is broken:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2105,
+      "error": "HMDS data farm connection is broken:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2105,
+      "error": "HMDS data farm connection is broken:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2157,
+      "error": "Sec-def data farm connection is broken:secdefil",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2110,
+      "error": "Connectivity between Trader Workstation and server is broken. It will be restored automatically.",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2103,
+      "error": "Market data farm connection is broken:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2105,
+      "error": "HMDS data farm connection is broken:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2105,
+      "error": "HMDS data farm connection is broken:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2105,
+      "error": "HMDS data farm connection is broken:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:49:49Z",
+      "req_id": -1,
+      "error_code": 2157,
+      "error": "Sec-def data farm connection is broken:secdefil",
+      "advanced_reject_json": null
+    }
+  ],
+  "notes": [
+    "This probe is read-only and does not place, modify, or cancel orders."
+  ]
+}

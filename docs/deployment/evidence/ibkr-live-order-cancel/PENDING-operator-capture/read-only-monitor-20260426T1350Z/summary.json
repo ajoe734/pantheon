@@ -1,0 +1,19 @@
+{
+  "status": "terminal_or_absent",
+  "generated_at": "2026-04-26T13:50:00Z",
+  "order_id": "1",
+  "iterations": 1,
+  "summaries": [
+    {
+      "generated_at": "2026-04-26T13:50:00Z",
+      "probe_file": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture/read-only-monitor-20260426T1350Z/open-orders-01.json",
+      "open_order_count": 0,
+      "statuses": [],
+      "terminal": false,
+      "absent": true
+    }
+  ],
+  "notes": [
+    "Read-only monitor; no order placement, modification, or cancellation was performed."
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "task_id": "EP5-002",
+  "generated_at": "2026-04-27T10:28:02Z",
+  "status": "validated",
+  "packet_dir": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture",
+  "proof_boundary": "manual live order/cancel packet validation",
+  "checks": [
+    {
+      "name": "tws_open_order_evidence_present",
+      "status": "pass",
+      "detail": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture/tws-open-order-transcript.md"
+    },
+    {
+      "name": "placeholders_replaced",
+      "status": "pass",
+      "detail": "packet contains no <placeholder> values"
+    },
+    {
+      "name": "minimal_live_order_guardrails",
+      "status": "pass",
+      "detail": {
+        "account": true,
+        "symbol": true,
+        "security_type": true,
+        "exchange": true,
+        "currency": true,
+        "action": true,
+        "quantity": true,
+        "order_type": true,
+        "time_in_force": true,
+        "outside_rth": true,
+        "limit_price": true
+      }
+    },
+    {
+      "name": "broker_acknowledged_live_order",
+      "status": "pass",
+      "detail": {
+        "observed_state": "presubmitted"
+      }
+    },
+    {
+      "name": "cancel_targets_same_order",
+      "status": "pass",
+      "detail": {
+        "submit_order_id": "1",
+        "cancel_order_id": "1"
+      }
+    },
+    {
+      "name": "broker_confirmed_cancel",
+      "status": "pass",
+      "detail": {
+        "observed_state": "presubmitted",
+        "proof_source": "ib_read_only_absent_no_fill",
+        "ib_read_only_summary": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture/read-only-verify-20260427T051345Z/summary.json"
+      }
+    },
+    {
+      "name": "telemetry_trace_archived",
+      "status": "pass",
+      "detail": {
+        "target_type": "telemetry_event",
+        "runtime_binding_ids": [
+          "rb-ep5-002-ibkr-live-manual-20260426T132701Z"
+        ],
+        "deployment_plan_ids": [
+          "plan-ep5-002-ibkr-live-manual-20260426"
+        ],
+        "submit_order_id": "1"
+      }
+    },
+    {
+      "name": "runtime_manager_lifecycle_archived",
+      "status": "pass",
+      "detail": {
+        "submit_order_id": "1"
+      }
+    },
+    {
+      "name": "tws_evidence_matches_order",
+      "status": "pass",
+      "detail": {
+        "path": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture/tws-open-order-transcript.md",
+        "mode": "transcript"
+      }
+    },
+    {
+      "name": "operator_note_confirms_cancel_without_fill",
+      "status": "pass",
+      "detail": "operator note must state the order was canceled and not filled"
+    }
+  ]
+}

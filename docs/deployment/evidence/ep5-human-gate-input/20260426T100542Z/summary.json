@@ -1,0 +1,13 @@
+{
+  "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+  "generated_at": "2026-04-26T10:16:23Z",
+  "mode": "human_gate_packet",
+  "status": "ready_for_review",
+  "event_trace_status": "closed",
+  "event_trace_read_model": {
+    "status": "closed",
+    "note": "Replay-clean telemetry_event_trace archive is stored at docs/deployment/evidence/ep5-event-trace-replay-clean/20260426T100542Z.",
+    "acceptance_rule": "Must be either closed with replayable trace evidence or explicitly packetized before human gate."
+  },
+  "proof_boundary": "EP5-001 prerequisite_only; not EP5-002 proof"
+}

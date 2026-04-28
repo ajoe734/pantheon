@@ -1,0 +1,44 @@
+{
+  "runtime_binding_id": "rb-ep5-002-ibkr-live-manual-20260426T132701Z",
+  "deployment_plan_id": "plan-ep5-002-ibkr-live-manual-20260426",
+  "runtime_id": "rt-ep5-002-ibkr-live-manual",
+  "operator_id": "ajoe7341113",
+  "account": "U19859952",
+  "broker": "IBKR",
+  "symbol": "AAPL",
+  "order_id": "1",
+  "perm_id": 204599504,
+  "source": "manual_live_harness_archive",
+  "source_artifacts": [
+    "live-order-submit.response.json",
+    "live-order-cancel.response.json",
+    "read-only-verify-20260427T051345Z/summary.json"
+  ],
+  "authoritative_runtime_manager_order_route": false,
+  "archive_note": "The live order was submitted by the guarded manual IBKR harness, not by the deployable runtime-manager order route. This excerpt archives the lifecycle for EP5-002 packet lineage without claiming runtime-manager-originated order placement.",
+  "events": [
+    {
+      "event_type": "live_order_submitted",
+      "order_id": "1",
+      "perm_id": 204599504,
+      "status": "PreSubmitted",
+      "captured_at": "2026-04-26T13:27:18Z"
+    },
+    {
+      "event_type": "live_order_cancel_requested",
+      "order_id": "1",
+      "perm_id": 204599504,
+      "status": "PendingCancel",
+      "captured_at": "2026-04-26T13:27:38Z"
+    },
+    {
+      "event_type": "live_order_absent_no_fill_verified",
+      "order_id": "1",
+      "perm_id": 204599504,
+      "status": "absent_from_open_orders",
+      "fill_status": "no_matching_executions",
+      "matching_shares": 0.0,
+      "captured_at": "2026-04-27T05:16:14Z"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "task_id": "EP5-TRACE-REPLAY-001",
+  "generated_at": "2026-04-26T10:08:11Z",
+  "status": "closed",
+  "event_trace_status": "closed",
+  "replay_clean": true,
+  "source_evidence_dir": "docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z",
+  "output_dir": "docs/deployment/evidence/ep5-event-trace-replay-clean/20260426T100542Z",
+  "primary_event_id": "evt-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91",
+  "primary_binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91",
+  "primary_plan_id": "plan-ep5-canary-20260424-003-rollback",
+  "required_ids": [
+    "pause_then_replace",
+    "plan-ep5-canary-20260424-003-rollback",
+    "pool-ep5-canary-3",
+    "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+    "rb-c357b5ab929f425c89efcb7b98eacf91"
+  ],
+  "missing_ids": [],
+  "artifacts": {
+    "corpus": "event-trace-corpus.json",
+    "telemetry_event_trace_request": "telemetry-event-trace.request.json",
+    "telemetry_event_trace_response": "telemetry-event-trace.response.json",
+    "runtime_binding_projection_response": "runtime-binding-projection.response.json",
+    "forensic_plan_trace_response": "forensic-plan-trace.response.json",
+    "capital_pool_projection_response": "capital-pool-projection.response.json"
+  }
+}

@@ -1,0 +1,363 @@
+{
+  "metadata": {
+    "task_id": "EP5-TRACE-REPLAY-001",
+    "source_evidence_dir": "docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z",
+    "projection_updated_at": "2026-04-24T14:29:48Z",
+    "primary_event_id": "evt-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91",
+    "primary_binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91",
+    "primary_plan_id": "plan-ep5-canary-20260424-003-rollback",
+    "primary_pool_id": "pool-ep5-canary-3",
+    "rollback_parent_binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+    "rollback_action_type": "pause_then_replace"
+  },
+  "node_sets": {
+    "capital_pools": [
+      {
+        "pool_id": "pool-ep5-canary",
+        "single_runtime_enforced": true,
+        "created_at": "2026-04-24T14:26:37Z"
+      },
+      {
+        "pool_id": "pool-ep5-canary-2",
+        "single_runtime_enforced": true,
+        "created_at": "2026-04-24T14:27:56Z"
+      },
+      {
+        "pool_id": "pool-ep5-canary-3",
+        "single_runtime_enforced": true,
+        "created_at": "2026-04-24T14:29:48Z"
+      }
+    ],
+    "persona_capital_bindings": [
+      {
+        "binding_id": "pcb-ep5-canary",
+        "persona_id": "persona-live-ops",
+        "capital_pool_id": "pool-ep5-canary",
+        "status": "active",
+        "created_at": "2026-04-24T14:26:37Z"
+      },
+      {
+        "binding_id": "pcb-ep5-canary-2",
+        "persona_id": "persona-live-ops",
+        "capital_pool_id": "pool-ep5-canary-2",
+        "status": "active",
+        "created_at": "2026-04-24T14:27:56Z"
+      },
+      {
+        "binding_id": "pcb-ep5-canary-3",
+        "persona_id": "persona-live-ops",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "status": "active",
+        "created_at": "2026-04-24T14:29:48Z"
+      }
+    ],
+    "deployment_plans": [
+      {
+        "plan_id": "plan-ep5-canary-20260424-001",
+        "approval_decision_id": "derived-from-plan-ep5-canary-20260424-001",
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.0",
+        "artifact_type": "model_artifact",
+        "strategy_id": "strategy-ep5-canary",
+        "capital_pool_id": "pool-ep5-canary",
+        "binding_id": "pcb-ep5-canary",
+        "current_stage": "paper",
+        "target_stage": "canary",
+        "status": "executed",
+        "created_at": "2026-04-24T14:22:11Z",
+        "rollback": {}
+      },
+      {
+        "plan_id": "plan-ep5-canary-20260424-001-rollback",
+        "approval_decision_id": "derived-from-plan-ep5-canary-20260424-001-rollback",
+        "artifact_id": "artifact-ep4-paper-baseline",
+        "artifact_version": "0.9.0",
+        "artifact_type": "model_artifact",
+        "strategy_id": "strategy-ep5-canary",
+        "capital_pool_id": "pool-ep5-canary",
+        "binding_id": "pcb-ep5-canary",
+        "current_stage": "paper",
+        "target_stage": "paper",
+        "status": "executed",
+        "created_at": "2026-04-24T14:26:37Z",
+        "rollback": {
+          "target_artifact_id": "artifact-ep4-paper-baseline",
+          "target_version": "0.9.0",
+          "action_type": "pause_then_replace",
+          "reason": "derived from EP5 rollback evidence",
+          "verified_at": "2026-04-24T14:26:37Z"
+        }
+      },
+      {
+        "plan_id": "plan-ep5-canary-20260424-002",
+        "approval_decision_id": "derived-from-plan-ep5-canary-20260424-002",
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.1",
+        "artifact_type": "model_artifact",
+        "strategy_id": "strategy-ep5-canary",
+        "capital_pool_id": "pool-ep5-canary-2",
+        "binding_id": "pcb-ep5-canary-2",
+        "current_stage": "paper",
+        "target_stage": "canary",
+        "status": "executed",
+        "created_at": "2026-04-24T14:27:55Z",
+        "rollback": {}
+      },
+      {
+        "plan_id": "plan-ep5-canary-20260424-002-rollback",
+        "approval_decision_id": "derived-from-plan-ep5-canary-20260424-002-rollback",
+        "artifact_id": "artifact-ep4-paper-baseline",
+        "artifact_version": "0.9.0",
+        "artifact_type": "model_artifact",
+        "strategy_id": "strategy-ep5-canary",
+        "capital_pool_id": "pool-ep5-canary-2",
+        "binding_id": "pcb-ep5-canary-2",
+        "current_stage": "paper",
+        "target_stage": "paper",
+        "status": "executed",
+        "created_at": "2026-04-24T14:27:56Z",
+        "rollback": {
+          "target_artifact_id": "artifact-ep4-paper-baseline",
+          "target_version": "0.9.0",
+          "action_type": "pause_then_replace",
+          "reason": "derived from EP5 rollback evidence",
+          "verified_at": "2026-04-24T14:27:56Z"
+        }
+      },
+      {
+        "plan_id": "plan-ep5-canary-20260424-003",
+        "approval_decision_id": "derived-from-plan-ep5-canary-20260424-003",
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.2",
+        "artifact_type": "model_artifact",
+        "strategy_id": "strategy-ep5-canary",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "binding_id": "pcb-ep5-canary-3",
+        "current_stage": "paper",
+        "target_stage": "canary",
+        "status": "executed",
+        "created_at": "2026-04-24T14:29:47Z",
+        "rollback": {}
+      },
+      {
+        "plan_id": "plan-ep5-canary-20260424-003-rollback",
+        "approval_decision_id": "derived-from-plan-ep5-canary-20260424-003-rollback",
+        "artifact_id": "artifact-ep4-paper-baseline",
+        "artifact_version": "0.9.1",
+        "artifact_type": "model_artifact",
+        "strategy_id": "strategy-ep5-canary",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "binding_id": "pcb-ep5-canary-3",
+        "current_stage": "paper",
+        "target_stage": "paper",
+        "status": "executed",
+        "created_at": "2026-04-24T14:29:48Z",
+        "rollback": {
+          "target_artifact_id": "artifact-ep4-paper-baseline",
+          "target_version": "0.9.1",
+          "action_type": "pause_then_replace",
+          "reason": "derived from EP5 rollback evidence",
+          "verified_at": "2026-04-24T14:29:48Z"
+        }
+      }
+    ],
+    "runtime_bindings": [
+      {
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.0",
+        "binding_id": "rb-bb9d6c057e3f44ccaf8c207a8eee3a29",
+        "capital_pool_id": "pool-ep5-canary",
+        "deployment_mode": "canary",
+        "effective_at": "2026-04-24T14:22:11Z",
+        "persona_capital_binding_id": "pcb-ep5-canary",
+        "plan_id": "plan-ep5-canary-20260424-001",
+        "retired_at": "2026-04-24T14:26:37Z",
+        "runtime_id": "paper-runtime-001",
+        "status": "retired"
+      },
+      {
+        "artifact_id": "artifact-ep4-paper-baseline",
+        "artifact_version": "0.9.0",
+        "binding_id": "rb-7221290d74704d8ea6808976d8120093",
+        "capital_pool_id": "pool-ep5-canary",
+        "deployment_mode": "paper",
+        "effective_at": "2026-04-24T14:26:37Z",
+        "persona_capital_binding_id": "pcb-ep5-canary",
+        "plan_id": "plan-ep5-canary-20260424-001-rollback",
+        "rollback_action_type": "pause_then_replace",
+        "rollback_parent": "rb-bb9d6c057e3f44ccaf8c207a8eee3a29",
+        "runtime_id": "paper-runtime-rollback-001",
+        "status": "active"
+      },
+      {
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.1",
+        "binding_id": "rb-782978a91ba9435eab321f224abe48ca",
+        "capital_pool_id": "pool-ep5-canary-2",
+        "deployment_mode": "canary",
+        "effective_at": "2026-04-24T14:27:55Z",
+        "persona_capital_binding_id": "pcb-ep5-canary-2",
+        "plan_id": "plan-ep5-canary-20260424-002",
+        "retired_at": "2026-04-24T14:27:56Z",
+        "runtime_id": "paper-runtime-001",
+        "status": "retired"
+      },
+      {
+        "artifact_id": "artifact-ep4-paper-baseline",
+        "artifact_version": "0.9.0",
+        "binding_id": "rb-9e82547f531f434497433a5e8ccce34f",
+        "capital_pool_id": "pool-ep5-canary-2",
+        "deployment_mode": "paper",
+        "effective_at": "2026-04-24T14:27:56Z",
+        "persona_capital_binding_id": "pcb-ep5-canary-2",
+        "plan_id": "plan-ep5-canary-20260424-002-rollback",
+        "rollback_action_type": "pause_then_replace",
+        "rollback_parent": "rb-782978a91ba9435eab321f224abe48ca",
+        "runtime_id": "paper-runtime-rollback-001",
+        "status": "active"
+      },
+      {
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.2",
+        "binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "deployment_mode": "canary",
+        "effective_at": "2026-04-24T14:29:47Z",
+        "persona_capital_binding_id": "pcb-ep5-canary-3",
+        "plan_id": "plan-ep5-canary-20260424-003",
+        "retired_at": "2026-04-24T14:29:48Z",
+        "runtime_id": "paper-runtime-rollback-001",
+        "status": "retired"
+      },
+      {
+        "artifact_id": "artifact-ep4-paper-baseline",
+        "artifact_version": "0.9.1",
+        "binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "deployment_mode": "paper",
+        "effective_at": "2026-04-24T14:29:48Z",
+        "persona_capital_binding_id": "pcb-ep5-canary-3",
+        "plan_id": "plan-ep5-canary-20260424-003-rollback",
+        "rollback_action_type": "pause_then_replace",
+        "rollback_parent": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+        "runtime_id": "paper-runtime-rollback-002",
+        "status": "active"
+      }
+    ],
+    "telemetry_events": [
+      {
+        "event_id": "evt-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91",
+        "event_type": "rollback_completed",
+        "created_at": "2026-04-24T14:29:48Z",
+        "event_produced_at": "2026-04-24T14:29:48Z",
+        "execution_mode": "paper",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91",
+        "runtime_binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91",
+        "runtime_id": "paper-runtime-rollback-002",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "artifact_id": "artifact-ep4-paper-baseline",
+        "artifact_version": "0.9.1",
+        "plan_id": "plan-ep5-canary-20260424-003-rollback",
+        "deployment_plan_id": "plan-ep5-canary-20260424-003-rollback",
+        "persona_capital_binding_id": "pcb-ep5-canary-3",
+        "trace_id": "trace-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91",
+        "strategy_id": "strategy-ep5-canary",
+        "registry_id": "artifact-ep4-paper-baseline",
+        "rollback_parent": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+        "rollback_action_type": "pause_then_replace",
+        "target": {
+          "registry_id": "artifact-ep4-paper-baseline",
+          "strategy_id": "strategy-ep5-canary",
+          "artifact_version": "0.9.1",
+          "artifact_type": "model_artifact",
+          "promotion_state": "paper"
+        },
+        "metrics": {
+          "action": "rollback_completed"
+        },
+        "metadata": {
+          "source_task_id": "EP5-TRACE-REPLAY-001",
+          "source_evidence_dir": "docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z",
+          "source_response": "rollback.response.json"
+        }
+      },
+      {
+        "event_id": "evt-ep5-kill-switch-ks-5b327d2c0bf8",
+        "event_type": "kill_switch_action",
+        "created_at": "2026-04-24T14:29:48Z",
+        "event_produced_at": "2026-04-24T14:29:48Z",
+        "execution_mode": "live",
+        "environment": "canary",
+        "deployment_stage": "canary",
+        "binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+        "runtime_binding_id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+        "runtime_id": "paper-runtime-rollback-001",
+        "capital_pool_id": "pool-ep5-canary-3",
+        "artifact_id": "artifact-ep5-canary",
+        "artifact_version": "1.0.2",
+        "plan_id": "plan-ep5-canary-20260424-003",
+        "deployment_plan_id": "plan-ep5-canary-20260424-003",
+        "persona_capital_binding_id": "pcb-ep5-canary-3",
+        "trace_id": "trace-ep5-kill-switch-ks-5b327d2c0bf8",
+        "strategy_id": "strategy-ep5-canary",
+        "registry_id": "artifact-ep5-canary",
+        "target": {
+          "registry_id": "artifact-ep5-canary",
+          "strategy_id": "strategy-ep5-canary",
+          "artifact_version": "1.0.2",
+          "artifact_type": "model_artifact",
+          "promotion_state": "canary"
+        },
+        "metrics": {
+          "action": "pause"
+        },
+        "metadata": {
+          "source_task_id": "EP5-TRACE-REPLAY-001",
+          "source_evidence_dir": "docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z",
+          "source_response": "kill-switch.response.json",
+          "command_id": "ks-5b327d2c0bf8"
+        }
+      }
+    ]
+  },
+  "query_families": [
+    {
+      "query_family": "telemetry_event_trace",
+      "sla_bucket": "sync",
+      "p95_target_ms": 500
+    },
+    {
+      "query_family": "runtime_binding_projection",
+      "sla_bucket": "sync",
+      "p95_target_ms": 500
+    },
+    {
+      "query_family": "forensic_plan_trace",
+      "sla_bucket": "forensic",
+      "p95_target_ms": 5000
+    }
+  ],
+  "benchmark_cases": [
+    {
+      "case_id": "ep5-rollback-event-trace",
+      "query_family": "telemetry_event_trace",
+      "params": {
+        "event_id": "evt-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91"
+      },
+      "expected_ids": [
+        "pool-ep5-canary-3",
+        "pcb-ep5-canary-3",
+        "plan-ep5-canary-20260424-003-rollback",
+        "rb-c357b5ab929f425c89efcb7b98eacf91",
+        "artifact-ep4-paper-baseline@0.9.1",
+        "paper-runtime-rollback-002"
+      ],
+      "expected_marker_ids": [
+        "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+        "pause_then_replace"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "query_family": "telemetry_event_trace",
+  "params": {
+    "event_id": "evt-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91"
+  },
+  "replay_mode": "local_lineage_read_service"
+}
