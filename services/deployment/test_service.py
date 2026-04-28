@@ -338,6 +338,109 @@ def test_dispatch_bootstraps_saga_and_persists_outbox(client):
     assert len(persisted["outbox"]) == 1
 
 
+def test_dispatch_records_foundation_context_and_replays_idempotently(client):
+    test_client, governance_dir = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-paper-foundation-001"),
+    )
+    assert created.status_code == 201
+
+    body = {
+        "trace_id": "trace-deploy-foundation-001",
+        "correlation_id": "corr-deploy-foundation-001",
+        "idempotency_key": "idmp-deploy-foundation-001",
+        "actor_id": "deployment-worker-001",
+        "workflow_id": "pantheon.deploy.foundation",
+        "source_task_id": "SD-FND-004",
+        "metadata": {"change_ticket": "chg-001"},
+    }
+    first = test_client.post(
+        "/api/deployment/plans/plan-paper-foundation-001/dispatch",
+        json=body,
+    )
+    second = test_client.post(
+        "/api/deployment/plans/plan-paper-foundation-001/dispatch",
+        json=body,
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["replayed"] is True
+
+    saga = first.json()["deployment_saga"]["saga"]
+    foundation = saga["metadata"]["foundation"]
+    assert foundation["trace_context"]["trace_id"] == "trace-deploy-foundation-001"
+    assert foundation["trace_context"]["correlation_id"] == "corr-deploy-foundation-001"
+    assert foundation["command_envelope"]["command_type"] == "deployment.dispatch_plan"
+    assert foundation["idempotency_record"]["idempotency_key"] == "idmp-deploy-foundation-001"
+    assert foundation["idempotency_record"]["status"] == "succeeded"
+    assert foundation["policy_decision"]["decision"] == "allow"
+    assert foundation["audit_action"]["trace_id"] == "trace-deploy-foundation-001"
+    assert first.json()["deployment_saga"]["outbox_event"]["event"]["trace_id"] == "trace-deploy-foundation-001"
+
+    persisted = json.loads((governance_dir / "deployment_sagas.json").read_text(encoding="utf-8"))
+    persisted_foundation = persisted["sagas"]["deployment-saga-plan-paper-foundation-001"]["metadata"]["foundation"]
+    assert persisted_foundation["audit_action"]["policy_decision_ref"] == foundation["policy_decision"]["decision_id"]
+    assert len(persisted["outbox"]) == 1
+
+
+def test_dispatch_rejects_idempotency_key_reuse_with_foundation_error(client):
+    test_client, _ = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-paper-foundation-conflict"),
+    )
+    assert created.status_code == 201
+
+    first = test_client.post(
+        "/api/deployment/plans/plan-paper-foundation-conflict/dispatch",
+        json={
+            "trace_id": "trace-deploy-conflict-001",
+            "idempotency_key": "idmp-deploy-conflict-001",
+            "metadata": {"change_ticket": "chg-original"},
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    conflict = test_client.post(
+        "/api/deployment/plans/plan-paper-foundation-conflict/dispatch",
+        json={
+            "trace_id": "trace-deploy-conflict-002",
+            "idempotency_key": "idmp-deploy-conflict-001",
+            "metadata": {"change_ticket": "chg-mutated"},
+        },
+    )
+    assert conflict.status_code == 409, conflict.text
+    detail = conflict.json()["detail"]
+    assert detail["foundation_error"]["error_kind"] == "idempotency_conflict"
+    assert detail["foundation_error"]["trace"]["trace_id"] == "trace-deploy-conflict-002"
+    assert detail["audit_action"]["action_type"] == "deployment.dispatch.idempotency_conflict"
+
+
+def test_dispatch_unapproved_plan_returns_foundation_policy_error(client):
+    test_client, _ = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json={**_plan_payload(plan_id="plan-paper-foundation-deny"), "status": "draft"},
+    )
+    assert created.status_code == 201
+
+    denied = test_client.post(
+        "/api/deployment/plans/plan-paper-foundation-deny/dispatch",
+        json={
+            "trace_id": "trace-deploy-deny-001",
+            "idempotency_key": "idmp-deploy-deny-001",
+        },
+    )
+    assert denied.status_code == 403, denied.text
+    detail = denied.json()["detail"]
+    assert detail["foundation_error"]["error_kind"] == "policy_denial"
+    assert detail["foundation_error"]["trace"]["trace_id"] == "trace-deploy-deny-001"
+    assert detail["policy_decision"]["decision"] == "deny"
+    assert detail["audit_action"]["policy_decision_ref"] == detail["policy_decision"]["decision_id"]
+
+
 def test_dispatch_is_idempotent_for_existing_saga(client):
     test_client, _ = client
     created = test_client.post(

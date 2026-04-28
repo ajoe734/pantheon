@@ -293,6 +293,9 @@ class DeploymentExecutionProjectionBody(BaseModel):
 
 class DispatchDeploymentPlanRequest(BaseModel):
     trace_id: Optional[str] = None
+    correlation_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    actor_id: Optional[str] = None
     saga_id: Optional[str] = None
     source_task_id: Optional[str] = None
     workflow_id: Optional[str] = None

@@ -22,9 +22,29 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance"
 if str(_CP_GOV) not in sys.path:
     sys.path.insert(0, str(_CP_GOV))
+
+from services.foundation import (  # noqa: E402
+    ActorRef,
+    ActorType,
+    AuditAction,
+    AuthorityScope,
+    CommandEnvelope,
+    EnvironmentScope,
+    ErrorEnvelope,
+    ErrorKind,
+    IdempotencyRecord,
+    PolicyDecision,
+    PolicyDecisionValue,
+    TraceContext,
+    foundation_id,
+)
 
 from deployment_plan import (  # type: ignore
     DeploymentPlan,
@@ -95,6 +115,9 @@ except ImportError:
     )
 
 log = logging.getLogger(__name__)
+
+_DEPLOYMENT_FOUNDATION_POLICY_VERSION = "deployment.dispatch.v1"
+_DEPLOYMENT_FOUNDATION_ROUTE = "deployment.plan.dispatch"
 
 
 def _iso_sort_key(plan: DeploymentPlan) -> str:
@@ -323,6 +346,13 @@ class DeploymentPlannerService:
         )
 
 
+class FoundationDeploymentError(Exception):
+    def __init__(self, *, status_code: int, detail: Dict[str, Any]) -> None:
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail.get("message") or str(detail))
+
+
 class DeploymentOrchestrationService:
     """Deployment-facing orchestration facade over the canonical DEP-002 store."""
 
@@ -341,16 +371,19 @@ class DeploymentOrchestrationService:
         request: DispatchDeploymentPlanRequest,
     ) -> tuple[DeploymentPlan, Dict[str, Any], DeploymentSagaBootstrap, bool]:
         plan = self.planner_service.get_plan(plan_id)
+        foundation_context = _build_dispatch_foundation_context(plan=plan, request=request)
         existing = self.saga_store.get(request.saga_id or f"deployment-saga-{plan.plan_id}")
         if existing is None and PlanStatus(plan.status) != PlanStatus.APPROVED:
-            raise DeploymentPlanError(
-                f"DeploymentPlan '{plan_id}' must be approved before dispatch; got '{plan.status}'"
+            raise _foundation_policy_denial(
+                foundation_context=foundation_context,
+                reason=f"DeploymentPlan '{plan_id}' must be approved before dispatch; got '{plan.status}'",
             )
 
         registry_entry = self._resolve_registry_entry_for_plan(plan, request.registry_entry)
         projection = self.planner_service.planner.build_execution_projection(plan, registry_entry)
 
         if existing is not None:
+            _ensure_dispatch_replay_matches_foundation(existing, foundation_context)
             first_outbox = self._find_outbox_event(existing.saga_id, sequence_no=1)
             if first_outbox is None:
                 raise DeploymentSagaError(
@@ -365,9 +398,15 @@ class DeploymentOrchestrationService:
         if request.source_task_id:
             metadata.setdefault("source_task_id", request.source_task_id)
 
+        foundation_context["idempotency_record"] = foundation_context["idempotency_record"].with_status(
+            "succeeded",
+            result_ref=f"deployment_saga:{request.saga_id or f'deployment-saga-{plan.plan_id}'}",
+        )
+        metadata["foundation"] = _serialize_foundation_context(foundation_context)
+
         bootstrap = self.saga_store.bootstrap_for_plan(
             plan,
-            trace_id=request.trace_id or f"deploy-trace-{uuid.uuid4()}",
+            trace_id=foundation_context["trace_context"].trace_id,
             saga_id=request.saga_id,
             metadata=metadata or None,
         )
@@ -539,6 +578,254 @@ def _load_record(path: Path, *, key_candidates: Iterable[str], target_key: str) 
     return None
 
 
+def _foundation_environment_for_plan(plan: DeploymentPlan) -> EnvironmentScope:
+    target_stage = _enum_value(plan.target_stage)
+    if target_stage in {"paper", "canary", "live"}:
+        environment_name = target_stage
+    else:
+        environment_name = os.getenv("PANTHEON_ENV", "dev").strip() or "dev"
+        if environment_name not in {"dev", "sandbox", "paper", "canary", "live"}:
+            environment_name = "dev"
+    return EnvironmentScope(name=environment_name)
+
+
+def _dispatch_actor_ref(plan: DeploymentPlan, request: DispatchDeploymentPlanRequest) -> ActorRef:
+    actor_id = (
+        str(request.actor_id or "").strip()
+        or str(getattr(plan, "created_by", "") or "").strip()
+        or str(request.source_task_id or "").strip()
+        or "deployment-orchestrator"
+    )
+    return ActorRef(
+        actor_type=ActorType.SERVICE,
+        actor_id=actor_id,
+        roles=("deployment-dispatcher",),
+        persona_id=str(getattr(plan, "sponsor_persona_id", "") or "").strip() or None,
+    )
+
+
+def _dispatch_request_payload(plan: DeploymentPlan, request: DispatchDeploymentPlanRequest) -> Dict[str, Any]:
+    payload = request.model_dump(mode="json", exclude_none=True)
+    payload.pop("trace_id", None)
+    payload.pop("correlation_id", None)
+    payload.pop("idempotency_key", None)
+    return {
+        "plan_id": plan.plan_id,
+        "approval_decision_id": plan.approval_decision_id,
+        "target_stage": _enum_value(plan.target_stage),
+        "runtime_action": _enum_value(plan.runtime_action),
+        "dispatch": payload,
+    }
+
+
+def _build_dispatch_foundation_context(
+    *,
+    plan: DeploymentPlan,
+    request: DispatchDeploymentPlanRequest,
+) -> Dict[str, Any]:
+    environment = _foundation_environment_for_plan(plan)
+    actor_ref = _dispatch_actor_ref(plan, request)
+    authority_scope = AuthorityScope(
+        action="deployment.dispatch_plan",
+        target_type="DeploymentPlan",
+        target_id=plan.plan_id,
+        environment=environment,
+        persona_id=str(getattr(plan, "sponsor_persona_id", "") or "").strip() or None,
+        capital_pool_id=str(getattr(plan, "capital_pool_id", "") or "").strip() or None,
+        attributes={"route": _DEPLOYMENT_FOUNDATION_ROUTE},
+    )
+    request_payload = _dispatch_request_payload(plan, request)
+    trace_id = str(request.trace_id or "").strip()
+    idempotency_key = str(request.idempotency_key or "").strip() or None
+    if trace_id:
+        trace = TraceContext(
+            trace_id=trace_id,
+            correlation_id=str(request.correlation_id or trace_id).strip(),
+            environment=environment,
+            actor_ref=actor_ref,
+            source_system="pantheon-deployment",
+            idempotency_key=idempotency_key,
+        )
+    else:
+        trace = TraceContext.new(
+            environment=environment,
+            actor_ref=actor_ref,
+            source_system="pantheon-deployment",
+            correlation_id=str(request.correlation_id or "").strip() or None,
+            idempotency_key=idempotency_key,
+        )
+    command_envelope = CommandEnvelope.new(
+        command_type="deployment.dispatch_plan",
+        actor_ref=actor_ref,
+        authority_scope=authority_scope,
+        payload=request_payload,
+        trace=trace,
+        idempotency_key=idempotency_key,
+    )
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=command_envelope.idempotency_key,
+        operation_type="deployment.dispatch_plan",
+        target_ref=authority_scope.target_ref,
+        request_payload=request_payload,
+        trace_id=command_envelope.trace.trace_id,
+    )
+    policy_decision = PolicyDecision.make(
+        policy_id="deployment.dispatch.admission",
+        policy_version=_DEPLOYMENT_FOUNDATION_POLICY_VERSION,
+        decision=PolicyDecisionValue.ALLOW,
+        actor_ref=actor_ref,
+        action=command_envelope.command_type,
+        target_ref=authority_scope.target_ref,
+        environment=environment,
+        trace_id=command_envelope.trace.trace_id,
+    )
+    audit_action = AuditAction.record(
+        actor_ref=actor_ref,
+        action_type="deployment.dispatch.accepted",
+        target_ref=authority_scope.target_ref,
+        environment=environment,
+        reason="deployment plan dispatch accepted",
+        trace=command_envelope.trace,
+        payload=request_payload,
+        policy_decision_ref=policy_decision.decision_id,
+        metadata={"route": _DEPLOYMENT_FOUNDATION_ROUTE},
+    )
+    return {
+        "command_envelope": command_envelope,
+        "trace_context": command_envelope.trace,
+        "idempotency_record": idempotency_record,
+        "policy_decision": policy_decision,
+        "audit_action": audit_action,
+        "request_payload": request_payload,
+    }
+
+
+def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "trace_context": context["trace_context"].to_dict(),
+        "command_envelope": context["command_envelope"].to_dict(),
+        "idempotency_record": context["idempotency_record"].to_dict(),
+        "policy_decision": context["policy_decision"].to_dict(),
+        "audit_action": context["audit_action"].to_dict(),
+    }
+
+
+def _foundation_error_detail(
+    *,
+    foundation_error: ErrorEnvelope,
+    audit_action: AuditAction,
+    policy_decision: PolicyDecision | None = None,
+) -> Dict[str, Any]:
+    detail: Dict[str, Any] = {
+        "message": foundation_error.message,
+        "foundation_error": foundation_error.to_dict(),
+        "audit_action": audit_action.to_dict(),
+    }
+    if policy_decision is not None:
+        detail["policy_decision"] = policy_decision.to_dict()
+    return detail
+
+
+def _foundation_policy_denial(*, foundation_context: Dict[str, Any], reason: str) -> FoundationDeploymentError:
+    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    policy_decision = PolicyDecision.make(
+        policy_id="deployment.dispatch.admission",
+        policy_version=_DEPLOYMENT_FOUNDATION_POLICY_VERSION,
+        decision=PolicyDecisionValue.DENY,
+        actor_ref=command_envelope.actor_ref,
+        action=command_envelope.command_type,
+        target_ref=command_envelope.authority_scope.target_ref,
+        environment=command_envelope.authority_scope.environment,
+        trace_id=command_envelope.trace.trace_id,
+        reasons=[reason],
+    )
+    foundation_error = ErrorEnvelope.policy_denial(
+        message=reason,
+        trace=command_envelope.trace,
+        policy_decision_ref=policy_decision.decision_id,
+        details={"route": _DEPLOYMENT_FOUNDATION_ROUTE},
+    )
+    audit_action = AuditAction.record(
+        actor_ref=command_envelope.actor_ref,
+        action_type="deployment.dispatch.policy_denied",
+        target_ref=command_envelope.authority_scope.target_ref,
+        environment=command_envelope.authority_scope.environment,
+        reason=reason,
+        trace=command_envelope.trace,
+        payload=foundation_context["request_payload"],
+        policy_decision_ref=policy_decision.decision_id,
+        metadata={"route": _DEPLOYMENT_FOUNDATION_ROUTE},
+    )
+    return FoundationDeploymentError(
+        status_code=403,
+        detail=_foundation_error_detail(
+            foundation_error=foundation_error,
+            audit_action=audit_action,
+            policy_decision=policy_decision,
+        ),
+    )
+
+
+def _foundation_idempotency_conflict(
+    *,
+    foundation_context: Dict[str, Any],
+    existing_saga_id: str,
+) -> FoundationDeploymentError:
+    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+    reason = (
+        f"idempotency_key={idempotency_record.idempotency_key} is already bound "
+        f"to deployment saga {existing_saga_id}"
+    )
+    foundation_error = ErrorEnvelope(
+        error_id=foundation_id("err"),
+        error_code="IDEMPOTENCY_CONFLICT",
+        message="Idempotency key was already used with a different deployment dispatch payload",
+        error_kind=ErrorKind.IDEMPOTENCY_CONFLICT,
+        trace=command_envelope.trace,
+        status_code=409,
+        details={
+            "reason": reason,
+            "existing_saga_id": existing_saga_id,
+            "idempotency_key": idempotency_record.idempotency_key,
+        },
+    )
+    audit_action = AuditAction.record(
+        actor_ref=command_envelope.actor_ref,
+        action_type="deployment.dispatch.idempotency_conflict",
+        target_ref=command_envelope.authority_scope.target_ref,
+        environment=command_envelope.authority_scope.environment,
+        reason=reason,
+        trace=command_envelope.trace,
+        payload=foundation_context["request_payload"],
+        metadata={"route": _DEPLOYMENT_FOUNDATION_ROUTE},
+    )
+    return FoundationDeploymentError(
+        status_code=409,
+        detail=_foundation_error_detail(foundation_error=foundation_error, audit_action=audit_action),
+    )
+
+
+def _ensure_dispatch_replay_matches_foundation(
+    existing: DeploymentSaga,
+    foundation_context: Dict[str, Any],
+) -> None:
+    foundation = (existing.metadata or {}).get("foundation") if isinstance(existing.metadata, dict) else None
+    if not isinstance(foundation, dict):
+        return
+    existing_record = foundation.get("idempotency_record")
+    if not isinstance(existing_record, dict):
+        return
+    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+    if existing_record.get("idempotency_key") != idempotency_record.idempotency_key:
+        return
+    if existing_record.get("request_hash") != idempotency_record.request_hash:
+        raise _foundation_idempotency_conflict(
+            foundation_context=foundation_context,
+            existing_saga_id=existing.saga_id,
+        )
+
+
 def _plan_body(plan: DeploymentPlan) -> DeploymentPlanBody:
     return DeploymentPlanBody(**plan.to_dict())
 
@@ -679,6 +966,8 @@ async def update_deployment_plan_status(plan_id: str, body: UpdatePlanStatusRequ
 async def dispatch_deployment_plan(plan_id: str, body: DispatchDeploymentPlanRequest):
     try:
         plan, execution_projection, bootstrap, replayed = orchestration_service.dispatch_plan(plan_id, body)
+    except FoundationDeploymentError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     except (DeploymentPlanError, DeploymentSagaError) as exc:
         message = str(exc)
         status_code = 404 if "not found" in message.lower() else 400

@@ -46,6 +46,7 @@ class CommandStore:
         submitted_at: str,
         params: Dict[str, Any],
         audit_context: Dict[str, Any],
+        foundation_context: Optional[Dict[str, Any]] = None,
     ):
         record = {
             "command_id": command_id,
@@ -55,6 +56,7 @@ class CommandStore:
             "status": CommandStatus.SUBMITTED.value,
             "params": params,
             "audit": audit_context,
+            "foundation": foundation_context,
             "result": None,
             "error": None,
         }
@@ -64,6 +66,14 @@ class CommandStore:
     def get_command(self, command_id: str) -> Optional[Dict[str, Any]]:
         for cmd in self._get_all_commands():
             if cmd["command_id"] == command_id:
+                return cmd
+        return None
+
+    def get_command_by_idempotency_key(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
+        for cmd in self._get_all_commands():
+            foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
+            record = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
+            if record.get("idempotency_key") == idempotency_key:
                 return cmd
         return None
 
