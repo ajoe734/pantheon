@@ -10,6 +10,7 @@ from .base import (
     SourceConnector,
     SourceEvidenceError,
     SourceRecord,
+    SourceRecordStatus,
     SourceType,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "SourceConnector",
     "SourceEvidenceError",
     "SourceRecord",
+    "SourceRecordStatus",
     "SourceType",
 ]
