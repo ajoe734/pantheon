@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260416-0852";
+} from "./dashboard-config.js?v=20260428-0142";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
@@ -201,6 +201,7 @@ export function agentLabel(value) {
   if (!value) return "-";
   const normalized = String(value).toLowerCase();
   if (normalized === "claude") return "Claude";
+  if (normalized === "claude2") return "Claude (2)";
   if (normalized === "gemini") return "Gemini";
   if (normalized === "codex") return "Codex";
   if (normalized === "codex2") return "Codex (2)";

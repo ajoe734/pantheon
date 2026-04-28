@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260416-0852";
+} from "./dashboard-config.js?v=20260428-0142";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -28,7 +28,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260416-0852";
+} from "./dashboard-core.js?v=20260428-0142";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -707,6 +707,8 @@ export function renderStackList(selector, items, emptyText, formatter) {
 function coordinationStageLabel(stage) {
   const normalized = compactWhitespace(stage || "").toLowerCase();
   if (!normalized) return "未知";
+  if (normalized === "loop_complete") return "loop-complete";
+  if (normalized === "frontend_feedback_reviewed_followup") return "feedback reviewed / follow-up";
   if (normalized === "waiting_for_lovable") return "等待 Lovable / 前端";
   if (normalized === "ui_done_received") return "已收 ui-done";
   if (normalized === "frontend_feedback_received") return "已收 feedback";
@@ -723,16 +725,21 @@ export function renderLovableCoordinationSummary(dashboardBundle = null) {
   const summary = dashboardBundle?.coordination_summary || {};
   const counts = summary.counts || {};
   const features = Array.isArray(summary.features) ? summary.features : [];
+  const loopComplete = features.filter((feature) => feature.stage === "loop_complete").length;
+  const followUp = features.filter((feature) => feature.stage && feature.stage !== "loop_complete").length;
 
   const summaryCard = document.createElement("article");
   summaryCard.className = "stack-card";
   summaryCard.innerHTML = `
     <div class="stack-head">
-      <strong>Coordination Snapshot</strong>
+      <strong>Coordination Records</strong>
       <span class="status-pill">${formatTime(summary.last_scan_at)}</span>
     </div>
+    <p class="card-copy">這裡是前端交付協調紀錄，不等於 remaining workbench backlog；剩餘模組真相以 <code>WORKBENCH_DELIVERY_BACKLOG.md</code> 和 <code>ai-status.json</code> 為準。</p>
     <div class="lane-meta">
       <span class="chip">追蹤 feature ${counts.tracked_features || 0}</span>
+      <span class="chip">loop-complete ${loopComplete}</span>
+      <span class="chip">follow-up ${followUp}</span>
       <span class="chip">Lovable-ready ${counts.lovable_ready || 0}</span>
       <span class="chip">等待執行 ${counts.waiting_for_lovable || 0}</span>
       <span class="chip">ui-done ${counts.ui_done_received || 0}</span>
@@ -802,16 +809,13 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const container = qs("#overview-metrics");
   if (!container) return;
   const tasks = status.tasks || [];
-  const summary = dashboardBundle?.execution_summary || {};
 
-  // Task status counts — use bundle values where available (bundle may cover
-  // all historical waves), fall back to local task list counts.
   const todo          = tasks.filter((t) => String(t.status || "").toLowerCase() === "todo").length;
-  const inProgress    = Number.isFinite(summary.in_progress)     ? summary.in_progress     : tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
-  const review        = Number.isFinite(summary.in_review)       ? summary.in_review       : tasks.filter((t) => String(t.status || "").toLowerCase() === "review").length;
-  const reviewApproved= Number.isFinite(summary.review_approved) ? summary.review_approved : tasks.filter((t) => String(t.status || "").toLowerCase() === "review_approved").length;
-  const done          = Number.isFinite(summary.done)            ? summary.done            : tasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
-  const blocked       = Number.isFinite(summary.blocked)         ? summary.blocked         : tasks.filter((t) => String(t.status || "").toLowerCase() === "blocked").length;
+  const inProgress    = tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
+  const review        = tasks.filter((t) => String(t.status || "").toLowerCase() === "review").length;
+  const reviewApproved= tasks.filter((t) => String(t.status || "").toLowerCase() === "review_approved").length;
+  const done          = tasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
+  const blocked       = tasks.filter((t) => String(t.status || "").toLowerCase() === "blocked").length;
 
   const items = [
     { label: "待開始",    value: todo,           tone: "" },
@@ -833,13 +837,14 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
 function executionStatusCounts(status, dashboardBundle = null) {
   const tasks = status.tasks || [];
   const summary = dashboardBundle?.execution_summary || {};
+  const archive = dashboardBundle?.archive_summary?.counts || {};
   return {
     total: tasks.length,
-    done: Number.isFinite(summary.done) ? summary.done : tasks.filter((task) => String(task.status || "").toLowerCase() === "done").length,
-    reviewApproved: Number.isFinite(summary.review_approved) ? summary.review_approved : tasks.filter((task) => String(task.status || "").toLowerCase() === "review_approved").length,
-    inProgress: Number.isFinite(summary.in_progress) ? summary.in_progress : tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length,
-    review: Number.isFinite(summary.in_review) ? summary.in_review : tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length,
-    blocked: Number.isFinite(summary.blocked) ? summary.blocked : tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length,
+    done: tasks.filter((task) => String(task.status || "").toLowerCase() === "done").length,
+    reviewApproved: tasks.filter((task) => String(task.status || "").toLowerCase() === "review_approved").length,
+    inProgress: tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length,
+    review: tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length,
+    blocked: tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length,
     todo: tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     readyNow: Number.isFinite(summary.ready_now) ? summary.ready_now : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     dependencyReady: Number.isFinite(summary.dependency_ready)
@@ -847,6 +852,8 @@ function executionStatusCounts(status, dashboardBundle = null) {
       : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     liveAttached: Number.isFinite(summary.live_attached) ? summary.live_attached : 0,
     mismatchCount: Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : 0,
+    archivedDone: Number.isFinite(archive.completed) ? archive.completed : Number.isFinite(summary.done) ? summary.done : 0,
+    archivedSuperseded: Number.isFinite(archive.superseded) ? archive.superseded : Number.isFinite(summary.superseded) ? summary.superseded : 0,
   };
 }
 
@@ -856,6 +863,81 @@ function pausedProviderEntries(orchState) {
   return Object.entries(pauses)
     .map(([provider, info]) => ({ provider, ...(info || {}) }))
     .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
+}
+
+function normalizedProviderKey(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "grok") return "copilot";
+  return normalized;
+}
+
+function pauseSeverity(entry) {
+  if (!entry) return null;
+  const raw = [
+    entry.pause_kind,
+    entry.failure_kind,
+    entry.summary,
+    entry.reason,
+    entry.detail,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (
+    raw.includes("quota")
+    || raw.includes("rate limit")
+    || raw.includes("capacity")
+    || raw.includes("402")
+    || raw.includes("429")
+  ) {
+    return "quota";
+  }
+  return "error";
+}
+
+function agentRuntimeAvailability(agentId, details) {
+  const { pause, running, failed, readyCount } = details;
+  const pauseKind = pauseSeverity(pause);
+  if (pauseKind === "quota") {
+    return {
+      icon: "⛔",
+      className: "agent-card-quota",
+      pillClass: "status-blocked",
+      label: "Quota 暫停",
+      canAccept: false,
+    };
+  }
+  if (pauseKind === "error" || failed > 0) {
+    return {
+      icon: "🔴",
+      className: "agent-card-error",
+      pillClass: "status-blocked",
+      label: pause ? "錯誤暫停" : "Worker 錯誤",
+      canAccept: false,
+    };
+  }
+  if (running > 0) {
+    return {
+      icon: "🟡",
+      className: "agent-card-busy",
+      pillClass: "status-working",
+      label: "執行中",
+      canAccept: false,
+    };
+  }
+  if (readyCount > 0) {
+    return {
+      icon: "🟢",
+      className: "agent-card-available",
+      pillClass: "status-ready",
+      label: "可接工",
+      canAccept: true,
+    };
+  }
+  return {
+    icon: "⚪",
+    className: "agent-card-idle",
+    pillClass: "status-idle",
+    label: "無可派工",
+    canAccept: false,
+  };
 }
 
 function planningGateProgress(planning) {
@@ -1716,10 +1798,9 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
   const currentWaveTotal = proposalStats.total > 0 ? proposalStats.total : localTasks.length;
   const currentWaveDone = proposalStats.total > 0 ? proposalStats.done : localDone;
   const executionPercent = currentWaveTotal ? Math.round((currentWaveDone / currentWaveTotal) * 100) : 0;
-  const historicalDone = executionCounts.done;
-  const executionNote = historicalDone > currentWaveDone
-    ? `${currentWaveDone}/${currentWaveTotal} 本波次 · 歷史共 ${historicalDone} done`
-    : `${currentWaveDone}/${currentWaveTotal} 正式完成`;
+  const executionNote = proposalStats.total > 0
+    ? `${currentWaveDone}/${currentWaveTotal} 本輪 planning 切片完成 · 當前看板 ${localDone}/${localTasks.length} done`
+    : `${currentWaveDone}/${currentWaveTotal} 當前看板正式完成`;
 
   const items = [
     {
@@ -2006,15 +2087,20 @@ export function renderExecutionSummary(status, orchState, dashboardBundle = null
   const cards = [
     { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "lane 健康且目前空閒，supervisor 這一輪真的能 dispatch 的 todo task" },
     { label: "Deps Ready", value: dependencyReady, note: "依賴都完成，但可能仍在等 lane 恢復、空出，或避開 sidecar-only/guardrail 限制" },
-    { label: "In Progress", value: Number.isFinite(summary.in_progress) ? summary.in_progress : activeNow, note: "task board 上已進入 in_progress 的任務" },
-    { label: "In Review", value: Number.isFinite(summary.in_review) ? summary.in_review : reviewNow, note: "正在 review lane 的任務" },
+    { label: "In Progress", value: activeNow, note: "task board 上已進入 in_progress 的任務" },
+    { label: "In Review", value: reviewNow, note: "正在 review lane 的任務" },
     { label: "Live Attached", value: Number.isFinite(summary.live_attached) ? summary.live_attached : attachedNow, note: "目前有 live running worker 真的掛在 task 上" },
-    { label: "Blocked", value: Number.isFinite(summary.blocked) ? summary.blocked : blockedNow, note: "已標記 blocker 的任務" },
+    { label: "Blocked", value: blockedNow, note: "已標記 blocker 的任務" },
     {
       label: "Mismatches",
       value: truth.counts.total,
       note: truth.counts.total ? `High ${truth.counts.high} · Medium ${truth.counts.medium}` : "目前 execution/runtime 對齊",
       statusClass: truth.counts.total ? "status-blocked" : "status-ready",
+    },
+    {
+      label: "Archived Done",
+      value: executionStatusCounts(status, dashboardBundle).archivedDone,
+      note: "歷史封存完成數；不列入當前 sprint/open board 計算",
     },
   ];
 
@@ -2094,7 +2180,7 @@ export function renderBoardSummary(status, orchState, dashboardBundle = null) {
   const chips = [
     `<span class="chip">Ready ${Number.isFinite(summary.ready_now) ? summary.ready_now : readyCount}</span>`,
     `<span class="chip">Deps ${dependencyReady}</span>`,
-    `<span class="chip">Review ${Number.isFinite(summary.in_review) ? summary.in_review : reviewCount}</span>`,
+    `<span class="chip">Review ${reviewCount}</span>`,
     `<span class="chip">Live attached ${Number.isFinite(summary.live_attached) ? summary.live_attached : attachedCount}</span>`,
     `<span class="chip ${truth.counts.total ? "status-blocked" : ""}">Mismatch ${truth.counts.total}</span>`,
   ];
@@ -2224,9 +2310,16 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     statusEl.appendChild(pauseCard);
   }
 
-  const agentStateMap = new Map((agentStates || []).map((a) => [a.name.toLowerCase(), a]));
-  for (const agentId of logicalAgents) {
-    const pw = workers.filter((w) => w.logical_agent_id === agentId);
+  const agentStateMap = new Map((agentStates || []).map((a) => [normalizedProviderKey(a.name), a]));
+  const pauseMap = new Map(pausedProviders.map((entry) => [normalizedProviderKey(entry.provider), entry]));
+  const runtimeAgentIds = Array.from(new Set([
+    ...logicalAgents,
+    ...(agentStates || []).map((agent) => normalizedProviderKey(agent.name)),
+    ...workers.map((worker) => normalizedProviderKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
+    ...pausedProviders.map((entry) => normalizedProviderKey(entry.provider)),
+  ].filter(Boolean)));
+  for (const agentId of runtimeAgentIds) {
+    const pw = workers.filter((w) => normalizedProviderKey(w.logical_agent_id || w.provider || w.agent_id) === agentId);
     const running = pw.filter((w) => w.bucket === "running").length;
     const waiting = pw.filter((w) => w.bucket === "pending").length;
     const transition = pw.filter((w) => w.bucket === "transition").length;
@@ -2234,18 +2327,31 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     const completed = pw.filter((w) => w.bucket === "completed").length;
     const agent = agentStateMap.get(agentId);
     const runningTasks = pw.filter((w) => w.bucket === "running").map((w) => w.task_id).filter(Boolean);
+    const pause = pauseMap.get(agentId);
+    const readyCount = agent?.ready_count || 0;
+    const availability = agentRuntimeAvailability(agentId, { pause, running, failed, readyCount });
+    const pauseReason = pause ? summarizePausedReason(pause.summary || pause.reason || pause.detail, pause.provider) : null;
     const card = document.createElement("article");
-    card.className = "sys-card";
+    card.className = `sys-card agent-runtime-card ${availability.className}`;
     card.innerHTML = `
-      <div class="sys-card-head"><span class="sys-icon">${running > 0 ? "🟡" : failed > 0 ? "🔴" : "⚪"}</span><strong>${agentLabel(agentId)}</strong></div>
+      <div class="sys-card-head">
+        <span class="sys-icon">${availability.icon}</span>
+        <strong>${agentLabel(agentId)}</strong>
+        <span class="status-pill ${availability.pillClass}">${availability.label}</span>
+      </div>
       <div class="sys-card-body">
+        <span class="chip ${availability.canAccept ? "agent-can-accept" : "agent-cannot-accept"}">${availability.canAccept ? "可接新工作" : "不可接新工作"}</span>
         <span class="chip">執行中 ${running}</span>
         <span class="chip">等待 ${waiting}</span>
         ${transition ? `<span class="chip">改派 ${transition}</span>` : ""}
         <span class="chip">失敗 ${failed}</span>
         <span class="chip">完成 ${completed}</span>
         ${runningTasks.length ? `<span class="chip">任務 ${runningTasks.join(", ")}</span>` : ""}
-        ${agent ? `<span class="chip">可開工 ${agent.ready_count || 0}</span><span class="chip">等前置 ${agent.waiting_count || 0}</span>` : ""}
+        ${agent ? `<span class="chip">可開工 ${readyCount}</span><span class="chip">等前置 ${agent.waiting_count || 0}</span>` : ""}
+        ${pause ? `<span class="chip status-blocked">暫停到 ${formatTime(pause.blocked_until)}</span>` : ""}
+        ${pause?.task_id ? `<span class="chip status-blocked">卡在 ${pause.task_id}</span>` : ""}
+        ${pauseReason ? `<span class="chip status-blocked">${escapeHtml(pauseReason.summary)}</span>` : ""}
+        ${pause?.raw_ref ? `<span class="chip">evidence ${escapeHtml(pause.raw_ref)}</span>` : ""}
       </div>
     `;
     statusEl.appendChild(card);
@@ -2431,6 +2537,8 @@ const LOVABLE_STAGE_LABEL = {
   ui_done_received: "UI Done — 待整合",
   bff_gap_open: "BFF Gap 待解",
   frontend_feedback_received: "Feedback 收到",
+  frontend_feedback_reviewed_followup: "Feedback reviewed / follow-up",
+  loop_complete: "loop-complete",
   done: "已完成",
 };
 const LOVABLE_STAGE_TONE = {
@@ -2440,6 +2548,8 @@ const LOVABLE_STAGE_TONE = {
   ui_done_received: "card-review",
   bff_gap_open: "card-blocked",
   frontend_feedback_received: "card-active",
+  frontend_feedback_reviewed_followup: "card-review",
+  loop_complete: "card-done",
   done: "card-done",
 };
 
@@ -2456,7 +2566,7 @@ function deriveLovableStage(f) {
   return "needs_ui";
 }
 
-export function renderLovableCoordination(orchState, status) {
+export function renderLovableCoordination(orchState, status, dashboardBundle = null) {
   const overview = qs("#lovable-overview");
   const featureList = qs("#lovable-features");
   const panelSummary = qs("#lovable-panel-summary");
@@ -2464,12 +2574,25 @@ export function renderLovableCoordination(orchState, status) {
 
   const coord = orchState?.coordination || {};
   const rawFeatures = coord.features || {};
-  const features = Object.values(rawFeatures);
+  const bundledFeatures = dashboardBundle?.coordination_summary?.features;
+  const features = Array.isArray(bundledFeatures) && bundledFeatures.length
+    ? bundledFeatures
+    : Object.values(rawFeatures);
 
   // Build summary counts
-  const counts = { needs_ui: 0, contract_ready: 0, waiting_for_lovable: 0, ui_done_received: 0, bff_gap_open: 0, frontend_feedback_received: 0, done: 0 };
+  const counts = {
+    needs_ui: 0,
+    contract_ready: 0,
+    waiting_for_lovable: 0,
+    ui_done_received: 0,
+    bff_gap_open: 0,
+    frontend_feedback_received: 0,
+    frontend_feedback_reviewed_followup: 0,
+    loop_complete: 0,
+    done: 0,
+  };
   for (const f of features) {
-    const stage = deriveLovableStage(f);
+    const stage = f.stage || deriveLovableStage(f);
     const key = Object.prototype.hasOwnProperty.call(counts, stage) ? stage : "needs_ui";
     counts[key]++;
   }
@@ -2482,12 +2605,12 @@ export function renderLovableCoordination(orchState, status) {
 
   // Overview metrics
   const metricItems = [
-    { label: "追蹤中", value: features.length, tone: "" },
-    { label: "等待中", value: counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable, tone: "" },
-    { label: "待整合", value: counts.ui_done_received, tone: counts.ui_done_received ? "card-review" : "" },
+    { label: "協調紀錄", value: features.length, tone: "" },
+    { label: "Loop Complete", value: counts.loop_complete + counts.done, tone: "card-done" },
+    { label: "Follow-up", value: counts.frontend_feedback_reviewed_followup, tone: counts.frontend_feedback_reviewed_followup ? "card-review" : "" },
     { label: "BFF Gap", value: counts.bff_gap_open, tone: counts.bff_gap_open ? "card-blocked" : "" },
     { label: "整合任務", value: coordTasks.length, tone: coordTasks.length ? "card-active" : "" },
-    { label: "已完成", value: counts.done, tone: "card-done" },
+    { label: "等待前端", value: counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable + counts.ui_done_received + counts.frontend_feedback_received, tone: "" },
   ];
   overview.innerHTML = metricItems.map((m) => `
     <article class="metric-card ${m.tone}">
@@ -2498,8 +2621,8 @@ export function renderLovableCoordination(orchState, status) {
 
   // Panel summary
   if (panelSummary) {
-    const pending = counts.ui_done_received + counts.bff_gap_open;
-    panelSummary.textContent = pending ? `${pending} 待處理` : features.length ? "進行中" : "無追蹤項目";
+    const pending = counts.frontend_feedback_reviewed_followup + counts.bff_gap_open + counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable;
+    panelSummary.textContent = pending ? `${pending} follow-up / pending` : features.length ? `${counts.loop_complete + counts.done}/${features.length} loop-complete` : "無追蹤項目";
   }
 
   if (!features.length) {
@@ -2508,9 +2631,9 @@ export function renderLovableCoordination(orchState, status) {
   }
 
   featureList.innerHTML = features.map((f) => {
-    const stage = deriveLovableStage(f);
+    const stage = f.stage || deriveLovableStage(f);
     const tone = LOVABLE_STAGE_TONE[stage] || "";
-    const stageLabel = LOVABLE_STAGE_LABEL[stage] || stage;
+    const stageLabel = LOVABLE_STAGE_LABEL[stage] || coordinationStageLabel(stage);
     const featureId = escapeHtml(f.feature_id || "-");
     const screen = escapeHtml(f.screen || "-");
     const nextAction = escapeHtml(f.next_action || "");

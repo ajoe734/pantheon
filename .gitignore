@@ -34,3 +34,4 @@ archived
 *:Zone.Identifier
 .venv-*/
 docs/commit-plan-uncommitted-worktree-*.md
+tools/storage-state.json

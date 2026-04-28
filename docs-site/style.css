@@ -904,9 +904,43 @@ details[open].cockpit-details .cockpit-details-summary::before {
   gap: 12px;
 }
 
+.agent-runtime-card {
+  border-left: 4px solid rgba(95, 111, 108, 0.32);
+}
+
+.agent-runtime-card.agent-card-available {
+  border-color: rgba(20, 104, 94, 0.34);
+  border-left-color: var(--teal);
+  background: rgba(20, 104, 94, 0.08);
+}
+
+.agent-runtime-card.agent-card-busy {
+  border-color: rgba(166, 117, 28, 0.28);
+  border-left-color: var(--orange);
+  background: rgba(166, 117, 28, 0.07);
+}
+
+.agent-runtime-card.agent-card-quota,
+.agent-runtime-card.agent-card-error {
+  border-color: rgba(196, 75, 63, 0.34);
+  border-left-color: var(--red);
+  background: rgba(196, 75, 63, 0.08);
+}
+
+.agent-can-accept {
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.agent-cannot-accept {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
 .sys-card-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   font-weight: 700;
 }
