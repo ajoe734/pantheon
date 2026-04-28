@@ -79,7 +79,7 @@ WORKER_FAILURE_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"^status:\s*(401|429)\b", re.IGNORECASE),
-    re.compile(r"^(?:you(?:'ve| have)\s+)?hit your limit\b", re.IGNORECASE),
+    re.compile(r"^(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+)?\s+limit\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
@@ -1345,6 +1345,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "credit balance is too low",
         "billing_error",
         "hit your limit",
+        "hit your usage limit",
         "exhausted your capacity",
         "no quota",
         "you have no quota",
@@ -1391,6 +1392,44 @@ def _parse_iso_utc(ts: str | None) -> datetime | None:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+_QUOTA_RETRY_AT_PATTERN = re.compile(
+    r"\btry again at\s+(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
+_QUOTA_RESETS_AT_PATTERN = re.compile(
+    r"\bresets\s+(?:at\s+)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
+
+
+def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -> datetime | None:
+    """Return the next wall-clock time at which a quota error says it will reset.
+
+    Both Codex ("try again at 7:00 PM") and Claude ("resets 1pm (Asia/Taipei)")
+    emit times in the user's local clock; we interpret them in LOCAL_TZ. Returns
+    a UTC-aware datetime, or None if no hint is found.
+    """
+    if not reason:
+        return None
+    match = _QUOTA_RETRY_AT_PATTERN.search(reason) or _QUOTA_RESETS_AT_PATTERN.search(reason)
+    if not match:
+        return None
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute") or 0)
+    meridiem = (match.group("meridiem") or "").replace(".", "").lower()
+    if meridiem == "pm" and hour < 12:
+        hour += 12
+    elif meridiem == "am" and hour == 12:
+        hour = 0
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        return None
+    base = (now.astimezone(LOCAL_TZ) if now else datetime.now(LOCAL_TZ))
+    candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= base:
+        candidate += timedelta(days=1)
+    return candidate.astimezone(timezone.utc)
 
 
 def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -1499,7 +1538,12 @@ def mark_provider_dispatch_paused(
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
+    if effective_pause_kind == "quota_terminal":
+        hinted = parse_quota_retry_hint(reason, now=now)
+        if hinted is not None and hinted > blocked_until:
+            blocked_until = hinted.replace(microsecond=0)
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
+    actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
     previous = bucket.get(provider_id)
     summary = summarize_failure_reason(reason, provider_id)
@@ -1518,7 +1562,7 @@ def mark_provider_dispatch_paused(
         "detail": summary.get("detail"),
         "failure_kind": failure_kind or summary.get("kind"),
         "pause_kind": effective_pause_kind or failure_kind or summary.get("kind"),
-        "reset_after_seconds": pause_seconds,
+        "reset_after_seconds": actual_pause_seconds,
         "raw_ref": raw_ref,
         "task_id": task_id,
         "worker_run_id": worker_run_id,

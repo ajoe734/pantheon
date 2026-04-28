@@ -169,6 +169,29 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
+    def test_classifies_codex_usage_limit_failure_as_terminal_quota(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "codex"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+        )
+
+        self.assertEqual(result["kind"], "quota_terminal")
+        self.assertFalse(result["transient"])
+
+    def test_detects_codex_usage_limit_line_as_worker_failure(self) -> None:
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n"
+        )
+
+        self.assertEqual(
+            supervisor.detect_worker_failure(worker),
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+        )
+
     def test_classifies_gemini_auth_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
@@ -200,6 +223,102 @@ class DetectWorkerFailureTests(unittest.TestCase):
     @mock.patch("supervisor.os.waitpid", return_value=(43210, 0))
     def test_pid_is_alive_treats_reaped_child_as_dead(self, _waitpid: mock.Mock, _kill: mock.Mock) -> None:
         self.assertFalse(supervisor.pid_is_alive(43210))
+
+    def test_parse_quota_retry_hint_codex_pm(self) -> None:
+        from datetime import datetime, timezone
+
+        # 03:05Z on 2026-04-28 = 11:05 LOCAL (Asia/Taipei). "7:00 PM" in local
+        # time = 19:00 LOCAL = 11:00 UTC same day.
+        now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+            now=now,
+        )
+
+        self.assertEqual(hint, datetime(2026, 4, 28, 11, 0, 0, tzinfo=timezone.utc))
+
+    def test_parse_quota_retry_hint_rolls_to_next_day_when_past(self) -> None:
+        from datetime import datetime, timezone
+
+        # 06:00Z on 2026-04-28 = 14:00 LOCAL same day (Asia/Taipei). "1pm" = 13:00
+        # LOCAL is already past, so the hint should roll forward to the next day:
+        # 2026-04-29 13:00 LOCAL = 2026-04-29 05:00 UTC.
+        now = datetime(2026, 4, 28, 6, 0, 0, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "You've hit your limit · resets 1pm (Asia/Taipei)",
+            now=now,
+        )
+
+        self.assertEqual(hint, datetime(2026, 4, 29, 5, 0, 0, tzinfo=timezone.utc))
+
+    def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
+        self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
+        self.assertIsNone(supervisor.parse_quota_retry_hint(None))
+
+    def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
+        from datetime import datetime, timezone
+
+        config = {
+            "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state: dict = {}
+
+        fake_now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex",
+                "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+                task_id="SD-FND-003",
+                worker_run_id="codex-run-1",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        entry = state["provider_guardrails"]["dispatch_pauses"]["codex"]
+        # 7pm Asia/Taipei = 11:00 UTC same day, far longer than the default 900s
+        self.assertEqual(entry["blocked_until"], "2026-04-28T11:00:00Z")
+        self.assertEqual(entry["pause_kind"], "quota_terminal")
+        # reset_after_seconds should reflect the actual hint window, not the default
+        self.assertGreater(entry["reset_after_seconds"], 900)
+        self.assertEqual(entry["reset_after_seconds"], int((11 - 3) * 3600 - 5 * 60))
+
+    def test_mark_provider_dispatch_paused_uses_default_when_no_hint(self) -> None:
+        from datetime import datetime, timezone
+
+        config = {
+            "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state: dict = {}
+
+        fake_now = datetime(2026, 4, 28, 3, 5, 0, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "claude",
+                "Credit balance is too low",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        entry = state["provider_guardrails"]["dispatch_pauses"]["claude"]
+        # 03:05Z + 900s = 03:20Z
+        self.assertEqual(entry["blocked_until"], "2026-04-28T03:20:00Z")
+        self.assertEqual(entry["reset_after_seconds"], 900)
 
     def test_expire_provider_dispatch_pauses_removes_expired_entry(self) -> None:
         config = {

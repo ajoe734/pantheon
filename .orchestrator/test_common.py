@@ -89,6 +89,15 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota")
         self.assertEqual(result["summary"], "Qwen OAuth free tier discontinued")
 
+    def test_summarize_failure_reason_treats_codex_usage_limit_as_quota(self) -> None:
+        result = common.summarize_failure_reason(
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+            "Codex",
+        )
+
+        self.assertEqual(result["kind"], "quota")
+        self.assertEqual(result["summary"], "Codex usage limit reached")
+
 
 class ClaudeAuthTests(unittest.TestCase):
     def test_claude_auth_ready_refreshes_expired_oauth(self) -> None:

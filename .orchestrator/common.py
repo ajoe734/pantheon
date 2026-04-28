@@ -556,6 +556,8 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         return {"kind": "quota", "summary": "Credit balance is too low", "detail": raw[: max(420, limit)]}
     if "free daily quota has been reached" in lowered:
         return {"kind": "quota", "summary": "Daily quota exceeded", "detail": raw[: max(420, limit)]}
+    if "hit your usage limit" in lowered:
+        return {"kind": "quota", "summary": "Codex usage limit reached", "detail": raw[: max(420, limit)]}
     if "hit your limit" in lowered:
         return {"kind": "quota", "summary": "Rate limit reached", "detail": raw[: max(420, limit)]}
     if "rate limit" in lowered or "rate limited" in lowered or "capacity" in lowered or "quota exceeded" in lowered:
