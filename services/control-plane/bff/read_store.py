@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -148,6 +150,64 @@ def _load_snapshot_dataset(
     return True, normalized, (str(snapshot_path), stat)
 
 
+def _base_url_from_env(env_names: tuple[str, ...]) -> Optional[str]:
+    for env_name in env_names:
+        raw = os.getenv(env_name, "").strip()
+        if raw:
+            return raw.rstrip("/")
+    return None
+
+
+def _service_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS", "2.0").strip()
+    try:
+        return max(float(raw), 0.1)
+    except ValueError:
+        return 2.0
+
+
+def _http_json_get(
+    base_url: str,
+    path: str,
+    *,
+    headers: Optional[Dict[str, str]] = None,
+) -> tuple[bool, Any]:
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", **(headers or {})},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_service_timeout_seconds()) as response:
+            text = response.read().decode("utf-8").strip()
+            if not text:
+                return True, None
+            return True, json.loads(text)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return True, None
+        return False, None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False, None
+
+
+def _auth_headers_from_spec(spec: Dict[str, Any]) -> Dict[str, str]:
+    token_env = str(spec.get("auth_token_env") or "").strip()
+    if not token_env:
+        return {}
+    token = os.getenv(token_env, "").strip() or str(spec.get("default_token") or "").strip()
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _records_from_http_payload(payload: Any, *, list_key: Optional[str]) -> Any:
+    if list_key and isinstance(payload, dict):
+        return payload.get(list_key, [])
+    return payload
+
+
 class CanonicalSnapshotAdapter:
     """Best-effort adapter over canonical governance/runtime JSON snapshots.
 
@@ -202,10 +262,70 @@ class CanonicalSnapshotAdapter:
         },
     }
 
-    def __init__(self, *, snapshot_path: Optional[Path] = None) -> None:
+    _HTTP_DATASETS = {
+        "deployment_plans": {
+            "base_env": ("PANTHEON_DEPLOYMENT_API_URL", "PANTHEON_DEPLOYMENT_SERVICE_URL"),
+            "list_path": "/api/deployment/plans",
+        },
+        "approval_decisions": {
+            "base_env": (
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
+            ),
+            "list_path": "/api/governance/approvals",
+        },
+        "capital_pools": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/capital-pools",
+        },
+        "persona_bindings": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/bindings",
+        },
+        "runtime_bindings": {
+            "base_env": ("PANTHEON_RUNTIME_MANAGER_URL", "PANTHEON_INTERNAL_API_URL"),
+            "list_path": "/api/runtime-bindings",
+            "list_key": "bindings",
+            "auth_token_env": "PANTHEON_RUNTIME_MANAGER_TOKEN",
+            "default_token": "runtime-control-internal",
+        },
+    }
+
+    def __init__(
+        self,
+        *,
+        snapshot_path: Optional[Path] = None,
+        allow_snapshot_fallback: bool = True,
+    ) -> None:
         self._cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._cache_meta: Dict[str, tuple[str, int]] = {}
+        self._cache_source: Dict[str, str] = {}
         self._snapshot_path = snapshot_path or _default_bff_snapshot_path()
+        self._allow_snapshot_fallback = allow_snapshot_fallback
+
+    def _load_http_dataset(self, dataset: str) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        spec = self._HTTP_DATASETS.get(dataset)
+        if not spec:
+            return False, {}
+        base_url = _base_url_from_env(tuple(spec.get("base_env") or ()))
+        if not base_url:
+            return False, {}
+        available, payload = _http_json_get(
+            base_url,
+            str(spec.get("list_path") or ""),
+            headers=_auth_headers_from_spec(spec),
+        )
+        if not available:
+            return False, {}
+        records_payload = _records_from_http_payload(
+            payload,
+            list_key=spec.get("list_key"),
+        )
+        normalized = _normalize_records(records_payload, self._DATASETS[dataset]["keys"])
+        self._cache[dataset] = normalized
+        self._cache_meta[dataset] = (f"{base_url}{spec.get('list_path')}", 0)
+        self._cache_source[dataset] = "service_client"
+        return True, normalized
 
     def _resolve_path(self, dataset: str) -> Optional[Path]:
         spec = self._DATASETS[dataset]
@@ -227,6 +347,10 @@ class CanonicalSnapshotAdapter:
         *,
         include_snapshot_fallback: bool = True,
     ) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        http_available, http_records = self._load_http_dataset(dataset)
+        if http_available:
+            return True, http_records
+
         path = self._resolve_path(dataset)
         if path is not None and path.exists():
             stat = path.stat().st_mtime_ns
@@ -239,10 +363,11 @@ class CanonicalSnapshotAdapter:
             normalized = _normalize_records(payload, self._DATASETS[dataset]["keys"])
             self._cache[dataset] = normalized
             self._cache_meta[dataset] = (cache_key, stat)
+            self._cache_source[dataset] = "canonical"
             return True, normalized
 
         snapshot_key = self._DATASETS[dataset].get("snapshot_key")
-        if include_snapshot_fallback and snapshot_key:
+        if include_snapshot_fallback and self._allow_snapshot_fallback and snapshot_key:
             available, normalized, cache_meta = _load_snapshot_dataset(
                 self._snapshot_path,
                 str(snapshot_key),
@@ -252,12 +377,24 @@ class CanonicalSnapshotAdapter:
                 if self._cache_meta.get(dataset) != cache_meta:
                     self._cache[dataset] = normalized
                     self._cache_meta[dataset] = cache_meta
+                    self._cache_source[dataset] = "local_snapshot"
                 return True, self._cache.get(dataset, normalized)
 
         return False, {}
 
-    def list_records(self, dataset: str) -> tuple[bool, List[Dict[str, Any]]]:
-        available, records = self._load_dataset(dataset)
+    def source(self, dataset: str) -> str:
+        return self._cache_source.get(dataset, "canonical")
+
+    def list_records(
+        self,
+        dataset: str,
+        *,
+        include_snapshot_fallback: bool = True,
+    ) -> tuple[bool, List[Dict[str, Any]]]:
+        available, records = self._load_dataset(
+            dataset,
+            include_snapshot_fallback=include_snapshot_fallback,
+        )
         return available, list(records.values())
 
     def deployment_plan(self, plan_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
@@ -537,10 +674,71 @@ class ServiceBackedReadAdapter:
         },
     }
 
-    def __init__(self, *, snapshot_path: Optional[Path] = None) -> None:
+    _HTTP_DATASETS = {
+        "incidents": {
+            "base_env": ("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL"),
+            "list_path": "/api/incidents",
+        },
+        "postmortems": {
+            "base_env": ("PANTHEON_POSTMORTEMS_API_URL", "PANTHEON_POSTMORTEMS_URL"),
+            "list_path": "/api/postmortems",
+        },
+        "evolution_decisions": {
+            "base_env": ("PANTHEON_EVOLUTION_API_URL", "PANTHEON_GOVERNANCE_API_URL"),
+            "list_path": "/api/evolution/proposals",
+        },
+        "lineage_edges": {
+            "base_env": ("PANTHEON_LINEAGE_READ_URL", "PANTHEON_LINEAGE_API_URL"),
+            "list_path": "/api/v1/lineage",
+        },
+    }
+
+    def __init__(
+        self,
+        *,
+        snapshot_path: Optional[Path] = None,
+        allow_snapshot_fallback: bool = True,
+    ) -> None:
         self._cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._cache_meta: Dict[str, tuple[str, int]] = {}
+        self._cache_source: Dict[str, str] = {}
         self._snapshot_path = snapshot_path or _default_bff_snapshot_path()
+        self._allow_snapshot_fallback = allow_snapshot_fallback
+
+    def _load_http_dataset(self, dataset: str) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        spec = self._HTTP_DATASETS.get(dataset)
+        if not spec:
+            return False, {}
+        base_url = _base_url_from_env(tuple(spec.get("base_env") or ()))
+        if not base_url:
+            return False, {}
+        available, payload = _http_json_get(
+            base_url,
+            str(spec.get("list_path") or ""),
+            headers=_auth_headers_from_spec(spec),
+        )
+        if not available:
+            return False, {}
+        records_payload = _records_from_http_payload(
+            payload,
+            list_key=spec.get("list_key"),
+        )
+        if dataset == "lineage_edges" and isinstance(records_payload, list):
+            records_payload = [
+                {
+                    **record,
+                    "from_artifact_id": record.get("from_artifact_id") or record.get("source_id"),
+                    "to_artifact_id": record.get("to_artifact_id") or record.get("target_id"),
+                }
+                if isinstance(record, dict)
+                else record
+                for record in records_payload
+            ]
+        normalized = _normalize_records(records_payload, self._DATASETS[dataset]["keys"])
+        self._cache[dataset] = normalized
+        self._cache_meta[dataset] = (f"{base_url}{spec.get('list_path')}", 0)
+        self._cache_source[dataset] = "service_client"
+        return True, normalized
 
     def _resolve_path(self, dataset: str) -> Optional[Path]:
         spec = self._DATASETS[dataset]
@@ -562,6 +760,10 @@ class ServiceBackedReadAdapter:
         *,
         include_snapshot_fallback: bool = True,
     ) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        http_available, http_records = self._load_http_dataset(dataset)
+        if http_available:
+            return True, http_records
+
         path = self._resolve_path(dataset)
         if path is not None and path.exists():
             stat = path.stat().st_mtime_ns
@@ -577,10 +779,11 @@ class ServiceBackedReadAdapter:
             normalized = _normalize_records(payload, self._DATASETS[dataset]["keys"])
             self._cache[dataset] = normalized
             self._cache_meta[dataset] = (cache_key, stat)
+            self._cache_source[dataset] = "service_store"
             return True, normalized
 
         snapshot_key = self._DATASETS[dataset].get("snapshot_key")
-        if include_snapshot_fallback and snapshot_key:
+        if include_snapshot_fallback and self._allow_snapshot_fallback and snapshot_key:
             available, normalized, cache_meta = _load_snapshot_dataset(
                 self._snapshot_path,
                 str(snapshot_key),
@@ -590,9 +793,13 @@ class ServiceBackedReadAdapter:
                 if self._cache_meta.get(dataset) != cache_meta:
                     self._cache[dataset] = normalized
                     self._cache_meta[dataset] = cache_meta
+                    self._cache_source[dataset] = "local_snapshot"
                 return True, self._cache.get(dataset, normalized)
 
         return False, {}
+
+    def source(self, dataset: str) -> str:
+        return self._cache_source.get(dataset, "service_store")
 
     def list_records(
         self,
@@ -4408,11 +4615,17 @@ class ReadSurfaceStore:
     ) -> None:
         self._path = Path(storage_path)
         self._data: Dict[str, Any] = {}
-        self._canonical = CanonicalSnapshotAdapter(snapshot_path=self._path)
-        self._service = ServiceBackedReadAdapter(snapshot_path=self._path)
         if allow_local_snapshot_fallback is None:
             allow_local_snapshot_fallback = False
         self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
+        self._canonical = CanonicalSnapshotAdapter(
+            snapshot_path=self._path,
+            allow_snapshot_fallback=self._allow_local_snapshot_fallback,
+        )
+        self._service = ServiceBackedReadAdapter(
+            snapshot_path=self._path,
+            allow_snapshot_fallback=self._allow_local_snapshot_fallback,
+        )
         self._last_governed_search_refs: Dict[str, Dict[str, Any]] = {}
         self._load_or_seed()
 
@@ -5114,23 +5327,37 @@ class ReadSurfaceStore:
     ) -> str:
         if self._consultation_service_dataset_available(dataset):
             return "consultation_service"
+        if dataset == "approval_queue_items":
+            approval_source = self.dataset_source(
+                "approval_decisions",
+                include_snapshot_fallback=include_snapshot_fallback,
+                include_local_fallback=include_local_fallback,
+            )
+            if approval_source != "missing":
+                return approval_source
+        if dataset == "governance_review_queue_items":
+            for upstream_dataset in ("deployment_plans", "evolution_decisions"):
+                upstream_source = self.dataset_source(
+                    upstream_dataset,
+                    include_snapshot_fallback=include_snapshot_fallback,
+                    include_local_fallback=include_local_fallback,
+                )
+                if upstream_source != "missing":
+                    return upstream_source
         if dataset in CanonicalSnapshotAdapter._DATASETS:
-            available, _ = self._canonical.list_records(dataset)
+            available, _ = self._canonical.list_records(
+                dataset,
+                include_snapshot_fallback=include_snapshot_fallback,
+            )
             if available:
-                return "canonical"
+                return self._canonical.source(dataset)
         if dataset in ServiceBackedReadAdapter._DATASETS:
             available, _ = self._service.list_records(
                 dataset,
                 include_snapshot_fallback=include_snapshot_fallback,
             )
             if available:
-                if (
-                    include_snapshot_fallback
-                    and self._allow_local_snapshot_fallback
-                    and self._service._resolve_path(dataset) is None
-                ):
-                    return "local_snapshot"
-                return "service_store"
+                return self._service.source(dataset)
         local_payload = self._local_fallback(dataset) if include_local_fallback else None
         if local_payload not in (None, "", [], {}):
             return "local_snapshot"
@@ -5440,7 +5667,7 @@ class ReadSurfaceStore:
                 d for d in decisions
                 if str(d.get("state") or "").lower() == state.lower()
             ]
-        return sorted(decisions, key=lambda x: x.get("decided_at", ""), reverse=True)
+        return sorted(decisions, key=lambda x: str(x.get("decided_at") or ""), reverse=True)
 
     def list_runtime_bindings(
         self,
@@ -5636,6 +5863,53 @@ class ReadSurfaceStore:
         statuses: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         items = list((self._local_fallback("governance_review_queue_items") or {}).values())
+        if not items:
+            reviewable_statuses = {"draft", "pending_review", "proposed", "under_review", "reviewed"}
+            for plan in self.list_deployment_plans():
+                status = str(plan.get("status") or "").strip().lower()
+                if status and status not in reviewable_statuses:
+                    continue
+                plan_id = str(plan.get("plan_id") or plan.get("id") or "").strip()
+                if not plan_id:
+                    continue
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+                items.append(
+                    {
+                        "item_id": f"review-{plan_id}",
+                        "item_type": "DeploymentPlan",
+                        "risk_level": (decision or {}).get("risk_level"),
+                        "submitted_at": plan.get("submitted_at") or plan.get("created_at"),
+                        "submitted_by": plan.get("created_by") or "deployment-service",
+                        "governance_outcome": (decision or {}).get("outcome"),
+                        "allowedActions": self.get_allowed_actions(plan_id),
+                        "review_summary": self.get_review_summary(plan_id) or {},
+                    }
+                )
+            for decision in self.list_evolution_decisions():
+                status = str(decision.get("decision_state") or decision.get("status") or "").strip().lower()
+                if status and status not in reviewable_statuses:
+                    continue
+                decision_id = str(decision.get("decision_id") or decision.get("id") or "").strip()
+                if not decision_id:
+                    continue
+                items.append(
+                    {
+                        "item_id": f"review-{decision_id}",
+                        "item_type": "EvolutionDecision",
+                        "risk_level": decision.get("risk_level"),
+                        "submitted_at": decision.get("created_at"),
+                        "submitted_by": decision.get("created_by_id") or "evolution-service",
+                        "governance_outcome": decision.get("status"),
+                        "allowedActions": {
+                            "canApprove": status in {"reviewed", "under_review"},
+                            "canReject": status in {"reviewed", "under_review"},
+                            "canRequestRevision": status in {"proposed", "under_review", "reviewed"},
+                        },
+                        "review_summary": {
+                            "riskSummary": decision.get("rationale") or "Evolution decision awaiting governance review.",
+                        },
+                    }
+                )
 
         if item_types:
             requested_item_types = {value for value in item_types if value}
@@ -5684,6 +5958,47 @@ class ReadSurfaceStore:
         decision_states: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         items = list((self._local_fallback("approval_queue_items") or {}).values())
+        if not items:
+            pending_states = {"proposed", "under_review", "reviewed", "pending", "in_review"}
+            available, raw_decisions = self._canonical.list_records("approval_decisions")
+            if available:
+                for raw in raw_decisions:
+                    decision_id = str(raw.get("decision_id") or raw.get("id") or "").strip()
+                    if not decision_id:
+                        continue
+                    state = str(raw.get("decision_state") or raw.get("state") or "").strip().lower()
+                    outcome = str(raw.get("outcome") or raw.get("decision") or "").strip().lower()
+                    if outcome in {"approved", "approved_with_conditions", "rejected"}:
+                        continue
+                    if state and state not in pending_states:
+                        continue
+                    target_type = raw.get("target_type") or raw.get("decision_type") or "ApprovalDecision"
+                    can_decide = state in {"under_review", "reviewed", "in_review"}
+                    items.append(
+                        {
+                            "decision_id": decision_id,
+                            "decision_type": target_type,
+                            "risk_level": raw.get("risk_level"),
+                            "submitted_at": raw.get("created_at") or raw.get("submitted_at"),
+                            "submitted_by": raw.get("actor_id") or raw.get("created_by") or "governance-service",
+                            "decision_state": state or "pending",
+                            "allowedActions": {
+                                "canApprove": can_decide,
+                                "canReject": can_decide,
+                                "canRequestRevision": state in pending_states,
+                            },
+                            "decision_context": {
+                                "risk_summary": raw.get("rationale") or "Approval decision awaiting governance action.",
+                                "evidence_refs": list(raw.get("evidence_refs") or []),
+                                "governance_chain": {
+                                    "target_type": target_type,
+                                    "target_id": raw.get("target_id"),
+                                    "target_version": raw.get("target_version"),
+                                },
+                                "required_approvals": 1,
+                            },
+                        }
+                    )
 
         if decision_types:
             requested_types = {value for value in decision_types if value}

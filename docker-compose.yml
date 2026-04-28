@@ -260,25 +260,23 @@ services:
     environment:
       BFF_DATA_DIR: /data/bff
       BFF_READ_SURFACE_STATE: fresh
-      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
-      PANTHEON_RUNTIME_DATA_DIR: /data/runtime
-      INCIDENTS_DATA_DIR: /data/incidents
-      POSTMORTEMS_DATA_DIR: /data/incidents
+      PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
+      PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_INTERNAL_API_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_CAPITAL_API_URL: http://capital:8092
-      PANTHEON_GOVERNANCE_API_URL: http://evolution:8093
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
-      - governance-data:/data/governance:ro
-      - runtime-data:/data/runtime:ro
-      - incident-data:/data/incidents:ro
     depends_on:
       governance:
         condition: service_healthy
@@ -295,6 +293,8 @@ services:
       postmortems:
         condition: service_healthy
       telemetry:
+        condition: service_healthy
+      lineage-read:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -389,20 +389,12 @@ services:
   feedback:
     build:
       context: .
-      dockerfile: services/feedback/Dockerfile
+      dockerfile: services/control-plane/feedback/Dockerfile
     environment:
       PORT: "8085"
-      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
+      TRADER_FEEDBACK_STORE_PATH: /data/feedback/trader_feedback_events.jsonl
+    volumes:
+      - feedback-data:/data/feedback
     ports:
       - "18085:8085"
     healthcheck:
@@ -624,6 +616,7 @@ volumes:
   bff-data:
   capital-data:
   evolution-data:
+  feedback-data:
   governance-data:
   incident-data:
   minio-data:

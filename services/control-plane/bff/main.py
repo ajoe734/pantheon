@@ -118,9 +118,9 @@ os.makedirs(BFF_DATA_DIR, exist_ok=True)
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 read_store = ReadSurfaceStore(
     os.path.join(BFF_DATA_DIR, "read_surfaces.json"),
-    allow_local_snapshot_fallback=(
-        os.getenv("PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK", "true").strip().lower()
-        != "false"
+    allow_local_snapshot_fallback=_bool_from_env(
+        "PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK",
+        default=False,
     ),
 )
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
@@ -8225,8 +8225,18 @@ def _rw04_validate_status(value: Any) -> str:
     return normalized
 
 
-def _rw04_surface_state(snapshot_at: str, *, has_data: Optional[bool] = None) -> str:
-    return _rw01_surface_state("research_experiments", snapshot_at=snapshot_at, has_data=has_data)
+def _rw04_surface_state(
+    snapshot_at: str,
+    *,
+    has_data: Optional[bool] = None,
+    source: Optional[str] = None,
+) -> str:
+    return _rw01_surface_state(
+        "research_experiments",
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        source=source,
+    )
 
 
 def _rw05_surface_state(snapshot_at: str, *, has_data: Optional[bool] = None) -> str:
@@ -8388,7 +8398,14 @@ async def list_experiments(
         status=validated_status,
     )
     total = len(items)
-    surface_state = _rw04_surface_state(snapshot_at)
+    experiment_source = read_store.dataset_source("research_experiments")
+    if experiment_source == "missing" and items:
+        experiment_source = "bff_local"
+    surface_state = _rw04_surface_state(
+        snapshot_at,
+        has_data=bool(items),
+        source=experiment_source,
+    )
     if surface_state == "unavailable":
         page_items: List[Dict[str, Any]] = []
         next_page_token = None

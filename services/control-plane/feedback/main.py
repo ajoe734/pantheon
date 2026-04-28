@@ -186,6 +186,10 @@ def create_app(store_path: str | Path | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "trader-feedback", "store_path": str(resolved_store_path)}
 
+    @app.get("/__health__")
+    async def docker_health() -> dict[str, str]:
+        return {"status": "ok", "service": "trader-feedback", "store_path": str(resolved_store_path)}
+
     @app.post("/trader-feedback", response_model=IngestResponse)
     async def ingest_trader_feedback(event: TraderFeedbackEvent):
         payload = event.model_dump(mode="json", exclude_none=True)
