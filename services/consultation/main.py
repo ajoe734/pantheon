@@ -34,6 +34,11 @@ app = FastAPI(title="Pantheon Consultation Service", version="0.1.0")
 DATA_DIR = os.getenv("CONSULTATION_DATA_DIR", "/tmp/pantheon/consultation")
 store = ConsultationStore(DATA_DIR)
 
+CONSULTATION_SERVICE_ACTOR = ActorRef(
+    actor_type="service",
+    actor_id="consultation-svc",
+)
+
 
 def _actor_to_data(actor_ref: ActorRef | Dict[str, str]) -> Dict[str, str]:
     if hasattr(actor_ref, "model_dump"):
@@ -51,11 +56,13 @@ def _emit_audit(
     before_state: Optional[str] = None,
     after_state: Optional[str] = None,
     payload_hash: Optional[str] = None,
+    service_actor_ref: Optional[ActorRef | Dict[str, str]] = None,
 ) -> ConsultAuditEvent:
     event = ConsultAuditEvent(
         audit_id=f"aud-{uuid.uuid4().hex[:12]}",
         request_id=request_id,
         actor_ref=_actor_to_data(actor_ref),
+        service_actor_ref=_actor_to_data(service_actor_ref) if service_actor_ref else None,
         action=action,
         before_state=before_state,
         after_state=after_state,
@@ -175,7 +182,8 @@ def assign_participant(
     _emit_audit(
         action="participant_assigned",
         request_id=request_id,
-        actor_ref={"actor_type": "system", "actor_id": "consultation-svc"},
+        actor_ref=req.initiated_by or request.requested_by,
+        service_actor_ref=CONSULTATION_SERVICE_ACTOR,
         trace_id=req.trace_id,
         before_state=before_state,
         after_state=request.status.value,
@@ -413,7 +421,8 @@ def create_handoff(req: CreateGateHandoffRequest) -> ConsultGateHandoff:
     handoff_audit = _emit_audit(
         action="gate_handoff_created",
         request_id=req.request_id,
-        actor_ref={"actor_type": "system", "actor_id": "consultation-svc"},
+        actor_ref=req.initiated_by or request.requested_by,
+        service_actor_ref=CONSULTATION_SERVICE_ACTOR,
         trace_id=req.trace_id,
         after_state=handoff.handoff_id,
     )

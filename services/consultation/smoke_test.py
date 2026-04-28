@@ -20,6 +20,7 @@ try:
         MemoStatus,
         GateHandoffStatus
     )
+    from .store import ConsultationStore
 except ImportError:
     # Fallback for direct execution if needed
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -33,6 +34,7 @@ except ImportError:
         MemoStatus,
         GateHandoffStatus
     )
+    from services.consultation.store import ConsultationStore
 
 class ConsultationSmokeTest(unittest.TestCase):
     def setUp(self):
@@ -74,7 +76,8 @@ class ConsultationSmokeTest(unittest.TestCase):
             "participant_type": "committee",
             "participant_ref": "risk-committee",
             "role": "risk_reviewer",
-            "trace_id": "trace-123"
+            "trace_id": "trace-123",
+            "initiated_by": {"actor_type": "human", "actor_id": "operator-7"}
         }
         response = self.client.post(
             f"/api/consult/requests/{request_id}/participants",
@@ -153,7 +156,8 @@ class ConsultationSmokeTest(unittest.TestCase):
             "target_gate": "EP5-GOV-GATE",
             "memo_ids": [memo_id],
             "evidence_refs": ["ev-999"],
-            "trace_id": "trace-123"
+            "trace_id": "trace-123",
+            "initiated_by": {"actor_type": "human", "actor_id": "operator-7"}
         }
         response = self.client.post("/api/consult/handoffs", json=handoff_payload)
         self.assertEqual(response.status_code, 201)
@@ -174,6 +178,28 @@ class ConsultationSmokeTest(unittest.TestCase):
         self.assertIn("memo_submitted", actions)
         self.assertIn("memo_published", actions)
         self.assertIn("gate_handoff_created", actions)
+
+        participant_audit = next(a for a in audit_events if a.action == "participant_assigned")
+        self.assertEqual(participant_audit.actor_ref.actor_id, "operator-7")
+        self.assertEqual(participant_audit.service_actor_ref.actor_id, "consultation-svc")
+        handoff_audit = next(a for a in audit_events if a.action == "gate_handoff_created")
+        self.assertEqual(handoff_audit.actor_ref.actor_id, "operator-7")
+        self.assertEqual(handoff_audit.service_actor_ref.actor_id, "consultation-svc")
+
+        # 11. Restart/replay preserves the full lifecycle and stable handoff refs.
+        replayed = ConsultationStore(self.test_dir.name)
+        replayed_request = replayed.get_request(request_id)
+        self.assertEqual(replayed_request.status, ConsultRequestStatus.PUBLISHED)
+        self.assertEqual(len(replayed.list_participants_for_request(request_id)), 1)
+        self.assertEqual(len(replayed.list_evidence_for_request(request_id)), 1)
+        self.assertEqual(len(replayed.get_transcript(request_id).events), 1)
+        self.assertEqual(replayed.get_memo(memo_id).status, MemoStatus.PUBLISHED)
+        self.assertEqual(replayed.get_handoff(handoff_id).audit_refs, response.json()["audit_refs"])
+        self.assertEqual(
+            [event.audit_id for event in replayed.list_audit_for_request(request_id)],
+            [event.audit_id for event in audit_events],
+        )
+        self.assertGreater(len(replayed.outbox.load()), 0)
 
 if __name__ == "__main__":
     unittest.main()

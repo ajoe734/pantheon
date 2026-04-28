@@ -177,6 +177,7 @@ class ConsultAuditEvent(BaseModel):
     audit_id: str
     request_id: str
     actor_ref: ActorRef
+    service_actor_ref: Optional[ActorRef] = None
     action: str
     before_state: Optional[str] = None
     after_state: Optional[str] = None
@@ -254,6 +255,7 @@ class CreateGateHandoffRequest(BaseModel):
     memo_ids: List[str] = Field(default_factory=list)
     evidence_refs: List[str] = Field(default_factory=list)
     trace_id: str
+    initiated_by: Optional[ActorRef] = None
 
 
 class AttachEvidenceRequest(BaseModel):
@@ -267,6 +269,7 @@ class AssignParticipantRequest(BaseModel):
     participant_ref: str
     role: ParticipantRole
     trace_id: str
+    initiated_by: Optional[ActorRef] = None
 
 
 class SubmitMemoRequest(BaseModel):
