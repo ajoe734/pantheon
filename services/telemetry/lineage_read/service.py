@@ -59,6 +59,13 @@ EDGE_EVOLUTION_TARGET = "evolution_decision.registry_target"
 EDGE_BROKER_ORDER_BINDING = "broker_order_event.runtime_binding"
 EDGE_BROKER_ORDER_PLAN = "broker_order_event.deployment_plan"
 EDGE_BROKER_ORDER_TELEMETRY = "broker_order_event.telemetry_event"
+EDGE_POSITION_SNAPSHOT_BINDING = "position_snapshot.runtime_binding"
+EDGE_POSITION_SNAPSHOT_TELEMETRY = "position_snapshot.telemetry_event"
+EDGE_RECONCILIATION_RUN_BINDING = "reconciliation_run.runtime_binding"
+EDGE_RECONCILIATION_RUN_PLAN = "reconciliation_run.deployment_plan"
+EDGE_RECONCILIATION_RECORD_RUN = "reconciliation_record.reconciliation_run"
+EDGE_DRIFT_REPORT_RUN = "drift_report.reconciliation_run"
+EDGE_ALERT_CANDIDATE_SOURCE = "alert_candidate.source_ref"
 
 # Node type constants
 NODE_SOURCE_RECORD = "source_record"
@@ -72,6 +79,11 @@ NODE_DEPLOYMENT_PLAN = "deployment_plan"
 NODE_RUNTIME_BINDING = "runtime_binding"
 NODE_TELEMETRY_EVENT = "telemetry_event"
 NODE_BROKER_ORDER_EVENT = "broker_order_event"
+NODE_POSITION_SNAPSHOT = "position_snapshot"
+NODE_RECONCILIATION_RUN = "reconciliation_run"
+NODE_RECONCILIATION_RECORD = "reconciliation_record"
+NODE_DRIFT_REPORT = "drift_report"
+NODE_ALERT_CANDIDATE = "alert_candidate"
 NODE_INCIDENT_CASE = "incident_case"
 NODE_POSTMORTEM = "postmortem"
 NODE_EVOLUTION_DECISION = "evolution_decision"
@@ -770,13 +782,38 @@ def _chain_item(node: GraphNode, *, include_data: bool = False) -> dict[str, Any
         "account_ref",
         "order_id",
         "order_status",
+        "fill_status",
+        "symbol",
+        "quantity",
+        "position_qty",
+        "recon_run_id",
+        "recon_type",
+        "record_id",
+        "drift_report_id",
+        "drift_type",
+        "severity",
+        "source_type",
+        "source_ref",
+        "rule_id",
+        "scope_type",
+        "scope_id",
+        "scope_ref",
+        "resolution",
+        "recommended_action",
         "lifecycle_state",
         "rollback_parent",
         "rollback_action_type",
+        "baseline_ref",
+        "current_ref",
+        "expected_ref",
+        "actual_ref",
         "created_at",
         "event_produced_at",
         "effective_at",
         "executed_at",
+        "started_at",
+        "finished_at",
+        "generated_at",
     )
     for field_name in passthrough_fields:
         value = data.get(field_name)
@@ -856,17 +893,104 @@ def _nested_value(data: dict[str, Any], outer: str, inner: str) -> Optional[Any]
     return None
 
 
+def _as_str_set(value: Any) -> set[str]:
+    if value in (None, ""):
+        return set()
+    if isinstance(value, list):
+        return {str(item) for item in value if item not in (None, "")}
+    if isinstance(value, tuple) or isinstance(value, set):
+        return {str(item) for item in value if item not in (None, "")}
+    return {str(value)}
+
+
+def _data_refs(data: dict[str, Any], *keys: str) -> set[str]:
+    values: set[str] = set()
+    for key in keys:
+        values.update(_as_str_set(data.get(key)))
+    return values
+
+
+def _matches_any_ref(data: dict[str, Any], refs: set[str], *keys: str) -> bool:
+    return bool(refs and (_data_refs(data, *keys) & refs))
+
+
 _ORDER_LIFECYCLE_EVENT_TYPES = {
     "fill_observation",
+    "fill_received",
     "order_rejection",
     "order_filled",
     "order_partially_filled",
     "order_canceled",
     "order_cancelled",
     "order_submitted",
+    "order_accepted",
     "order_acknowledged",
     "slippage_observation",
 }
+
+_ORDER_OPEN_EVENT_TYPES = {
+    "order_submitted",
+    "order_acknowledged",
+    "order_updated",
+    "order_opened",
+    "order_accepted",
+}
+
+_ORDER_FILL_EVENT_TYPES = {
+    "fill_observation",
+    "fill_received",
+    "order_filled",
+    "order_partially_filled",
+}
+
+_ORDER_CANCEL_EVENT_TYPES = {
+    "order_canceled",
+    "order_cancelled",
+    "order_cancel_requested",
+    "order_cancel_rejected",
+}
+
+_POSITION_EVENT_TYPES = {
+    "position_snapshot",
+    "position_snapshot_received",
+    "broker_position_snapshot",
+}
+
+_ORDER_FILL_POSITION_RECON_TYPES = {
+    "order_fill_position",
+    "order_fill_cancel_position",
+    "execution_lifecycle",
+}
+
+_PAPER_LIVE_DRIFT_TYPES = {
+    "paper_live",
+    "paper_live_drift",
+    "backtest_paper_live",
+    "execution",
+    "slippage",
+    "pnl",
+    "cost",
+}
+
+_ALERT_CLOSED_STATUSES = {
+    "suppressed",
+    "promoted_to_alert",
+    "linked_to_incident",
+    "closed",
+    "resolved",
+}
+
+_DRIFT_CLOSED_STATUSES = {
+    "acknowledged",
+    "closed",
+    "linked_to_incident",
+    "resolved",
+    "suppressed",
+}
+
+_RECON_PASS_STATUSES = {"pass", "passed", "ok", "none"}
+_RECON_FAIL_STATUSES = {"fail", "failed", "mismatch"}
+_HIGH_SEVERITIES = {"high", "critical"}
 
 
 def _build_source_runtime_telemetry_trace(
@@ -909,11 +1033,30 @@ def _build_source_runtime_telemetry_trace(
                 "runtime_chain": [],
                 "broker_order_lifecycle": [],
                 "telemetry_events": [],
+                "position_snapshots": [],
+                "reconciliation_runs": [],
+                "reconciliation_records": [],
+                "drift_reports": [],
+                "alert_candidates": [],
+                "reconciliation_closure": _build_reconciliation_closure(
+                    telemetry_events=[],
+                    broker_order_lifecycle=[],
+                    position_snapshots=[],
+                    reconciliation_runs=[],
+                    reconciliation_records=[],
+                    drift_reports=[],
+                    alert_candidates=[],
+                ),
                 "evolution_refs": [],
             },
             "refs": _operator_trace_refs(trace_id=trace_id),
             "telemetry_event_count": 0,
             "broker_order_event_count": 0,
+            "position_snapshot_count": 0,
+            "reconciliation_run_count": 0,
+            "reconciliation_record_count": 0,
+            "drift_report_count": 0,
+            "alert_candidate_count": 0,
             "evolution_decision_count": 0,
             "_meta": {"visited_node_count": 0, "visited_edge_count": 0},
         }
@@ -925,6 +1068,11 @@ def _build_source_runtime_telemetry_trace(
     runtime_chain: list[dict[str, Any]] = []
     telemetry_events: list[dict[str, Any]] = []
     broker_order_lifecycle: list[dict[str, Any]] = []
+    position_snapshots: list[dict[str, Any]] = []
+    reconciliation_runs: list[dict[str, Any]] = []
+    reconciliation_records: list[dict[str, Any]] = []
+    drift_reports: list[dict[str, Any]] = []
+    alert_candidates: list[dict[str, Any]] = []
     incident_refs: list[dict[str, Any]] = []
     postmortem_refs: list[dict[str, Any]] = []
     evolution_refs: list[dict[str, Any]] = []
@@ -944,6 +1092,8 @@ def _build_source_runtime_telemetry_trace(
     strategy_ids: set[str] = set()
     request_ids: set[str] = set()
     telemetry_event_ids: set[str] = {node.node_id for node in telemetry_nodes}
+    order_ids: set[str] = set()
+    position_snapshot_event_nodes: list[GraphNode] = []
 
     for event_node in telemetry_nodes:
         remember(event_node)
@@ -994,8 +1144,12 @@ def _build_source_runtime_telemetry_trace(
         strategy_id = event_data.get("strategy_id") or _nested_value(event_data, "target", "strategy_id")
         if strategy_id:
             strategy_ids.add(str(strategy_id))
+        if event_data.get("order_id"):
+            order_ids.add(str(event_data["order_id"]))
 
         event_type = str(event_data.get("event_type") or "")
+        if event_type in _POSITION_EVENT_TYPES:
+            position_snapshot_event_nodes.append(event_node)
         if (
             event_type in _ORDER_LIFECYCLE_EVENT_TYPES
             or event_data.get("broker")
@@ -1114,6 +1268,98 @@ def _build_source_runtime_telemetry_trace(
     for node in broker_order_nodes:
         remember(node)
         _append_unique(broker_order_lifecycle, _chain_item(node))
+        if node.data.get("order_id"):
+            order_ids.add(str(node.data["order_id"]))
+
+    position_snapshot_nodes = _related_position_snapshot_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        telemetry_event_ids=telemetry_event_ids,
+    )
+    for node in position_snapshot_nodes:
+        remember(node)
+        _append_unique(position_snapshots, _chain_item(node))
+
+    linked_position_telemetry_ids = {
+        str(value)
+        for node in position_snapshot_nodes
+        for value in (node.data.get("telemetry_event_id"), node.data.get("event_id"))
+        if value not in (None, "")
+    }
+    for event_node in position_snapshot_event_nodes:
+        if event_node.node_id in linked_position_telemetry_ids:
+            continue
+        snapshot_item = _chain_item(event_node)
+        snapshot_item["type"] = NODE_POSITION_SNAPSHOT
+        snapshot_item["id"] = str(
+            event_node.data.get("position_snapshot_id")
+            or event_node.data.get("snapshot_id")
+            or event_node.node_id
+        )
+        snapshot_item["source"] = NODE_TELEMETRY_EVENT
+        snapshot_item["telemetry_event_id"] = event_node.node_id
+        _append_unique(position_snapshots, snapshot_item)
+
+    reconciliation_run_nodes = _related_reconciliation_run_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        pool_ids=pool_ids,
+        artifact_ids=artifact_ids,
+        telemetry_event_ids=telemetry_event_ids,
+        order_ids=order_ids,
+    )
+    reconciliation_run_ids = {node.node_id for node in reconciliation_run_nodes}
+    for node in reconciliation_run_nodes:
+        remember(node)
+        _append_unique(reconciliation_runs, _chain_item(node))
+
+    reconciliation_record_nodes = _related_reconciliation_record_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        telemetry_event_ids=telemetry_event_ids,
+        order_ids=order_ids,
+        reconciliation_run_ids=reconciliation_run_ids,
+    )
+    reconciliation_record_ids = {node.node_id for node in reconciliation_record_nodes}
+    for node in reconciliation_record_nodes:
+        remember(node)
+        _append_unique(reconciliation_records, _chain_item(node))
+
+    drift_report_nodes = _related_drift_report_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        pool_ids=pool_ids,
+        artifact_ids=artifact_ids,
+        reconciliation_run_ids=reconciliation_run_ids,
+        reconciliation_record_ids=reconciliation_record_ids,
+    )
+    drift_report_ids = {node.node_id for node in drift_report_nodes}
+    for node in drift_report_nodes:
+        remember(node)
+        _append_unique(drift_reports, _chain_item(node))
+
+    alert_candidate_nodes = _related_alert_candidate_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        telemetry_event_ids=telemetry_event_ids,
+        order_ids=order_ids,
+        reconciliation_run_ids=reconciliation_run_ids,
+        reconciliation_record_ids=reconciliation_record_ids,
+        drift_report_ids=drift_report_ids,
+    )
+    for node in alert_candidate_nodes:
+        remember(node)
+        _append_unique(alert_candidates, _chain_item(node))
 
     incident_nodes = _related_incident_nodes(
         graph,
@@ -1153,7 +1399,18 @@ def _build_source_runtime_telemetry_trace(
     downstream_chain: list[dict[str, Any]] = []
     for item in [*source_chain, *deployment_chain, *runtime_chain]:
         _append_unique(upstream_chain, item)
-    for item in [*telemetry_events, *broker_order_lifecycle, *incident_refs, *postmortem_refs, *evolution_refs]:
+    for item in [
+        *telemetry_events,
+        *broker_order_lifecycle,
+        *position_snapshots,
+        *reconciliation_runs,
+        *reconciliation_records,
+        *drift_reports,
+        *alert_candidates,
+        *incident_refs,
+        *postmortem_refs,
+        *evolution_refs,
+    ]:
         _append_unique(downstream_chain, item)
 
     projection_updated_at = max(
@@ -1171,11 +1428,26 @@ def _build_source_runtime_telemetry_trace(
         runtime_chain=runtime_chain,
         telemetry_events=telemetry_events,
         broker_order_lifecycle=broker_order_lifecycle,
+        position_snapshots=position_snapshots,
+        reconciliation_runs=reconciliation_runs,
+        reconciliation_records=reconciliation_records,
+        drift_reports=drift_reports,
+        alert_candidates=alert_candidates,
         incident_refs=incident_refs,
         postmortem_refs=postmortem_refs,
         evolution_refs=evolution_refs,
         request_ids=request_ids,
         artifact_refs=artifact_refs,
+    )
+
+    reconciliation_closure = _build_reconciliation_closure(
+        telemetry_events=telemetry_events,
+        broker_order_lifecycle=broker_order_lifecycle,
+        position_snapshots=position_snapshots,
+        reconciliation_runs=reconciliation_runs,
+        reconciliation_records=reconciliation_records,
+        drift_reports=drift_reports,
+        alert_candidates=alert_candidates,
     )
 
     return {
@@ -1194,6 +1466,12 @@ def _build_source_runtime_telemetry_trace(
             "runtime_chain": runtime_chain,
             "broker_order_lifecycle": broker_order_lifecycle,
             "telemetry_events": telemetry_events,
+            "position_snapshots": position_snapshots,
+            "reconciliation_runs": reconciliation_runs,
+            "reconciliation_records": reconciliation_records,
+            "drift_reports": drift_reports,
+            "alert_candidates": alert_candidates,
+            "reconciliation_closure": reconciliation_closure,
             "incident_refs": incident_refs,
             "postmortem_refs": postmortem_refs,
             "evolution_refs": evolution_refs,
@@ -1201,6 +1479,11 @@ def _build_source_runtime_telemetry_trace(
         "refs": refs,
         "telemetry_event_count": len(telemetry_events),
         "broker_order_event_count": len(broker_order_lifecycle),
+        "position_snapshot_count": len(position_snapshots),
+        "reconciliation_run_count": len(reconciliation_runs),
+        "reconciliation_record_count": len(reconciliation_records),
+        "drift_report_count": len(drift_reports),
+        "alert_candidate_count": len(alert_candidates),
         "evolution_decision_count": len(evolution_refs),
         "_meta": {
             "visited_node_count": len(visited_nodes),
@@ -1325,6 +1608,393 @@ def _related_broker_order_nodes(
     return sorted(nodes, key=_node_sort_key)
 
 
+def _trace_matches(data: dict[str, Any], trace_id: str) -> bool:
+    return (
+        data.get("trace_id") == trace_id
+        or _nested_value(data, "authority_refs", "trace_id") == trace_id
+    )
+
+
+def _evidence_ref_ids(data: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    for ref in data.get("evidence_refs", []) or []:
+        if isinstance(ref, dict):
+            ref_id = ref.get("ref_id") or ref.get("id")
+            if ref_id not in (None, ""):
+                refs.add(str(ref_id))
+        elif ref not in (None, ""):
+            refs.add(str(ref))
+    return refs
+
+
+def _related_position_snapshot_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    telemetry_event_ids: set[str],
+) -> list[GraphNode]:
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_POSITION_SNAPSHOT):
+        data = node.data
+        telemetry_id = data.get("telemetry_event_id") or data.get("event_id")
+        binding_id = data.get("runtime_binding_id") or data.get("binding_id")
+        plan_id = data.get("deployment_plan_id") or data.get("plan_id")
+        if (
+            _trace_matches(data, trace_id)
+            or telemetry_id in telemetry_event_ids
+            or binding_id in binding_ids
+            or plan_id in plan_ids
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_reconciliation_run_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    pool_ids: set[str],
+    artifact_ids: set[str],
+    telemetry_event_ids: set[str],
+    order_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | pool_ids
+        | artifact_ids
+        | telemetry_event_ids
+        | order_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_RECONCILIATION_RUN):
+        data = node.data
+        binding_id = data.get("runtime_binding_id") or data.get("binding_id")
+        plan_id = data.get("deployment_plan_id") or data.get("plan_id")
+        if (
+            _trace_matches(data, trace_id)
+            or binding_id in binding_ids
+            or plan_id in plan_ids
+            or data.get("capital_pool_id") in pool_ids
+            or data.get("artifact_id") in artifact_ids
+            or data.get("scope_id") in known_refs
+            or data.get("scope_ref") in known_refs
+            or data.get("baseline_ref") in known_refs
+            or data.get("current_ref") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_reconciliation_record_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    telemetry_event_ids: set[str],
+    order_ids: set[str],
+    reconciliation_run_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | telemetry_event_ids
+        | order_ids
+        | reconciliation_run_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_RECONCILIATION_RECORD):
+        data = node.data
+        if (
+            _trace_matches(data, trace_id)
+            or data.get("recon_run_id") in reconciliation_run_ids
+            or data.get("scope_ref") in known_refs
+            or data.get("expected_ref") in known_refs
+            or data.get("actual_ref") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_drift_report_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    pool_ids: set[str],
+    artifact_ids: set[str],
+    reconciliation_run_ids: set[str],
+    reconciliation_record_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | pool_ids
+        | artifact_ids
+        | reconciliation_run_ids
+        | reconciliation_record_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_DRIFT_REPORT):
+        data = node.data
+        if (
+            _trace_matches(data, trace_id)
+            or data.get("recon_run_id") in reconciliation_run_ids
+            or data.get("scope_ref") in known_refs
+            or data.get("baseline_ref") in known_refs
+            or data.get("current_ref") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_alert_candidate_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    telemetry_event_ids: set[str],
+    order_ids: set[str],
+    reconciliation_run_ids: set[str],
+    reconciliation_record_ids: set[str],
+    drift_report_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | telemetry_event_ids
+        | order_ids
+        | reconciliation_run_ids
+        | reconciliation_record_ids
+        | drift_report_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_ALERT_CANDIDATE):
+        data = node.data
+        if (
+            _trace_matches(data, trace_id)
+            or data.get("source_ref") in known_refs
+            or data.get("scope_ref") in known_refs
+            or data.get("scope_id") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _status_counts(items: list[dict[str, Any]], *fields: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = None
+        for field_name in fields:
+            value = item.get(field_name)
+            if value not in (None, ""):
+                status = str(value).lower()
+                break
+        if status is not None:
+            counts[status] = counts.get(status, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _type_counts(items: list[dict[str, Any]], field_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = item.get(field_name)
+        if value not in (None, ""):
+            key = str(value).lower()
+            counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _latest_item(items: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not items:
+        return None
+    return max(items, key=lambda item: str(
+        item.get("event_produced_at")
+        or item.get("generated_at")
+        or item.get("finished_at")
+        or item.get("created_at")
+        or item.get("executed_at")
+        or ""
+    ))
+
+
+def _numeric_value(item: dict[str, Any], *fields: str) -> Optional[float]:
+    for field_name in fields:
+        value = item.get(field_name)
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _build_reconciliation_closure(
+    *,
+    telemetry_events: list[dict[str, Any]],
+    broker_order_lifecycle: list[dict[str, Any]],
+    position_snapshots: list[dict[str, Any]],
+    reconciliation_runs: list[dict[str, Any]],
+    reconciliation_records: list[dict[str, Any]],
+    drift_reports: list[dict[str, Any]],
+    alert_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a derived SD-09 lifecycle closure summary from trace-local refs."""
+    lifecycle_event_types = {
+        str(item.get("event_type") or "").lower()
+        for item in broker_order_lifecycle
+        if item.get("event_type")
+    }
+    lifecycle_statuses = {
+        str(item.get("order_status") or item.get("status") or item.get("fill_status") or "").lower()
+        for item in broker_order_lifecycle
+        if item.get("order_status") or item.get("status") or item.get("fill_status")
+    }
+    order_ids = sorted(
+        {
+            str(item["order_id"])
+            for item in broker_order_lifecycle
+            if item.get("order_id") not in (None, "")
+        }
+    )
+    has_open_event = bool(lifecycle_event_types & _ORDER_OPEN_EVENT_TYPES) or bool(
+        lifecycle_statuses & {"submitted", "accepted", "acknowledged", "open", "opened"}
+    )
+    has_fill_event = bool(lifecycle_event_types & _ORDER_FILL_EVENT_TYPES) or bool(
+        lifecycle_statuses & {"filled", "partially_filled", "partial_fill"}
+    )
+    has_cancel_event = bool(lifecycle_event_types & _ORDER_CANCEL_EVENT_TYPES) or bool(
+        lifecycle_statuses & {"canceled", "cancelled", "cancel_requested", "cancel_rejected"}
+    )
+    has_reject_event = "order_rejection" in lifecycle_event_types or "rejected" in lifecycle_statuses
+    order_resolved = has_fill_event or has_cancel_event or has_reject_event
+
+    latest_position = _latest_item(position_snapshots)
+    latest_position_qty = _numeric_value(latest_position or {}, "position_qty", "quantity")
+    flat_position = latest_position_qty == 0 if latest_position_qty is not None else None
+
+    run_statuses = _status_counts(reconciliation_runs, "status")
+    record_statuses = _status_counts(reconciliation_records, "status")
+    record_severities = _status_counts(reconciliation_records, "severity")
+    failed_records = sum(record_statuses.get(status, 0) for status in _RECON_FAIL_STATUSES)
+    high_severity_records = sum(record_severities.get(severity, 0) for severity in _HIGH_SEVERITIES)
+    pass_records = sum(record_statuses.get(status, 0) for status in _RECON_PASS_STATUSES)
+
+    drift_statuses = _status_counts(drift_reports, "status")
+    open_drift_reports = [
+        item for item in drift_reports
+        if str(item.get("status") or "open").lower() not in _DRIFT_CLOSED_STATUSES
+    ]
+    paper_live_drift_reports = [
+        item for item in drift_reports
+        if str(item.get("drift_type") or "").lower() in _PAPER_LIVE_DRIFT_TYPES
+    ]
+
+    alert_statuses = _status_counts(alert_candidates, "status")
+    open_alert_candidates = [
+        item for item in alert_candidates
+        if str(item.get("status") or "pending").lower() not in _ALERT_CLOSED_STATUSES
+    ]
+
+    proof_gaps: list[str] = []
+    if not broker_order_lifecycle:
+        proof_gaps.append("missing_order_lifecycle")
+    elif not order_resolved:
+        proof_gaps.append("order_lifecycle_unresolved")
+    if not position_snapshots:
+        proof_gaps.append("missing_position_snapshot")
+    if not reconciliation_runs:
+        proof_gaps.append("missing_reconciliation_run")
+    if not reconciliation_records:
+        proof_gaps.append("missing_reconciliation_record")
+    if open_drift_reports:
+        proof_gaps.append("open_drift_report")
+    if open_alert_candidates:
+        proof_gaps.append("open_alert_candidate")
+    if failed_records or high_severity_records:
+        proof_gaps.append("failed_or_high_severity_reconciliation_record")
+
+    if proof_gaps:
+        if open_drift_reports or open_alert_candidates:
+            status = "open"
+        elif failed_records or high_severity_records or not order_resolved:
+            status = "attention_required"
+        else:
+            status = "incomplete"
+    else:
+        status = "closed"
+
+    return {
+        "derived_only": True,
+        "status": status,
+        "lifecycle_proof_complete": status == "closed",
+        "proof_gaps": proof_gaps,
+        "order_lifecycle": {
+            "order_ids": order_ids,
+            "event_count": len(broker_order_lifecycle),
+            "event_type_counts": _type_counts(broker_order_lifecycle, "event_type"),
+            "status_counts": _status_counts(broker_order_lifecycle, "order_status", "status", "fill_status"),
+            "has_open_event": has_open_event,
+            "has_fill_event": has_fill_event,
+            "has_cancel_event": has_cancel_event,
+            "has_reject_event": has_reject_event,
+            "resolved": order_resolved,
+        },
+        "position_closure": {
+            "snapshot_count": len(position_snapshots),
+            "latest_snapshot_id": (latest_position or {}).get("id"),
+            "latest_position_qty": latest_position_qty,
+            "flat_position": flat_position,
+        },
+        "reconciliation": {
+            "run_count": len(reconciliation_runs),
+            "record_count": len(reconciliation_records),
+            "run_status_counts": run_statuses,
+            "record_status_counts": record_statuses,
+            "record_severity_counts": record_severities,
+            "pass_record_count": pass_records,
+            "failed_record_count": failed_records,
+            "high_severity_record_count": high_severity_records,
+        },
+        "paper_live_drift": {
+            "report_count": len(paper_live_drift_reports),
+            "status_counts": drift_statuses,
+            "open_report_count": len(open_drift_reports),
+            "closed_report_count": len(drift_reports) - len(open_drift_reports),
+            "recommended_actions": sorted(
+                {
+                    str(item["recommended_action"])
+                    for item in drift_reports
+                    if item.get("recommended_action") not in (None, "")
+                }
+            ),
+        },
+        "alert_closure": {
+            "candidate_count": len(alert_candidates),
+            "status_counts": alert_statuses,
+            "open_candidate_count": len(open_alert_candidates),
+            "closed_candidate_count": len(alert_candidates) - len(open_alert_candidates),
+        },
+        "telemetry_event_count": len(telemetry_events),
+    }
+
+
 def _related_incident_nodes(
     graph: LineageGraph,
     *,
@@ -1411,6 +2081,11 @@ def _operator_trace_refs(
     runtime_chain: Optional[list[dict[str, Any]]] = None,
     telemetry_events: Optional[list[dict[str, Any]]] = None,
     broker_order_lifecycle: Optional[list[dict[str, Any]]] = None,
+    position_snapshots: Optional[list[dict[str, Any]]] = None,
+    reconciliation_runs: Optional[list[dict[str, Any]]] = None,
+    reconciliation_records: Optional[list[dict[str, Any]]] = None,
+    drift_reports: Optional[list[dict[str, Any]]] = None,
+    alert_candidates: Optional[list[dict[str, Any]]] = None,
     incident_refs: Optional[list[dict[str, Any]]] = None,
     postmortem_refs: Optional[list[dict[str, Any]]] = None,
     evolution_refs: Optional[list[dict[str, Any]]] = None,
@@ -1451,6 +2126,11 @@ def _operator_trace_refs(
         "telemetry_event_ids": set(),
         "broker_order_event_ids": set(),
         "broker_order_ids": set(),
+        "position_snapshot_ids": set(),
+        "reconciliation_run_ids": set(),
+        "reconciliation_record_ids": set(),
+        "drift_report_ids": set(),
+        "alert_candidate_ids": set(),
         "incident_ids": set(),
         "postmortem_ids": set(),
         "evolution_decision_ids": set(),
@@ -1464,6 +2144,11 @@ def _operator_trace_refs(
         + list(runtime_chain or [])
         + list(telemetry_events or [])
         + list(broker_order_lifecycle or [])
+        + list(position_snapshots or [])
+        + list(reconciliation_runs or [])
+        + list(reconciliation_records or [])
+        + list(drift_reports or [])
+        + list(alert_candidates or [])
         + list(incident_refs or [])
         + list(postmortem_refs or [])
         + list(evolution_refs or [])
@@ -1494,6 +2179,16 @@ def _operator_trace_refs(
             extra["telemetry_event_ids"].add(item_id)
         elif item_type == NODE_BROKER_ORDER_EVENT:
             extra["broker_order_event_ids"].add(item_id)
+        elif item_type == NODE_POSITION_SNAPSHOT:
+            extra["position_snapshot_ids"].add(item_id)
+        elif item_type == NODE_RECONCILIATION_RUN:
+            extra["reconciliation_run_ids"].add(item_id)
+        elif item_type == NODE_RECONCILIATION_RECORD:
+            extra["reconciliation_record_ids"].add(item_id)
+        elif item_type == NODE_DRIFT_REPORT:
+            extra["drift_report_ids"].add(item_id)
+        elif item_type == NODE_ALERT_CANDIDATE:
+            extra["alert_candidate_ids"].add(item_id)
         elif item_type == NODE_INCIDENT_CASE:
             extra["incident_ids"].add(item_id)
         elif item_type == NODE_POSTMORTEM:
@@ -2224,6 +2919,101 @@ class CorpusLoader:
                     from_id=order_event_id,
                     to_type=NODE_TELEMETRY_EVENT,
                     to_id=str(telemetry_event_id),
+                ))
+
+        for record in node_sets.get("position_snapshots", []):
+            snapshot_id = _record_identifier(record, "position_snapshot_id", "snapshot_id", "event_id", "id")
+            if not snapshot_id:
+                continue
+            graph.add_node(NODE_POSITION_SNAPSHOT, snapshot_id, record)
+            binding_id = record.get("runtime_binding_id") or record.get("binding_id")
+            if binding_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_POSITION_SNAPSHOT_BINDING,
+                    from_type=NODE_POSITION_SNAPSHOT,
+                    from_id=snapshot_id,
+                    to_type=NODE_RUNTIME_BINDING,
+                    to_id=str(binding_id),
+                ))
+            telemetry_event_id = record.get("telemetry_event_id") or record.get("event_id")
+            if telemetry_event_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_POSITION_SNAPSHOT_TELEMETRY,
+                    from_type=NODE_POSITION_SNAPSHOT,
+                    from_id=snapshot_id,
+                    to_type=NODE_TELEMETRY_EVENT,
+                    to_id=str(telemetry_event_id),
+                ))
+
+        for record in node_sets.get("reconciliation_runs", []):
+            recon_run_id = _record_identifier(record, "recon_run_id", "run_id", "id")
+            if not recon_run_id:
+                continue
+            graph.add_node(NODE_RECONCILIATION_RUN, recon_run_id, record)
+            binding_id = record.get("runtime_binding_id") or record.get("binding_id")
+            if binding_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_RECONCILIATION_RUN_BINDING,
+                    from_type=NODE_RECONCILIATION_RUN,
+                    from_id=recon_run_id,
+                    to_type=NODE_RUNTIME_BINDING,
+                    to_id=str(binding_id),
+                ))
+            plan_id = record.get("deployment_plan_id") or record.get("plan_id")
+            if plan_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_RECONCILIATION_RUN_PLAN,
+                    from_type=NODE_RECONCILIATION_RUN,
+                    from_id=recon_run_id,
+                    to_type=NODE_DEPLOYMENT_PLAN,
+                    to_id=str(plan_id),
+                ))
+
+        for record in node_sets.get("reconciliation_records", []):
+            record_id = _record_identifier(record, "record_id", "id")
+            if not record_id:
+                continue
+            graph.add_node(NODE_RECONCILIATION_RECORD, record_id, record)
+            recon_run_id = record.get("recon_run_id") or record.get("run_id")
+            if recon_run_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_RECONCILIATION_RECORD_RUN,
+                    from_type=NODE_RECONCILIATION_RECORD,
+                    from_id=record_id,
+                    to_type=NODE_RECONCILIATION_RUN,
+                    to_id=str(recon_run_id),
+                ))
+
+        for record in node_sets.get("drift_reports", []):
+            drift_report_id = _record_identifier(record, "drift_report_id", "report_id", "id")
+            if not drift_report_id:
+                continue
+            graph.add_node(NODE_DRIFT_REPORT, drift_report_id, record)
+            recon_run_id = record.get("recon_run_id") or record.get("run_id")
+            if recon_run_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_DRIFT_REPORT_RUN,
+                    from_type=NODE_DRIFT_REPORT,
+                    from_id=drift_report_id,
+                    to_type=NODE_RECONCILIATION_RUN,
+                    to_id=str(recon_run_id),
+                ))
+
+        for record in node_sets.get("alert_candidates", []):
+            alert_candidate_id = _record_identifier(record, "alert_candidate_id", "candidate_id", "id")
+            if not alert_candidate_id:
+                continue
+            graph.add_node(NODE_ALERT_CANDIDATE, alert_candidate_id, record)
+            source_ref = record.get("source_ref")
+            source_type = str(record.get("source_type") or "").lower()
+            if source_ref:
+                to_type = NODE_DRIFT_REPORT if source_type == "drift" else NODE_RECONCILIATION_RECORD
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_ALERT_CANDIDATE_SOURCE,
+                    from_type=NODE_ALERT_CANDIDATE,
+                    from_id=alert_candidate_id,
+                    to_type=to_type,
+                    to_id=str(source_ref),
                 ))
 
         for record in [*node_sets.get("incident_cases", []), *node_sets.get("incidents", [])]:

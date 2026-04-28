@@ -595,11 +595,67 @@ class TestBindingStageEvidence(unittest.TestCase):
         self.assertEqual(event["deployment_stage"], "canary")
         self.assertGreater(len(event["metrics"]), 0)
 
+    def test_order_lifecycle_and_position_snapshot_events(self):
+        """Order/cancel/position events validate against the canonical schema."""
+        capture = TelemetryCapture(
+            schema_path=CANONICAL_SCHEMA,
+            binding_context=FULL_BINDING_CONTEXT.copy(),
+        )
+
+        self.assertTrue(
+            capture.capture_order_lifecycle(
+                ExecutionMode.LIVE,
+                "strat",
+                EventType.ORDER_SUBMITTED,
+                order_id="order-001",
+                order_status="submitted",
+                quantity=10,
+                price=101.25,
+                symbol="SPY",
+                broker="paper_broker",
+            )
+        )
+        self.assertTrue(
+            capture.capture_order_lifecycle(
+                ExecutionMode.LIVE,
+                "strat",
+                EventType.ORDER_CANCELED,
+                order_id="order-001",
+                order_status="canceled",
+                quantity=10,
+                symbol="SPY",
+                broker="paper_broker",
+            )
+        )
+        self.assertTrue(
+            capture.capture_position_snapshot(
+                ExecutionMode.LIVE,
+                "strat",
+                position_qty=0,
+                symbol="SPY",
+                broker="paper_broker",
+            )
+        )
+
+        events = capture.get_live_events()
+        self.assertEqual([event["event_type"] for event in events], [
+            "order_submitted",
+            "order_canceled",
+            "position_snapshot",
+        ])
+        self.assertEqual(events[0]["order_id"], "order-001")
+        self.assertEqual(events[1]["order_status"], "canceled")
+        self.assertEqual(events[2]["position_qty"], 0)
+
     def test_all_event_types_available(self):
         """Verify all new EventType enum values are accessible."""
         expected_types = [
             "pnl_snapshot", "drawdown_snapshot", "slippage_observation",
-            "fill_observation", "order_rejection", "deploy_started",
+            "fill_observation", "fill_received", "order_submitted",
+            "order_accepted", "order_partially_filled", "order_filled",
+            "order_canceled", "order_cancelled", "order_rejection",
+            "position_snapshot", "position_snapshot_received",
+            "broker_position_snapshot", "deploy_started",
             "deploy_completed", "rollback_started", "rollback_completed",
             "pause_triggered", "liquidate_triggered", "governance_decision",
             "approval_action", "manual_override", "kill_switch_action",

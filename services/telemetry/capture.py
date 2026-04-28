@@ -51,7 +51,17 @@ class EventType(str, Enum):
     DRAWDOWN_SNAPSHOT = "drawdown_snapshot"
     SLIPPAGE_OBSERVATION = "slippage_observation"
     FILL_OBSERVATION = "fill_observation"
+    FILL_RECEIVED = "fill_received"
+    ORDER_SUBMITTED = "order_submitted"
+    ORDER_ACCEPTED = "order_accepted"
+    ORDER_PARTIALLY_FILLED = "order_partially_filled"
+    ORDER_FILLED = "order_filled"
+    ORDER_CANCELED = "order_canceled"
+    ORDER_CANCELLED = "order_cancelled"
     ORDER_REJECTION = "order_rejection"
+    POSITION_SNAPSHOT = "position_snapshot"
+    POSITION_SNAPSHOT_RECEIVED = "position_snapshot_received"
+    BROKER_POSITION_SNAPSHOT = "broker_position_snapshot"
     DEPLOY_STARTED = "deploy_started"
     DEPLOY_COMPLETED = "deploy_completed"
     ROLLBACK_STARTED = "rollback_started"
@@ -424,6 +434,107 @@ class TelemetryCapture:
             metrics={"reject_reason": reject_reason},
             metadata=metadata,
         )
+        return self._store_event(event, mode)
+
+    def capture_order_lifecycle(
+        self,
+        mode: ExecutionMode,
+        strategy_id: str,
+        event_type: EventType,
+        order_id: str,
+        order_status: str,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        symbol: Optional[str] = None,
+        signal_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        broker: Optional[str] = None,
+        account_ref: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Capture an order/fill/cancel lifecycle event for reconciliation."""
+        allowed = {
+            EventType.ORDER_SUBMITTED,
+            EventType.ORDER_ACCEPTED,
+            EventType.ORDER_PARTIALLY_FILLED,
+            EventType.ORDER_FILLED,
+            EventType.ORDER_CANCELED,
+            EventType.ORDER_CANCELLED,
+            EventType.FILL_RECEIVED,
+            EventType.FILL_OBSERVATION,
+        }
+        if event_type not in allowed:
+            raise ValueError(f"{event_type.value} is not an order lifecycle event type")
+
+        metrics: dict[str, Any] = {"action": event_type.value}
+        if quantity is not None:
+            metrics["order_quantity"] = quantity
+        if price is not None:
+            metrics["order_price"] = price
+
+        event = self._build_event(
+            event_type=event_type,
+            mode=mode,
+            strategy_id=strategy_id,
+            signal_id=signal_id,
+            run_id=run_id,
+            broker=broker,
+            account_ref=account_ref,
+            metrics=metrics,
+            metadata=metadata,
+        )
+        if event is None:
+            return False
+
+        event["order_id"] = order_id
+        event["order_status"] = order_status
+        if event_type in {EventType.ORDER_PARTIALLY_FILLED, EventType.ORDER_FILLED, EventType.FILL_RECEIVED}:
+            event["fill_status"] = order_status
+        if quantity is not None:
+            event["quantity"] = quantity
+        if price is not None:
+            event["price"] = price
+        if symbol:
+            event["symbol"] = symbol
+        return self._store_event(event, mode)
+
+    def capture_position_snapshot(
+        self,
+        mode: ExecutionMode,
+        strategy_id: str,
+        position_qty: float,
+        symbol: Optional[str] = None,
+        price: Optional[float] = None,
+        signal_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        broker: Optional[str] = None,
+        account_ref: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Capture a position snapshot event for order/fill/position reconciliation."""
+        metrics: dict[str, Any] = {"position_qty": position_qty}
+        if price is not None:
+            metrics["order_price"] = price
+        event = self._build_event(
+            event_type=EventType.POSITION_SNAPSHOT,
+            mode=mode,
+            strategy_id=strategy_id,
+            signal_id=signal_id,
+            run_id=run_id,
+            broker=broker,
+            account_ref=account_ref,
+            metrics=metrics,
+            metadata=metadata,
+        )
+        if event is None:
+            return False
+
+        event["position_qty"] = position_qty
+        event["quantity"] = position_qty
+        if price is not None:
+            event["price"] = price
+        if symbol:
+            event["symbol"] = symbol
         return self._store_event(event, mode)
 
     # ── TEL-001: Deployment / Rollback / Governance event capture ──

@@ -906,6 +906,53 @@ class TestAdapterSchemaCompliance(unittest.TestCase):
 class TestLineageReadModel(unittest.TestCase):
     """LIN-001 regression tests for telemetry-derived lineage normalization."""
 
+    def test_order_cancel_position_events_remain_in_telemetry_family(self):
+        """SD-09 lifecycle events must survive shared-store family filtering."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_file = Path(tmpdir) / "feedback_store.jsonl"
+            adapter = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+
+            adapter.feedback_store.append(
+                {
+                    "event_id": "feedback-ignore-1",
+                    "event_type": "approve",
+                    "target": {"strategy_id": "strat-exec"},
+                    "created_at": "2026-04-10T00:00:00Z",
+                }
+            )
+            for event_type in ("order_submitted", "order_canceled", "position_snapshot"):
+                adapter.ingest_telemetry_event(
+                    {
+                        "event_id": f"evt-{event_type}",
+                        "event_type": event_type,
+                        "created_at": "2026-04-10T00:01:00Z",
+                        "execution_mode": "live",
+                        "binding_id": "rb-exec-001",
+                        "runtime_id": "runtime-exec",
+                        "capital_pool_id": "pool-exec",
+                        "artifact_id": "artifact-exec",
+                        "artifact_version": "1.0.0",
+                        "deployment_stage": "canary",
+                        "plan_id": "plan-exec",
+                        "persona_capital_binding_id": "pcb-exec",
+                        "trace_id": "trace-exec",
+                        "order_id": "order-exec-001" if event_type != "position_snapshot" else None,
+                        "position_qty": 0 if event_type == "position_snapshot" else None,
+                        "target": {"strategy_id": "strat-exec", "registry_id": "reg-exec"},
+                        "metrics": {"action": event_type},
+                    },
+                    "strat-exec",
+                    "live",
+                )
+
+            records = adapter.query_lineage_records("runtime_binding", "rb-exec-001")
+
+            self.assertEqual(
+                [record["event_type"] for record in records],
+                ["order_submitted", "order_canceled", "position_snapshot"],
+            )
+            self.assertNotIn("approve", {record["event_type"] for record in records})
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()
