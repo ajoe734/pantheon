@@ -1,32 +1,15 @@
 #!/usr/bin/env bash
-# Reject paths that should never enter git history. Centralized here so every
-# clone gets the same protection once `git config core.hooksPath .githooks`
-# is set (see scripts/install-git-hooks.sh).
+# Reject staged runtime artifacts that should never enter git history.
+# Centralized here so every clone gets the same protection once
+# `git config core.hooksPath .githooks` is set.
 
-set -e
+set -euo pipefail
 
-blocked_patterns=(
-  '(^|/)ai-activity-log\.jsonl$'
-  '(^|/)ai-activity-log\.jsonl\.[0-9]'
-)
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-violations=()
-while IFS= read -r path; do
-  [ -z "$path" ] && continue
-  for pattern in "${blocked_patterns[@]}"; do
-    if printf '%s\n' "$path" | grep -Eq "$pattern"; then
-      violations+=("$path")
-      break
-    fi
-  done
-done < <(git diff --cached --name-only --diff-filter=ACMR)
-
-if [ "${#violations[@]}" -gt 0 ]; then
-  printf 'pre-commit: refusing to commit runtime activity log files:\n' >&2
-  for path in "${violations[@]}"; do
-    printf '  - %s\n' "$path" >&2
-  done
-  printf '\nThese paths are runtime output and are listed in .gitignore.\n' >&2
-  printf 'If a stray copy was staged, run:  git restore --staged <path>\n' >&2
-  exit 1
+mapfile -t staged_paths < <(git diff --cached --name-only --diff-filter=ACMR)
+if [ "${#staged_paths[@]}" -eq 0 ]; then
+  exit 0
 fi
+
+exec python3 "$ROOT_DIR/scripts/check_staged_generated_files.py" "${staged_paths[@]}"
