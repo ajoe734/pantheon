@@ -220,7 +220,21 @@ If we want the next wave to reduce the largest real delivery risk instead of jus
 7. `Phase 6 real integrations`
    Move OpenClaw and the deferred OSS stack from criteria to executable adapters and smoke tests.
 
-## 7. Bottom Line
+## 7. SVC-SERVICE-DISPOSITION Addendum (2026-04-28)
+
+`SVC-SERVICE-DISPOSITION` resolved the consultation/source-ingest/search boundary for the first single-VM service baseline:
+
+| Component | Current evidence | Disposition for default single-VM compose |
+|---|---|---|
+| `consultation` | `services/consultation/main.py` exposes a FastAPI app with `/health`, `services/consultation/Dockerfile` exists, and the store is append/replay-backed. The root `docker-compose.yml` does not run it, and BFF consultation reads currently use a local data-dir `ConsultationStore` adapter rather than an HTTP client. | Code exists; deployable service activation deferred. It must not become a hidden default dependency for SVC-SURFACES until the BFF boundary is implemented explicitly. |
+| `source_ingestion` | `services/source_ingestion/` contains connector, ingest manager, scheduler, persisted watermark, DLQ, and audit logic. It has no HTTP entrypoint, service Dockerfile, health endpoint, port, or compose wiring. | Deployable service deferred. A later wrapper task must define job-trigger APIs, storage/env contracts, Dockerfile, health check, and smoke criteria before compose inclusion. |
+| `search` | `services/search/` contains governed filtering, gateway, index adapter/store, and retriever code. It has no HTTP entrypoint, service Dockerfile, health endpoint, port, or compose wiring. | Deployable service deferred. A later search API task must define the network contract, Dockerfile, health check, index storage, and smoke criteria before compose inclusion. |
+
+SVC-SURFACES therefore inherits an explicit negative boundary: it should not add normal-path dependencies on consultation, source-ingestion, or search services in this wave. Where those surfaces are visible, they must expose degraded/unavailable semantics or clearly fenced test-only seed paths rather than silently presenting missing service data as live backend data.
+
+SVC-COMPOSE therefore satisfies this part of its acceptance by leaving these three components out of the default compose profile and citing this gap record; it should not add placeholder containers for them without real service entrypoints and smoke criteria.
+
+## 8. Bottom Line
 
 The repo has already completed most of the `semantic baseline` for phases 2 through 6.
 
@@ -238,7 +252,7 @@ That is why the active planning effort should not treat phase 2-6 as "already fi
 - `phase 5`: packet baseline partly done, product/workbench delivery still incomplete
 - `phase 6`: governance criteria done, executable integrations still incomplete
 
-## 8. SVC-BASELINE Closure Note
+## 9. SVC-BASELINE Closure Note
 
 Updated: 2026-04-28
 
