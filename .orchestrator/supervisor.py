@@ -46,6 +46,17 @@ from common import (
     write_activity_log,
 )
 from coordination_file_watcher import sync_coordination_files
+from dispatch_policy import (
+    DISPATCH_STATUS_ACTIONS,
+    REASON_OWNED_FINALIZE,
+    REASON_OWNED_IN_PROGRESS,
+    REASON_OWNED_READY,
+    REASON_REVIEW_READY,
+    dispatch_reason_priority,
+    is_execution_dispatch_reason,
+    normalized_status_set,
+    ready_dispatch_settings,
+)
 from github_bus import sync_github_bus
 from provider_permissions import provider_capabilities as build_provider_capabilities, write_provider_capabilities
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, save_runtime_state
@@ -1446,12 +1457,7 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
 
 def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -> bool:
     reason = str(event.get("reason") or "").strip()
-    action_by_reason = {
-        "owned_ready_dispatch": ("start", {"todo"}),
-        "owned_finalize_dispatch": ("note", {"review_approved"}),
-        "owned_in_progress_dispatch": ("progress", {"in_progress"}),
-    }
-    action = action_by_reason.get(reason)
+    action = DISPATCH_STATUS_ACTIONS.get(reason)
     if action is None:
         return False
     if not config.get("paths", {}).get("status_file"):
@@ -1484,9 +1490,9 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         return False
 
     message = {
-        "owned_ready_dispatch": f"Supervisor auto-started {task_id} after successful dispatch.",
-        "owned_finalize_dispatch": f"Supervisor resumed {task_id} for finalize after successful dispatch.",
-        "owned_in_progress_dispatch": f"Supervisor re-dispatched {task_id}; task remains in progress.",
+        REASON_OWNED_READY: f"Supervisor auto-started {task_id} after successful dispatch.",
+        REASON_OWNED_FINALIZE: f"Supervisor resumed {task_id} for finalize after successful dispatch.",
+        REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
     }[reason]
     env = os.environ.copy()
     env["AI_NAME"] = target_agent
@@ -2609,21 +2615,6 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
 
 
 
-def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
-    settings = dict(config.get("ready_dispatcher", {}) or {})
-    settings.setdefault("enabled", True)
-    settings.setdefault("review_statuses", ["review"])
-    settings.setdefault("finalize_statuses", ["review_approved"])
-    settings.setdefault("owned_statuses", ["in_progress", "todo"])
-    legacy_done_statuses = settings.get("done_statuses", ["done", "review_approved"])
-    settings.setdefault("dependency_done_statuses", ["done"])
-    settings.setdefault("worker_terminal_statuses", legacy_done_statuses)
-    settings.setdefault("active_worker_statuses", ["running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"])
-    settings.setdefault("max_tasks_per_agent", 1)
-    settings.setdefault("max_dispatches_per_tick", 4)
-    return settings
-
-
 def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("helper_claim", {}) or {})
     settings.setdefault("enabled", True)
@@ -3200,7 +3191,7 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
 
 def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     reason = str(event.get("reason") or "")
-    if reason not in {"review_ready_dispatch", "owned_finalize_dispatch", "owned_in_progress_dispatch", "owned_ready_dispatch"}:
+    if not is_execution_dispatch_reason(reason):
         return None
 
     task_id = str(event.get("task_id") or "")
@@ -3213,36 +3204,25 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     reviewer_field = schema.get("reviewer_field", "reviewer")
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
     settings = ready_dispatch_settings(config)
-    review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
-    finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
-    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
+    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     task_status = str(task.get("status") or "").lower()
 
     eligible = False
-    if reason == "review_ready_dispatch":
+    if reason == REASON_REVIEW_READY:
         eligible = task_status in review_statuses and task.get(reviewer_field) == target_agent
-    elif reason == "owned_finalize_dispatch":
+    elif reason == REASON_OWNED_FINALIZE:
         eligible = task_status in finalize_statuses and task.get(owner_field) == target_agent
-    elif reason == "owned_in_progress_dispatch":
+    elif reason == REASON_OWNED_IN_PROGRESS:
         eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
-    elif reason == "owned_ready_dispatch":
+    elif reason == REASON_OWNED_READY:
         eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
 
     if not eligible:
         return None
 
     return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
-
-
-def dispatch_reason_priority(reason: str | None) -> int | None:
-    normalized = str(reason or "")
-    priorities = {
-        "review_ready_dispatch": 0,
-        "owned_finalize_dispatch": 1,
-        "owned_in_progress_dispatch": 2,
-        "owned_ready_dispatch": 3,
-    }
-    return priorities.get(normalized)
 
 
 def dispatch_priority_for_task(
@@ -3339,7 +3319,7 @@ def choose_helper_claim_agent(
         return False
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):
-        current_priority = dispatch_reason_priority("owned_ready_dispatch")
+        current_priority = dispatch_reason_priority(REASON_OWNED_READY)
         if current_priority is None or not any(priority < current_priority for priority in owner_loads):
             return False
     fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
@@ -3433,7 +3413,7 @@ def worker_matches_current_assignment(
 
 def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     reason = str(event.get("reason") or "")
-    if reason not in {"review_ready_dispatch", "owned_finalize_dispatch", "owned_in_progress_dispatch", "owned_ready_dispatch"}:
+    if not is_execution_dispatch_reason(reason):
         return None
 
     expected_key = current_dispatch_event_key(config, event, task_map)
@@ -3588,16 +3568,16 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
             reason = None
             priority = None
             if task_status in review_statuses and task_reviewer == target_agent:
-                reason = "review_ready_dispatch"
+                reason = REASON_REVIEW_READY
                 priority = 0
             elif task_status in finalize_statuses and task_owner == target_agent:
-                reason = "owned_finalize_dispatch"
+                reason = REASON_OWNED_FINALIZE
                 priority = 1
             elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
-                reason = "owned_in_progress_dispatch"
+                reason = REASON_OWNED_IN_PROGRESS
                 priority = 2
             elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
-                reason = "owned_ready_dispatch"
+                reason = REASON_OWNED_READY
                 priority = 3
 
             helper_claim_candidate = (
@@ -3633,7 +3613,7 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
                     task[reviewer_field] = str(task_owner or task_reviewer or "")
                     task["last_update"] = utc_now()
                     task["next"] = helper_message
-                    event = build_dispatch_event(task, target_agent, "owned_ready_dispatch", task_map)
+                    event = build_dispatch_event(task, target_agent, REASON_OWNED_READY, task_map)
                     if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
                         seen[event["key"]] = utc_now()
                         pending_event_keys.add(event["key"])
@@ -3825,7 +3805,7 @@ def dispatch_underutilization_sidecars(config: dict[str, Any], state: dict[str, 
 
         state.setdefault("tasks", {})[candidate["sidecar_id"]] = snapshot_task(sidecar_task, config.get("schema", {}))
 
-        event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_map)
+        event = build_dispatch_event(sidecar_task, selected_owner, REASON_OWNED_READY, task_map)
         if event["key"] in pending_event_keys:
             continue
         if queue_delivery_event(config, event):
