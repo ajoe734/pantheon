@@ -30,6 +30,7 @@ REGISTRY_URL = os.getenv("REGISTRY_URL", "http://127.0.0.1:8087")
 OPTIMIZER_URL = os.getenv("OPTIMIZER_URL", "http://127.0.0.1:8088")
 PROMOTION_URL = os.getenv("PROMOTION_URL", "http://127.0.0.1:8089")
 SEARCH_URL = os.getenv("SEARCH_URL", "http://127.0.0.1:8098")
+POLICY_LEARNING_URL = os.getenv("POLICY_LEARNING_URL", "http://127.0.0.1:8100")
 
 OPERATOR_TOKEN = "Bearer smoke-operator:operator"
 APPROVER_TOKEN = "Bearer smoke-approver:approver"
@@ -124,6 +125,7 @@ def main() -> int:
     _wait_for_health("optimizer-svc", f"{OPTIMIZER_URL}/__health__")
     _wait_for_health("promotion", f"{PROMOTION_URL}/__health__")
     _wait_for_health("search-svc", f"{SEARCH_URL}/health")
+    _wait_for_health("policy-learning-svc", f"{POLICY_LEARNING_URL}/health")
 
     status, matrix = _request_json("GET", f"{GOVERNANCE_URL}/api/governance/write-authority")
     if status != 200 or "matrix" not in (matrix or {}):
@@ -274,6 +276,33 @@ def main() -> int:
     if status != 200 or search_snapshot.get("snapshot", {}).get("request_id") != search_body["request_id"]:
         raise RuntimeError(f"search-svc did not replay index snapshot: {status} {search_snapshot}")
     print("ok  search-svc applied governed filters and replayed search refs")
+
+
+    policy_job_body = {
+        "policy_id": "persona-alpha-routing",
+        "objective": "Smoke-check non-production policy-learning lifecycle.",
+        "adapter": "stub",
+        "requested_mode": "stub",
+        "source_refs": [{"type": "deployment_plan", "id": plan_id}],
+        "actor_id": "smoke-operator",
+    }
+    status, policy_job = _request_json("POST", f"{POLICY_LEARNING_URL}/api/policy-learning/jobs", body=policy_job_body)
+    if status != 201 or policy_job.get("status") != "proposed":
+        raise RuntimeError(f"policy-learning stub proposal failed: {status} {policy_job}")
+    status, production_rejection = _request_json(
+        "POST",
+        f"{POLICY_LEARNING_URL}/api/policy-learning/jobs",
+        body={
+            "policy_id": "persona-alpha-routing",
+            "objective": "Production activation must remain disabled.",
+            "adapter": "qlib",
+            "requested_mode": "production",
+            "actor_id": "smoke-operator",
+        },
+    )
+    if status != 201 or production_rejection.get("rejection", {}).get("reason") != "production_adapter_disabled":
+        raise RuntimeError(f"policy-learning production rejection failed: {status} {production_rejection}")
+    print("ok  policy-learning-svc persisted stub lifecycle and rejected production adapter")
 
     status, guidance = _request_json(
         "GET",
