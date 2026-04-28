@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from read_store import ReadSurfaceStore
+from services.consultation.store import ConsultationStore
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 
@@ -218,3 +219,71 @@ def test_cw01_running_request_disables_cancel_and_rejects_cancel_route() -> None
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert cancel_resp.status_code == 409, cancel_resp.text
+
+
+def test_cw01_create_and_cancel_use_consultation_service_store_when_configured() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        tracked_env = {
+            "PANTHEON_BFF_CONSULTATION_DATA_DIR": os.environ.get("PANTHEON_BFF_CONSULTATION_DATA_DIR"),
+            "PANTHEON_BFF_CONSULT_REQUEST_STORE": os.environ.get("PANTHEON_BFF_CONSULT_REQUEST_STORE"),
+        }
+        os.environ["PANTHEON_BFF_CONSULTATION_DATA_DIR"] = td
+        os.environ.pop("PANTHEON_BFF_CONSULT_REQUEST_STORE", None)
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        client = TestClient(bff_main.app)
+        try:
+            create_resp = client.post(
+                "/api/v1/consult/requests",
+                json=_VALID_CREATE_PAYLOAD,
+                headers={"Authorization": OPERATOR_AUTH},
+            )
+            assert create_resp.status_code == 200, create_resp.text
+            created = create_resp.json()
+            request_id = created["request_id"]
+            assert created["status"] == "created"
+            assert created["request_to_session_status"] == "pending_session"
+
+            service_store = ConsultationStore(td)
+            service_request = service_store.get_request(request_id)
+            assert service_request is not None
+            assert service_request.request_id == request_id
+            assert service_request.task == _VALID_CREATE_PAYLOAD["task"]
+            assert service_request.metadata["bff_context_refs"] == _VALID_CREATE_PAYLOAD["context_refs"]
+
+            list_resp = client.get(
+                "/api/v1/consult/requests",
+                headers={"Authorization": OPERATOR_AUTH},
+            )
+            assert list_resp.status_code == 200, list_resp.text
+            list_body = list_resp.json()
+            assert list_body["data"][0]["request_id"] == request_id
+            assert list_body["meta"]["surfaces"]["consult_request_list"] == "fresh"
+
+            cancel_resp = client.post(
+                f"/api/v1/consult/requests/{request_id}/cancel",
+                headers={"Authorization": OPERATOR_AUTH},
+            )
+            assert cancel_resp.status_code == 200, cancel_resp.text
+            assert cancel_resp.json()["status"] == "canceled"
+
+            replayed = ConsultationStore(td).get_request(request_id)
+            assert replayed is not None
+            assert replayed.status.value == "cancelled"
+            assert replayed.request_to_session_status == "canceled_before_session"
+            audit_actions = [
+                event.action
+                for event in ConsultationStore(td).list_audit_for_request(request_id)
+            ]
+            assert "request_created" in audit_actions
+            assert "request_cancelled" in audit_actions
+        finally:
+            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value

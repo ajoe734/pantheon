@@ -14,6 +14,21 @@ sys.path.insert(0, os.path.dirname(__file__))
 import main as bff_main
 from command_queue import CommandStore
 from read_store import ReadSurfaceStore
+from services.consultation.models import (
+    ActorRef,
+    ConsultAuditEvent,
+    ConsultFinding,
+    ConsultMemo,
+    ConsultRequest,
+    ConsultRequestStatus,
+    ConsultRequestType,
+    AuthorType,
+    FindingSeverity,
+    MemoStatus,
+    MemoType,
+    Recommendation,
+)
+from services.consultation.store import ConsultationStore
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -228,3 +243,146 @@ def test_cw03_record_sponsor_decision_persists_to_service_store() -> None:
             assert persisted["synthesis_summary"]["rationale_ref"] == (
                 "workspace://committee-rationales/committee-regime-risk-20260419-081/service"
             )
+
+
+def test_cw03_record_sponsor_decision_creates_consultation_service_handoff_refs() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        service_store = ConsultationStore(td)
+        request = ConsultRequest(
+            request_id="cr-service-committee-001",
+            request_type=ConsultRequestType.EXECUTION_RISK,
+            requested_by=ActorRef(actor_type="operator", actor_id="operator-service"),
+            from_persona_id="persona-alpha",
+            target_type="deployment_plan",
+            target_id="plan-F-042",
+            task="Review service-backed committee handoff.",
+            consultation_type="risk_review",
+            evidence_refs=["ev-service-001"],
+            priority="normal",
+            status=ConsultRequestStatus.IN_PROGRESS,
+            linked_session_id="cs-service-committee-001",
+            request_to_session_status="session_running",
+            trace_id="trace-service-committee-001",
+            created_at="2026-04-20T06:00:00Z",
+            metadata={
+                "consultation": {
+                    "consultation_type": "risk_review",
+                    "requester_session_id": "cs-service-committee-001",
+                    "committee_session_ids": ["cm-service-committee-001"],
+                    "committee_ref": "committee-service-001",
+                    "quorum_state": "quorum_met",
+                    "consensus_state": "sponsor_required",
+                    "committee_started_at": "2026-04-20T06:01:00Z",
+                    "sponsor_session_id": "cm-service-committee-001",
+                    "sponsor_decision": None,
+                    "sponsor_decided_at": None,
+                    "sponsor_decided_by": None,
+                    "escalation_reason": {
+                        "trigger_rule": "risk_review",
+                        "escalation_path": "committee_override",
+                    },
+                    "synthesis_summary": {
+                        "outcome": "pending",
+                        "rationale_ref": "workspace://consultation-rationales/service",
+                        "evidence_refs": ["ev-service-001"],
+                        "dissent_refs": [],
+                    },
+                    "evidence_refs": [
+                        {
+                            "id": "ev-service-001",
+                            "type": "evidence_link",
+                            "evidence_type": "deployment_plan",
+                            "artifact_ref": "plan-F-042",
+                            "description": "Service-owned deployment review evidence",
+                            "link": "/deployments/plans/plan-F-042",
+                        }
+                    ],
+                    "committee_participants": [
+                        {
+                            "session_id": "cm-service-committee-001",
+                            "persona_id": "p-compliance-sponsor",
+                            "role": "sponsor",
+                            "participant_status": "active",
+                            "status": "active",
+                            "rationale_ref": "workspace://consultation-rationales/service/sponsor",
+                        }
+                    ],
+                }
+            },
+        )
+        service_store.put_request(request)
+        service_store.append_audit(
+            ConsultAuditEvent(
+                audit_id="aud-service-request-created",
+                request_id=request.request_id,
+                actor_ref=ActorRef(actor_type="operator", actor_id="operator-service"),
+                action="request_created",
+                after_state="draft",
+                trace_id=request.trace_id,
+            )
+        )
+        service_store.put_memo(
+            ConsultMemo(
+                memo_id="mem-service-committee-001",
+                request_id=request.request_id,
+                memo_type=MemoType.REDTEAM_REPORT,
+                author_type=AuthorType.PERSONA,
+                author_ref="p-risk-analyst",
+                target_type="deployment_plan",
+                target_id="plan-F-042",
+                summary="Service-backed red-team memo.",
+                findings=[
+                    ConsultFinding(
+                        severity=FindingSeverity.MEDIUM,
+                        category="execution",
+                        claim="Deployment requires sponsor confirmation.",
+                        evidence_refs=["ev-service-001"],
+                        recommendation="approve with sponsor conditions",
+                    )
+                ],
+                recommendation=Recommendation.APPROVE_WITH_CONDITIONS,
+                status=MemoStatus.PUBLISHED,
+                trace_id=request.trace_id,
+                created_at="2026-04-20T06:05:00Z",
+                published_at="2026-04-20T06:06:00Z",
+            )
+        )
+
+        tracked_env = {
+            "PANTHEON_BFF_CONSULTATION_DATA_DIR": os.environ.get("PANTHEON_BFF_CONSULTATION_DATA_DIR"),
+        }
+        original_store = bff_main.read_store
+        os.environ["PANTHEON_BFF_CONSULTATION_DATA_DIR"] = td
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        try:
+            updated = bff_main.read_store.record_sponsor_decision(
+                "committee-service-001",
+                sponsor_decision="conditional",
+                rationale_ref="workspace://committee-rationales/service/final",
+                actor_id="operator-service-path",
+                recorded_at="2026-04-20T06:10:00Z",
+            )
+            assert updated is not None
+            assert updated["sponsor_decision"] == "conditional"
+            handoff = updated["service_handoff"]
+            assert handoff["handoff_id"].startswith("gh-")
+            assert handoff["evidence_refs"] == ["ev-service-001"]
+            assert "aud-service-request-created" in handoff["audit_refs"]
+            assert any(ref.startswith("aud-") for ref in handoff["audit_refs"])
+
+            replayed_store = ConsultationStore(td)
+            handoffs = replayed_store.list_handoffs_for_request(request.request_id)
+            assert len(handoffs) == 1
+            assert handoffs[0].handoff_id == handoff["handoff_id"]
+            assert handoffs[0].evidence_refs == ["ev-service-001"]
+            assert handoffs[0].audit_refs == handoff["audit_refs"]
+        finally:
+            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value

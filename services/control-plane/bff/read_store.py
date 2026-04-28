@@ -7,6 +7,19 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from services.consultation.models import (
+    ActorRef as ConsultationActorRef,
+    ConsultAuditEvent,
+    ConsultGateHandoff,
+    ConsultPriority,
+    ConsultRequest,
+    ConsultRequestStatus,
+    ConsultRequestType,
+    GateHandoffStatus,
+    MemoStatus,
+)
+from services.consultation.store import ConsultationStore
+
 
 def _first_existing(paths: List[Path]) -> Optional[Path]:
     for path in paths:
@@ -53,6 +66,59 @@ def _parse_rfc3339(value: Any) -> Optional[datetime]:
 
 def _utc_now_rfc3339() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _model_to_data(model: Any) -> Dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(mode="json")
+    return json.loads(model.json())
+
+
+_CONSULTATION_DATA_DIR_ENVS = (
+    "PANTHEON_BFF_CONSULTATION_DATA_DIR",
+    "PANTHEON_CONSULTATION_DATA_DIR",
+    "CONSULTATION_DATA_DIR",
+)
+_CONSULTATION_SERVICE_DATASETS = {
+    "consult_requests",
+    "consultation_sessions",
+    "consult_transcripts",
+    "consult_memos",
+}
+_BFF_TO_SERVICE_REQUEST_TYPE = {
+    "pre_deployment": ConsultRequestType.STRATEGY_REVIEW,
+    "risk_review": ConsultRequestType.EXECUTION_RISK,
+    "macro_regime_shift": ConsultRequestType.STRATEGY_REVIEW,
+    "incident_response": ConsultRequestType.INCIDENT,
+    "policy_change": ConsultRequestType.PERSONA_POLICY,
+    "general": ConsultRequestType.STRATEGY_REVIEW,
+}
+_BFF_TO_SERVICE_PRIORITY = {
+    "low": ConsultPriority.LOW,
+    "normal": ConsultPriority.NORMAL,
+    "high": ConsultPriority.HIGH,
+    "critical": ConsultPriority.URGENT,
+}
+_SERVICE_TO_BFF_REQUEST_STATUS = {
+    ConsultRequestStatus.DRAFT.value: "created",
+    ConsultRequestStatus.SUBMITTED.value: "created",
+    ConsultRequestStatus.ASSIGNED.value: "created",
+    ConsultRequestStatus.IN_PROGRESS.value: "running",
+    ConsultRequestStatus.MEMO_PENDING.value: "running",
+    ConsultRequestStatus.PUBLISHED.value: "completed",
+    ConsultRequestStatus.CANCELLED.value: "canceled",
+    ConsultRequestStatus.FAILED.value: "failed",
+}
+_SERVICE_TO_SESSION_STATUS = {
+    ConsultRequestStatus.DRAFT.value: "pending",
+    ConsultRequestStatus.SUBMITTED.value: "queued",
+    ConsultRequestStatus.ASSIGNED.value: "active",
+    ConsultRequestStatus.IN_PROGRESS.value: "active",
+    ConsultRequestStatus.MEMO_PENDING.value: "active",
+    ConsultRequestStatus.PUBLISHED.value: "terminated",
+    ConsultRequestStatus.CANCELLED.value: "terminated",
+    ConsultRequestStatus.FAILED.value: "failed",
+}
 
 
 _TW04_DRAWDOWN_EVIDENCE_REF_ID = "tel-drawdown-2026-04-18"
@@ -4350,6 +4416,344 @@ class ReadSurfaceStore:
         self._last_governed_search_refs: Dict[str, Dict[str, Any]] = {}
         self._load_or_seed()
 
+    def _consultation_data_dir(self) -> Optional[Path]:
+        for env_name in _CONSULTATION_DATA_DIR_ENVS:
+            raw = os.getenv(env_name, "").strip()
+            if raw:
+                return Path(raw)
+        return None
+
+    def _consultation_store(self) -> Optional[ConsultationStore]:
+        data_dir = self._consultation_data_dir()
+        if data_dir is None:
+            return None
+        return ConsultationStore(str(data_dir))
+
+    def _consultation_service_dataset_available(self, dataset: str) -> bool:
+        return dataset in _CONSULTATION_SERVICE_DATASETS and self._consultation_data_dir() is not None
+
+    @staticmethod
+    def _service_context_refs_to_bff(req: Dict[str, Any]) -> List[Dict[str, str]]:
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        bff_refs = metadata.get("bff_context_refs")
+        if isinstance(bff_refs, list):
+            return [
+                {"type": str(item.get("type") or ""), "id": str(item.get("id") or "")}
+                for item in bff_refs
+                if isinstance(item, dict) and item.get("type") and item.get("id")
+            ]
+        refs: List[Dict[str, str]] = []
+        for raw_ref in req.get("context_refs") or []:
+            text = str(raw_ref or "")
+            if ":" not in text:
+                continue
+            ref_type, ref_id = text.split(":", 1)
+            if ref_type and ref_id:
+                refs.append({"type": ref_type, "id": ref_id})
+        return refs
+
+    @staticmethod
+    def _service_request_status(req: Dict[str, Any]) -> str:
+        status = str(req.get("status") or "").strip().lower()
+        return _SERVICE_TO_BFF_REQUEST_STATUS.get(status, status or "created")
+
+    @classmethod
+    def _project_service_request_record(cls, req: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        bff_priority = metadata.get("bff_priority") or req.get("priority")
+        consultation_type = req.get("consultation_type") or metadata.get("consultation_type") or req.get("request_type")
+        status = cls._service_request_status(req)
+        request_to_session_status = (
+            req.get("request_to_session_status")
+            or metadata.get("request_to_session_status")
+            or ("session_completed" if status == "completed" else "pending_session")
+        )
+        return {
+            "request_id": req.get("request_id"),
+            "status": status,
+            "from_persona_id": req.get("from_persona_id"),
+            "target_type": req.get("target_type"),
+            "target_ref": req.get("target_ref") or req.get("target_id"),
+            "task": req.get("task") or metadata.get("task") or "",
+            "context_refs": cls._service_context_refs_to_bff(req),
+            "priority": bff_priority,
+            "consultation_type": consultation_type,
+            "created_at": req.get("created_at"),
+            "completed_at": req.get("completed_at"),
+            "canceled_at": req.get("canceled_at"),
+            "linked_session_id": req.get("linked_session_id") or metadata.get("linked_session_id"),
+            "request_to_session_status": request_to_session_status,
+            "session_handoff_note": (
+                req.get("session_handoff_note")
+                or metadata.get("session_handoff_note")
+                or "Request is served from the consultation service lifecycle store."
+            ),
+            "created_by": (req.get("requested_by") or {}).get("actor_id"),
+            "service_request_type": req.get("request_type"),
+            "service_trace_id": req.get("trace_id"),
+            "service_evidence_refs": list(req.get("evidence_refs") or []),
+        }
+
+    @staticmethod
+    def _service_evidence_ref(ref_id: str) -> Dict[str, Any]:
+        return {
+            "id": ref_id,
+            "type": "evidence_link",
+            "evidence_type": "consultation_evidence",
+            "artifact_ref": ref_id,
+            "description": ref_id,
+            "link": f"/evidence/{ref_id}",
+        }
+
+    def _project_service_session_records(self, store: ConsultationStore) -> List[Dict[str, Any]]:
+        sessions: Dict[str, Dict[str, Any]] = {}
+        handoffs_by_request: Dict[str, List[Dict[str, Any]]] = {}
+        for handoff in store.list_handoffs():
+            data = _model_to_data(handoff)
+            handoffs_by_request.setdefault(str(data.get("request_id") or ""), []).append(data)
+
+        for request in store.list_requests():
+            req = _model_to_data(request)
+            metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+            consult = dict(metadata.get("consultation") or {})
+            request_id = str(req.get("request_id") or "")
+            linked_session_id = (
+                req.get("linked_session_id")
+                or consult.get("requester_session_id")
+                or consult.get("root_session_id")
+                or request_id
+            )
+            service_handoffs = sorted(
+                handoffs_by_request.get(request_id, []),
+                key=lambda item: str(item.get("created_at") or ""),
+                reverse=True,
+            )
+            latest_handoff = service_handoffs[0] if service_handoffs else None
+
+            evidence_refs = consult.get("evidence_refs")
+            if not evidence_refs:
+                evidence_refs = [
+                    self._service_evidence_ref(str(ref_id))
+                    for ref_id in req.get("evidence_refs") or []
+                    if str(ref_id or "").strip()
+                ]
+            consult.setdefault("consultation_type", req.get("consultation_type") or req.get("request_type"))
+            consult.setdefault("requester_session_id", linked_session_id)
+            consult.setdefault("responder_session_ids", [])
+            consult.setdefault("committee_session_ids", [])
+            consult.setdefault("outcome", self._service_request_status(req))
+            consult.setdefault("evidence_refs", evidence_refs)
+            consult.setdefault(
+                "synthesis_summary",
+                {
+                    "outcome": consult.get("outcome"),
+                    "rationale_ref": consult.get("rationale_ref"),
+                    "evidence_refs": [
+                        item.get("id") if isinstance(item, dict) else item
+                        for item in evidence_refs
+                    ],
+                },
+            )
+            if latest_handoff:
+                consult["service_handoff"] = {
+                    "handoff_id": latest_handoff.get("handoff_id"),
+                    "target_gate": latest_handoff.get("target_gate"),
+                    "evidence_refs": list(latest_handoff.get("evidence_refs") or []),
+                    "audit_refs": list(latest_handoff.get("audit_refs") or []),
+                    "status": latest_handoff.get("status"),
+                }
+
+            sessions[linked_session_id] = {
+                "id": linked_session_id,
+                "session_id": linked_session_id,
+                "persona_id": req.get("from_persona_id") or (req.get("requested_by") or {}).get("actor_id"),
+                "session_type": "consult",
+                "status": _SERVICE_TO_SESSION_STATUS.get(str(req.get("status") or ""), "active"),
+                "started_at": req.get("created_at"),
+                "ended_at": req.get("completed_at") or req.get("canceled_at"),
+                "capability_snapshot_id": consult.get("capability_snapshot_id"),
+                "trace_id": req.get("trace_id"),
+                "request_id": request_id,
+                "context_bundle_ref": consult.get("context_bundle_ref"),
+                "task_ref": req.get("task"),
+                "runtime_binding_id": consult.get("runtime_binding_id"),
+                "deployment_stage": consult.get("deployment_stage"),
+                "capital_pool_id": consult.get("capital_pool_id"),
+                "metadata": {"consultation": consult},
+            }
+
+            for participant in consult.get("committee_participants") or []:
+                if not isinstance(participant, dict):
+                    continue
+                session_id = str(participant.get("session_id") or participant.get("participant_id") or "").strip()
+                if not session_id:
+                    continue
+                sessions[session_id] = {
+                    "id": session_id,
+                    "session_id": session_id,
+                    "persona_id": participant.get("persona_id") or participant.get("participant_ref"),
+                    "session_type": "committee",
+                    "status": participant.get("status") or "active",
+                    "started_at": participant.get("started_at") or req.get("created_at"),
+                    "ended_at": participant.get("ended_at"),
+                    "capability_snapshot_id": participant.get("capability_snapshot_id"),
+                    "trace_id": participant.get("trace_id") or req.get("trace_id"),
+                    "request_id": request_id,
+                    "context_bundle_ref": participant.get("context_bundle_ref") or consult.get("context_bundle_ref"),
+                    "task_ref": req.get("task"),
+                    "runtime_binding_id": participant.get("runtime_binding_id") or consult.get("runtime_binding_id"),
+                    "deployment_stage": participant.get("deployment_stage") or consult.get("deployment_stage"),
+                    "capital_pool_id": participant.get("capital_pool_id") or consult.get("capital_pool_id"),
+                    "metadata": {
+                        "consultation": {
+                            "consultation_type": consult.get("consultation_type"),
+                            "root_session_id": linked_session_id,
+                            "committee_ref": consult.get("committee_ref"),
+                            "participant_status": participant.get("participant_status") or participant.get("status"),
+                            "outcome_signal": participant.get("outcome_signal"),
+                            "role": participant.get("role") or "committee_participant",
+                            "rationale_ref": participant.get("rationale_ref"),
+                        }
+                    },
+                }
+
+        return list(sessions.values())
+
+    @staticmethod
+    def _project_service_transcript_record(transcript: Dict[str, Any]) -> Dict[str, Any]:
+        transcript_id = str(transcript.get("transcript_id") or f"tr-{transcript.get('session_id')}")
+        events: List[Dict[str, Any]] = []
+        for event in transcript.get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            actor = event.get("actor") if isinstance(event.get("actor"), dict) else {}
+            content = event.get("content") if isinstance(event.get("content"), dict) else {}
+            events.append(
+                {
+                    "transcript_id": transcript_id,
+                    "session_id": event.get("session_id") or transcript.get("session_id"),
+                    "event_id": event.get("event_id"),
+                    "sequence_no": event.get("sequence_no"),
+                    "parent_event_id": event.get("parent_event_id"),
+                    "event_type": event.get("event_type"),
+                    "event_time": event.get("event_time"),
+                    "ingest_time": event.get("ingest_time") or event.get("event_time"),
+                    "actor": {
+                        "actor_type": actor.get("actor_type"),
+                        "actor_id": actor.get("actor_id"),
+                        "display_name": actor.get("display_name"),
+                        "role": actor.get("role") or content.get("actor_role"),
+                    },
+                    "content": {
+                        "format": content.get("format") or "json",
+                        "text": content.get("text"),
+                        **{key: value for key, value in content.items() if key not in {"format", "text"}},
+                    },
+                    "evidence_refs": list(event.get("evidence_refs") or []),
+                    "visibility": event.get("visibility") or "committee",
+                    "redaction": event.get("redaction") or {"is_redacted": False, "reason": None},
+                    "meta": event.get("meta") or {"source": "consultation-service", "hash": None},
+                }
+            )
+        return {
+            "transcript_id": transcript_id,
+            "session_id": transcript.get("session_id") or transcript.get("request_id"),
+            "linked_request_id": transcript.get("request_id") or transcript.get("linked_request_id"),
+            "events": events,
+        }
+
+    def _project_service_memo_record(self, memo: Dict[str, Any]) -> Dict[str, Any]:
+        memo_id = str(memo.get("memo_id") or "")
+        request_id = str(memo.get("request_id") or "")
+        request = None
+        store = self._consultation_store()
+        if store is not None and request_id:
+            found = store.get_request(request_id)
+            request = _model_to_data(found) if found else None
+        request_metadata = request.get("metadata") if isinstance((request or {}).get("metadata"), dict) else {}
+        consult = request_metadata.get("consultation") if isinstance(request_metadata.get("consultation"), dict) else {}
+        linked_session_id = (
+            (request or {}).get("linked_session_id")
+            or consult.get("requester_session_id")
+            or request_id
+        )
+        findings = [item for item in memo.get("findings") or [] if isinstance(item, dict)]
+        evidence_ref_ids = []
+        for finding in findings:
+            evidence_ref_ids.extend(str(ref_id) for ref_id in finding.get("evidence_refs") or [] if str(ref_id or "").strip())
+        evidence_ref_ids = list(dict.fromkeys(evidence_ref_ids))
+        recommendation = memo.get("recommendation")
+        recommendations = [
+            finding.get("recommendation")
+            for finding in findings
+            if finding.get("recommendation")
+        ] or ([recommendation] if recommendation else [])
+        return {
+            "memo_id": memo_id,
+            "memo_type": "red_team" if memo.get("memo_type") == "redteam_report" else memo.get("memo_type"),
+            "status": str(memo.get("status") or "").lower(),
+            "lifecycle_state": str(memo.get("status") or "").lower(),
+            "author_ref": memo.get("author_ref"),
+            "linked_request_id": request_id,
+            "linked_session_id": linked_session_id,
+            "session_to_memo_mapping": {
+                "mapping_id": f"map-{memo_id}" if memo_id else None,
+                "source_session_id": linked_session_id,
+                "transcript_id": f"tr-{linked_session_id}" if linked_session_id else None,
+                "transcript_version": None,
+                "memo_id": memo_id,
+                "memo_type": "red_team" if memo.get("memo_type") == "redteam_report" else memo.get("memo_type"),
+                "created_by": {
+                    "actor_type": memo.get("author_type"),
+                    "actor_id": memo.get("author_ref"),
+                },
+                "evidence_refs": evidence_ref_ids,
+                "mapping_status": "active",
+                "created_at": memo.get("created_at"),
+            },
+            "summary": memo.get("summary"),
+            "recommendations": recommendations,
+            "evidence_refs": [self._service_evidence_ref(ref_id) for ref_id in evidence_ref_ids],
+            "published_at": memo.get("published_at"),
+            "created_at": memo.get("created_at"),
+            "supersedes_memo_id": None,
+            "superseded_by_memo_id": None,
+            "surface_state": "ok",
+            "governance_target": {
+                "target_type": memo.get("target_type"),
+                "target_id": memo.get("target_id"),
+                "deployment_plan_id": memo.get("target_id") if memo.get("target_type") == "deployment_plan" else None,
+                "artifact_id": memo.get("target_id") if memo.get("target_type") == "artifact" else None,
+                "strategy_id": memo.get("target_id") if memo.get("target_type") == "strategy" else None,
+            },
+            "suppressed": False,
+            "withdrawn": False,
+            "active_governance_review_id": None,
+        }
+
+    def _consultation_service_records(self, dataset: str) -> Optional[List[Dict[str, Any]]]:
+        store = self._consultation_store()
+        if store is None:
+            return None
+        if dataset == "consult_requests":
+            return [
+                self._project_service_request_record(_model_to_data(request))
+                for request in store.list_requests()
+            ]
+        if dataset == "consultation_sessions":
+            return self._project_service_session_records(store)
+        if dataset == "consult_transcripts":
+            return [
+                self._project_service_transcript_record(_model_to_data(transcript))
+                for transcript in store.list_transcripts()
+            ]
+        if dataset == "consult_memos":
+            return [
+                self._project_service_memo_record(_model_to_data(memo))
+                for memo in store.list_memos()
+            ]
+        return None
+
     def _load_or_seed(self) -> None:
         if self._path.exists():
             raw = self._path.read_text().strip()
@@ -4708,6 +5112,8 @@ class ReadSurfaceStore:
         include_snapshot_fallback: bool = True,
         include_local_fallback: bool = True,
     ) -> str:
+        if self._consultation_service_dataset_available(dataset):
+            return "consultation_service"
         if dataset in CanonicalSnapshotAdapter._DATASETS:
             available, _ = self._canonical.list_records(dataset)
             if available:
@@ -7211,6 +7617,10 @@ class ReadSurfaceStore:
         include_snapshot_fallback: bool = True,
         include_local_fallback: bool = True,
     ) -> List[Dict[str, Any]]:
+        if self._consultation_service_dataset_available(dataset):
+            service_records = self._consultation_service_records(dataset)
+            if service_records is not None:
+                return service_records
         if dataset in ServiceBackedReadAdapter._DATASETS:
             available, records = self._service.list_records(
                 dataset,
@@ -8905,6 +9315,15 @@ class ReadSurfaceStore:
     # ------------------------------------------------------------------ #
 
     def _consultation_session_records(self) -> Dict[str, Dict[str, Any]]:
+        if self._consultation_service_dataset_available("consultation_sessions"):
+            service_records = self._consultation_service_records("consultation_sessions") or []
+            return {
+                str(session_id): session
+                for session in service_records
+                if isinstance(session, dict)
+                for session_id in [session.get("session_id") or session.get("id")]
+                if session_id
+            }
         available, sessions = self._service.list_records("consultation_sessions")
         if available:
             return {
@@ -9079,6 +9498,15 @@ class ReadSurfaceStore:
         return list(meta_consult.get("evidence_refs") or [])
 
     def _consult_transcript_records(self) -> Dict[str, Dict[str, Any]]:
+        if self._consultation_service_dataset_available("consult_transcripts"):
+            service_records = self._consultation_service_records("consult_transcripts") or []
+            return {
+                str(session_id): transcript
+                for transcript in service_records
+                if isinstance(transcript, dict)
+                for session_id in [transcript.get("session_id") or transcript.get("transcript_id")]
+                if session_id
+            }
         available, records = self._service.list_records("consult_transcripts")
         if available:
             return {
@@ -9313,6 +9741,7 @@ class ReadSurfaceStore:
             "sponsor_decided_by": consult.get("sponsor_decided_by"),
             "synthesis_summary": json.loads(json.dumps(consult.get("synthesis_summary") or {})),
             "linked_evidence": json.loads(json.dumps(consult.get("evidence_refs") or [])),
+            "service_handoff": json.loads(json.dumps(consult.get("service_handoff") or {})),
         }
 
     def record_sponsor_decision(
@@ -9324,6 +9753,97 @@ class ReadSurfaceStore:
         actor_id: str,
         recorded_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        store = self._consultation_store()
+        if store is not None:
+            matched_request: Optional[ConsultRequest] = None
+            matched_consult: Dict[str, Any] = {}
+            for request in store.list_requests():
+                data = _model_to_data(request)
+                metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+                consult = metadata.get("consultation") if isinstance(metadata.get("consultation"), dict) else {}
+                if str(consult.get("committee_ref") or "") == str(committee_id):
+                    matched_request = request
+                    matched_consult = dict(consult)
+                    break
+            if matched_request is None:
+                return None
+
+            timestamp = recorded_at or _utc_now_rfc3339()
+            matched_consult["sponsor_decision"] = sponsor_decision
+            matched_consult["sponsor_decided_at"] = timestamp
+            matched_consult["sponsor_decided_by"] = actor_id
+            matched_consult["consensus_state"] = "reached"
+            matched_consult["outcome"] = sponsor_decision
+            synthesis_summary = dict(matched_consult.get("synthesis_summary") or {})
+            synthesis_summary["outcome"] = sponsor_decision
+            synthesis_summary["rationale_ref"] = rationale_ref
+            matched_consult["synthesis_summary"] = synthesis_summary
+            matched_consult["rationale_ref"] = rationale_ref
+
+            memos = [
+                memo
+                for memo in store.list_memos_for_request(matched_request.request_id)
+                if str(memo.status.value if hasattr(memo.status, "value") else memo.status) == MemoStatus.PUBLISHED.value
+            ]
+            if not memos:
+                return None
+
+            evidence_ref_ids: List[str] = []
+            for ref_id in matched_request.evidence_refs:
+                if str(ref_id or "").strip() and str(ref_id) not in evidence_ref_ids:
+                    evidence_ref_ids.append(str(ref_id))
+            for attachment in store.list_evidence_for_request(matched_request.request_id):
+                ref_id = str(attachment.evidence_ref.id or "").strip()
+                if ref_id and ref_id not in evidence_ref_ids:
+                    evidence_ref_ids.append(ref_id)
+            for item in matched_consult.get("evidence_refs") or []:
+                ref_id = str(item.get("id") if isinstance(item, dict) else item or "").strip()
+                if ref_id and ref_id not in evidence_ref_ids:
+                    evidence_ref_ids.append(ref_id)
+
+            audit_refs = [
+                event.audit_id
+                for event in store.list_audit_for_request(matched_request.request_id)
+            ]
+            handoff = ConsultGateHandoff(
+                handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
+                request_id=matched_request.request_id,
+                target_gate=f"committee_sponsor_decision:{committee_id}",
+                memo_ids=[memo.memo_id for memo in memos],
+                evidence_refs=evidence_ref_ids,
+                audit_refs=audit_refs,
+                trace_id=matched_request.trace_id,
+                status=GateHandoffStatus.SENT,
+                sent_at=timestamp,
+            )
+            store.put_handoff(handoff)
+            audit = ConsultAuditEvent(
+                audit_id=f"aud-{uuid.uuid4().hex[:12]}",
+                request_id=matched_request.request_id,
+                actor_ref=ConsultationActorRef(actor_type="operator", actor_id=actor_id),
+                service_actor_ref=ConsultationActorRef(actor_type="service", actor_id="consultation-svc"),
+                action="gate_handoff_created",
+                after_state=handoff.handoff_id,
+                timestamp=timestamp,
+                trace_id=matched_request.trace_id,
+            )
+            store.append_audit(audit)
+            handoff.audit_refs.append(audit.audit_id)
+            store.put_handoff(handoff)
+
+            metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
+            metadata["consultation"] = matched_consult
+            metadata["service_handoff"] = {
+                "handoff_id": handoff.handoff_id,
+                "target_gate": handoff.target_gate,
+                "evidence_refs": list(handoff.evidence_refs),
+                "audit_refs": list(handoff.audit_refs),
+                "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+            }
+            matched_request.metadata = metadata
+            store.put_request(matched_request)
+            return self.get_committee(committee_id)
+
         service_store_path = self._service._resolve_path("consultation_sessions")
         persist_service_store = service_store_path is not None
         consultation_sessions: Optional[Dict[str, Any]]
@@ -9535,6 +10055,14 @@ class ReadSurfaceStore:
     def get_consult_request(self, request_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not request_id:
             return None
+        if self._consultation_service_dataset_available("consult_requests"):
+            requests = {
+                str(record.get("request_id") or ""): record
+                for record in (self._consultation_service_records("consult_requests") or [])
+                if isinstance(record, dict)
+            }
+            req = requests.get(request_id)
+            return self._project_consult_request_detail(req) if req else None
         available, req = self._service.record("consult_requests", request_id)
         if not available:
             req = (self._local_fallback("consult_requests") or {}).get(request_id)
@@ -9555,6 +10083,63 @@ class ReadSurfaceStore:
         actor_id: str,
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
+        store = self._consultation_store()
+        if store is not None:
+            timestamp = created_at or _utc_now_rfc3339()
+            request_id = f"cr-{timestamp[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+            existing_ids = {request.request_id for request in store.list_requests()}
+            while request_id in existing_ids:
+                request_id = f"cr-{timestamp[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+            serialized_context_refs = [
+                f"{item['type']}:{item['id']}"
+                for item in context_refs
+                if isinstance(item, dict) and item.get("type") and item.get("id")
+            ]
+            trace_id = f"trace-{request_id}"
+            service_request = ConsultRequest(
+                request_id=request_id,
+                request_type=_BFF_TO_SERVICE_REQUEST_TYPE.get(
+                    consultation_type,
+                    ConsultRequestType.STRATEGY_REVIEW,
+                ),
+                requested_by=ConsultationActorRef(actor_type="operator", actor_id=actor_id),
+                from_persona_id=from_persona_id,
+                target_type=target_type,
+                target_id=target_ref,
+                task=task,
+                consultation_type=consultation_type,
+                context_refs=serialized_context_refs,
+                priority=_BFF_TO_SERVICE_PRIORITY.get(priority, ConsultPriority.NORMAL),
+                status=ConsultRequestStatus.DRAFT,
+                linked_session_id=None,
+                request_to_session_status="pending_session",
+                completed_at=None,
+                canceled_at=None,
+                session_handoff_note="Request accepted; session creation is pending Persona Plane assignment.",
+                metadata={
+                    "bff_context_refs": context_refs,
+                    "bff_priority": priority,
+                    "task": task,
+                    "consultation_type": consultation_type,
+                },
+                trace_id=trace_id,
+                created_at=timestamp,
+            )
+            store.put_request(service_request)
+            store.append_audit(
+                ConsultAuditEvent(
+                    audit_id=f"aud-{uuid.uuid4().hex[:12]}",
+                    request_id=request_id,
+                    actor_ref=ConsultationActorRef(actor_type="operator", actor_id=actor_id),
+                    action="request_created",
+                    after_state=ConsultRequestStatus.DRAFT.value,
+                    trace_id=trace_id,
+                )
+            )
+            return self._project_consult_request_detail(
+                self._project_service_request_record(_model_to_data(service_request))
+            )
+
         service_store_path = self._service._resolve_path("consult_requests")
         persist_service_store = service_store_path is not None
         requests: Optional[Dict[str, Any]]
@@ -9722,6 +10307,14 @@ class ReadSurfaceStore:
     def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not memo_id:
             return None
+        if self._consultation_service_dataset_available("consult_memos"):
+            memos = {
+                str(record.get("memo_id") or ""): record
+                for record in (self._consultation_service_records("consult_memos") or [])
+                if isinstance(record, dict)
+            }
+            memo = memos.get(memo_id)
+            return self._project_consult_memo_detail(memo) if memo else None
         available, memo = self._service.record("consult_memos", memo_id)
         if not available:
             memo = (self._local_fallback("consult_memos") or {}).get(memo_id)
@@ -9736,6 +10329,36 @@ class ReadSurfaceStore:
         actor_id: str,
         canceled_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        store = self._consultation_store()
+        if store is not None:
+            request = store.get_request(request_id)
+            if request is None:
+                return None
+            projected = self._project_service_request_record(_model_to_data(request))
+            if not self._consult_request_can_cancel(projected):
+                return None
+            before_state = request.status.value if hasattr(request.status, "value") else str(request.status)
+            timestamp = canceled_at or _utc_now_rfc3339()
+            request.status = ConsultRequestStatus.CANCELLED
+            request.canceled_at = timestamp
+            request.request_to_session_status = "canceled_before_session"
+            request.session_handoff_note = "Request canceled by operator."
+            store.put_request(request)
+            store.append_audit(
+                ConsultAuditEvent(
+                    audit_id=f"aud-{uuid.uuid4().hex[:12]}",
+                    request_id=request_id,
+                    actor_ref=ConsultationActorRef(actor_type="operator", actor_id=actor_id),
+                    action="request_cancelled",
+                    before_state=before_state,
+                    after_state=ConsultRequestStatus.CANCELLED.value,
+                    trace_id=request.trace_id,
+                )
+            )
+            return self._project_consult_request_detail(
+                self._project_service_request_record(_model_to_data(request))
+            )
+
         service_store_path = self._service._resolve_path("consult_requests")
         persist_service_store = service_store_path is not None
         requests: Optional[Dict[str, Any]]

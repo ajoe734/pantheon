@@ -35,6 +35,21 @@ from runtime_binding import (
 )
 
 import services.control_plane.internal_api as internal_api
+from services.consultation.models import (
+    ActorRef,
+    AuthorType,
+    ConsultAuditEvent,
+    ConsultFinding,
+    ConsultMemo,
+    ConsultRequest,
+    ConsultRequestStatus,
+    ConsultRequestType,
+    FindingSeverity,
+    MemoStatus,
+    MemoType,
+    Recommendation,
+)
+from services.consultation.store import ConsultationStore
 
 
 class FakeRuntimeManagerClient:
@@ -458,6 +473,179 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
             ],
         )
         self.assertEqual(self.fake_client.calls[3][0:2], ("retire", binding_id))
+
+
+class TestProtectedInternalAPIConsultationServiceBoundary(unittest.TestCase):
+    """Protected consultation control routes must hand off through the consultation service store."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.prev_command_state_file = internal_api._COMMAND_STATE_FILE
+        self.prev_runtime_consultation_dir = os.environ.get("PANTHEON_RUNTIME_CONSULTATION_DATA_DIR")
+        internal_api._COMMAND_STATE_FILE = os.path.join(self.tmpdir.name, "commands.json")
+        os.environ["PANTHEON_RUNTIME_CONSULTATION_DATA_DIR"] = self.tmpdir.name
+        self.client = internal_api.app.test_client()
+        self._seed_service_committee()
+
+    def tearDown(self):
+        internal_api._COMMAND_STATE_FILE = self.prev_command_state_file
+        if self.prev_runtime_consultation_dir is None:
+            os.environ.pop("PANTHEON_RUNTIME_CONSULTATION_DATA_DIR", None)
+        else:
+            os.environ["PANTHEON_RUNTIME_CONSULTATION_DATA_DIR"] = self.prev_runtime_consultation_dir
+        self.tmpdir.cleanup()
+
+    @staticmethod
+    def _headers():
+        return {
+            "Authorization": "Bearer runtime-operator:mfa",
+            "X-MFA-Token": "123456",
+            "Content-Type": "application/json",
+        }
+
+    def _seed_service_committee(self):
+        store = ConsultationStore(self.tmpdir.name)
+        request = ConsultRequest(
+            request_id="cr-internal-committee-001",
+            request_type=ConsultRequestType.EXECUTION_RISK,
+            requested_by=ActorRef(actor_type="operator", actor_id="runtime-operator"),
+            from_persona_id="persona-alpha",
+            target_type="deployment_plan",
+            target_id="plan-internal-001",
+            task="Review service-backed runtime handoff.",
+            consultation_type="risk_review",
+            evidence_refs=["ev-internal-001"],
+            priority="high",
+            status=ConsultRequestStatus.IN_PROGRESS,
+            linked_session_id="cs-internal-committee-001",
+            request_to_session_status="session_running",
+            trace_id="trace-internal-committee-001",
+            created_at="2026-04-20T07:00:00Z",
+            metadata={
+                "consultation": {
+                    "consultation_type": "risk_review",
+                    "requester_session_id": "cs-internal-committee-001",
+                    "committee_session_ids": ["cm-internal-committee-001"],
+                    "committee_ref": "committee-internal-001",
+                    "quorum_state": "quorum_met",
+                    "consensus_state": "sponsor_required",
+                    "committee_started_at": "2026-04-20T07:01:00Z",
+                    "sponsor_session_id": "cm-internal-committee-001",
+                    "sponsor_decision": None,
+                    "sponsor_decided_at": None,
+                    "sponsor_decided_by": None,
+                    "synthesis_summary": {
+                        "outcome": "pending",
+                        "rationale_ref": "workspace://consultation-rationales/internal",
+                        "evidence_refs": ["ev-internal-001"],
+                        "dissent_refs": [],
+                    },
+                    "evidence_refs": [
+                        {
+                            "id": "ev-internal-001",
+                            "type": "evidence_link",
+                            "evidence_type": "deployment_plan",
+                            "artifact_ref": "plan-internal-001",
+                            "description": "Runtime-owned deployment review evidence",
+                            "link": "/deployments/plans/plan-internal-001",
+                        }
+                    ],
+                    "committee_participants": [
+                        {
+                            "session_id": "cm-internal-committee-001",
+                            "persona_id": "p-compliance-sponsor",
+                            "role": "sponsor",
+                            "participant_status": "active",
+                            "status": "active",
+                            "rationale_ref": "workspace://consultation-rationales/internal/sponsor",
+                        }
+                    ],
+                }
+            },
+        )
+        store.put_request(request)
+        store.append_audit(
+            ConsultAuditEvent(
+                audit_id="aud-internal-request-created",
+                request_id=request.request_id,
+                actor_ref=ActorRef(actor_type="operator", actor_id="runtime-operator"),
+                action="request_created",
+                after_state="draft",
+                trace_id=request.trace_id,
+            )
+        )
+        store.put_memo(
+            ConsultMemo(
+                memo_id="mem-internal-committee-001",
+                request_id=request.request_id,
+                memo_type=MemoType.REDTEAM_REPORT,
+                author_type=AuthorType.PERSONA,
+                author_ref="p-risk-analyst",
+                target_type="deployment_plan",
+                target_id="plan-internal-001",
+                summary="Runtime route service-backed memo.",
+                findings=[
+                    ConsultFinding(
+                        severity=FindingSeverity.MEDIUM,
+                        category="execution",
+                        claim="Runtime sponsor handoff requires service evidence refs.",
+                        evidence_refs=["ev-internal-001"],
+                        recommendation="approve with sponsor conditions",
+                    )
+                ],
+                recommendation=Recommendation.APPROVE_WITH_CONDITIONS,
+                status=MemoStatus.PUBLISHED,
+                trace_id=request.trace_id,
+                created_at="2026-04-20T07:05:00Z",
+                published_at="2026-04-20T07:06:00Z",
+            )
+        )
+
+    def test_sponsor_decision_route_creates_service_handoff(self):
+        response = self.client.post(
+            "/api/internal/v1/consultations/committees/committee-internal-001/sponsor-decision",
+            headers=self._headers(),
+            json={
+                "sponsor_decision": "approved",
+                "rationale_ref": "workspace://committee-rationales/internal/final",
+                "recorded_at": "2026-04-20T07:10:00Z",
+            },
+        )
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 202, response.get_data(as_text=True))
+        self.assertEqual(payload["sponsor_decision"], "approved")
+        self.assertEqual(payload["sponsor_decided_by"], "runtime-operator")
+        handoff = payload["service_handoff"]
+        self.assertTrue(handoff["handoff_id"].startswith("gh-"))
+        self.assertEqual(handoff["target_gate"], "committee_sponsor_decision:committee-internal-001")
+        self.assertEqual(handoff["evidence_refs"], ["ev-internal-001"])
+        self.assertIn("aud-internal-request-created", handoff["audit_refs"])
+        self.assertTrue(any(ref.startswith("aud-") for ref in handoff["audit_refs"]))
+
+        replayed_store = ConsultationStore(self.tmpdir.name)
+        request = replayed_store.get_request("cr-internal-committee-001")
+        self.assertIsNotNone(request)
+        consultation = request.metadata["consultation"]
+        self.assertEqual(consultation["sponsor_decision"], "approved")
+        self.assertEqual(
+            consultation["synthesis_summary"]["rationale_ref"],
+            "workspace://committee-rationales/internal/final",
+        )
+        handoffs = replayed_store.list_handoffs_for_request("cr-internal-committee-001")
+        self.assertEqual(len(handoffs), 1)
+        self.assertEqual(handoffs[0].handoff_id, handoff["handoff_id"])
+        self.assertEqual(handoffs[0].memo_ids, ["mem-internal-committee-001"])
+        actions = [
+            event.action
+            for event in replayed_store.list_audit_for_request("cr-internal-committee-001")
+        ]
+        self.assertIn("gate_handoff_created", actions)
+
+        commands = json.loads(open(internal_api._COMMAND_STATE_FILE, encoding="utf-8").read())
+        self.assertEqual(len(commands), 1)
+        command = next(iter(commands.values()))
+        self.assertEqual(command["result"]["service_handoff"]["handoff_id"], handoff["handoff_id"])
 
 
 if __name__ == "__main__":

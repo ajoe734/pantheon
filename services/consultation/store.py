@@ -321,6 +321,9 @@ class ConsultationStore:
         transcript = self._transcripts.get(request_id)
         return _model_copy(transcript) if transcript else None
 
+    def list_transcripts(self) -> List[ConsultTranscript]:
+        return [_model_copy(transcript) for transcript in self._transcripts.values()]
+
     def put_transcript(self, transcript: ConsultTranscript) -> None:
         request = self._requests.get(transcript.request_id)
         self._append_lifecycle_event(
@@ -377,6 +380,9 @@ class ConsultationStore:
     def get_handoff(self, handoff_id: str) -> Optional[ConsultGateHandoff]:
         handoff = self._handoffs.get(handoff_id)
         return _model_copy(handoff) if handoff else None
+
+    def list_handoffs(self) -> List[ConsultGateHandoff]:
+        return [_model_copy(handoff) for handoff in self._handoffs.values()]
 
     def list_handoffs_for_request(self, request_id: str) -> List[ConsultGateHandoff]:
         return [

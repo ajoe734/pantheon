@@ -18,6 +18,15 @@ import os
 import sys
 import uuid
 
+from services.consultation.models import (
+    ActorRef as ConsultationActorRef,
+    ConsultAuditEvent,
+    ConsultGateHandoff,
+    GateHandoffStatus,
+    MemoStatus,
+)
+from services.consultation.store import ConsultationStore
+
 app = Flask(__name__)
 
 # --------------------------------------------------------------------------- #
@@ -149,6 +158,130 @@ def _record_command(command_id: str, record: dict):
     _save_commands(state)
 
 
+def _consultation_data_dir() -> Path | None:
+    for env_name in (
+        "PANTHEON_RUNTIME_CONSULTATION_DATA_DIR",
+        "PANTHEON_BFF_CONSULTATION_DATA_DIR",
+        "PANTHEON_CONSULTATION_DATA_DIR",
+        "CONSULTATION_DATA_DIR",
+    ):
+        raw = os.getenv(env_name, "").strip()
+        if raw:
+            return Path(raw)
+    return None
+
+
+def _record_service_committee_sponsor_decision(
+    committee_id: str,
+    *,
+    sponsor_decision: str,
+    rationale_ref: str,
+    actor_id: str,
+    recorded_at: str,
+) -> dict | None:
+    data_dir = _consultation_data_dir()
+    if data_dir is None:
+        return None
+
+    store = ConsultationStore(str(data_dir))
+    matched_request = None
+    matched_consult = {}
+    for request_record in store.list_requests():
+        request_data = request_record.model_dump(mode="json") if hasattr(request_record, "model_dump") else request_record.dict()
+        metadata = request_data.get("metadata") if isinstance(request_data.get("metadata"), dict) else {}
+        consult = metadata.get("consultation") if isinstance(metadata.get("consultation"), dict) else {}
+        if str(consult.get("committee_ref") or "").strip() == committee_id:
+            matched_request = request_record
+            matched_consult = dict(consult)
+            break
+    if matched_request is None:
+        raise KeyError(committee_id)
+
+    memos = [
+        memo
+        for memo in store.list_memos_for_request(matched_request.request_id)
+        if str(memo.status.value if hasattr(memo.status, "value") else memo.status) == MemoStatus.PUBLISHED.value
+    ]
+    if not memos:
+        raise ValueError(f"Committee {committee_id} has no published consultation memo for gate handoff")
+
+    matched_consult["sponsor_decision"] = sponsor_decision
+    matched_consult["sponsor_decided_at"] = recorded_at
+    matched_consult["sponsor_decided_by"] = actor_id
+    matched_consult["consensus_state"] = "reached"
+    matched_consult["outcome"] = sponsor_decision
+    synthesis_summary = dict(matched_consult.get("synthesis_summary") or {})
+    synthesis_summary["outcome"] = sponsor_decision
+    synthesis_summary["rationale_ref"] = rationale_ref
+    matched_consult["synthesis_summary"] = synthesis_summary
+    matched_consult["rationale_ref"] = rationale_ref
+
+    evidence_refs: list[str] = []
+    for ref_id in matched_request.evidence_refs:
+        if str(ref_id or "").strip() and str(ref_id) not in evidence_refs:
+            evidence_refs.append(str(ref_id))
+    for attachment in store.list_evidence_for_request(matched_request.request_id):
+        ref_id = str(attachment.evidence_ref.id or "").strip()
+        if ref_id and ref_id not in evidence_refs:
+            evidence_refs.append(ref_id)
+    for item in matched_consult.get("evidence_refs") or []:
+        ref_id = str(item.get("id") if isinstance(item, dict) else item or "").strip()
+        if ref_id and ref_id not in evidence_refs:
+            evidence_refs.append(ref_id)
+
+    audit_refs = [event.audit_id for event in store.list_audit_for_request(matched_request.request_id)]
+    handoff = ConsultGateHandoff(
+        handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
+        request_id=matched_request.request_id,
+        target_gate=f"committee_sponsor_decision:{committee_id}",
+        memo_ids=[memo.memo_id for memo in memos],
+        evidence_refs=evidence_refs,
+        audit_refs=audit_refs,
+        trace_id=matched_request.trace_id,
+        status=GateHandoffStatus.SENT,
+        sent_at=recorded_at,
+    )
+    store.put_handoff(handoff)
+    audit = ConsultAuditEvent(
+        audit_id=f"aud-{uuid.uuid4().hex[:12]}",
+        request_id=matched_request.request_id,
+        actor_ref=ConsultationActorRef(actor_type="operator", actor_id=actor_id),
+        service_actor_ref=ConsultationActorRef(actor_type="service", actor_id="consultation-svc"),
+        action="gate_handoff_created",
+        after_state=handoff.handoff_id,
+        timestamp=recorded_at,
+        trace_id=matched_request.trace_id,
+    )
+    store.append_audit(audit)
+    handoff.audit_refs.append(audit.audit_id)
+    store.put_handoff(handoff)
+
+    metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
+    metadata["consultation"] = matched_consult
+    matched_request.metadata = metadata
+    store.put_request(matched_request)
+
+    return {
+        "committee_id": committee_id,
+        "committee_ref": matched_consult.get("committee_ref") or committee_id,
+        "linked_request_id": matched_request.request_id,
+        "linked_session_id": matched_request.linked_session_id or matched_consult.get("requester_session_id"),
+        "sponsor_decision": matched_consult.get("sponsor_decision"),
+        "sponsor_decided_at": matched_consult.get("sponsor_decided_at"),
+        "sponsor_decided_by": matched_consult.get("sponsor_decided_by"),
+        "consensus_state": matched_consult.get("consensus_state"),
+        "rationale_ref": (matched_consult.get("synthesis_summary") or {}).get("rationale_ref"),
+        "outcome": (matched_consult.get("synthesis_summary") or {}).get("outcome"),
+        "service_handoff": {
+            "handoff_id": handoff.handoff_id,
+            "target_gate": handoff.target_gate,
+            "evidence_refs": list(handoff.evidence_refs),
+            "audit_refs": list(handoff.audit_refs),
+            "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+        },
+    }
+
+
 def _consultation_session_store_target() -> tuple[Path, str]:
     explicit = (
         os.getenv("PANTHEON_CONSULTATION_SESSION_STORE", "").strip()
@@ -205,6 +338,16 @@ def _record_committee_sponsor_decision(
     actor_id: str,
     recorded_at: str,
 ) -> dict:
+    service_result = _record_service_committee_sponsor_decision(
+        committee_id,
+        sponsor_decision=sponsor_decision,
+        rationale_ref=rationale_ref,
+        actor_id=actor_id,
+        recorded_at=recorded_at,
+    )
+    if service_result is not None:
+        return service_result
+
     sessions, path, mode = _load_consultation_sessions()
     root_session_id = None
     for session_id, session in sessions.items():

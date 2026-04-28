@@ -1699,6 +1699,7 @@ def _cw03_committee_projection(
         "sponsor_decided_by": committee.get("sponsor_decided_by"),
         "synthesis_summary": json.loads(json.dumps(committee.get("synthesis_summary") or {})),
         "linked_evidence": json.loads(json.dumps(committee.get("linked_evidence") or [])),
+        "service_handoff": json.loads(json.dumps(committee.get("service_handoff") or {})),
         "allowedActions": allowed_actions,
         "meta": {
             **_snapshot_meta(snapshot_at),
@@ -11335,6 +11336,7 @@ async def _process_command(command_id: str):
                 "sponsor_decided_by": updated.get("sponsor_decided_by"),
                 "consensus_state": updated.get("consensus_state"),
                 "rationale_ref": (updated.get("synthesis_summary") or {}).get("rationale_ref"),
+                "service_handoff": updated.get("service_handoff") or {},
                 "execution_completed_at": utc_now(),
             }
             audit["execution_completed_at"] = result["execution_completed_at"]

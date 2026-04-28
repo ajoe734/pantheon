@@ -203,11 +203,19 @@ class ConsultRequest(BaseModel):
     from_persona_id: Optional[str] = None
     target_type: str
     target_id: str
+    task: Optional[str] = None
+    consultation_type: Optional[str] = None
     context_refs: List[str] = Field(default_factory=list)
     evidence_refs: List[str] = Field(default_factory=list)
     priority: ConsultPriority = ConsultPriority.NORMAL
     status: ConsultRequestStatus = ConsultRequestStatus.DRAFT
     policy_id: Optional[str] = None
+    linked_session_id: Optional[str] = None
+    request_to_session_status: Optional[str] = None
+    completed_at: Optional[str] = None
+    canceled_at: Optional[str] = None
+    session_handoff_note: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     trace_id: str
     created_at: str = Field(default_factory=utc_now)
 
@@ -242,10 +250,18 @@ class CreateConsultRequest(BaseModel):
     from_persona_id: Optional[str] = None
     target_type: str
     target_id: str
+    task: Optional[str] = None
+    consultation_type: Optional[str] = None
     context_refs: List[str] = Field(default_factory=list)
     evidence_refs: List[str] = Field(default_factory=list)
     priority: ConsultPriority = ConsultPriority.NORMAL
     policy_id: Optional[str] = None
+    linked_session_id: Optional[str] = None
+    request_to_session_status: Optional[str] = None
+    completed_at: Optional[str] = None
+    canceled_at: Optional[str] = None
+    session_handoff_note: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     trace_id: str
 
 
