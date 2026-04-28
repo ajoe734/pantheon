@@ -5,7 +5,8 @@ import pytest
 from integrations.openclaw.search_gateway import OpenClawSearchGateway
 from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, InMemoryEvidenceRepository
 from services.knowledge.evidence.models import KnowledgeObject
-from services.search import SearchAccessContext, SearchGateway, SearchRequest
+from services.search import JsonlSearchIndexStore, KeywordIndexAdapter, SearchAccessContext, SearchGateway, SearchRequest
+from services.search.index_adapter import SearchIndexDocument
 from services.search.filters import SearchPolicyError
 from services.source_ingestion.connectors import SourceRecord
 
@@ -117,3 +118,136 @@ def test_openclaw_search_returns_evidence_not_raw_undocumented_blob() -> None:
     assert result["evidence_bundle_id"] == "evbundle-volatility"
     assert result["citations"] == ["volatility-note#1"]
     assert "raw_payload" not in result
+
+
+def test_search_index_store_replays_evidence_bundle_refs_without_raw_payloads(tmp_path) -> None:
+    index_store = JsonlSearchIndexStore(tmp_path / "search-index.jsonl")
+    gateway = SearchGateway(_repository(), index_store=index_store)
+    gateway.search(
+        SearchRequest(
+            request_id="search-refs-001",
+            query="momentum volatility",
+            persona_id="persona-alpha",
+            workspace_id="workspace-research",
+            source_types=["internal_note"],
+            trace_id="trace-search-refs-001",
+        ),
+        SearchAccessContext(
+            persona_id="persona-alpha",
+            workspace_id="workspace-research",
+            environment="paper",
+            access_scopes=["research"],
+            license_scopes=["internal"],
+        ),
+    )
+
+    replayed = JsonlSearchIndexStore(tmp_path / "search-index.jsonl")
+    snapshot = replayed.get_snapshot("search-refs-001")
+
+    assert snapshot is not None
+    assert snapshot.result_refs == [
+        {
+            "result_id": "ko-volatility",
+            "evidence_bundle_id": "evbundle-volatility",
+            "citations": ["volatility-note#1"],
+            "matched_items": [
+                {
+                    "knowledge_object_id": "ko-volatility",
+                    "source_id": "src-volatility-note",
+                    "evidence_item_id": "evi-volatility-note",
+                    "content_ref": "note://pantheon/volatility#1",
+                    "citation_label": "volatility-note#1",
+                    "matched_terms": ["momentum", "volatility"],
+                }
+            ],
+            "relevance_score": 0.75,
+        }
+    ]
+    assert "answer_context" not in snapshot.to_dict()["result_refs"][0]
+    assert "raw_payload" not in snapshot.to_dict()["result_refs"][0]
+
+
+def test_search_uses_index_adapter_documents_for_keyword_inputs() -> None:
+    repository = _repository()
+
+    class AdapterOnlyKeywordIndex(KeywordIndexAdapter):
+        def documents_for(self, knowledge_objects):
+            return [
+                SearchIndexDocument(
+                    knowledge_object=knowledge_object,
+                    search_text="adapter-only-token",
+                    relevance_score=0.42,
+                    indexed_at=None,
+                    source_watermark="2026-04-28T09:00:00Z",
+                    metadata={},
+                )
+                for knowledge_object in knowledge_objects
+                if knowledge_object.knowledge_object_id == "ko-volatility"
+            ]
+
+    gateway = SearchGateway(repository, index_adapter=AdapterOnlyKeywordIndex(repository))
+    response = gateway.search(
+        SearchRequest(
+            request_id="search-adapter-boundary",
+            query="adapter-only-token",
+            persona_id="persona-alpha",
+            workspace_id="workspace-research",
+            source_types=["internal_note"],
+            trace_id="trace-search-adapter-boundary",
+        ),
+        SearchAccessContext(
+            persona_id="persona-alpha",
+            workspace_id="workspace-research",
+            environment="paper",
+            access_scopes=["research"],
+            license_scopes=["internal"],
+        ),
+    )
+
+    assert [result.result_id for result in response.results] == ["ko-volatility"]
+    assert response.results[0].relevance_score == 0.43
+
+
+def test_keyword_index_adapter_preserves_metadata_search_text_input() -> None:
+    repository = _repository()
+    source = repository.get_source_record("src-volatility-note")
+    item = repository.get_evidence_item("evi-volatility-note")
+    bundle = repository.get_bundle("evbundle-volatility")
+    assert source is not None
+    assert item is not None
+    assert bundle is not None
+    repository.add_knowledge_object(
+        KnowledgeObject(
+            knowledge_object_id="ko-adapter-metadata",
+            source_id=source.source_id,
+            evidence_item_id=item.evidence_item_id,
+            evidence_bundle_id=bundle.evidence_bundle_id,
+            title="Durable adapter metadata",
+            text="This object only exposes the query token through metadata.",
+            source_type="internal_note",
+            license_scope="internal",
+            access_scope=["research"],
+            metadata={"search_text": "adapter-only-token", "relevance_score": 0.5},
+        )
+    )
+
+    gateway = SearchGateway(repository)
+    response = gateway.search(
+        SearchRequest(
+            request_id="search-metadata-search-text",
+            query="adapter-only-token",
+            persona_id="persona-alpha",
+            workspace_id="workspace-research",
+            source_types=["internal_note"],
+            trace_id="trace-search-metadata-search-text",
+        ),
+        SearchAccessContext(
+            persona_id="persona-alpha",
+            workspace_id="workspace-research",
+            environment="paper",
+            access_scopes=["research"],
+            license_scopes=["internal"],
+        ),
+    )
+
+    assert [result.result_id for result in response.results] == ["ko-adapter-metadata"]

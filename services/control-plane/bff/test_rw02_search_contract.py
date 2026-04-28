@@ -80,6 +80,59 @@ def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta()
         }
 
 
+def test_rw02_governed_evidence_refs_remain_stable_after_durable_replay() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        storage_path = os.path.join(td, "read_surfaces.json")
+        first_store = ReadSurfaceStore(storage_path, allow_local_snapshot_fallback=True)
+        first_results = first_store.list_research_search_results(
+            query="momentum decay volatility",
+            match_type="all",
+        )
+        first_refs = first_store.get_last_governed_search_refs()
+
+        replayed_store = ReadSurfaceStore(storage_path, allow_local_snapshot_fallback=True)
+        replayed_results = replayed_store.list_research_search_results(
+            query="momentum decay volatility",
+            match_type="all",
+        )
+        replayed_refs = replayed_store.get_last_governed_search_refs()
+
+        assert [item["result_id"] for item in replayed_results] == [item["result_id"] for item in first_results]
+        assert replayed_refs == first_refs
+        assert replayed_refs["rt-20260419-007"]["evidence_bundle_id"] == "evbundle-rw02-rt-20260419-007"
+
+
+def test_rw02_durable_replay_does_not_pollute_narrow_match_type_search() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+
+        store.list_research_search_results(query="momentum", match_type="all")
+        artifact_results = store.list_research_search_results(query="momentum", match_type="artifact")
+
+        assert [(item["result_id"], item["match_type"]) for item in artifact_results] == [
+            ("artifact-20260418-005", "artifact"),
+        ]
+        assert store.get_last_governed_search_refs() == {
+            "artifact-20260418-005": {
+                "evidence_bundle_id": "evbundle-rw02-artifact-20260418-005",
+                "citations": ["artifact:artifact-20260418-005"],
+                "matched_items": [
+                    {
+                        "knowledge_object_id": "artifact-20260418-005",
+                        "source_id": "src-rw02-artifact-20260418-005",
+                        "evidence_item_id": "evi-rw02-artifact-20260418-005",
+                        "content_ref": "/research/artifacts/artifact-20260418-005#search-index",
+                        "citation_label": "artifact:artifact-20260418-005",
+                        "matched_terms": ["momentum"],
+                    }
+                ],
+            }
+        }
+
+
 def test_rw02_search_contract_applies_backend_owned_filters() -> None:
     with _seeded_client(allow_local_snapshot_fallback=True) as client:
         response = client.get(

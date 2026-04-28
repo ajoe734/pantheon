@@ -2,7 +2,7 @@
 
 from .bundle_builder import EvidenceBundleBuilder
 from .models import DocumentChunk, EvidenceBundle, EvidenceItem, KnowledgeObject
-from .repository import InMemoryEvidenceRepository
+from .repository import InMemoryEvidenceRepository, JsonlEvidenceRepository
 
 __all__ = [
     "DocumentChunk",
@@ -10,5 +10,6 @@ __all__ = [
     "EvidenceBundleBuilder",
     "EvidenceItem",
     "InMemoryEvidenceRepository",
+    "JsonlEvidenceRepository",
     "KnowledgeObject",
 ]

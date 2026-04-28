@@ -9,6 +9,8 @@ from typing import Any, Mapping
 from services.knowledge.evidence.repository import InMemoryEvidenceRepository
 
 from .filters import SearchAccessContext, SearchPolicyError, SearchRequest
+from .index_adapter import KeywordIndexAdapter
+from .index_store import JsonlSearchIndexStore, SearchIndexSnapshot
 from .retriever import KeywordRetriever
 
 
@@ -67,9 +69,17 @@ class GovernedSearchResponse:
 class SearchGateway:
     """Applies ACL/license/environment filters before ranking evidence-backed objects."""
 
-    def __init__(self, repository: InMemoryEvidenceRepository, retriever: KeywordRetriever | None = None) -> None:
+    def __init__(
+        self,
+        repository: InMemoryEvidenceRepository,
+        retriever: KeywordRetriever | None = None,
+        index_store: JsonlSearchIndexStore | None = None,
+        index_adapter: KeywordIndexAdapter | None = None,
+    ) -> None:
         self.repository = repository
         self.retriever = retriever or KeywordRetriever()
+        self.index_store = index_store
+        self.index_adapter = index_adapter or KeywordIndexAdapter(repository)
 
     def search(self, request: SearchRequest, context: SearchAccessContext) -> GovernedSearchResponse:
         filtered = []
@@ -91,7 +101,8 @@ class SearchGateway:
                     continue
             filtered.append(knowledge_object)
 
-        matches = self.retriever.retrieve(request.query, filtered, top_k=request.top_k)
+        index_documents = self.index_adapter.documents_for(filtered)
+        matches = self.retriever.retrieve(request.query, index_documents, top_k=request.top_k)
         results: list[RetrievalResult] = []
         created_at = _now_iso()
         filters_applied = {
@@ -132,7 +143,7 @@ class SearchGateway:
                 )
             )
 
-        return GovernedSearchResponse(
+        response = GovernedSearchResponse(
             request_id=request.request_id,
             trace_id=request.trace_id,
             results=results,
@@ -140,3 +151,6 @@ class SearchGateway:
             filters_applied=filters_applied,
             created_at=created_at,
         )
+        if self.index_store is not None:
+            self.index_store.append_snapshot(SearchIndexSnapshot.from_response(response))
+        return response

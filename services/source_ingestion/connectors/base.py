@@ -178,6 +178,20 @@ class SourceRecord:
             "created_at": _iso(self.created_at),
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "SourceRecord":
+        return cls(
+            source_id=str(data["source_id"]),
+            connector_id=str(data["connector_id"]),
+            source_type=str(data["source_type"]),
+            title=str(data["title"]),
+            content_ref=str(data["content_ref"]),
+            status=str(data.get("status", SourceRecordStatus.NORMALIZED.value)),
+            metadata=dict(data.get("metadata", {})),
+            trace_id=str(data.get("trace_id") or ""),
+            created_at=data.get("created_at") or _utc_now(),
+        )
+
 
 @dataclass(frozen=True)
 class IngestEvent:
@@ -202,6 +216,17 @@ class IngestEvent:
             "created_at": _iso(self.created_at),
             "message": self.message,
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "IngestEvent":
+        return cls(
+            event_type=str(data["event_type"]),
+            ingest_run_id=str(data["ingest_run_id"]),
+            status=str(data["status"]),
+            trace_id=str(data.get("trace_id") or ""),
+            created_at=data.get("created_at") or _utc_now(),
+            message=data.get("message"),
+        )
 
 
 @dataclass
@@ -303,3 +328,20 @@ class IngestRun:
             "trace_id": self.trace_id,
             "events": [event.to_dict() for event in self.events],
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "IngestRun":
+        return cls(
+            ingest_run_id=str(data["ingest_run_id"]),
+            connector_id=str(data["connector_id"]),
+            source_type=str(data["source_type"]),
+            trigger_type=str(data["trigger_type"]),
+            trace_id=str(data["trace_id"]),
+            status=str(data.get("status", IngestRunStatus.QUEUED.value)),
+            started_at=data.get("started_at") or _utc_now(),
+            finished_at=data.get("finished_at"),
+            raw_count=int(data.get("raw_count", 0)),
+            normalized_count=int(data.get("normalized_count", 0)),
+            rejected_count=int(data.get("rejected_count", 0)),
+            events=[IngestEvent.from_dict(event) for event in data.get("events", [])],
+        )

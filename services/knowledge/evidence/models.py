@@ -83,6 +83,23 @@ class EvidenceItem:
             "metadata": dict(self.metadata),
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "EvidenceItem":
+        return cls(
+            evidence_item_id=str(data["evidence_item_id"]),
+            source_id=str(data["source_id"]),
+            item_type=str(data["item_type"]),
+            content_ref=str(data["content_ref"]),
+            citation_label=str(data["citation_label"]),
+            body=str(data.get("body") or ""),
+            event_time=data.get("event_time"),
+            available_time=data.get("available_time"),
+            confidence=float(data.get("confidence", 1.0)),
+            access_scope=list(data.get("access_scope") or ("public",)),
+            trace_refs=list(data.get("trace_refs") or ()),
+            metadata=dict(data.get("metadata", {})),
+        )
+
 
 @dataclass(frozen=True)
 class EvidenceBundle:
@@ -133,6 +150,23 @@ class EvidenceBundle:
             "trace_refs": list(self.trace_refs),
             "metadata": dict(self.metadata),
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "EvidenceBundle":
+        return cls(
+            evidence_bundle_id=str(data["evidence_bundle_id"]),
+            source_ids=list(data.get("source_ids") or ()),
+            evidence_item_ids=list(data.get("evidence_item_ids") or ()),
+            summary=str(data["summary"]),
+            citation_refs=list(data.get("citation_refs") or ()),
+            confidence=float(data["confidence"]),
+            license_scope=str(data["license_scope"]),
+            access_scope=list(data.get("access_scope") or ("public",)),
+            created_by=str(data["created_by"]),
+            created_at=data.get("created_at") or utc_now(),
+            trace_refs=list(data.get("trace_refs") or ()),
+            metadata=dict(data.get("metadata", {})),
+        )
 
 
 @dataclass(frozen=True)
@@ -230,3 +264,23 @@ class KnowledgeObject:
             "metadata": dict(self.metadata),
             "created_at": iso(self.created_at),
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "KnowledgeObject":
+        return cls(
+            knowledge_object_id=str(data["knowledge_object_id"]),
+            source_id=str(data["source_id"]),
+            evidence_item_id=str(data["evidence_item_id"]),
+            evidence_bundle_id=str(data["evidence_bundle_id"]),
+            title=str(data["title"]),
+            text=str(data["text"]),
+            source_type=str(data["source_type"]),
+            license_scope=str(data["license_scope"]),
+            access_scope=list(data.get("access_scope") or ("public",)),
+            environment_scope=list(data.get("environment_scope") or ()),
+            persona_scope=list(data.get("persona_scope") or ()),
+            workspace_scope=list(data.get("workspace_scope") or ()),
+            keywords=list(data.get("keywords") or ()),
+            metadata=dict(data.get("metadata", {})),
+            created_at=data.get("created_at") or utc_now(),
+        )

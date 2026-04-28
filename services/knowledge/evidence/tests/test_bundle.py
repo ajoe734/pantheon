@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, InMemoryEvidenceRepository
+from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, InMemoryEvidenceRepository, JsonlEvidenceRepository
 from services.knowledge.evidence.models import EvidenceValidationError
 from services.source_ingestion.connectors import SourceRecord
 
@@ -95,3 +95,33 @@ def test_knowledge_object_links_back_to_evidence_bundle() -> None:
 
     assert knowledge_object.evidence_bundle_id == "evbundle-note-001"
     assert repository.get_knowledge_object("ko-note-001") == knowledge_object
+
+
+def test_jsonl_repository_replays_source_evidence_and_knowledge_refs(tmp_path) -> None:
+    repository = JsonlEvidenceRepository(tmp_path / "source-evidence.jsonl")
+    builder = EvidenceBundleBuilder(repository)
+    source = _source()
+    item = _item()
+    bundle = builder.build_bundle(
+        source_records=[source],
+        evidence_items=[item],
+        summary="Evidence for momentum decay during volatility clusters.",
+        created_by="Codex",
+        evidence_bundle_id="evbundle-note-001",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="ko-note-001",
+        source_record=source,
+        evidence_item=item,
+        evidence_bundle=bundle,
+        title="Momentum volatility note",
+        text=item.body,
+        keywords=["momentum", "volatility"],
+    )
+
+    replayed = JsonlEvidenceRepository(tmp_path / "source-evidence.jsonl")
+
+    assert replayed.get_source_record("src-note-001").to_dict() == source.to_dict()
+    assert replayed.get_evidence_item("evi-note-001").to_dict() == item.to_dict()
+    assert replayed.get_bundle("evbundle-note-001").to_dict() == bundle.to_dict()
+    assert replayed.get_knowledge_object("ko-note-001").evidence_bundle_id == "evbundle-note-001"

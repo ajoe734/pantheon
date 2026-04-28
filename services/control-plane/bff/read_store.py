@@ -7280,20 +7280,29 @@ class ReadSurfaceStore:
     def get_last_governed_search_refs(self) -> Dict[str, Dict[str, Any]]:
         return json.loads(json.dumps(self._last_governed_search_refs))
 
+    def _rw02_evidence_store_path(self) -> Path:
+        return self._path.parent / "source_evidence" / "rw02-evidence.jsonl"
+
+    def _rw02_search_index_store_path(self) -> Path:
+        return self._path.parent / "source_evidence" / "rw02-search-index.jsonl"
+
     def _build_research_search_repository(self, documents: List[Dict[str, Any]]):
         from services.knowledge.evidence import (
             EvidenceBundleBuilder,
             EvidenceItem,
             InMemoryEvidenceRepository,
+            JsonlEvidenceRepository,
         )
         from services.source_ingestion.connectors import SourceRecord
 
-        repository = InMemoryEvidenceRepository()
+        repository = JsonlEvidenceRepository(self._rw02_evidence_store_path())
         builder = EvidenceBundleBuilder(repository)
+        eligible_result_ids: set[str] = set()
         for document in documents:
             result_id = str(document.get("result_id") or "").strip()
             if not result_id:
                 continue
+            eligible_result_ids.add(result_id)
             match_type = str(document.get("match_type") or "document").strip().lower()
             links = document.get("links") if isinstance(document.get("links"), dict) else {}
             result_detail = str(
@@ -7360,7 +7369,21 @@ class ReadSurfaceStore:
                     "result_detail": result_detail,
                 },
             )
-        return repository
+
+        scoped_repository = InMemoryEvidenceRepository()
+        for knowledge_object in repository.list_knowledge_objects():
+            if knowledge_object.knowledge_object_id not in eligible_result_ids:
+                continue
+            source = repository.get_source_record(knowledge_object.source_id)
+            evidence_item = repository.get_evidence_item(knowledge_object.evidence_item_id)
+            bundle = repository.get_bundle(knowledge_object.evidence_bundle_id)
+            if source is None or evidence_item is None or bundle is None:
+                continue
+            scoped_repository.add_source_record(source)
+            scoped_repository.add_evidence_item(evidence_item)
+            scoped_repository.add_bundle(bundle)
+            scoped_repository.add_knowledge_object(knowledge_object)
+        return scoped_repository
 
     def list_research_search_results(
         self,
@@ -7410,10 +7433,10 @@ class ReadSurfaceStore:
                     continue
             eligible_documents.append(document)
 
-        from services.search import SearchAccessContext, SearchGateway, SearchRequest
+        from services.search import JsonlSearchIndexStore, SearchAccessContext, SearchGateway, SearchRequest
 
         repository = self._build_research_search_repository(eligible_documents)
-        gateway = SearchGateway(repository)
+        gateway = SearchGateway(repository, index_store=JsonlSearchIndexStore(self._rw02_search_index_store_path()))
         response = gateway.search(
             SearchRequest(
                 request_id="rw02-bff-search",
