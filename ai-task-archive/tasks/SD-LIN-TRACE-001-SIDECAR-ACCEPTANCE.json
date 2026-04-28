@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-27T16:09:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SD-LIN-TRACE-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SD-LIN-TRACE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "SD Residual / Lineage",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SD-LIN-TRACE-001/SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Claude review approved the support-only packet; no canonical truth or runtime implementation changes were made by this sidecar.",
+    "last_update": "2026-04-27T16:09:09Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SD-LIN-TRACE-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 僅新增 support/sidecars/SD-LIN-TRACE-001/SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE.md，未動 L1 canonical truth 或 runtime 實作。",
+      "驗證 acceptance checklist 對應的程式片段皆存在：services/telemetry/lineage_read/service.py 的 source_runtime_telemetry_trace / _build_source_runtime_telemetry_trace / query dispatch、services/telemetry/main.py:533 的 HTTP route、services/registry/lineage/read_model_contract.md:212 的 query family 條目。",
+      "重跑 pytest services/telemetry/lineage_read/test_service.py services/telemetry/test_main_routes.py -q：39 passed in 0.83s，與 packet 宣告一致。",
+      "packet 內 reviewer 仍標 Codex2 為原指派；現為 Claude（auto-reassigned）。屬時間戳差異，不需修正即可關案。",
+      "後續工作（SD-RECON-001 lifecycle reconciliation、SD-SRC-EVIDENCE-001 source evidence governance、EP5-002-PACKET-PREP-001 dry-run、CROSS-REPO-SD-VERIFY-001）皆已在 packet 第 5 節明確切出，不屬本 sidecar 範圍。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-sd-lin-trace-001-sidecar-acceptance-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T16:09:09Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 143,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T13:26:20Z",
+      "resolved_at": "2026-04-27T13:34:05Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T13:34:05Z",
+      "resolved_at": "2026-04-27T13:37:23Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support acceptance packet is ready for Codex2 review at support/sidecars/SD-LIN-TRACE-001/SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE.md; targeted lineage read and telemetry route tests pass.",
+      "status": "done",
+      "created_at": "2026-04-27T13:41:24Z",
+      "resolved_at": "2026-04-27T15:40:08Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support acceptance packet refreshed and ready for Codex2 review at support/sidecars/SD-LIN-TRACE-001/SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE.md; targeted lineage read and telemetry route tests rerun on 2026-04-27 UTC: 39 passed.",
+      "status": "done",
+      "created_at": "2026-04-27T15:40:08Z",
+      "resolved_at": "2026-04-27T15:41:19Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-27T15:41:19Z",
+      "resolved_at": "2026-04-27T16:04:53Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer approved sidecar acceptance packet; only new file is support/sidecars/SD-LIN-TRACE-001/SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE.md, targeted lineage read + telemetry route tests rerun (39 passed), no canonical or runtime files mutated, dependency boundaries hold.",
+      "status": "done",
+      "created_at": "2026-04-27T16:04:53Z",
+      "resolved_at": "2026-04-27T16:07:06Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Apr 28th, 2026 6:21 PM.",
+      "status": "done",
+      "created_at": "2026-04-27T16:07:06Z",
+      "resolved_at": "2026-04-27T16:09:09Z"
+    }
+  ],
+  "blockers": []
+}

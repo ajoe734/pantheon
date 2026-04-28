@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-27T14:40:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-WANDB-DEFERRED-PREP-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-WANDB-DEFERRED-PREP-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only sidecar review packet. Claude approved the packet as faithful to the archived parent and current repo surface; no canonical truth, runtime, registry, or governance implementation was changed by this slice.",
+    "last_update": "2026-04-27T14:40:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-WANDB-DEFERRED-PREP-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 與封存的 parent (APP-003-WANDB-DEFERRED-PREP-001 done/completed) 一致：activation_boundary=does_not_activate_wandb_backend，canonical_status_expected=criteria-defined，delivery commit 6097ce8 可達。",
+      "命名測試 test_selected_backend_rejects_wandb_without_feature_flag 與 test_wandb_prep_backend_preserves_promoted_metadata_shape 確實存在；evidence 路徑齊全；canonical 文件仍標記 W&B 為 criteria-defined。",
+      "本次 reviewer 環境無 pytest，無法獨立重跑，但 packet 的 2026-04-25 與 2026-04-27 重跑紀錄與當前檔案結構一致。Support-only artifact，無 canonical/runtime 變更。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-app-003-wandb-deferred-prep-001-sidecar-review-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T14:40:59Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 131,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-25T06:10:22Z",
+      "resolved_at": "2026-04-25T06:10:51Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet ready at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW.md. Parent archive revalidated: pytest services/registry/experiments/test_adapter.py -q => 7 passed; default selector remains mlflow; wandb stays explicit-flag/offline-only; canonical docs still keep W&B criteria-defined.",
+      "status": "done",
+      "created_at": "2026-04-25T06:21:44Z",
+      "resolved_at": "2026-04-27T14:33:12Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet refreshed with 2026-04-27 revalidation: adapter tests 7 passed, memory and wandb smoke pass, default selector remains mlflow, wandb remains explicit deferred-prep flag plus offline dryrun only. Support-only artifact is ready for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-27T14:33:12Z",
+      "resolved_at": "2026-04-27T14:34:22Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T14:34:22Z",
+      "resolved_at": "2026-04-27T14:36:54Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet faithfully reflects the archived parent and current repo surface; no canonical truth changed, support-only artifact approved and returned to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T14:36:54Z",
+      "resolved_at": "2026-04-27T14:40:59Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "task_id": "EP5-002-PACKET-PREP-001",
+  "archived_at": "2026-04-28T00:26:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-002-PACKET-PREP-001",
+    "title": "Prepare runtime-manager-originated EP5 live canary proof packet",
+    "summary_zh": "準備 runtime-manager-originated live/canary proof packet，僅 dry-run/checklist/validator/template，不下 live order。",
+    "phase": "EP5 Proof Prep",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "SD-FND-002",
+      "SD-LIN-TRACE-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "Follow packet acceptance boundary"
+    ],
+    "next": "Owner finalized approved EP5-002 prep packet. Reviewer Claude2 approved artifacts and validator boundary; task closes as packet-only, no live broker order authorized.",
+    "last_update": "2026-04-28T00:26:26Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "Packet 邊界與 acceptance shape 全部對齊：runtime-manager 為 origin、dry-run envelope 不下單、IBKR/lifecycle/checklist/expectations/closeout 模板齊備；validator 的 7 個 unittest 全綠（含 init scaffold 必須因 placeholder 失敗、quantity 漂移、TWS 證據缺失、read-only absent/no-fill 身份對齊等邊界案例）。",
+      "EP5-002-RUNTIME-LIVE-PROOF-001 仍受 HUMAN-EP5-002-APPROVAL 與本 packet 雙重 gate 阻擋，本次審查並未授權 live order；canary-ready bundle 的 IB Gateway/TWS 邊界補正屬於 packet 配套，不擴大 proof claim。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-ep5-002-packet-prep-001-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T00:26:26Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 149,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-002-PACKET-PREP-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Prepared runtime-manager-originated EP5-002 packet boundary: validator now requires command envelope, IBKR manifest, lifecycle schema, checklist, expectations, closeout template; docs updated; tests pass via python3 -m unittest test_validate_ep5_live_order_cancel.py from scripts/.",
+      "status": "done",
+      "created_at": "2026-04-27T23:37:58Z",
+      "resolved_at": "2026-04-28T00:22:48Z"
+    },
+    {
+      "task_id": "EP5-002-PACKET-PREP-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Reviewer Claude2 approved EP5-002 packet prep; all artifacts present, validator boundary enforced (no live orders), 7/7 tests pass; returned to owner Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T00:22:48Z",
+      "resolved_at": "2026-04-28T00:26:26Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "SD-FND-001",
+  "archived_at": "2026-04-27T14:17:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-FND-001",
+    "title": "Materialize canonical foundation package boundary",
+    "summary_zh": "建立 SD-00/SD-12 shared foundation package 邊界與核心 envelope/trace/idempotency/audit/policy primitives。",
+    "phase": "SD Residual / Foundations",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "Follow packet acceptance boundary"
+    ],
+    "next": "Owner finalized Claude-approved foundation package boundary. Final check reran PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. python3.12 -m pytest services/foundation/tests -q: 8 passed on 2026-04-27 UTC. Delivery commit 978afe9.",
+    "last_update": "2026-04-27T14:17:06Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "Foundation 套件邊界、primitive 契約、README、無副作用 import 與 8 項 baseline 測試 (pytest 8 passed) 與 materialization packet 的 Foundations 接受形狀一致",
+      "採納 (SD-FND-002) 與耐久 persistence (SD-FND-003) 維持為下一階段的工作",
+      "policy.py 未使用之 field import 與更明確之 actor_ref 比較命名為非阻擋性後續注意事項"
+    ],
+    "review_file": "docs/reviews/2026-04-27-sd-fnd-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T14:17:06Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "978afe938f91fc5ed9c12105762e051634a7c5aa",
+      "commit_subject": "SD-FND-001 foundation package boundary checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SD-FND-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 138,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-FND-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "SD-FND-001 is ready for review. Foundation package boundary is implemented at services/foundation with TraceContext, CommandEnvelope, ErrorEnvelope, IdempotencyRecord, PolicyDecision, AuditAction, SecretRef, README boundary note, and primitive tests. Review evidence: docs/reviews/2026-04-27-sd-fnd-001-codex-handoff.md. Verification: pytest services/foundation/tests -q passed (8 tests).",
+      "status": "done",
+      "created_at": "2026-04-27T12:51:34Z",
+      "resolved_at": "2026-04-27T13:04:49Z"
+    },
+    {
+      "task_id": "SD-FND-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T13:04:49Z",
+      "resolved_at": "2026-04-27T14:14:25Z"
+    },
+    {
+      "task_id": "SD-FND-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: foundation package boundary at services/foundation matches the materialization packet acceptance for Foundations; tests rerun green on 2026-04-27 UTC. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T14:14:25Z",
+      "resolved_at": "2026-04-27T14:17:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,13 @@
+{
+  "task_id": "RESEARCH-OSS-ACTIVATION-GATE-REPORT",
+  "generated_at": "2026-04-26T13:50:59Z",
+  "as_of": "2026-04-26",
+  "status": "activation_gates_blocked",
+  "production_activated_rows": [],
+  "blocked_rows": [
+    "Qlib",
+    "TRL",
+    "RL stack",
+    "W&B"
+  ]
+}

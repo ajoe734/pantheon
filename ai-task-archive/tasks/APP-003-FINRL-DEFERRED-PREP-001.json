@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "APP-003-FINRL-DEFERRED-PREP-001",
+  "archived_at": "2026-04-25T05:00:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-FINRL-DEFERRED-PREP-001",
+    "title": "Scaffold FinRL deferred prep lane",
+    "summary_zh": "在不重開 RL gate 的前提下，先完成 FinRL 的 governed single-agent prep lane：adapter、policy I/O、offline workflow、artifact draft/candidate pipeline 與 smoke tests。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/finrl/",
+      "services/learning/rl/",
+      "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+    ],
+    "acceptance": [
+      "FinRL deferred prep scaffold lands behind a non-default gate",
+      "Offline workflow and smoke tests land without production overclaim",
+      "Canonical docs and packet preserve criteria-defined deferred truth"
+    ],
+    "next": "Owner finalized approved FinRL deferred-prep lane. Deferred gate, offline workflow, smoke coverage, and truthful criteria-defined canonical boundary are recorded; no RL gate reopen or production default change.",
+    "last_update": "2026-04-25T05:00:33Z",
+    "deferred_scope": "prep_only",
+    "activation_boundary": "does_not_reopen_rl_gate",
+    "canonical_status_expected": "criteria-defined",
+    "materialization_packet": "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+    "task_class": "execution",
+    "auto_created_by": "Codex-deferred-prep-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "review 初始發現 smoke flag 與 worker env gate 與 handoff 漂移，已在 review 中補齊並重驗。",
+      "prep-only 邊界維持 truthful：FinRL 仍為 criteria-defined、draft-only，且未改任何預設 production path。"
+    ],
+    "review_file": "docs/reviews/2026-04-25-app-003-finrl-deferred-prep-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-25T05:00:33Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 38,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Deferred-prep FinRL scaffold landed in services/research/finrl with explicit non-default gate, offline rl_policy draft workflow, candidate packet scaffold, unit/smoke coverage, and canonical docs updated to preserve FinRL=criteria-defined.",
+      "status": "done",
+      "created_at": "2026-04-25T04:40:12Z",
+      "resolved_at": "2026-04-25T04:42:16Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review ready. Prep-only FinRL scaffold landed in services/research/finrl with DeferredPrepGate, draft rl_policy workflow, blocked candidate packet, worker/sample/smoke/tests, and docs aligned to keep FinRL criteria-defined. Evidence: docs/reviews/2026-04-25-app-003-finrl-deferred-prep-001-codex2-handoff.md; verification passed: pytest, smoke_test --enable-deferred-prep, and worker with PANTHEON_FINRL_PREP_ENABLED=1.",
+      "status": "done",
+      "created_at": "2026-04-25T04:42:16Z",
+      "resolved_at": "2026-04-25T04:46:12Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Deferred-prep FinRL scaffold is ready for review: adapter/config/worker/sample dataset/smoke tests landed, Dockerfile copy path fixed, and local verification passed (pytest + smoke + worker).",
+      "status": "done",
+      "created_at": "2026-04-25T04:46:29Z",
+      "resolved_at": "2026-04-25T04:58:27Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after enforcing the explicit deferred-prep gate at the smoke and worker entrypoints, correcting the reviewer evidence, and re-running the declared verification commands.",
+      "status": "done",
+      "created_at": "2026-04-25T04:58:27Z",
+      "resolved_at": "2026-04-25T05:00:33Z"
+    }
+  ],
+  "blockers": []
+}

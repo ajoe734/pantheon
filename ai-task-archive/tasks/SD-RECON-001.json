@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "SD-RECON-001",
+  "archived_at": "2026-04-28T00:25:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-RECON-001",
+    "title": "Extend lifecycle reconciliation for order fill cancel position",
+    "summary_zh": "擴充 SD-09 order/fill/cancel/position/drift/alert reconciliation closure。",
+    "phase": "SD Residual / Telemetry Reconciliation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SD-LIN-TRACE-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "Follow packet acceptance boundary"
+    ],
+    "next": "Owner finalized approved SD-09 reconciliation closure. Delivery commit abdc027 covers order/fill/cancel lifecycle, position snapshots including telemetry-only snapshot events, reconciliation runs/records, paper-live drift, alert closure, refs and counts. Verification: python3 -m unittest services.telemetry.lineage_read.test_service; PYTHONPATH=services/telemetry python3 -m unittest services.telemetry.test_capture; PYTHONPATH=services/telemetry python3 -m unittest services.telemetry.test_feedback_adapter; git diff --check on telemetry files.",
+    "last_update": "2026-04-28T00:25:02Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "審查通過。Reviewer 補上一個小修：source_runtime_telemetry_trace 現在會把 telemetry-only position_snapshot event 當作 derived position snapshot proof，避免 capture_position_snapshot 產生的事件被誤判為 missing_position_snapshot；已保留獨立 position_snapshots node 優先且避免重複。驗證通過：python3 -m unittest services.telemetry.lineage_read.test_service；PYTHONPATH=services/telemetry python3 -m unittest services.telemetry.test_capture；PYTHONPATH=services/telemetry python3 -m unittest services.telemetry.test_feedback_adapter；git diff --check。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T00:25:02Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "abdc0270b52084a2c7a696cd5690bb12e1f90a77",
+      "commit_subject": "SD-RECON-001 lifecycle reconciliation closure",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SD-RECON-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 146,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-RECON-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-27T14:39:15Z",
+      "resolved_at": "2026-04-27T14:39:15Z"
+    },
+    {
+      "task_id": "SD-RECON-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T15:07:50Z",
+      "resolved_at": "2026-04-27T15:09:28Z"
+    },
+    {
+      "task_id": "SD-RECON-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T15:09:27Z",
+      "resolved_at": "2026-04-27T15:28:44Z"
+    },
+    {
+      "task_id": "SD-RECON-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-27T23:23:11Z",
+      "resolved_at": "2026-04-27T23:23:12Z"
+    },
+    {
+      "task_id": "SD-RECON-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented SD-09 lifecycle reconciliation closure in source_runtime_telemetry_trace: order/fill/cancel lifecycle, position snapshots, reconciliation runs/records, paper-live drift, alert closure, refs and counts. Verification: python3 -m unittest services.telemetry.lineage_read.test_service.",
+      "status": "done",
+      "created_at": "2026-04-27T23:25:12Z",
+      "resolved_at": "2026-04-28T00:23:10Z"
+    },
+    {
+      "task_id": "SD-RECON-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. SD-09 reconciliation trace now covers order/fill/cancel lifecycle, position snapshots including telemetry-only snapshot events, reconciliation runs/records, paper-live drift, alert closure, refs and counts. Owner should finalize to done after final checkpoint.",
+      "status": "done",
+      "created_at": "2026-04-28T00:23:10Z",
+      "resolved_at": "2026-04-28T00:25:03Z"
+    }
+  ],
+  "blockers": []
+}

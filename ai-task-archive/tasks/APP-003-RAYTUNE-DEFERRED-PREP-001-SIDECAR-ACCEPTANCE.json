@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-27T15:03:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-RAYTUNE-DEFERRED-PREP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-RAYTUNE-DEFERRED-PREP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-RLLIB-DEFERRED-PREP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-RAYTUNE-DEFERRED-PREP-001/APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized Claude-approved sidecar acceptance packet. Support artifact remains acceptance-only; no canonical truth or runtime implementation changes were made in this slice.",
+    "last_update": "2026-04-27T15:03:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 已重新驗證；smoke 與 worker 行為仍為 prep-only / draft / gate-closed，且未動 canonical truth。",
+      "Reviewer 已由 Codex2 auto-reassigned 至 Claude；packet 內 frontmatter 仍寫 Codex2 屬包件生成當下快照，正規 reviewer 真相以 ai-status.json 為準，不需重出包件。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-app-003-raytune-deferred-prep-001-sidecar-acceptance-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T15:03:52Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 139,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ]
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-25T10:01:12Z",
+      "resolved_at": "2026-04-25T10:01:39Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance/dependency packet added at support/sidecars/APP-003-RAYTUNE-DEFERRED-PREP-001/APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25 UTC: pytest services/research/rllib/test_ray_tune_adapter.py -q => 12 passed; pytest services/research/rllib/test_adapter.py -q => 13 passed; Ray Tune smoke remains optimizer_result/draft/gate-closed; enabled worker emits stub_ray_tune summary; disabled worker still requires explicit PANTHEON_RAYTUNE_PREP_ENABLED=1. Review this packet alongside docs/reviews/2026-04-25-app-003-raytune-deferred-prep-001-codex-handoff.md.",
+      "status": "done",
+      "created_at": "2026-04-25T10:07:33Z",
+      "resolved_at": "2026-04-25T10:08:12Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated Ray Tune deferred-prep repo evidence on 2026-04-25 UTC and added the reviewer-facing acceptance/dependency packet at support/sidecars/APP-003-RAYTUNE-DEFERRED-PREP-001/APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Current proof remains prep-only and gate-closed: pytest services/research/rllib/test_ray_tune_adapter.py -q => 12 passed; pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke keeps artifact_type=optimizer_result, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed; enabled worker emits backend=stub_ray_tune, search_strategy=pbt, num_trials=16, best_trial_id=trial-016; disabled worker fails closed as expected.",
+      "status": "done",
+      "created_at": "2026-04-25T10:08:12Z",
+      "resolved_at": "2026-04-27T14:51:58Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed support-only acceptance packet on 2026-04-27 UTC after review_ready_dispatch. Parent APP-003-RAYTUNE-DEFERRED-PREP-001 is archived done; sidecar remains reviewer packet only. Revalidated: pytest services/research/rllib/test_ray_tune_adapter.py -q => 12 passed; pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke stays optimizer_result/draft/deployment_stage=none/candidate_next_state=candidate/gate_state=closed; enabled worker emits backend=stub_ray_tune search_strategy=pbt num_trials=16 best_trial_id=trial-016; disabled worker fails closed without PANTHEON_RAYTUNE_PREP_ENABLED=1. Please close out support/sidecars/APP-003-RAYTUNE-DEFERRED-PREP-001/APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-04-27T14:51:58Z",
+      "resolved_at": "2026-04-27T14:52:48Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T14:52:48Z",
+      "resolved_at": "2026-04-27T15:01:45Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved. Re-ran smoke and worker proofs locally; outputs match the packet (stub_ray_tune backend, draft optimizer_result, gate_state=closed, num_trials=16, best_trial_id=trial-016, disabled worker exits with explicit gate-closed refusal). No canonical edits in this slice. Returning to Codex for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T15:01:45Z",
+      "resolved_at": "2026-04-27T15:03:52Z"
+    }
+  ],
+  "blockers": []
+}

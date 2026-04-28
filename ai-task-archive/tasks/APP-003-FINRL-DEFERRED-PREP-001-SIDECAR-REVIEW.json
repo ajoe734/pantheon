@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-27T13:58:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-FINRL-DEFERRED-PREP-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-FINRL-DEFERRED-PREP-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized Claude-approved support-only FinRL deferred-prep review packet and closed the sidecar as done.",
+    "last_update": "2026-04-27T13:58:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-FINRL-DEFERRED-PREP-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 與當前 repo 對齊：parent 已 archived 為 done/completed，prep_only 邊界與 does_not_reopen_rl_gate 維持，smoke/worker 兩端 gate 預設仍關閉，啟用路徑仍只輸出 draft 與 stub_finrl backend，未動到 canonical truth。",
+      "pytest 在本地 reviewer runtime 未安裝，但 boundary-critical 重驗已透過 smoke/worker 直接執行確認，因此 approve。"
+    ],
+    "review_file": "support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T13:58:39Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "c3e4414d1d3316bc3a308e745c318370a9d51130",
+      "commit_subject": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 141,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet added at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW.md. Packet summarizes the archived parent closeout, fresh FinRL gate verification (pytest + smoke +/- gate + worker +/- gate), and the deferred-prep boundary for support-only reviewer validation.",
+      "status": "done",
+      "created_at": "2026-04-25T05:06:14Z",
+      "resolved_at": "2026-04-25T05:19:24Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T05:19:24Z",
+      "resolved_at": "2026-04-25T05:51:12Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review sidecar packet is ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW.md. Packet reviewer routing has been refreshed from Claude to Codex2 and still frames the parent as deferred-prep only, with gate enforcement reproducible and no canonical maturity promotion.",
+      "status": "done",
+      "created_at": "2026-04-25T05:51:12Z",
+      "resolved_at": "2026-04-27T13:05:20Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review sidecar packet remains ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW.md. Refreshed verification on 2026-04-27 reproduced the prep-only boundary: tests pass, smoke/worker are gated by default, and enabled paths still emit draft-only offline output with no canonical maturity promotion.",
+      "status": "done",
+      "created_at": "2026-04-27T13:05:20Z",
+      "resolved_at": "2026-04-27T13:26:07Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-27T13:26:07Z",
+      "resolved_at": "2026-04-27T13:26:33Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T13:26:33Z",
+      "resolved_at": "2026-04-27T13:30:46Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review sidecar packet refreshed and ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW.md. Fresh 2026-04-27 verification reproduced the prep-only boundary: pytest passed, smoke/worker remain gated by default, and enabled paths emit draft-only offline output with deployment_stage=none and gate_state=closed. No canonical truth, runtime contract, registry, or governance implementation was changed.",
+      "status": "done",
+      "created_at": "2026-04-27T13:30:46Z",
+      "resolved_at": "2026-04-27T13:31:42Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-27T13:31:42Z",
+      "resolved_at": "2026-04-27T13:31:57Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T13:31:57Z",
+      "resolved_at": "2026-04-27T13:51:41Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review sidecar packet is still ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW.md. Owner reissued the handoff after failed reviewer dispatch attempts; scope remains support-only, with no canonical truth, runtime contract, registry, or governance implementation changes.",
+      "status": "done",
+      "created_at": "2026-04-27T13:51:41Z",
+      "resolved_at": "2026-04-27T13:52:15Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-27T13:52:15Z",
+      "resolved_at": "2026-04-27T13:55:31Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: sidecar packet truthfully reflects archived FinRL deferred-prep parent, gate enforcement re-verified, no canonical truth changes.",
+      "status": "done",
+      "created_at": "2026-04-27T13:55:31Z",
+      "resolved_at": "2026-04-27T13:58:39Z"
+    }
+  ],
+  "blockers": []
+}

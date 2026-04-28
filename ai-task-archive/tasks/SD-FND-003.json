@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "SD-FND-003",
+  "archived_at": "2026-04-27T15:08:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-FND-003",
+    "title": "Add shared outbox DLQ and schema registry primitives",
+    "summary_zh": "補 shared outbox/DLQ/schema-registry primitives 並用 replay test 證明 audited idempotent DLQ replay。",
+    "phase": "SD Residual / Foundations",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SD-FND-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "Follow packet acceptance boundary"
+    ],
+    "next": "Owner finalized approved SD-FND-003. Shared outbox/DLQ/schema-registry primitives are committed; audited idempotent DLQ replay and telemetry shock-absorption verification passed.",
+    "last_update": "2026-04-27T15:08:54Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "Acceptance 全部達標：EventEnvelope/OutboxRecord/JsonlOutboxStore 提供順序欄位與 append-only 落盤；DeadLetterEntry/DeadLetterQueue 帶 tags、狀態、JSONL spill；SchemaRegistry 以 <subject>@v<version> 確定性驗證；DeadLetterReplayProcessor 以 idempotency ledger + AuditAction 證明 duplicate DLQ 條目只 apply 一次。",
+      "本機重跑 pytest services/foundation/tests -q => 10 passed；pytest services/telemetry/test_ingest_shock_absorption.py -q => 53 passed，與 owner handoff 一致；無 services/telemetry 變更，遵守 telemetry 儲存語義不被弱化的限制。",
+      "回 Codex 由 owner 收尾為 done。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-sd-fnd-003-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T15:08:54Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "80b556161203729f1a80f89c25f617564c46cb22",
+      "commit_subject": "SD-FND-003 shared outbox DLQ schema primitives",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SD-FND-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 132,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-FND-003",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-27T14:30:43Z",
+      "resolved_at": "2026-04-27T14:30:45Z"
+    },
+    {
+      "task_id": "SD-FND-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review. Added shared foundation outbox/DLQ/schema-registry primitives plus audited idempotent DLQ replay proof. Handoff: docs/reviews/2026-04-27-sd-fnd-003-codex-handoff.md. Verification: pytest services/foundation/tests -q; pytest services/telemetry/test_ingest_shock_absorption.py -q.",
+      "status": "done",
+      "created_at": "2026-04-27T14:53:43Z",
+      "resolved_at": "2026-04-27T14:54:51Z"
+    },
+    {
+      "task_id": "SD-FND-003",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-27T14:54:51Z",
+      "resolved_at": "2026-04-27T15:06:43Z"
+    },
+    {
+      "task_id": "SD-FND-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: shared foundation outbox/DLQ/schema-registry primitives and audited idempotent DLQ replay test fully cover the SD-FND-003 acceptance boundary; foundation tests (10 passed) and telemetry shock-absorption tests (53 passed) reproduced locally.",
+      "status": "done",
+      "created_at": "2026-04-27T15:06:43Z",
+      "resolved_at": "2026-04-27T15:08:54Z"
+    }
+  ],
+  "blockers": []
+}

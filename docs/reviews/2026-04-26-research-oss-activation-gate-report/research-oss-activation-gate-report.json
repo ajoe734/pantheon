@@ -1,0 +1,114 @@
+{
+  "task_id": "RESEARCH-OSS-ACTIVATION-GATE-REPORT",
+  "generated_at": "2026-04-26T10:17:05Z",
+  "as_of": "2026-04-26",
+  "status": "activation_gates_blocked",
+  "production_activated_rows": [],
+  "blocked_rows": [
+    "Qlib",
+    "TRL",
+    "RL stack",
+    "W&B"
+  ],
+  "rows": [
+    {
+      "row": "Qlib",
+      "production_activated": false,
+      "repo_baseline_ready": true,
+      "status": "smoke_tested_activation_blocked",
+      "blockers": [
+        "RS-003 candidate proof missing",
+        "governed dataset has fewer than 50 instruments",
+        "governed dataset covers fewer than 2 years",
+        "target StrategySpec binding missing",
+        "first governed LightGBM activation run not archived"
+      ],
+      "evidence": {
+        "dataset_instruments": 0,
+        "dataset_years": 0.0,
+        "rs003_candidate_passed": false,
+        "strategy_spec_binding": false,
+        "activation_run_archived": false
+      },
+      "next_truthful_action": "Promote Qlib only after RS-003, >=50 instruments, >=2 years data, StrategySpec binding, and activation-run archive all pass."
+    },
+    {
+      "row": "TRL",
+      "production_activated": false,
+      "repo_baseline_ready": true,
+      "status": "smoke_tested_runtime_data_blocked",
+      "blockers": [
+        "fewer than 200 governed FB-002 events",
+        "fewer than 100 valid preference pairs",
+        "fewer than 2 strategy families",
+        "FB-002 evidence does not cover approve/edit/reject",
+        "approved LP-002 imitation artifact missing",
+        "baseline preference model metrics missing or below threshold",
+        "downstream consumer readiness missing",
+        "first governed production DPO run not archived"
+      ],
+      "evidence": {
+        "feedback_events": 0,
+        "preference_pairs": 0,
+        "strategy_families": 0,
+        "action_types": [],
+        "imitation_approved_artifact": false,
+        "baseline_model_metrics_pass": false,
+        "downstream_consumer_ready": false,
+        "activation_run_archived": false
+      },
+      "next_truthful_action": "Promote TRL only after FB-002 volume, pair volume, imitation, baseline metrics, downstream consumer, and production DPO archive all pass."
+    },
+    {
+      "row": "RL stack",
+      "production_activated": false,
+      "repo_baseline_ready": true,
+      "status": "deferred_prep_gate_closed",
+      "blockers": [
+        "Qlib approved artifact missing",
+        "Qlib stable evaluation history is below 90 days",
+        "sequential-decision justification missing",
+        "2+ years intraday OHLCV/order-fill dataset missing",
+        "RL path approval gate remains closed",
+        "FinRL first-lane governed proof missing"
+      ],
+      "evidence": {
+        "qlib_artifact_approved": false,
+        "qlib_stable_days": 0,
+        "sequential_decision_justification": false,
+        "intraday_dataset_ready": false,
+        "rl_gate_approved": false,
+        "finrl_first_lane_archived": false
+      },
+      "next_truthful_action": "Keep RL deferred until Qlib is approved and stable for at least 90 days, then reopen the RL gate with FinRL first."
+    },
+    {
+      "row": "W&B",
+      "production_activated": false,
+      "repo_baseline_ready": true,
+      "status": "deferred_reentry_blocked",
+      "blockers": [
+        "MLflow 30-day history not met; earliest eligible reopen is 2026-05-15",
+        "operator preference for W&B over MLflow missing",
+        "adapter generalization review not closed",
+        "canonical artifact_state/deployment_stage migration not closed",
+        "W&B SDK pin and compatibility proof missing",
+        "W&B network or self-hosted infrastructure readiness missing",
+        "real W&B activation smoke not archived"
+      ],
+      "evidence": {
+        "as_of": "2026-04-26",
+        "mlflow_governed_since": "2026-04-15",
+        "mlflow_history_days": 11,
+        "earliest_reopen": "2026-05-15",
+        "operator_preference_on_file": false,
+        "adapter_generalization_review_done": false,
+        "canonical_state_migration_done": false,
+        "wandb_sdk_pin_verified": false,
+        "network_readiness_verified": false,
+        "activation_run_archived": false
+      },
+      "next_truthful_action": "Prepare a W&B reopen packet only after 2026-05-15 and after all operator, state-migration, SDK, network, and smoke evidence exists."
+    }
+  ]
+}
