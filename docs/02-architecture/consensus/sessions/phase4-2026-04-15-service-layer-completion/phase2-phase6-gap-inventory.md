@@ -269,3 +269,34 @@ This inventory remains the historical planning bridge that justified the service
 - the explicit single-VM BFF HA deferral
 
 The earlier evidence notes about missing Dockerfiles and an unlocked compose baseline should be read as 2026-04-15 planning evidence, not as the current implementation contract.
+
+## 10. SVC-COMPOSE Closure Note
+
+Updated: 2026-04-28
+
+The `SVC-COMPOSE` execution slice assembles the root `docker-compose.yml` as the current single-VM test stack.
+
+Default profile contents:
+
+- local infrastructure: `postgres`, `minio`, `minio-init`, `nats`, and `signal-store`
+- control/evidence services: `runtime-manager`, `governance`, `deployment`, `capital`, `evolution`, `telemetry`, `lineage-read`, `incidents`, and `postmortems`
+- operator/application surfaces: `operator-bff`, `persona`, `router`, and `feedback`
+- supporting service shells already in the baseline: `evaluation`, `memory`, `registry`, `optimizer-svc`, and `promotion`
+
+Optional profile contents:
+
+- `openclaw-gateway` remains under the `openclaw` profile and proves only gateway reachability for this wave.
+- `smoke-stack` remains under the `smoke` profile and runs `scripts/smoke_honest_stack.py` after the default stack is healthy.
+
+Repeatable verification commands:
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+docker compose --profile smoke run --rm smoke-stack
+docker compose down --volumes --remove-orphans
+```
+
+The smoke path intentionally runs after the default stack is healthy, waits for every default HTTP service health endpoint through the `smoke` profile's dependency graph, then exercises an integration path across runtime deployment, telemetry ingest, incident/postmortem evidence creation, BFF honest-mode guidance, and BFF SSE replay. It is run as a separate `docker compose run` step because `minio-init` is a successful one-shot initialization service; using `--abort-on-container-exit` on the whole stack would treat that expected exit as a stack stop signal.
+
+The `consultation`, `source_ingestion`, and `search` disposition from section 7 remains active: they are not part of the default compose stack in this wave, because the required BFF network boundary, service wrapper, Dockerfile, health check, and smoke criteria are not all present yet.

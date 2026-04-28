@@ -120,8 +120,20 @@ services:
     environment:
       PORT: "8081"
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_COMMAND_STATE_FILE: /data/runtime/internal_api_commands.json
+      PANTHEON_RUNTIME_CONSULTATION_DATA_DIR: /data/runtime/consultation
+      # ApproveDeployment routes to the deployment service plan-status API.
+      # Governance ApprovalDecision lookups use a separate approval-service URL
+      # for audit cross-references; the runtime-manager itself does not write
+      # to the governance service from this path.
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
     volumes:
       - runtime-data:/data/runtime
+    # Note: deployment/governance are not declared as `depends_on` because
+    # runtime-manager's primary contract (runtime CRUD, kill-switch) does not
+    # require them at boot. ApproveDeployment requests fail cleanly with
+    # DEPLOYMENT_API_UNAVAILABLE if the deployment service is unreachable.
     ports:
       - "18081:8081"
     healthcheck:
@@ -277,6 +289,9 @@ services:
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
+      - governance-data:/data/governance:ro
+      - runtime-data:/data/runtime:ro
+      - incident-data:/data/incidents:ro
     depends_on:
       governance:
         condition: service_healthy
@@ -596,7 +611,19 @@ services:
       TELEMETRY_URL: http://telemetry:8083
       INCIDENTS_URL: http://incidents:8090
       POSTMORTEMS_URL: http://postmortems:8091
+      CAPITAL_URL: http://capital:8092
+      DEPLOYMENT_URL: http://deployment:8095
+      EVOLUTION_URL: http://evolution:8093
+      LINEAGE_READ_URL: http://lineage-read:8094
       BFF_URL: http://operator-bff:8001
+      PERSONA_URL: http://persona:8002
+      ROUTER_URL: http://router:8001
+      EVALUATION_URL: http://evaluation:8084
+      FEEDBACK_URL: http://feedback:8085
+      MEMORY_URL: http://memory:8086
+      REGISTRY_URL: http://registry:8087
+      OPTIMIZER_URL: http://optimizer-svc:8088
+      PROMOTION_URL: http://promotion:8089
     depends_on:
       governance:
         condition: service_healthy
@@ -608,7 +635,31 @@ services:
         condition: service_healthy
       postmortems:
         condition: service_healthy
+      capital:
+        condition: service_healthy
+      deployment:
+        condition: service_healthy
+      evolution:
+        condition: service_healthy
+      lineage-read:
+        condition: service_healthy
       operator-bff:
+        condition: service_healthy
+      persona:
+        condition: service_healthy
+      router:
+        condition: service_healthy
+      evaluation:
+        condition: service_healthy
+      feedback:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+      optimizer-svc:
+        condition: service_healthy
+      promotion:
         condition: service_healthy
     command: ["python", "scripts/smoke_honest_stack.py"]
 
