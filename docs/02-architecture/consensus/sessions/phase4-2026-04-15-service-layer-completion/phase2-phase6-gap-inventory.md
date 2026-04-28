@@ -237,3 +237,21 @@ That is why the active planning effort should not treat phase 2-6 as "already fi
 - `phase 2-4`: contracts mostly done, service exposure still incomplete
 - `phase 5`: packet baseline partly done, product/workbench delivery still incomplete
 - `phase 6`: governance criteria done, executable integrations still incomplete
+
+## 8. SVC-BASELINE Closure Note
+
+Updated: 2026-04-28
+
+The `SVC-BASELINE` execution slice has locked the single-VM baseline contract in `starter-draft.md` under `SVC-BASELINE locked contract (2026-04-28)`.
+
+This inventory remains the historical planning bridge that justified the service-layer wave. For implementation, downstream `SVC-*` tasks should now treat the locked baseline in `starter-draft.md` as the active contract for:
+
+- service port and host-port allocation
+- shared env names
+- durable volume ownership
+- health-check endpoint expectations
+- compose profile boundaries
+- Dockerfile conventions
+- the explicit single-VM BFF HA deferral
+
+The earlier evidence notes about missing Dockerfiles and an unlocked compose baseline should be read as 2026-04-15 planning evidence, not as the current implementation contract.

@@ -15,9 +15,61 @@ Last updated by: Codex (baton-owner seed for round 1 refresh)
   - `telemetry-ingest` owns event intake, buffering, retry, and DLQ. `lineage-read` owns projection/query endpoints only.
   - `bff` remains read-oriented and command-submitting. It should stop treating snapshot/default seed data as the long-term integration path.
   - `feedback` remains a separate ingestion service. `router` and `persona` stay as already-deployable dependencies, not redesign targets.
+- SVC-BASELINE locked contract (2026-04-28):
+  - Contract source: the implementation baseline is the root `docker-compose.yml` plus service-local Dockerfiles. This section supersedes earlier planning-only port proposals in this draft; the gap inventory remains a historical planning snapshot unless explicitly updated later.
+  - Port map:
+
+    | Service | Container port | Host port / env | Health path | Profile |
+    |---|---:|---|---|---|
+    | `postgres` | `5432` | `${POSTGRES_PORT:-15432}` | `pg_isready` | default |
+    | `minio` | `9000`, `9001` | `${MINIO_API_PORT:-19000}`, `${MINIO_CONSOLE_PORT:-19001}` | `/minio/health/live` | default |
+    | `nats` | `4222`, `8222` | `${NATS_PORT:-14222}`, `${NATS_MONITOR_PORT:-18222}` | `/healthz` | default |
+    | `signal-store` | `6379` | not host-published by default | `redis-cli ping` | default |
+    | `runtime-manager` | `8081` | `18081` | `/__health__` | default |
+    | `governance` | `8082` | `18082` | `/health` | default |
+    | `telemetry` | `8083` | `18083` | `/__health__` | default |
+    | `evaluation` | `8084` | `18084` | `/__health__` | default |
+    | `feedback` | `8085` | `18085` | `/__health__` | default |
+    | `memory` | `8086` | `18086` | `/__health__` | default |
+    | `registry` | `8087` | `18087` | `/__health__` | default |
+    | `optimizer-svc` | `8088` | `18088` | `/__health__` | default |
+    | `promotion` | `8089` | `18089` | `/__health__` | default |
+    | `incidents` | `8090` | `18090` | `/__health__` | default |
+    | `postmortems` | `8091` | `18091` | `/__health__` | default |
+    | `capital` | `8092` | `18092` | `/health` | default |
+    | `evolution` | `8093` | `18093` | `/health` | default |
+    | `lineage-read` | `8094` | `18094` | `/__health__` | default |
+    | `operator-bff` | `8001` | `18001` | `/health` | default |
+    | `persona` | `8002` | `18002` | `/health` | default |
+    | `router` | `8001` | `18003` | `/health` | default |
+    | `openclaw-gateway` | `18789` | `${OPENCLAW_GATEWAY_PORT:-18789}` | `/healthz` | `openclaw` |
+    | `smoke-stack` | n/a | n/a | command exit status | `smoke` |
+
+  - Env naming contract:
+    - Every Python HTTP service must accept `PORT` for its container listener when the service runner supports configurable ports.
+    - Shared infrastructure env names stay canonical: `DATABASE_URL`, `PANTHEON_NATS_URL`, `PANTHEON_S3_ENDPOINT`, `PANTHEON_ARTIFACT_BUCKET`, `PANTHEON_RUNTIME_MANAGER_URL`, and service-to-service URLs such as `PANTHEON_BFF_URL`, `PANTHEON_REGISTRY_URL`, `PANTHEON_TELEMETRY_URL`, and `PANTHEON_INTERNAL_API_URL`.
+    - Data-directory env names must match the owning service or canonical domain: `BFF_DATA_DIR`, `PANTHEON_GOVERNANCE_DATA_DIR`, `GOVERNANCE_DATA_DIR`, `PANTHEON_RUNTIME_DATA_DIR`, `PANTHEON_RUNTIME_BINDING_STORE_PATH`, `TELEMETRY_STORAGE_DIR`, `INCIDENTS_DATA_DIR`, `POSTMORTEMS_DATA_DIR`, `PROMOTION_DATA_DIR`, `CAPITAL_DATA_DIR`, `EVOLUTION_DATA_DIR`, and `LINEAGE_DATA_DIR`.
+    - Secrets and external credentials remain env-driven with local defaults only for the single-VM test profile, for example `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `OPENCLAW_GATEWAY_TOKEN`, `PANTHEON_S3_ACCESS_KEY`, and `PANTHEON_S3_SECRET_KEY`.
+  - Volume contract:
+    - Durable named volumes are `postgres-data`, `minio-data`, `nats-data`, `openclaw-data`, `runtime-data`, `governance-data`, `telemetry-data`, `incident-data`, `bff-data`, `promotion-data`, `capital-data`, `evolution-data`, and `lineage-data`.
+    - BFF is a read client for governance/runtime/incident state in the single-VM test stack: it mounts `governance-data`, `runtime-data`, and `incident-data` as read-only and owns only `bff-data`.
+    - Runtime command state belongs under `/data/runtime`; governance state under `/data/governance`; telemetry under `/data/telemetry`; incident and postmortem records share `/data/incidents`.
+  - Compose profile boundaries:
+    - The default profile is the single-VM control/evidence/surface stack plus local infrastructure. It must boot without OpenClaw, research workers, web, cron, or broader OSS adapters.
+    - `openclaw` is optional and proves only gateway reachability for this wave; it does not imply full OpenClaw adapter integration.
+    - `smoke` is a verification profile that runs `scripts/smoke_honest_stack.py` after the default core stack is healthy.
+    - Research, learning, `web`, and `cron` remain outside default SVC-BASELINE. They may be introduced by later compose work only with explicit profile names and smoke criteria.
+  - Dockerfile conventions:
+    - New service Dockerfiles should use repository-root build context when they import shared Pantheon modules; service-local contexts are allowed only when the service is self-contained, as with the current router.
+    - Python service images use `python:3.11-slim`, set `PYTHONDONTWRITEBYTECODE=1` and `PYTHONUNBUFFERED=1`, install from the nearest service-specific `requirements.txt`, copy only the needed service/shared paths, expose the same container port used by compose, and run the HTTP app with the repo's existing Flask or FastAPI entrypoint.
+    - FastAPI services should prefer `/__health__`; legacy `/health` endpoints remain valid when already implemented and must be reflected exactly in compose health checks.
+    - `runtime-manager` remains the non-BFF emergency/control path in this baseline. Its Docker packaging must preserve the kill-switch module path and expose the protected command route independently of `operator-bff`.
+  - Explicit deferrals:
+    - The single-VM test profile runs `operator-bff` as one replica. This intentionally defers the multi-replica BFF HA requirement in `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` to the future dual-VM/production profile.
+    - The baseline locks deployability and smoke wiring only. It does not claim production-grade upstream OSS integration, full research-worker activation, or final BFF read-path convergence beyond the service contracts named here.
 - Proposed wave order:
   1. Service baseline: finalize port map, env names, volume mounts, and compose profile boundaries.
-  2. Runtime-control packaging on `:5001`, because BFF operator commands already depend on that interface.
+  2. Runtime-control packaging under the locked baseline as `runtime-manager` on container port `8081` / host port `18081`, because BFF operator commands and emergency controls already depend on that interface.
   3. Governance API plus evidence services (`telemetry-ingest`, `lineage-read`).
   4. BFF and trader-feedback Dockerfiles plus BFF client rewiring.
   5. Single-VM compose assembly and smoke path. Only after that, decide whether `web` / `cron` belong in the default profile or an optional profile.
@@ -35,12 +87,12 @@ Last updated by: Codex (baton-owner seed for round 1 refresh)
   - `Phase 5`: persona/app surface contracts exist; remaining work is BFF rewiring away from snapshots/defaults and packet expansion for non-APP-002 workbenches.
   - `Phase 6`: OSS governance criteria exist; remaining work is mostly follow-on execution once the service stack is runnable, not part of the first compose-critical slice unless reviewers argue otherwise.
 - Current evidence-backed decisions:
-  - The repo already has working HTTP apps for router, persona, BFF, feedback, web chat, and a protected internal command API. The largest missing work is packaging and service exposure for governance/runtime/evidence modules.
+  - The repo already has working HTTP apps and Dockerfiles for the locked single-VM baseline services listed above.
   - BFF is not yet backed by canonical services; it reads JSON snapshots or seeded defaults for governance/runtime data and posts commands to the protected internal API.
   - Telemetry ingest and lineage read already exist as reusable service classes, so they should be wrapped instead of redesigned.
-  - The current root compose file is obsolete for this scope and cannot be expanded naively because router and BFF both bind `8001` in their current local/dev runners.
+  - The current root compose resolves the earlier router/BFF `8001` collision by assigning distinct host ports while keeping each service's existing container listener.
 - Open disagreements:
-  - Should `services/control_plane/internal_api.py` become the long-lived `runtime-control` service, or only a temporary adapter in front of a new `runtime-manager` FastAPI app?
+  - Resolved for SVC-BASELINE: `runtime-manager` is the locked non-BFF emergency/control path for the single-VM baseline. Any later Flask/FastAPI migration must preserve the same external contract.
   - Where should evolution approval/action endpoints live: `runtime-control`, `governance-api`, or a split between them?
   - Must BFF client rewiring to real services happen in the same wave as Dockerization, or can snapshot mode ship temporarily for an earlier smoke stack?
   - Should `web` and `cron` be part of the default single-VM profile, or remain optional profiles outside the phase 3-5 critical path?
