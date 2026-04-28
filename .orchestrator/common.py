@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import re
@@ -340,13 +341,58 @@ def render_template(path: Path, variables: dict[str, Any]) -> str:
     return text
 
 
+ACTIVITY_LOG_ROTATE_BYTES_DEFAULT = 50 * 1024 * 1024  # 50 MiB
+ACTIVITY_LOG_ARCHIVE_SUBDIR = Path(".orchestrator") / "logs" / "activity-log-archive"
+
+
+def _activity_log_rotate_threshold(config: dict[str, Any]) -> int:
+    raw = (config.get("paths") or {}).get("activity_log_rotate_bytes")
+    try:
+        threshold = int(raw)
+    except (TypeError, ValueError):
+        return ACTIVITY_LOG_ROTATE_BYTES_DEFAULT
+    return threshold if threshold > 0 else ACTIVITY_LOG_ROTATE_BYTES_DEFAULT
+
+
+def _rotate_activity_log_if_needed(config: dict[str, Any], log_path: Path) -> None:
+    try:
+        size = log_path.stat().st_size
+    except FileNotFoundError:
+        return
+    if size <= _activity_log_rotate_threshold(config):
+        return
+    archive_dir = ROOT / ACTIVITY_LOG_ARCHIVE_SUBDIR
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive_path = archive_dir / f"{log_path.stem}-{stamp}.jsonl.gz"
+    counter = 1
+    while archive_path.exists():
+        archive_path = archive_dir / f"{log_path.stem}-{stamp}-{counter}.jsonl.gz"
+        counter += 1
+    rotating_path = log_path.with_suffix(log_path.suffix + ".rotating")
+    try:
+        os.replace(log_path, rotating_path)
+    except FileNotFoundError:
+        return
+    try:
+        with rotating_path.open("rb") as src, gzip.open(archive_path, "wb") as dst:
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+    finally:
+        try:
+            rotating_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
     payload = {
         "ts": utc_now(),
         "agent": "Orchestrator",
         **entry,
     }
-    append_jsonl(config_path(config, "activity_log"), payload)
+    log_path = config_path(config, "activity_log")
+    _rotate_activity_log_if_needed(config, log_path)
+    append_jsonl(log_path, payload)
 
 
 def runtime_log_path(prefix: str, target: str) -> Path:

@@ -2615,11 +2615,46 @@ def write_dashboard_bundle(state: dict[str, Any]) -> None:
     DASHBOARD_BUNDLE_FILE.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+DASHBOARD_LOG_TAIL_LINES = 5000
+
+
+def _mirror_log_tail(source: Path, target: Path, max_lines: int) -> None:
+    if not source.exists():
+        return
+    try:
+        with source.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            file_size = handle.tell()
+            block_size = 1 << 16
+            buffer = bytearray()
+            line_count = 0
+            position = file_size
+            while position > 0 and line_count <= max_lines:
+                read_size = min(block_size, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                buffer[0:0] = chunk
+                line_count = buffer.count(b"\n")
+            tail = bytes(buffer)
+        if line_count > max_lines:
+            split_at = -1
+            extra = line_count - max_lines
+            for _ in range(extra):
+                split_at = tail.find(b"\n", split_at + 1)
+                if split_at == -1:
+                    break
+            if split_at != -1:
+                tail = tail[split_at + 1 :]
+        target.write_bytes(tail)
+    except OSError:
+        return
+
+
 def sync_docs_site() -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
     mirror_files = [
         STATUS_FILE,
-        LOG_FILE,
         CURRENT_WORK_FILE,
         DASHBOARD_BUNDLE_FILE,
         ROOT / ".orchestrator" / "state.json",
@@ -2634,6 +2669,7 @@ def sync_docs_site() -> None:
         if path.exists():
             target_name = rename_map.get(path.name, path.name)
             shutil.copy2(path, DOCS_SITE_DIR / target_name)
+    _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
 
 
 def sync_all(state: dict[str, Any]) -> None:
