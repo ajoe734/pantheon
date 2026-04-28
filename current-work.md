@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-04-28 15:44:32
+Last updated: 2026-04-28 15:45:52
 
 ## Objective
 
@@ -39,7 +39,7 @@ Last updated: 2026-04-28 15:44:32
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Qwen`: integration, schema, acceptance, code-agent; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-04-28 15:44:32
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `APP-003-RUNTIME-PROOF-RECON-001` | Execution / Runtime Verification Reconciliation | Reconcile runtime proof coverage and coordination exceptions | Codex | review_approved | - | 把 dashboard 仍顯示 runtime_verified=false 的 14 個 frontend coordination features 拉成正式追蹤，核對既有 APP-003-RUNTIME-PROOF-001/002 證據，修正 coordinator metadata 或補缺失 runtime proof，並保留 16 個 superseded tasks 的 audit trail。CW-03 partial route 與 KW-01 frontend-feedback metadata 例外必須在看板上可見且有明確結論。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ### External / Upstream Integration Work
 
@@ -66,13 +66,12 @@ Last updated: 2026-04-28 15:44:32
 | `LUV-REVIEW-015` | Execution / Lovable Review Closeout | Review returned frontend feedback and close loop for governance-audit-rail | 審閱 PKT-009-governance-audit-rail 的 frontend feedback bundle，判定是否直接關閉、補小修，或拆出具體 follow-up。 | Gemini | Codex2 | done | - | 2026-04-17 22:36:00 | Owner finalized approved task and closed it. Frontend feedback bundle is contract-correct and ready for loop closure. |
 | `STATE-REBASE-001-SIDECAR-ACCEPTANCE` | Execution / Wave 1 - State Rebaseline | [Sidecar] [Auto] [Parent STATE-REBASE-001] Prepare STATE-REBASE-001 acceptance packet and dependency map | 平行支援 STATE-REBASE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | done | - | 2026-04-20 00:45:00 | Owner finalized approved sidecar acceptance packet and closed it. Verification confirmed for STATE-REBASE-001. |
 | `EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF` | Execution / Frontend Lane Implementation | [Sidecar] [Auto] [Parent EXEC-FRONT-CW03-PARTIAL-001] Prepare EXEC-FRONT-CW03-PARTIAL-001 BFF and frontend handoff packet | 平行支援 EXEC-FRONT-CW03-PARTIAL-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini | Codex2 | done | - | 2026-04-21 01:15:00 | Owner finalized approved sidecar handoff packet and closed it. |
-| `APP-003-RUNTIME-PROOF-RECON-001` | Execution / Runtime Verification Reconciliation | Reconcile runtime proof coverage and coordination exceptions | 把 dashboard 仍顯示 runtime_verified=false 的 14 個 frontend coordination features 拉成正式追蹤，核對既有 APP-003-RUNTIME-PROOF-001/002 證據，修正 coordinator metadata 或補缺失 runtime proof，並保留 16 個 superseded tasks 的 audit trail。CW-03 partial route 與 KW-01 frontend-feedback metadata 例外必須在看板上可見且有明確結論。 | Codex | Codex2 | review_approved | - | 2026-04-28 15:44:32 | Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `APP-003-RUNTIME-PROOF-RECON-001` | Codex2 | Codex | Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements. | pending | 2026-04-28 15:44:32 |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -87,7 +86,6 @@ Last updated: 2026-04-28 15:44:32
 | `LUV-REVIEW-015` | Codex2 | 前端 feedback 與 review packet 已核對完成；契約、降級語義、篩選 round-trip 與 replayability 皆符合 PKT-009 要求，無需再開 follow-up。 | .coordination/reviews/PKT-009-governance-audit-rail-review.md |
 | `STATE-REBASE-001-SIDECAR-ACCEPTANCE` | Claude | Sidecar acceptance packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）依賴圖涵蓋 ai-status.json 中全部主線 STATE-REBASE-001 依賴任務；（3）引用的 docs/reviews/2026-04-19-state-rebaseline-001.md 確認存在，recompute_agents() 已在 ai_status.py:991 驗證。Packet 可作為 STATE-REBASE-001 正式 done 的支援材料。 | support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md |
 | `EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF` | Codex2 | packet 已核對：BFF route / projection / authority mapping 與 support handoff 一致；linked_evidence contract gap、transcript gate 與 partial activation 邊界敘述清楚，可交由 parent owner 決定是否吸收進主線。 | - |
-| `APP-003-RUNTIME-PROOF-RECON-001` | Codex2 | 審核通過：dashboard bundle 顯示 tracked_features 46、runtime_verified 46、frontend_feedback_received 46、runtime pending 0；14 個 reconciled frontend-feedback response 均含 runtime proof ref 與 APP-003-RUNTIME-PROOF-RECON-001 標記；CW-03 partial/lovable_ready=false 與 KW-01 Pantheon-side frontend-feedback 路徑在看板可見；archive_summary 保留 superseded 16。驗證已跑 scripts/test_ai_status.py、py_compile、YAML parse 與 proof-ref existence checks。 | - |
 
 ## Lovable Coordination
 
@@ -158,7 +156,6 @@ Last updated: 2026-04-28 15:44:32
 
 ## Latest Checkpoints
 
-- 2026-04-28 15:42:35 Orchestrator: `PKT-004-deployment-approval-drilldowns` GitHub coordination issue synced for PKT-004-deployment-approval-drilldowns in ajoe734/pantheon.
 - 2026-04-28 15:42:38 Orchestrator: `PKT-010-runtime-state-board` GitHub coordination issue synced for PKT-010-runtime-state-board in ajoe734/pantheon.
 - 2026-04-28 15:42:40 Orchestrator: `CW-01-consult-request` GitHub coordination issue synced for CW-01-consult-request in ajoe734/pantheon.
 - 2026-04-28 15:42:43 Orchestrator: `KW-01-institutional-memory` GitHub coordination issue synced for KW-01-institutional-memory in ajoe734/pantheon.
@@ -178,3 +175,4 @@ Last updated: 2026-04-28 15:44:32
 - 2026-04-28 15:43:31 Codex: Archived 1 terminal tasks from ai-status.json.
 - 2026-04-28 15:43:31 Codex: `APP-001-SIDECAR-BFF-HANDOFF` Assigned APP-001-SIDECAR-BFF-HANDOFF to Gemini with reviewer Copilot
 - 2026-04-28 15:44:32 Codex2: `APP-003-RUNTIME-PROOF-RECON-001` Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements.
+- 2026-04-28 15:45:52 Codex: `APP-003-RUNTIME-PROOF-RECON-001` Owner finalized approved reconciliation. Dashboard bundle now reports 46/46 runtime_verified, 46/46 frontend_feedback_received, runtime pending 0; CW-03 and KW-01 exceptions remain visible; superseded archive audit count remains 16.
