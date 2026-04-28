@@ -1,0 +1,44 @@
+{
+  "dataset_id": "dataset:rllib-sample-001",
+  "strategy_id": "multi-agent-portfolio-rebalance",
+  "source_dataset_refs": [
+    "dataset:sample-tech-daily-001"
+  ],
+  "source_strategy_spec_id": "strategy-spec:multi-agent-rebalance-v1",
+  "decision_focus": "rebalance",
+  "data_frequency": "daily",
+  "transaction_cost_pct": 0.001,
+  "slippage_bps": 5,
+  "max_position_size": 0.3,
+  "records": [
+    {"instrument": "AAA", "date": "2024-01-01", "open": 99.4, "high": 101.0, "low": 98.8, "close": 100.0, "volume": 500000},
+    {"instrument": "AAA", "date": "2024-01-02", "open": 100.8, "high": 102.1, "low": 100.1, "close": 101.5, "volume": 512000},
+    {"instrument": "AAA", "date": "2024-01-03", "open": 101.4, "high": 102.8, "low": 100.9, "close": 102.1, "volume": 519000},
+    {"instrument": "AAA", "date": "2024-01-04", "open": 101.2, "high": 102.4, "low": 100.8, "close": 101.8, "volume": 515000},
+    {"instrument": "AAA", "date": "2024-01-05", "open": 102.6, "high": 103.9, "low": 102.1, "close": 103.4, "volume": 528000},
+    {"instrument": "AAA", "date": "2024-01-06", "open": 103.5, "high": 104.6, "low": 103.0, "close": 104.1, "volume": 534000},
+    {"instrument": "AAA", "date": "2024-01-07", "open": 103.1, "high": 104.0, "low": 102.8, "close": 103.6, "volume": 529000},
+    {"instrument": "AAA", "date": "2024-01-08", "open": 104.0, "high": 105.2, "low": 103.7, "close": 104.8, "volume": 541000},
+    {"instrument": "AAA", "date": "2024-01-09", "open": 104.5, "high": 105.8, "low": 104.1, "close": 105.2, "volume": 548000},
+
+    {"instrument": "BBB", "date": "2024-01-01", "open": 49.6, "high": 50.5, "low": 49.2, "close": 50.0, "volume": 420000},
+    {"instrument": "BBB", "date": "2024-01-02", "open": 50.1, "high": 50.7, "low": 49.8, "close": 50.4, "volume": 425000},
+    {"instrument": "BBB", "date": "2024-01-03", "open": 50.5, "high": 51.2, "low": 50.0, "close": 50.9, "volume": 431000},
+    {"instrument": "BBB", "date": "2024-01-04", "open": 50.2, "high": 50.9, "low": 49.9, "close": 50.6, "volume": 428000},
+    {"instrument": "BBB", "date": "2024-01-05", "open": 50.9, "high": 51.5, "low": 50.6, "close": 51.3, "volume": 439000},
+    {"instrument": "BBB", "date": "2024-01-06", "open": 51.3, "high": 51.9, "low": 51.0, "close": 51.7, "volume": 443000},
+    {"instrument": "BBB", "date": "2024-01-07", "open": 50.8, "high": 51.4, "low": 50.5, "close": 51.1, "volume": 437000},
+    {"instrument": "BBB", "date": "2024-01-08", "open": 51.4, "high": 52.1, "low": 51.0, "close": 51.9, "volume": 446000},
+    {"instrument": "BBB", "date": "2024-01-09", "open": 51.8, "high": 52.5, "low": 51.4, "close": 52.2, "volume": 452000},
+
+    {"instrument": "CCC", "date": "2024-01-01", "open": 74.5, "high": 75.6, "low": 74.0, "close": 75.0, "volume": 460000},
+    {"instrument": "CCC", "date": "2024-01-02", "open": 75.0, "high": 76.0, "low": 74.8, "close": 75.6, "volume": 467000},
+    {"instrument": "CCC", "date": "2024-01-03", "open": 75.7, "high": 76.5, "low": 75.1, "close": 76.1, "volume": 472000},
+    {"instrument": "CCC", "date": "2024-01-04", "open": 75.3, "high": 76.1, "low": 75.0, "close": 75.8, "volume": 468000},
+    {"instrument": "CCC", "date": "2024-01-05", "open": 76.2, "high": 77.1, "low": 75.9, "close": 76.9, "volume": 479000},
+    {"instrument": "CCC", "date": "2024-01-06", "open": 76.8, "high": 77.9, "low": 76.4, "close": 77.5, "volume": 484000},
+    {"instrument": "CCC", "date": "2024-01-07", "open": 76.9, "high": 77.5, "low": 76.5, "close": 77.2, "volume": 481000},
+    {"instrument": "CCC", "date": "2024-01-08", "open": 77.4, "high": 78.4, "low": 77.0, "close": 78.1, "volume": 489000},
+    {"instrument": "CCC", "date": "2024-01-09", "open": 78.0, "high": 79.0, "low": 77.6, "close": 78.7, "volume": 494000}
+  ]
+}
