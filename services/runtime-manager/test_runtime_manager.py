@@ -682,9 +682,14 @@ class KillSwitchDurabilityTests(unittest.TestCase):
             SafeModeState.NORMAL.value,
             "service should start with empty kill-switch state when snapshot is corrupt",
         )
-        self.assertFalse(self.ks_store_path.exists(), "corrupt snapshot should be moved aside")
+        self.assertTrue(self.ks_store_path.exists(), "clean recovery snapshot should be written after quarantine")
         quarantined = list(self.store_path.parent.glob("kill_switch.json.corrupt.*.json"))
         self.assertEqual(len(quarantined), 1)
+        recovery_snapshot = json.loads(self.ks_store_path.read_text())
+        self.assertEqual(
+            recovery_snapshot["foundation_recovery_audit"][0]["action_type"],
+            "foundation.command_recovery.quarantined",
+        )
 
         svc.execute_kill_switch({
             "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
@@ -695,6 +700,195 @@ class KillSwitchDurabilityTests(unittest.TestCase):
         self.assertEqual(
             restored["safe_mode"]["pool-corrupt"],
             SafeModeState.PAUSED.value,
+        )
+
+    def test_kill_switch_replay_after_mid_binding_crash_does_not_duplicate_side_effect(self):
+        svc1 = self._svc()
+        binding = svc1.deploy(_valid_deploy_request(
+            capital_pool_id="pool-crash-replay",
+            runtime_id="rt-crash-replay",
+        ))
+        request = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-crash-replay",
+            "actor_id": "op",
+            "binding_id": binding.binding_id,
+            "idempotency_key": "idmp-crash-replay-001",
+        }
+        original_binding_action = svc1._execute_kill_switch_binding_action
+
+        def crash_after_binding(command):
+            original_binding_action(command)
+            raise RuntimeError("simulated crash before success ledger persist")
+
+        svc1._execute_kill_switch_binding_action = crash_after_binding
+
+        with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+            svc1.execute_kill_switch(request)
+
+        crash_snapshot = json.loads(self.ks_store_path.read_text())
+        crash_entry = crash_snapshot["foundation_idempotency"]["idmp-crash-replay-001"]
+        self.assertEqual(crash_entry["idempotency_record"]["status"], "executing")
+        self.assertEqual(len(crash_snapshot["audit_log"]), 1)
+
+        svc2 = self._svc()
+        replayed = svc2.execute_kill_switch(request)
+
+        self.assertTrue(replayed["idempotent_replay"])
+        self.assertEqual(
+            replayed["command"]["command_id"],
+            crash_entry["result"]["command"]["command_id"],
+        )
+        self.assertEqual(len(svc2.get_kill_switch_audit_log()), 1)
+        self.assertEqual(svc2.get_safe_mode("pool-crash-replay"), SafeModeState.PAUSED.value)
+        self.assertEqual(
+            svc2._store.get(binding.binding_id).status,
+            "paused",
+        )
+        recovered_snapshot = json.loads(self.ks_store_path.read_text())
+        recovered_entry = recovered_snapshot["foundation_idempotency"]["idmp-crash-replay-001"]
+        self.assertEqual(recovered_entry["idempotency_record"]["status"], "succeeded")
+        self.assertEqual(
+            recovered_snapshot["foundation_recovery_audit"][-1]["action_type"],
+            "foundation.command_recovery.replay_resumed",
+        )
+
+    def test_kill_switch_replace_replay_after_replacement_create_does_not_duplicate_fallback(self):
+        svc1 = self._svc()
+        binding = svc1.deploy(_valid_deploy_request(
+            capital_pool_id="pool-replace-crash-replay",
+            runtime_id="rt-replace-crash-replay",
+        ))
+        request = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-replace-crash-replay",
+            "actor_id": "op",
+            "binding_id": binding.binding_id,
+            "idempotency_key": "idmp-replace-crash-replay-001",
+            "action_override": KillSwitchActionType.REPLACE.value,
+            "fallback_artifact_id": "artifact-fallback",
+            "fallback_artifact_version": "1.0.0",
+        }
+        original_retire = svc1._store.retire
+
+        def crash_before_old_binding_retire(binding_id, retired_at=None):
+            raise RuntimeError("simulated crash after replacement create before retire")
+
+        svc1._store.retire = crash_before_old_binding_retire
+
+        with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+            svc1.execute_kill_switch(request)
+
+        svc1._store.retire = original_retire
+        after_crash = self._svc()
+        after_crash_active_fallbacks = [
+            item for item in after_crash.list_by_pool("pool-replace-crash-replay")
+            if item.status == "active" and item.artifact_id == "artifact-fallback"
+        ]
+        self.assertEqual(len(after_crash_active_fallbacks), 1)
+        self.assertEqual(after_crash.get(binding.binding_id).status, "active")
+
+        replayed = after_crash.execute_kill_switch(request)
+
+        self.assertTrue(replayed["idempotent_replay"])
+        self.assertEqual(replayed["binding_action"]["replacement_binding"]["artifact_id"], "artifact-fallback")
+        self.assertEqual(after_crash.get(binding.binding_id).status, "retired")
+        after_replay_active_fallbacks = [
+            item for item in after_crash.list_by_pool("pool-replace-crash-replay")
+            if item.status == "active" and item.artifact_id == "artifact-fallback"
+        ]
+        self.assertEqual(len(after_replay_active_fallbacks), 1)
+        recovered_snapshot = json.loads(self.ks_store_path.read_text())
+        recovered_entry = recovered_snapshot["foundation_idempotency"]["idmp-replace-crash-replay-001"]
+        self.assertEqual(recovered_entry["idempotency_record"]["status"], "succeeded")
+
+    def test_kill_switch_replace_replay_without_binding_id_recovers_old_binding_from_replacement(self):
+        svc1 = self._svc()
+        binding = svc1.deploy(_valid_deploy_request(
+            capital_pool_id="pool-replace-crash-replay-optional-binding",
+            runtime_id="rt-replace-crash-replay-optional-binding",
+        ))
+        request = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-replace-crash-replay-optional-binding",
+            "actor_id": "op",
+            "idempotency_key": "idmp-replace-crash-replay-optional-binding-001",
+            "action_override": KillSwitchActionType.REPLACE.value,
+            "fallback_artifact_id": "artifact-fallback",
+            "fallback_artifact_version": "1.0.0",
+        }
+        original_retire = svc1._store.retire
+
+        def crash_before_old_binding_retire(binding_id, retired_at=None):
+            raise RuntimeError("simulated crash after replacement create before retire")
+
+        svc1._store.retire = crash_before_old_binding_retire
+
+        with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+            svc1.execute_kill_switch(request)
+
+        svc1._store.retire = original_retire
+        after_crash = self._svc()
+        active_bindings = [
+            item for item in after_crash.list_by_pool("pool-replace-crash-replay-optional-binding")
+            if item.status == "active"
+        ]
+        self.assertEqual(len(active_bindings), 2)
+
+        crash_snapshot = json.loads(self.ks_store_path.read_text())
+        crash_command = crash_snapshot["foundation_idempotency"][
+            "idmp-replace-crash-replay-optional-binding-001"
+        ]["result"]["command"]
+        self.assertNotIn("binding_id", crash_command)
+
+        replayed = after_crash.execute_kill_switch(request)
+
+        self.assertTrue(replayed["idempotent_replay"])
+        self.assertEqual(replayed["binding_action"]["binding"]["binding_id"], binding.binding_id)
+        self.assertEqual(after_crash.get(binding.binding_id).status, "retired")
+        active_fallbacks = [
+            item for item in after_crash.list_by_pool("pool-replace-crash-replay-optional-binding")
+            if item.status == "active" and item.artifact_id == "artifact-fallback"
+        ]
+        self.assertEqual(len(active_fallbacks), 1)
+        recovered_snapshot = json.loads(self.ks_store_path.read_text())
+        recovered_entry = recovered_snapshot["foundation_idempotency"][
+            "idmp-replace-crash-replay-optional-binding-001"
+        ]
+        self.assertEqual(recovered_entry["idempotency_record"]["status"], "succeeded")
+        self.assertEqual(
+            recovered_snapshot["foundation_recovery_audit"][-1]["action_type"],
+            "foundation.command_recovery.replay_resumed",
+        )
+
+    def test_corrupt_foundation_idempotency_entry_is_quarantined_on_boot(self):
+        self.ks_store_path.write_text(json.dumps({
+            "safe_mode": {"pool-partial": SafeModeState.PAUSED.value},
+            "audit_log": [],
+            "foundation_idempotency": {
+                "bad-entry": {
+                    "idempotency_record": {
+                        "idempotency_key": "bad-entry",
+                        "operation_type": "runtime_manager.kill_switch.dispatch",
+                        "target_ref": "CapitalPool:pool-partial",
+                        "request_hash": "hash",
+                        "first_seen_at": "2026-04-28T00:00:00Z",
+                        "last_seen_at": "2026-04-27T00:00:00Z",
+                        "status": "reserved",
+                        "trace_id": "trace-partial",
+                    }
+                }
+            },
+        }))
+
+        svc = self._svc()
+
+        self.assertEqual(svc.get_safe_mode("pool-partial"), SafeModeState.PAUSED.value)
+        recovered_snapshot = json.loads(self.ks_store_path.read_text())
+        self.assertEqual(recovered_snapshot["foundation_idempotency"], {})
+        self.assertEqual(
+            recovered_snapshot["foundation_recovery_audit"][-1]["action_type"],
+            "foundation.command_recovery.quarantined",
         )
 
 

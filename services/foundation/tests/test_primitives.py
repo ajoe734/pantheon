@@ -8,6 +8,7 @@ from services.foundation import (
     AuditAction,
     AuthorityScope,
     CommandEnvelope,
+    CommandRecoveryAction,
     EnvironmentName,
     EnvironmentScope,
     ErrorEnvelope,
@@ -21,6 +22,9 @@ from services.foundation import (
     SecretScopeType,
     TraceContext,
     canonical_json,
+    command_recovery_entry,
+    idempotency_record_from_entry,
+    load_command_recovery_entries,
     sha256_checksum,
 )
 
@@ -137,6 +141,40 @@ def test_idempotency_record_detects_duplicate_payloads_and_status_transitions() 
     succeeded = record.with_status(IdempotencyStatus.SUCCEEDED, result_ref="audit:audit-1")
     assert succeeded.to_dict()["status"] == "succeeded"
     assert succeeded.to_dict()["result_ref"] == "audit:audit-1"
+    assert IdempotencyRecord.from_dict(succeeded.to_dict()) == succeeded
+
+
+def test_command_recovery_entries_quarantine_corrupt_partial_state() -> None:
+    record = IdempotencyRecord.reserve(
+        idempotency_key="idmp-recovery-1",
+        operation_type="runtime_manager.kill_switch.dispatch",
+        target_ref="CapitalPool:pool-1",
+        request_payload={"reason": "operator_emergency_stop"},
+        trace_id="trace-recovery-1",
+    )
+    raw_entries = {
+        "idmp-recovery-1": command_recovery_entry(record, result={"command": {"command_id": "ks-1"}}),
+        "bad-entry": {
+            "idempotency_record": {
+                **record.to_dict(),
+                "idempotency_key": "bad-entry",
+                "status": "not-a-status",
+            }
+        },
+    }
+
+    loaded, audits = load_command_recovery_entries(
+        raw_entries,
+        owner_service="runtime-manager",
+        operation_type="runtime_manager.kill_switch.dispatch",
+    )
+
+    assert list(loaded) == ["idmp-recovery-1"]
+    assert idempotency_record_from_entry(loaded["idmp-recovery-1"]) == record
+    assert loaded["idmp-recovery-1"]["result"]["command"]["command_id"] == "ks-1"
+    assert len(audits) == 1
+    assert audits[0].action_type == CommandRecoveryAction.QUARANTINED
+    assert audits[0].idempotency_key == "bad-entry"
 
 
 def test_policy_decision_requires_reasons_for_denials() -> None:

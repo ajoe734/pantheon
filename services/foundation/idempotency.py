@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from .exceptions import FoundationValidationError
 from .serialization import drop_none, ensure_utc, sha256_checksum
@@ -114,4 +114,18 @@ class IdempotencyRecord:
                 "result_ref": self.result_ref,
                 "trace_id": self.trace_id,
             }
+        )
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "IdempotencyRecord":
+        return cls(
+            idempotency_key=str(data["idempotency_key"]),
+            operation_type=str(data["operation_type"]),
+            target_ref=str(data["target_ref"]),
+            request_hash=str(data["request_hash"]),
+            first_seen_at=str(data["first_seen_at"]),
+            last_seen_at=str(data["last_seen_at"]),
+            status=str(data["status"]),
+            trace_id=str(data["trace_id"]),
+            result_ref=data.get("result_ref"),
         )

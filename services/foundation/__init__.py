@@ -6,6 +6,14 @@ side effects.
 """
 
 from .audit import AuditAction
+from .command_recovery import (
+    CommandRecoveryAction,
+    CommandRecoveryAudit,
+    command_recovery_entry,
+    idempotency_record_from_entry,
+    is_recoverable_inflight_status,
+    load_command_recovery_entries,
+)
 from .dead_letter import DeadLetterEntry, DeadLetterQueue, DeadLetterStatus
 from .envelopes import CommandEnvelope, ErrorEnvelope, ErrorKind, TraceContext
 from .exceptions import FoundationValidationError
@@ -37,6 +45,8 @@ __all__ = [
     "AuditAction",
     "AuthorityScope",
     "CommandEnvelope",
+    "CommandRecoveryAction",
+    "CommandRecoveryAudit",
     "DeadLetterEntry",
     "DeadLetterQueue",
     "DeadLetterReplayBatchResult",
@@ -69,7 +79,11 @@ __all__ = [
     "SecretScopeType",
     "TraceContext",
     "canonical_json",
+    "command_recovery_entry",
     "foundation_id",
+    "idempotency_record_from_entry",
+    "is_recoverable_inflight_status",
+    "load_command_recovery_entries",
     "sha256_checksum",
     "utc_now",
 ]

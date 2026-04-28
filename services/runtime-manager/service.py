@@ -33,6 +33,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
@@ -72,15 +73,21 @@ from services.foundation import (  # noqa: E402
     AuditAction,
     AuthorityScope,
     CommandEnvelope,
+    CommandRecoveryAction,
+    CommandRecoveryAudit,
     EnvironmentName,
     EnvironmentScope,
     ErrorEnvelope,
     ErrorKind,
     IdempotencyRecord,
+    IdempotencyStatus,
     PolicyDecision,
     PolicyDecisionValue,
     TraceContext,
+    command_recovery_entry,
     foundation_id,
+    idempotency_record_from_entry,
+    load_command_recovery_entries,
 )
 
 __all__ = [
@@ -482,6 +489,7 @@ class RuntimeManagerService:
         self._single_runtime_enforced = single_runtime_enforced
         self._kill_switch = KillSwitchController()
         self._foundation_idempotency: Dict[str, Dict[str, Any]] = {}
+        self._foundation_recovery_audit: List[Dict[str, Any]] = []
         # Derive kill-switch store path alongside the binding store when not supplied.
         if ks_store_path is None and store_path is not None:
             ks_store_path = store_path.parent / "kill_switch.json"
@@ -815,7 +823,16 @@ class RuntimeManagerService:
         try:
             data = json.loads(self._ks_store_path.read_text())
             self._kill_switch.load_state(data)
-            self._foundation_idempotency = dict(data.get("foundation_idempotency") or {})
+            loaded, recovery_audits = load_command_recovery_entries(
+                data.get("foundation_idempotency") or {},
+                owner_service="runtime-manager",
+                operation_type=_KILL_SWITCH_FOUNDATION_OPERATION,
+            )
+            self._foundation_idempotency = loaded
+            self._foundation_recovery_audit = list(data.get("foundation_recovery_audit") or [])
+            if recovery_audits:
+                self._foundation_recovery_audit.extend(audit.to_dict() for audit in recovery_audits)
+                self._persist_ks_state()
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, KillSwitchError):
             # Do not let a torn/corrupt sidecar brick the whole runtime-manager.
             # Quarantine the bad file and fall back to empty controller state.
@@ -826,6 +843,15 @@ class RuntimeManagerService:
                 self._ks_store_path.replace(corrupt_path)
             except OSError:
                 pass
+            self._foundation_recovery_audit.append(
+                CommandRecoveryAudit.record(
+                    owner_service="runtime-manager",
+                    action_type=CommandRecoveryAction.QUARANTINED,
+                    reason="quarantined corrupt kill-switch durable snapshot during startup",
+                    metadata={"quarantine_path": str(corrupt_path)},
+                ).to_dict()
+            )
+            self._persist_ks_state()
 
     def _persist_ks_state(self) -> None:
         """Write kill-switch safe-mode and audit state to the durable store."""
@@ -833,6 +859,7 @@ class RuntimeManagerService:
             self._ks_store_path.parent.mkdir(parents=True, exist_ok=True)
             state = self._kill_switch.dump_state()
             state["foundation_idempotency"] = self._foundation_idempotency
+            state["foundation_recovery_audit"] = self._foundation_recovery_audit
             payload = json.dumps(state, indent=2)
             tmp_path = self._ks_store_path.with_name(
                 f"{self._ks_store_path.name}.{uuid.uuid4().hex}.tmp"
@@ -843,6 +870,40 @@ class RuntimeManagerService:
             finally:
                 if tmp_path.exists():
                     tmp_path.unlink()
+
+    def _record_ks_recovery_audit(
+        self,
+        *,
+        action_type: CommandRecoveryAction,
+        reason: str,
+        idempotency_key: str | None = None,
+        trace_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
+    ) -> None:
+        self._foundation_recovery_audit.append(
+            CommandRecoveryAudit.record(
+                owner_service="runtime-manager",
+                action_type=action_type,
+                reason=reason,
+                idempotency_key=idempotency_key,
+                trace_id=trace_id,
+                metadata=metadata or {},
+            ).to_dict()
+        )
+
+    def _store_ks_idempotency_record(
+        self,
+        record: IdempotencyRecord,
+        *,
+        result: Dict[str, Any] | None = None,
+        persist: bool = True,
+    ) -> None:
+        self._foundation_idempotency[record.idempotency_key] = command_recovery_entry(
+            record,
+            result=result,
+        )
+        if persist:
+            self._persist_ks_state()
 
     def execute_kill_switch(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch an emergency kill-switch command via the runtime-manager fast path.
@@ -888,15 +949,51 @@ class RuntimeManagerService:
         idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
         existing = self._foundation_idempotency.get(idempotency_record.idempotency_key)
         if existing:
-            if existing.get("request_hash") != idempotency_record.request_hash:
+            existing_record = idempotency_record_from_entry(existing)
+            if existing_record.request_hash != idempotency_record.request_hash:
                 foundation_error = _foundation_idempotency_conflict(
                     foundation_context,
-                    existing_command_id=str(existing.get("command_id") or ""),
+                    existing_command_id=str((existing.get("result") or {}).get("command", {}).get("command_id") or ""),
                 )
                 raise RuntimeManagerError(json.dumps(foundation_error.to_dict(), sort_keys=True))
-            replayed = json.loads(json.dumps(existing.get("result") or {}))
-            replayed["idempotent_replay"] = True
-            return replayed
+            existing_result = json.loads(json.dumps(existing.get("result") or {}))
+            if existing_record.status == IdempotencyStatus.SUCCEEDED:
+                replayed = existing_result
+                replayed["idempotent_replay"] = True
+                return replayed
+            if existing_record.status == IdempotencyStatus.EXECUTING and existing_result.get("command"):
+                self._record_ks_recovery_audit(
+                    action_type=CommandRecoveryAction.REPLAY_RESUMED,
+                    reason="resumed kill-switch binding follow-through from durable executing record",
+                    idempotency_key=existing_record.idempotency_key,
+                    trace_id=existing_record.trace_id,
+                    metadata={"command_id": existing_result["command"].get("command_id")},
+                )
+                binding_action = self._execute_kill_switch_binding_action(
+                    self._durable_kill_switch_command(existing_result["command"])
+                )
+                succeeded = existing_record.with_status(
+                    IdempotencyStatus.SUCCEEDED,
+                    result_ref=f"kill_switch:{existing_result['command'].get('command_id')}",
+                )
+                foundation_context["idempotency_record"] = succeeded
+                recovered = existing_result
+                recovered["foundation"] = _serialize_foundation_context(foundation_context)
+                recovered["binding_action"] = binding_action
+                recovered["idempotent_replay"] = True
+                self._store_ks_idempotency_record(succeeded, result=recovered)
+                return recovered
+            if existing_record.status != IdempotencyStatus.RESERVED:
+                self._record_ks_recovery_audit(
+                    action_type=CommandRecoveryAction.QUARANTINED,
+                    reason=f"quarantined unsupported kill-switch idempotency status {existing_record.status.value}",
+                    idempotency_key=existing_record.idempotency_key,
+                    trace_id=existing_record.trace_id,
+                )
+                self._foundation_idempotency.pop(existing_record.idempotency_key, None)
+                self._persist_ks_state()
+
+        self._store_ks_idempotency_record(idempotency_record)
 
         reason = request.get("reason", "")
         capital_pool_id = request.get("capital_pool_id", "")
@@ -942,26 +1039,27 @@ class RuntimeManagerService:
         except KillSwitchError as exc:
             raise RuntimeManagerError(f"Kill-switch dispatch failed: {exc}") from exc
 
+        executing_record = idempotency_record.with_status(IdempotencyStatus.EXECUTING)
+        foundation_context["idempotency_record"] = executing_record
+        executing_result = outcome.to_dict()
+        executing_result["foundation"] = _serialize_foundation_context(foundation_context)
+        self._store_ks_idempotency_record(executing_record, result=executing_result)
+
         # Execute the binding action against RuntimeBinding — runtime-manager is the
         # authoritative executor for pause / liquidate / replace / terminate.
         # (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY §5.2)
         binding_action = self._execute_kill_switch_binding_action(outcome.command)
-        idempotency_record = idempotency_record.with_status(
-            "succeeded",
+        idempotency_record = executing_record.with_status(
+            IdempotencyStatus.SUCCEEDED,
             result_ref=f"kill_switch:{outcome.command.command_id}",
         )
         foundation_context["idempotency_record"] = idempotency_record
         result = outcome.to_dict()
         result["foundation"] = _serialize_foundation_context(foundation_context)
         result["binding_action"] = binding_action
-        self._foundation_idempotency[idempotency_record.idempotency_key] = {
-            "request_hash": idempotency_record.request_hash,
-            "command_id": outcome.command.command_id,
-            "result": json.loads(json.dumps(result)),
-        }
         # Persist audit entry, safe-mode, and idempotency before acknowledging
         # the command (contract §11.2: durable write must precede ack).
-        self._persist_ks_state()
+        self._store_ks_idempotency_record(idempotency_record, result=result)
         return result
 
     def _execute_kill_switch_binding_action(
@@ -985,7 +1083,17 @@ class RuntimeManagerService:
         REPLACE also 'replacement_binding' (new active binding).  Returns None
         when no live binding is found for the target pool.
         """
-        binding_id = command.binding_id
+        action_type = getattr(command, "action_type", None)
+        binding_id = getattr(command, "binding_id", None)
+        if not binding_id and action_type == KillSwitchActionType.REPLACE.value:
+            replacement = self._find_kill_switch_replacement_binding(
+                command_id=getattr(command, "command_id", ""),
+                old_binding_id=None,
+                fallback_artifact_id=getattr(command, "fallback_artifact_id", ""),
+                fallback_artifact_version=getattr(command, "fallback_artifact_version", ""),
+            )
+            if replacement is not None:
+                binding_id = replacement.rollback_parent
         if not binding_id:
             active = self._store.get_active_for_pool(command.capital_pool_id)
             if active:
@@ -996,10 +1104,11 @@ class RuntimeManagerService:
 
         try:
             b = self._store.get(binding_id)
-            if b is None or b.is_terminal():
+            if b is None:
                 return None
 
-            action_type = command.action_type  # str value from KillSwitchActionType
+            if b.is_terminal() and action_type != KillSwitchActionType.REPLACE.value:
+                return None
             if action_type in (
                 KillSwitchActionType.PAUSE.value,
                 KillSwitchActionType.RISK_OFF.value,
@@ -1021,24 +1130,35 @@ class RuntimeManagerService:
                 # The single-runtime guard is bypassed only for this specific call via
                 # _allow_cutover_bypass so concurrent deploy() calls on other threads are unaffected.
                 cutover_at = utc_now()
-                deploy_req: Dict[str, Any] = {
-                    "plan_id": f"ks-replace-{command.command_id}",
-                    "plan_status": "approved",
-                    "target_stage": b.deployment_mode,
-                    "artifact_id": command.fallback_artifact_id,
-                    "artifact_version": command.fallback_artifact_version,
-                    "capital_pool_id": command.capital_pool_id,
-                    "persona_capital_binding_id": b.persona_capital_binding_id,
-                    # Emergency assumption: the existing PCB is still active and the
-                    # scope is sufficient (live is the maximum and covers all stages).
-                    "persona_capital_binding_status": "active",
-                    "allowed_deployment_scope": "live",
-                    "loader_checks_passed": True,
-                    "rollback_parent": binding_id,
-                    "rollback_action_type": "replace",
-                }
-                replacement = self.deploy(deploy_req, _allow_cutover_bypass=True)
-                retired = self._store.retire(binding_id, retired_at=cutover_at)
+                replacement = self._find_kill_switch_replacement_binding(
+                    command_id=command.command_id,
+                    old_binding_id=binding_id,
+                    fallback_artifact_id=command.fallback_artifact_id,
+                    fallback_artifact_version=command.fallback_artifact_version,
+                )
+                if replacement is None:
+                    deploy_req: Dict[str, Any] = {
+                        "plan_id": f"ks-replace-{command.command_id}",
+                        "plan_status": "approved",
+                        "target_stage": b.deployment_mode,
+                        "artifact_id": command.fallback_artifact_id,
+                        "artifact_version": command.fallback_artifact_version,
+                        "capital_pool_id": command.capital_pool_id,
+                        "persona_capital_binding_id": b.persona_capital_binding_id,
+                        # Emergency assumption: the existing PCB is still active and the
+                        # scope is sufficient (live is the maximum and covers all stages).
+                        "persona_capital_binding_status": "active",
+                        "allowed_deployment_scope": "live",
+                        "loader_checks_passed": True,
+                        "rollback_parent": binding_id,
+                        "rollback_action_type": "replace",
+                    }
+                    replacement = self.deploy(deploy_req, _allow_cutover_bypass=True)
+
+                if b.is_terminal():
+                    retired = b
+                else:
+                    retired = self._store.retire(binding_id, retired_at=cutover_at)
                 return {
                     "action": action_type,
                     "binding": retired.to_dict(),
@@ -1053,6 +1173,41 @@ class RuntimeManagerService:
         except (RuntimeBindingError, RuntimeManagerError):
             # Binding may already be terminal; do not mask the dispatch outcome
             return None
+
+    def _find_kill_switch_replacement_binding(
+        self,
+        *,
+        command_id: str,
+        old_binding_id: str | None,
+        fallback_artifact_id: str,
+        fallback_artifact_version: str,
+    ) -> Optional[RuntimeBinding]:
+        """Return an existing replacement for a replayed kill-switch REPLACE command."""
+        plan_id = f"ks-replace-{command_id}"
+        candidates = [
+            candidate for candidate in self._store.find_by_plan(plan_id)
+            if (old_binding_id is None or candidate.rollback_parent == old_binding_id)
+            and candidate.rollback_action_type == "replace"
+            and candidate.artifact_id == fallback_artifact_id
+            and candidate.artifact_version == fallback_artifact_version
+        ]
+        active_candidates = [
+            candidate for candidate in candidates
+            if candidate.status == RuntimeBindingStatus.ACTIVE.value
+        ]
+        if active_candidates:
+            return active_candidates[0]
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _durable_kill_switch_command(command: Dict[str, Any]) -> SimpleNamespace:
+        """Rebuild a persisted command dict while restoring omitted optional fields."""
+        durable_command = dict(command)
+        durable_command.setdefault("binding_id", None)
+        durable_command.setdefault("fallback_artifact_id", None)
+        durable_command.setdefault("fallback_artifact_version", None)
+        durable_command.setdefault("metadata", {})
+        return SimpleNamespace(**durable_command)
 
     def get_safe_mode(self, capital_pool_id: str) -> str:
         """Return the current SafeModeState for a capital pool (NORMAL if unknown)."""
