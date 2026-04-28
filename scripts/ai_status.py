@@ -1440,11 +1440,15 @@ def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else request_snapshot.get("metadata", {})
     if isinstance(metadata.get("planning"), dict) and metadata.get("planning"):
         return str(metadata["planning"].get("mode") or "discussion_planning")
+    if isinstance(metadata.get("chair"), dict) and metadata.get("chair"):
+        return "chair_review"
     if isinstance(metadata.get("coordination"), dict) and metadata.get("coordination"):
         return "coordination"
     reason = str(payload.get("reason") or request_snapshot.get("reason") or "").strip()
     if reason.startswith("discussion_planning_"):
         return "discussion_planning"
+    if reason.startswith("chair_review:"):
+        return "chair_review"
     if reason.startswith("coordination:"):
         return "coordination"
     return "execution"
@@ -1656,6 +1660,8 @@ def detect_truth_mismatches(
         if task_id:
             live_workers_by_task.setdefault(task_id, []).append(worker)
         else:
+            if str(worker.get("dispatch_mode") or "").strip() == "chair_review":
+                continue
             push(
                 {
                     "id": f"worker-without-task:{worker.get('run_id')}",
@@ -1671,7 +1677,7 @@ def detect_truth_mismatches(
 
         task = task_map.get(task_id)
         if task is None:
-            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination"}:
+            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination", "chair_review"}:
                 continue
             if resolver.source(task_id) == "archive":
                 continue
@@ -2498,11 +2504,13 @@ def build_dashboard_bundle(
         "planning": {"running": 0, "pending": 0, "queued": 0},
         "execution": {"running": 0, "pending": 0, "queued": 0},
         "coordination": {"running": 0, "pending": 0, "queued": 0},
+        "chair_review": {"running": 0, "pending": 0, "queued": 0},
     }
     dispatch_mode_map = {
         "discussion_planning": "planning",
         "execution": "execution",
         "coordination": "coordination",
+        "chair_review": "chair_review",
     }
     for worker in live_workers:
         mode_name = dispatch_mode_map.get(str(worker.get("dispatch_mode") or "").strip())
@@ -2522,7 +2530,7 @@ def build_dashboard_bundle(
     raw_mode_occupancy = supervisor_state.get("mode_occupancy") if isinstance(supervisor_state.get("mode_occupancy"), dict) else {}
     if raw_mode_occupancy:
         normalized_occupancy = {}
-        for key in ("planning", "execution", "coordination"):
+        for key in ("planning", "execution", "coordination", "chair_review"):
             bucket = raw_mode_occupancy.get(key) if isinstance(raw_mode_occupancy.get(key), dict) else {}
             normalized_occupancy[key] = {
                 "running": int(bucket.get("running") or 0),
@@ -2530,6 +2538,19 @@ def build_dashboard_bundle(
                 "queued": int(bucket.get("queued") or 0),
             }
         mode_occupancy = normalized_occupancy
+
+    chair_rotation = orchestrator.get("chair_rotation") if isinstance(orchestrator.get("chair_rotation"), dict) else {}
+    chair_summary = {
+        "current_index": int(chair_rotation.get("current_index") or 0),
+        "last_chair_agent": chair_rotation.get("last_chair_agent"),
+        "last_chair_run_at": chair_rotation.get("last_chair_run_at"),
+        "last_chair_reason": chair_rotation.get("last_chair_reason"),
+        "last_review_path": chair_rotation.get("last_review_path"),
+        "last_review_summary": chair_rotation.get("last_review_summary") or [],
+        "pending_review_path": chair_rotation.get("pending_review_path"),
+        "pending_review_agent": chair_rotation.get("pending_review_agent"),
+        "sidecar_approved_until": chair_rotation.get("sidecar_approved_until"),
+    }
 
     lanes: dict[str, dict[str, int]] = {}
     for worker in workers:
@@ -2601,6 +2622,7 @@ def build_dashboard_bundle(
         },
         "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
+        "chair_summary": chair_summary,
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }

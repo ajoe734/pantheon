@@ -39,6 +39,17 @@ def default_state() -> dict[str, Any]:
             "last_sidecar_wave_reason": None,
             "last_ratio": None,
         },
+        "chair_rotation": {
+            "current_index": 0,
+            "last_chair_run_at": None,
+            "last_chair_agent": None,
+            "last_chair_reason": None,
+            "last_review_path": None,
+            "last_review_summary": None,
+            "pending_review_path": None,
+            "pending_review_agent": None,
+            "sidecar_approved_until": None,
+        },
         "provider_guardrails": {
             "dispatch_pauses": {},
             "task_failure_streaks": {},
@@ -66,6 +77,7 @@ def default_state() -> dict[str, Any]:
                 "planning": {"running": 0, "pending": 0, "queued": 0},
                 "execution": {"running": 0, "pending": 0, "queued": 0},
                 "coordination": {"running": 0, "pending": 0, "queued": 0},
+                "chair_review": {"running": 0, "pending": 0, "queued": 0},
             },
         },
     }
@@ -91,6 +103,16 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["underutilization"].setdefault("last_sidecar_wave_at", None)
     state["underutilization"].setdefault("last_sidecar_wave_reason", None)
     state["underutilization"].setdefault("last_ratio", None)
+    state.setdefault("chair_rotation", {})
+    state["chair_rotation"].setdefault("current_index", 0)
+    state["chair_rotation"].setdefault("last_chair_run_at", None)
+    state["chair_rotation"].setdefault("last_chair_agent", None)
+    state["chair_rotation"].setdefault("last_chair_reason", None)
+    state["chair_rotation"].setdefault("last_review_path", None)
+    state["chair_rotation"].setdefault("last_review_summary", None)
+    state["chair_rotation"].setdefault("pending_review_path", None)
+    state["chair_rotation"].setdefault("pending_review_agent", None)
+    state["chair_rotation"].setdefault("sidecar_approved_until", None)
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
@@ -113,7 +135,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("mode_switch_requested", None)
     state["supervisor"].setdefault("last_mode_switch_at", None)
     state["supervisor"].setdefault("mode_occupancy", {})
-    for mode_name in ("planning", "execution", "coordination"):
+    for mode_name in ("planning", "execution", "coordination", "chair_review"):
         bucket = state["supervisor"]["mode_occupancy"].setdefault(mode_name, {})
         bucket.setdefault("running", 0)
         bucket.setdefault("pending", 0)

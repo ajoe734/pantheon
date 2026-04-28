@@ -61,6 +61,12 @@ export function defaultDashboardBundle() {
       running_workers: 0,
       pending_workers: 0,
       mismatch_count: 0,
+      mode_occupancy: {
+        planning: { running: 0, pending: 0, queued: 0 },
+        execution: { running: 0, pending: 0, queued: 0 },
+        coordination: { running: 0, pending: 0, queued: 0 },
+        chair_review: { running: 0, pending: 0, queued: 0 },
+      },
       lanes: {},
     },
     execution_summary: {
@@ -121,6 +127,17 @@ export function defaultDashboardBundle() {
       current_session_materialized: 0,
       missing_source_ref_count: 0,
     },
+    chair_summary: {
+      current_index: 0,
+      last_chair_agent: null,
+      last_chair_run_at: null,
+      last_chair_reason: null,
+      last_review_path: null,
+      last_review_summary: [],
+      pending_review_path: null,
+      pending_review_agent: null,
+      sidecar_approved_until: null,
+    },
     worker_task_links: [],
     truth_mismatches: [],
   };
@@ -142,6 +159,7 @@ export function normalizeDashboardBundle(value) {
       features: Array.isArray((value.coordination_summary || {}).features) ? value.coordination_summary.features : [],
     },
     bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
+    chair_summary: { ...base.chair_summary, ...(value.chair_summary || {}) },
     worker_task_links: Array.isArray(value.worker_task_links) ? value.worker_task_links : [],
     truth_mismatches: Array.isArray(value.truth_mismatches) ? value.truth_mismatches : [],
   };

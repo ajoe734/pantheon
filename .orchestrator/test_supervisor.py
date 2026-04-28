@@ -1560,7 +1560,9 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
             mock.patch.object(supervisor, "prune_event_queue", return_value=False),
             mock.patch.object(supervisor, "load_discussion_planning_state", return_value=None),
+            mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False),
             mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=False),
+            mock.patch.object(supervisor, "dispatch_chair_review", return_value=False),
             mock.patch.object(supervisor, "process_queue", return_value=False),
             mock.patch.object(supervisor, "sync_github_bus", return_value=False),
             mock.patch.object(supervisor, "trim_worker_history"),
@@ -1608,9 +1610,11 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
             mock.patch.object(supervisor, "prune_event_queue", return_value=False),
+            mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False),
             mock.patch.object(supervisor, "load_discussion_planning_state", return_value={"status": "active", "planning_mode": "discussion_planning", "readouts": {}}),
             mock.patch.object(supervisor, "dispatch_discussion_planning", return_value=True) as dispatch_discussion_planning,
             mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=False) as dispatch_ready_tasks,
+            mock.patch.object(supervisor, "dispatch_chair_review", return_value=False) as dispatch_chair_review,
             mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False) as dispatch_underutilization_sidecars,
             mock.patch.object(supervisor, "process_queue", return_value=False),
             mock.patch.object(supervisor, "sync_github_bus", return_value=False),
@@ -1622,6 +1626,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
 
         dispatch_discussion_planning.assert_called_once()
         dispatch_ready_tasks.assert_not_called()
+        dispatch_chair_review.assert_not_called()
         dispatch_underutilization_sidecars.assert_not_called()
 
     def test_run_once_auto_materializes_accepted_session_before_execution_dispatch(self) -> None:
@@ -1683,6 +1688,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(supervisor, "poll_workers", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "load_discussion_planning_state", return_value=planning_state))
                 dispatch_discussion_planning = stack.enter_context(
                     mock.patch.object(supervisor, "dispatch_discussion_planning", return_value=False)
@@ -1690,6 +1696,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
                 dispatch_ready_tasks = stack.enter_context(
                     mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=True)
                 )
+                stack.enter_context(mock.patch.object(supervisor, "dispatch_chair_review", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
@@ -2205,6 +2212,7 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
             },
             "underutilization_dispatch": {
                 "enabled": True,
+                "require_recent_chair_signal": False,
                 "threshold_ratio": 0.5,
                 "continuous_window_seconds": 900,
                 "cooldown_seconds": 900,
@@ -2414,6 +2422,124 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         )
         activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
         self.assertEqual(activity_types, ["sidecar_wave_skipped"])
+
+    def test_requires_recent_chair_signal_when_gate_enabled(self) -> None:
+        self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {},
+            "chair_rotation": {"sidecar_approved_until": None},
+        }
+
+        changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            state["underutilization"]["last_sidecar_wave_reason"],
+            "awaiting chair review approval before creating sidecars",
+        )
+
+
+class ChairReviewDispatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self.config = {
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+                "state_file": str(self.root / "state.json"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "providers": {},
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running",
+                    "started",
+                    "waiting_approval",
+                    "manual_pending",
+                    "retry_backoff",
+                    "suspended_approval",
+                    "stalled",
+                    "fallback",
+                ],
+                "dependency_done_statuses": ["done"],
+            },
+            "chair_review": {
+                "enabled": True,
+                "cooldown_seconds": 1800,
+                "candidates": ["Codex", "Codex2", "Claude", "Claude2"],
+                "output_dir": str(self.root / "chair-reviews"),
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+            },
+        }
+
+    def test_dispatch_chair_review_rotates_and_records_pending_report(self) -> None:
+        state = {"queue": {"events": {}}, "workers": {}, "chair_rotation": {"current_index": 0}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:00:00Z"),
+        ):
+            changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_chair_agent"], "Codex")
+        self.assertEqual(state["chair_rotation"]["current_index"], 1)
+        self.assertEqual(state["chair_rotation"]["pending_review_agent"], "Codex")
+        self.assertTrue(str(state["chair_rotation"]["pending_review_path"]).endswith("-codex.md"))
+
+    def test_dispatch_chair_review_skips_when_planning_active(self) -> None:
+        state = {"queue": {"events": {}}, "workers": {}, "chair_rotation": {"current_index": 0}}
+
+        changed = supervisor.dispatch_chair_review(
+            self.config,
+            state,
+            planning_state={"status": "active", "planning_mode": "discussion_planning", "readouts": {}},
+        )
+
+        self.assertFalse(changed)
+
+    def test_dispatch_chair_review_falls_through_busy_candidate(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "status": "running",
+                }
+            },
+            "chair_rotation": {"current_index": 0},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:00:00Z"),
+        ):
+            changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_chair_agent"], "Codex2")
+        self.assertEqual(state["chair_rotation"]["current_index"], 2)
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):

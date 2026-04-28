@@ -2218,6 +2218,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   historyEl.innerHTML = "";
   const queueEvents = normalizeDispatchQueue(orchState, status);
   const runtimeSummary = dashboardBundle?.runtime_summary || {};
+  const chairSummary = dashboardBundle?.chair_summary || {};
   const supervisor = orchState?.supervisor || {};
   const supervisorPid = supervisor?.pid || "-";
   const supervisorStartedAt = supervisor?.started_at || orchState?.initialized_at || null;
@@ -2243,6 +2244,25 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
       </div>
   `;
   statusEl.appendChild(supervisorCard);
+
+  const chairCard = document.createElement("article");
+  chairCard.className = "sys-card";
+  const chairReviewSummary = Array.isArray(chairSummary.last_review_summary) ? chairSummary.last_review_summary : [];
+  chairCard.innerHTML = `
+      <div class="sys-card-head"><span class="sys-icon">🪑</span><strong>Chair Review</strong></div>
+      <div class="sys-card-body">
+        <span class="status-pill ${chairSummary.pending_review_path ? "status-working" : chairSummary.last_chair_run_at ? "status-done" : "status-blocked"}">${
+          chairSummary.pending_review_path ? "巡檢進行中" : chairSummary.last_chair_run_at ? "最近有巡檢" : "尚未巡檢"
+        }</span>
+        <span class="chip">Last Chair：${escapeHtml(actorLabel(chairSummary.last_chair_agent, null))}</span>
+        <span class="chip">上次派出：${escapeHtml(timeAgo(chairSummary.last_chair_run_at))}</span>
+        ${chairSummary.pending_review_agent ? `<span class="chip">Pending：${escapeHtml(actorLabel(chairSummary.pending_review_agent, null))}</span>` : ""}
+        ${chairSummary.last_review_path ? `<span class="chip">${escapeHtml(chairSummary.last_review_path)}</span>` : ""}
+        ${chairSummary.sidecar_approved_until ? `<span class="chip">Sidecar until ${escapeHtml(formatTime(chairSummary.sidecar_approved_until))}</span>` : ""}
+        ${chairReviewSummary.map((line) => `<div class="approval-item">${escapeHtml(line)}</div>`).join("")}
+      </div>
+  `;
+  statusEl.appendChild(chairCard);
 
   const dispatchCard = document.createElement("article");
   dispatchCard.className = "sys-card";

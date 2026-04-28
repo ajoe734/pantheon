@@ -17,16 +17,29 @@
     "enabled": true
   },
   "watcher": {
-    "poll_interval_seconds": 2.0,
+    "poll_interval_seconds": 300,
     "replay_on_start": false,
     "max_seen_events": 2000
   },
   "supervisor": {
-    "poll_interval_seconds": 2.0,
+    "poll_interval_seconds": 300,
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
+  },
+  "chair_review": {
+    "enabled": true,
+    "cooldown_seconds": 1800,
+    "candidates": [
+      "Codex",
+      "Codex2",
+      "Claude",
+      "Claude2"
+    ],
+    "task_id": "OPS-CHAIR-REVIEW",
+    "output_dir": ".orchestrator/chair-reviews",
+    "recent_summary_lines": 6
   },
   "provider_guardrails": {
     "pause_on_capacity_failure": true,

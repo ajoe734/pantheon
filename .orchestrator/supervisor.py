@@ -314,12 +314,17 @@ def event_dispatch_mode(event: dict[str, Any]) -> str:
     planning = metadata.get("planning")
     if isinstance(planning, dict) and planning:
         return "planning"
+    chair = metadata.get("chair")
+    if isinstance(chair, dict) and chair:
+        return "chair_review"
     coordination = metadata.get("coordination")
     if isinstance(coordination, dict) and coordination:
         return "coordination"
     reason = str(event.get("reason") or "").strip()
     if reason.startswith("discussion_planning_"):
         return "planning"
+    if reason.startswith("chair_review:"):
+        return "chair_review"
     if reason.startswith("coordination:"):
         return "coordination"
     return "execution"
@@ -328,6 +333,8 @@ def event_dispatch_mode(event: dict[str, Any]) -> str:
 def worker_dispatch_mode(worker: dict[str, Any]) -> str:
     if worker_is_discussion_planning(worker):
         return "planning"
+    if worker_is_chair_review(worker):
+        return "chair_review"
     if worker_is_coordination_dispatch(worker):
         return "coordination"
     return "execution"
@@ -338,6 +345,7 @@ def empty_mode_occupancy() -> dict[str, dict[str, int]]:
         "planning": {"running": 0, "pending": 0, "queued": 0},
         "execution": {"running": 0, "pending": 0, "queued": 0},
         "coordination": {"running": 0, "pending": 0, "queued": 0},
+        "chair_review": {"running": 0, "pending": 0, "queued": 0},
     }
 
 
@@ -1178,6 +1186,208 @@ def worker_is_coordination_dispatch(worker: dict[str, Any]) -> bool:
         return True
     reason = str(request_snapshot.get("reason") or worker.get("reason") or "").strip()
     return reason.startswith("coordination:")
+
+
+def worker_is_chair_review(worker: dict[str, Any]) -> bool:
+    request_snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = request_snapshot.get("metadata", {}) or {}
+    chair = metadata.get("chair")
+    if isinstance(chair, dict) and chair:
+        return True
+    reason = str(request_snapshot.get("reason") or worker.get("reason") or "").strip()
+    return reason.startswith("chair_review:")
+
+
+def chair_review_settings(config: dict[str, Any]) -> dict[str, Any]:
+    settings = dict(config.get("chair_review", {}) or {})
+    settings.setdefault("enabled", True)
+    settings.setdefault("cooldown_seconds", 1800)
+    settings.setdefault("candidates", ["Codex", "Codex2", "Claude", "Claude2"])
+    settings.setdefault("task_id", "OPS-CHAIR-REVIEW")
+    settings.setdefault("output_dir", ".orchestrator/chair-reviews")
+    settings.setdefault("recent_summary_lines", 6)
+    return settings
+
+
+def chair_review_output_dir(config: dict[str, Any]) -> Path:
+    raw_path = str(chair_review_settings(config).get("output_dir") or ".orchestrator/chair-reviews").strip()
+    path = Path(raw_path)
+    if not path.is_absolute():
+        try:
+            base_dir = config_path(config, "state_file").parent.parent
+        except KeyError:
+            status_file = ((config.get("paths", {}) or {}).get("status_file") or "").strip()
+            base_dir = Path(status_file).resolve().parent if status_file else THIS_DIR.parent
+        path = base_dir / path
+    return path
+
+
+def chair_rotation_state(state: dict[str, Any]) -> dict[str, Any]:
+    rotation = state.setdefault("chair_rotation", {})
+    rotation.setdefault("current_index", 0)
+    rotation.setdefault("last_chair_run_at", None)
+    rotation.setdefault("last_chair_agent", None)
+    rotation.setdefault("last_chair_reason", None)
+    rotation.setdefault("last_review_path", None)
+    rotation.setdefault("last_review_summary", None)
+    rotation.setdefault("pending_review_path", None)
+    rotation.setdefault("pending_review_agent", None)
+    rotation.setdefault("sidecar_approved_until", None)
+    return rotation
+
+
+def chair_review_summary_lines(path: Path, *, max_lines: int) -> list[str]:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    return lines[: max(1, max_lines)]
+
+
+def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    rotation = chair_rotation_state(state)
+    output_dir = chair_review_output_dir(config)
+    if not output_dir.exists():
+        return False
+    review_files = sorted(output_dir.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
+    if not review_files:
+        return False
+    latest = review_files[0]
+    summary_lines = chair_review_summary_lines(latest, max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)))
+    latest_relpath = relpath(latest)
+    changed = False
+    if rotation.get("last_review_path") != latest_relpath:
+        rotation["last_review_path"] = latest_relpath
+        changed = True
+    if rotation.get("last_review_summary") != summary_lines:
+        rotation["last_review_summary"] = summary_lines
+        changed = True
+    if rotation.get("pending_review_path") == latest_relpath:
+        rotation["pending_review_path"] = None
+        rotation["pending_review_agent"] = None
+        changed = True
+    return changed
+
+
+def chair_review_candidates(config: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for item in chair_review_settings(config).get("candidates", []):
+        agent_name = str(item or "").strip()
+        if not agent_name:
+            continue
+        agent_id = normalize_agent_id(agent_name)
+        if agent_id and agent_id in config.get("agents", {}):
+            candidates.append(display_name_for(config, agent_id))
+    return candidates
+
+
+def chair_review_cooldown_active(config: dict[str, Any], state: dict[str, Any], *, now: str) -> bool:
+    last_run = _parse_iso_utc(str(chair_rotation_state(state).get("last_chair_run_at") or ""))
+    current_dt = _parse_iso_utc(now)
+    if last_run is None or current_dt is None:
+        return False
+    return (current_dt - last_run).total_seconds() < float(chair_review_settings(config).get("cooldown_seconds", 1800))
+
+
+def chair_review_active(state: dict[str, Any]) -> bool:
+    for worker in state.get("workers", {}).values():
+        if str(worker.get("status") or "") in {"running", "started", "waiting_approval", "manual_pending", "retry_backoff", "suspended_approval", "stalled", "fallback"} and worker_is_chair_review(worker):
+            return True
+    return False
+
+
+def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_at: str) -> Path:
+    stamp = issued_at.replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
+    filename = f"{stamp}-{normalize_agent_id(agent_name) or agent_name.lower()}.md"
+    return chair_review_output_dir(config) / filename
+
+
+def build_chair_review_message(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    agent_name: str,
+    review_path: Path,
+) -> str:
+    approval_state = safe_load_approval_state(config)
+    paused_lanes = sorted((state.get("provider_guardrails", {}) or {}).get("dispatch_pauses", {}).keys())
+    underutilization = state.get("underutilization", {}) or {}
+    occupancy = (state.get("supervisor", {}) or {}).get("mode_occupancy", {}) or {}
+    queue_depth = len(load_event_queue(config))
+    return (
+        "你是本輪輪值主席，請做一次 operational review，不接主線實作。\n\n"
+        f"- Chair Agent: {agent_name}\n"
+        f"- Review Output: {relpath(review_path)}\n"
+        f"- Queue Depth: {queue_depth}\n"
+        f"- Pending Approvals: {len(approval_state.get('pending') or [])}\n"
+        f"- Paused Lanes: {', '.join(paused_lanes) if paused_lanes else 'none'}\n"
+        f"- Underutilization Ratio: {underutilization.get('last_ratio') if underutilization.get('last_ratio') is not None else 'unknown'}\n"
+        f"- Mode Occupancy: {json.dumps(occupancy, ensure_ascii=False)}\n\n"
+        "請檢查以下事項：\n"
+        "1. task board 是否有假的 in_progress（沒有 live worker）。\n"
+        "2. worker 是否跑錯 owner/reviewer 或 queue event 對不上。\n"
+        "3. dispatch queue / approval queue 是否有卡住太久的項目。\n"
+        "4. provider guardrail 是否讓主線無法推進。\n"
+        "5. review / review_approved 是否有長時間滯留。\n"
+        "6. sidecar 是否過多、重複、或缺少明確 parent support need。\n\n"
+        "請把結論寫成 markdown 檔，格式建議包含 Summary、Findings、Suggested Repairs、Sidecar Recommendation。\n"
+        "你可以提出 repair commands 或建立 OPS-/SUP- follow-up task 建議，但不要直接改 task owner/reviewer，也不要直接把 task 標成 done。\n"
+    )
+
+
+def queue_chair_review_event(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    agent_name: str,
+    reason: str,
+    issued_at: str,
+) -> str:
+    agent = agent_config_for(config, agent_name)
+    review_path = chair_review_report_path(config, agent_name, issued_at=issued_at)
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    queue_payload = {
+        "event_id": new_runtime_id("evt"),
+        "created_at": issued_at,
+        "event_key": f"chair:{normalize_agent_id(agent_name)}:{reason}:{issued_at}",
+        "task_id": None,
+        "target_agent": agent["id"],
+        "target_display_name": display_name_for(config, agent["id"]),
+        "provider": agent.get("provider", agent["id"]),
+        "reason": reason,
+        "message": build_chair_review_message(config, state, agent_name=agent_name, review_path=review_path),
+        "context_files": [relpath(path) for path in selected_shared_files(config)],
+        "target_files": [relpath(review_path)],
+        "metadata": {
+            "chair": {
+                "mode": "chair_review",
+                "agent": agent_name,
+                "review_path": relpath(review_path),
+            }
+        },
+    }
+    enqueue_event(config, queue_payload)
+    rotation = chair_rotation_state(state)
+    rotation["last_chair_run_at"] = issued_at
+    rotation["last_chair_agent"] = agent_name
+    rotation["last_chair_reason"] = reason
+    rotation["pending_review_path"] = relpath(review_path)
+    rotation["pending_review_agent"] = agent_name
+    write_activity_log(
+        config,
+        {
+            "type": "chair_review_queued",
+            "task_id": chair_review_settings(config).get("task_id"),
+            "target_agent": display_name_for(config, agent["id"]),
+            "delivery_mode": config.get("providers", {}).get(agent.get("provider", agent["id"]), {}).get(
+                "delivery_mode", agent.get("adapter", "file_inbox")
+            ),
+            "message": f"Chair review queued for {agent_name}: {reason}",
+            "queue_event_id": queue_payload["event_id"],
+        },
+    )
+    return queue_payload["event_key"]
 
 
 def queue_discussion_planning_event(
@@ -3211,6 +3421,7 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
 def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("underutilization_dispatch", {}) or {})
     settings.setdefault("enabled", True)
+    settings.setdefault("require_recent_chair_signal", True)
     settings.setdefault("threshold_ratio", 0.5)
     settings.setdefault("continuous_window_seconds", 900)
     settings.setdefault("cooldown_seconds", 900)
@@ -4478,9 +4689,58 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
     return changed
 
 
+def dispatch_chair_review(config: dict[str, Any], state: dict[str, Any], planning_state: dict[str, Any] | None = None) -> bool:
+    settings = chair_review_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    if discussion_planning_is_active(planning_state):
+        return False
+    if chair_review_active(state):
+        return False
+    now = utc_now()
+    if chair_review_cooldown_active(config, state, now=now):
+        return False
+
+    candidates = chair_review_candidates(config)
+    if not candidates:
+        return False
+
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
+    pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    seen = state.setdefault("seen_event_keys", {})
+    status = load_status(config)
+    task_map = task_index_from_status(config, status)
+    rotation = chair_rotation_state(state)
+    start_index = int(rotation.get("current_index") or 0) % len(candidates)
+
+    for offset in range(len(candidates)):
+        agent_name = candidates[(start_index + offset) % len(candidates)]
+        agent_id = normalize_agent_id(agent_name)
+        if not agent_id or agent_id not in config.get("agents", {}):
+            continue
+        if agent_dispatch_paused(config, state, agent_id):
+            continue
+        if agent_id in active_agents or agent_id in pending_agents:
+            continue
+        if agent_has_dispatchable_primary_work(config, status, agent_name, task_map):
+            continue
+        reason = "chair_review:operational_review"
+        event_key = f"chair:{agent_id}:{reason}:{now}"
+        if event_key in pending_event_keys:
+            continue
+        queued_event_key = queue_chair_review_event(config, state, agent_name=agent_name, reason=reason, issued_at=now)
+        seen[queued_event_key] = now
+        pending_event_keys.add(queued_event_key)
+        rotation["current_index"] = (start_index + offset + 1) % len(candidates)
+        return True
+    return False
+
+
 def dispatch_underutilization_sidecars(config: dict[str, Any], state: dict[str, Any]) -> bool:
     settings = underutilization_settings(config)
     tracking = state.setdefault("underutilization", {})
+    rotation = chair_rotation_state(state)
     productive_statuses = {str(value) for value in settings.get("productive_worker_statuses", [])}
     ratio = utilization_ratio_for_sidecars(config, state, productive_statuses)
     threshold = float(settings.get("threshold_ratio", 0.5))
@@ -4491,6 +4751,13 @@ def dispatch_underutilization_sidecars(config: dict[str, Any], state: dict[str, 
     if not settings.get("enabled", True):
         tracking["below_threshold_since"] = None
         return changed
+
+    if settings.get("require_recent_chair_signal", True):
+        approval_until = _parse_iso_utc(str(rotation.get("sidecar_approved_until") or ""))
+        current_dt = _parse_iso_utc(now)
+        if approval_until is None or current_dt is None or current_dt > approval_until:
+            tracking["last_sidecar_wave_reason"] = "awaiting chair review approval before creating sidecars"
+            return changed
 
     if ratio >= threshold:
         if tracking.get("below_threshold_since") is not None:
@@ -4721,6 +4988,7 @@ def run_once(
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
+        changed = refresh_chair_review_state(config, state) or changed
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
@@ -4728,6 +4996,7 @@ def run_once(
             changed = dispatch_discussion_planning(config, state, planning_state) or changed
         else:
             changed = dispatch_ready_tasks(config, state) or changed
+            changed = dispatch_chair_review(config, state, planning_state) or changed
             changed = dispatch_underutilization_sidecars(config, state) or changed
         changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
@@ -4785,7 +5054,7 @@ def main() -> int:
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
-    poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 2.0))
+    poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 300.0))
     console_log(
         f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",
         quiet=args.quiet,
