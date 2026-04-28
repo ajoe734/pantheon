@@ -1155,6 +1155,14 @@ details[open].cockpit-details .cockpit-details-summary::before {
   align-items: start;
 }
 
+.board-context {
+  grid-column: 1 / -1;
+  min-width: min(100%, 960px);
+  box-shadow: none;
+  border-color: rgba(20, 104, 94, 0.22);
+  background: rgba(20, 104, 94, 0.07);
+}
+
 .board-column {
   min-width: 260px;
   border-radius: var(--radius-lg);

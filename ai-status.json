@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-24T12:11:04Z",
+  "updated_at": "2026-04-28T07:44:32Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -121,11 +121,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "APP-003-RUNTIME-PROOF-RECON-001"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-24T10:35:58Z"
+      "next": "Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements.",
+      "last_update": "2026-04-28T07:44:32Z"
     },
     {
       "name": "Codex2",
@@ -290,6 +292,40 @@
       "review_notes_zh": [
         "packet 已核對：BFF route / projection / authority mapping 與 support handoff 一致；linked_evidence contract gap、transcript gate 與 partial activation 邊界敘述清楚，可交由 parent owner 決定是否吸收進主線。"
       ]
+    },
+    {
+      "id": "APP-003-RUNTIME-PROOF-RECON-001",
+      "title": "Reconcile runtime proof coverage and coordination exceptions",
+      "summary_zh": "把 dashboard 仍顯示 runtime_verified=false 的 14 個 frontend coordination features 拉成正式追蹤，核對既有 APP-003-RUNTIME-PROOF-001/002 證據，修正 coordinator metadata 或補缺失 runtime proof，並保留 16 個 superseded tasks 的 audit trail。CW-03 partial route 與 KW-01 frontend-feedback metadata 例外必須在看板上可見且有明確結論。",
+      "phase": "Execution / Runtime Verification Reconciliation",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "docs/deployment/runtime-verification-batch-1-consultation-knowledge.md",
+        "docs/deployment/runtime-verification-batch-2-operator-trainer-residuals.md",
+        "docs-site/dashboard-bundle.json",
+        ".orchestrator/state.json",
+        ".coordination/requests",
+        ".coordination/responses",
+        "ai-task-archive/tasks"
+      ],
+      "acceptance": [
+        "14 runtime-pending features are reconciled against stored runtime proof or split into explicit follow-up blockers",
+        "current 32/46 dashboard count is explained against archived APP-003-RUNTIME-PROOF-001/002 claims of 46/46",
+        "coordination metadata reflects KW-01 frontend-feedback evidence or records a tracked exception",
+        "CW-03 committee-board partial/lovable_ready exception is documented or resolved without hiding the partial boundary",
+        "16 superseded archive records remain visible/auditable and are confirmed non-active",
+        "docs-site dashboard regenerates with truthful runtime_verified/runtime_pending counts"
+      ],
+      "next": "Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements.",
+      "last_update": "2026-04-28T07:44:32Z",
+      "task_class": "execution",
+      "mutates_canonical": true,
+      "review_notes_zh": [
+        "審核通過：dashboard bundle 顯示 tracked_features 46、runtime_verified 46、frontend_feedback_received 46、runtime pending 0；14 個 reconciled frontend-feedback response 均含 runtime proof ref 與 APP-003-RUNTIME-PROOF-RECON-001 標記；CW-03 partial/lovable_ready=false 與 KW-01 Pantheon-side frontend-feedback 路徑在看板可見；archive_summary 保留 superseded 16。驗證已跑 scripts/test_ai_status.py、py_compile、YAML parse 與 proof-ref existence checks。"
+      ]
     }
   ],
   "handoffs": [
@@ -373,6 +409,32 @@
       "status": "done",
       "created_at": "2026-04-20T16:45:43Z",
       "resolved_at": "2026-04-20T17:15:00Z"
+    },
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-RECON-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Runtime proof reconciliation is ready for review. Dashboard now reports runtime_verified 46/46, frontend_feedback_received 46/46, runtime pending 0. Added machine-readable runtime proof refs to the 14 pending closeout responses, added missing PKT-004 response closeouts, documented the 16 superseded archive records as terminal audit records in docs/deployment/runtime-verification-reconciliation-2026-04-28.md, and verified with scripts/test_ai_status.py plus py_compile/YAML parse checks.",
+      "status": "done",
+      "created_at": "2026-04-28T05:41:37Z",
+      "resolved_at": "2026-04-28T07:41:04Z"
+    },
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-RECON-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-28T07:41:04Z",
+      "resolved_at": "2026-04-28T07:44:32Z"
+    },
+    {
+      "task_id": "APP-003-RUNTIME-PROOF-RECON-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements.",
+      "status": "pending",
+      "created_at": "2026-04-28T07:44:32Z"
     }
   ],
   "blockers": [],
@@ -414,12 +476,12 @@
       "todo": 0
     },
     "Codex": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Codex2": {

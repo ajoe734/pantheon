@@ -2032,6 +2032,7 @@ def coordination_state_flags(feature: dict[str, Any]) -> dict[str, bool]:
     backend_delivery = coordination_payload_entry(feature, "responses", "backend-delivery")
     ui_done = coordination_payload_entry(feature, "requests", "ui-done")
     frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+    frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
     bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
     needs_runtime = coordination_payload_entry(feature, "requests", "needs-runtime")
 
@@ -2052,11 +2053,11 @@ def coordination_state_flags(feature: dict[str, Any]) -> dict[str, bool]:
         or coordination_audit_matches(front_root, feature_id, "received")
     )
 
-    lovable_consumed = any(bool(entry) for entry in (ui_done, frontend_feedback, bff_gap, needs_runtime))
-    ui_activated = any(bool(entry) for entry in (ui_done, frontend_feedback))
+    lovable_consumed = any(bool(entry) for entry in (ui_done, frontend_feedback, frontend_feedback_response, bff_gap, needs_runtime))
+    ui_activated = any(bool(entry) for entry in (ui_done, frontend_feedback, frontend_feedback_response))
     runtime_verified = any(
         coordination_payload_has_runtime_verification(entry)
-        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, backend_delivery)
+        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, frontend_feedback_response, backend_delivery)
     )
 
     return {
@@ -2290,7 +2291,9 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
         contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
         lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
         ui_done = coordination_payload_entry(feature, "requests", "ui-done")
-        frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+        frontend_feedback_request = coordination_payload_entry(feature, "requests", "frontend-feedback")
+        frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
+        frontend_feedback = frontend_feedback_request or frontend_feedback_response
         bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
         review = coordination_review_snapshot(feature_id)
         stage, next_action = coordination_stage(feature)

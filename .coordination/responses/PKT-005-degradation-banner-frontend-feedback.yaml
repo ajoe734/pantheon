@@ -3,6 +3,9 @@ type: frontend-feedback
 source_repo: ajoe734/pantheon
 reviewed_by: Codex
 reviewed_at: '2026-04-24T12:08:13Z'
+runtime_verified_at: '2026-04-28T05:37:21Z'
+verified_runtime_ref: .coordination/reviews/PKT-005-degradation-banner-review.md
+runtime_reconciliation_task: APP-003-RUNTIME-PROOF-RECON-001
 reviewed_commit: 0ee754bf0228a6998ace115f3277fdc30bcb15e1
 reviewed_source_commit: 8cbedf42342c3e67f80e5fe8e5d4f7f1e02c785f
 request_pair_commit: 68fc766daf6f7d0eecafed38b965894de35a42e6

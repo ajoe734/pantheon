@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260428-0142";
+} from "./dashboard-config.js?v=20260428-0748";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";

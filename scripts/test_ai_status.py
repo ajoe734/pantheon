@@ -1743,11 +1743,84 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
             mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_local_coordination_payload", return_value=None),
         ):
             bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
 
         feature = bundle["coordination_summary"]["features"][0]
         self.assertEqual(feature["stage"], "loop_complete")
+
+    def test_build_dashboard_bundle_counts_pantheon_frontend_feedback_response_as_feedback_and_runtime_proof(self) -> None:
+        state = {
+            "updated_at": "2026-04-14T02:00:00Z",
+            "agents": [],
+            "tasks": [],
+        }
+        planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-14T02:05:00Z"},
+            "queue": {"events": {}},
+            "workers": {},
+            "coordination": {
+                "last_scan_at": "2026-04-14T02:04:00Z",
+                "features": {
+                    "KW-01-institutional-memory": {
+                        "feature_id": "KW-01-institutional-memory",
+                        "screen": "institutional-memory",
+                        "summary": "Pantheon closeout proof ready",
+                        "current_payload_type": "lovable-ui-task",
+                        "source_repo": "ajoe734/pantheon",
+                        "source_repo_id": "pantheon",
+                        "target_agent": "Gemini",
+                        "worker_kind": "runtime-worker",
+                        "last_updated_at": "2026-04-14T02:04:00Z",
+                        "last_dispatched_at": "2026-04-14T02:03:00Z",
+                        "requests_by_type": {
+                            "ui-done": {
+                                "type": "ui-done",
+                                "path": "../front-ai-trading-system/.coordination/requests/KW-01-institutional-memory-ui-done.yaml",
+                                "payload": {"type": "ui-done", "summary": "UI ready"},
+                                "updated_at": "2026-04-14T02:03:30Z",
+                            },
+                        },
+                        "responses_by_type": {
+                            "frontend-feedback": {
+                                "type": "frontend-feedback",
+                                "path": ".coordination/responses/KW-01-institutional-memory-frontend-feedback.yaml",
+                                "payload": {
+                                    "type": "frontend-feedback",
+                                    "disposition": "close",
+                                    "can_close": True,
+                                    "runtime_verified_at": "2026-04-14T02:04:30Z",
+                                    "verified_runtime_ref": ".coordination/reviews/KW-01-institutional-memory-review.md",
+                                },
+                                "updated_at": "2026-04-14T02:04:30Z",
+                            },
+                        },
+                    }
+                },
+            },
+        }
+        approval_state = {"pending": [], "history": []}
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "load_archive_index",
+                return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
+            ),
+            mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
+            mock.patch.object(ai_status, "coordination_repo_root", return_value=None),
+        ):
+            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        feature = bundle["coordination_summary"]["features"][0]
+        self.assertEqual(feature["stage"], "loop_complete")
+        self.assertTrue(feature["has_frontend_feedback"])
+        self.assertEqual(feature["paths"]["frontend_feedback"], ".coordination/responses/KW-01-institutional-memory-frontend-feedback.yaml")
+        self.assertTrue(feature["state_flags"]["runtime_verified"])
+        self.assertEqual(bundle["coordination_summary"]["counts"]["frontend_feedback_received"], 1)
+        self.assertEqual(bundle["coordination_summary"]["counts"]["runtime_verified"], 1)
 
     def test_build_dashboard_bundle_marks_closed_scope_when_followup_response_has_no_active_next_step(self) -> None:
         state = {
@@ -1814,6 +1887,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
             mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_local_coordination_payload", return_value=None),
         ):
             bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
 

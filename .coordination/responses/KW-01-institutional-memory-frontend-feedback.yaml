@@ -3,6 +3,9 @@ type: frontend-feedback
 source_repo: ajoe734/pantheon
 reviewed_by: Codex
 reviewed_at: '2026-04-20T13:48:43Z'
+runtime_verified_at: '2026-04-28T05:37:21Z'
+verified_runtime_ref: docs/deployment/runtime-verification-batch-1-consultation-knowledge.md
+runtime_reconciliation_task: APP-003-RUNTIME-PROOF-RECON-001
 reviewed_commit: 78f022e787b08787d1e3feebd79794a51780e270
 ui_done_source_commit: ba560610044d5f11c97b2b48cfb5b7621d812e4e
 feedback_bundle_commit: 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4

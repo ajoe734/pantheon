@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260428-0142";
+} from "./dashboard-config.js?v=20260428-0748";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -28,7 +28,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260428-0142";
+} from "./dashboard-core.js?v=20260428-0748";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -287,6 +287,45 @@ export function renderTaskBoard(status, orchState, dashboardBundle = null) {
   const board = qs("#task-board");
   if (!board) return;
   board.innerHTML = "";
+
+  const canonicalTasks = status.tasks || [];
+  const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  const pendingProposals = Array.isArray(bridgeSummary.pending_proposals) ? bridgeSummary.pending_proposals : [];
+  const openTaskCount = canonicalTasks.filter((task) => !terminalTaskStatus(task.status)).length;
+  const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
+  if (!openTaskCount && archivedTotal) {
+    const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+    const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
+    const contextCard = document.createElement("article");
+    contextCard.className = "stack-card board-context";
+    contextCard.innerHTML = `
+      <div class="stack-head">
+        <strong>Active task board 目前沒有 open task</strong>
+        <span class="status-pill status-ready">archive intact</span>
+      </div>
+      <p class="card-copy">目前看板只顯示 active lifecycle task；已完成或已取代的工作已移到 <code>ai-task-archive</code>，不是被刪掉。</p>
+      <div class="lane-meta">
+        <span class="chip">Archived total ${archivedTotal}</span>
+        <span class="chip">Completed ${archivedDone}</span>
+        <span class="chip">Superseded ${archivedSuperseded}</span>
+        <span class="chip">Active open ${openTaskCount}</span>
+      </div>
+      ${
+        pendingProposals.length
+          ? `
+            <div class="review-block">
+              <p class="review-title">Pending planning bridge</p>
+              <ul class="note-list compact-list">
+                ${pendingProposals.slice(0, 4).map((task) => `<li><strong>${escapeHtml(task.id || "-")}</strong>：${escapeHtml(task.title || task.summary_zh || "尚未填寫")}</li>`).join("")}
+              </ul>
+            </div>
+          `
+          : ""
+      }
+    `;
+    board.appendChild(contextCard);
+  }
 
   const truth = buildTruthMismatches(status, orchState);
   const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
@@ -727,6 +766,8 @@ export function renderLovableCoordinationSummary(dashboardBundle = null) {
   const features = Array.isArray(summary.features) ? summary.features : [];
   const loopComplete = features.filter((feature) => feature.stage === "loop_complete").length;
   const followUp = features.filter((feature) => feature.stage && feature.stage !== "loop_complete").length;
+  const runtimeVerified = Number.isFinite(counts.runtime_verified) ? counts.runtime_verified : 0;
+  const runtimePending = Math.max(features.length - runtimeVerified, 0);
 
   const summaryCard = document.createElement("article");
   summaryCard.className = "stack-card";
@@ -745,6 +786,8 @@ export function renderLovableCoordinationSummary(dashboardBundle = null) {
       <span class="chip">ui-done ${counts.ui_done_received || 0}</span>
       <span class="chip">feedback ${counts.frontend_feedback_received || 0}</span>
       <span class="chip">open BFF gap ${counts.open_bff_gaps || 0}</span>
+      <span class="chip">runtime verified ${runtimeVerified}/${features.length}</span>
+      <span class="chip ${runtimePending ? "status-review" : "status-ready"}">runtime pending ${runtimePending}</span>
     </div>
   `;
   container.appendChild(summaryCard);
@@ -809,6 +852,9 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const container = qs("#overview-metrics");
   if (!container) return;
   const tasks = status.tasks || [];
+  const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  const coordinationCounts = dashboardBundle?.coordination_summary?.counts || {};
 
   const todo          = tasks.filter((t) => String(t.status || "").toLowerCase() === "todo").length;
   const inProgress    = tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
@@ -816,6 +862,32 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const reviewApproved= tasks.filter((t) => String(t.status || "").toLowerCase() === "review_approved").length;
   const done          = tasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
   const blocked       = tasks.filter((t) => String(t.status || "").toLowerCase() === "blocked").length;
+  const activeOpen = todo + inProgress + review + reviewApproved + blocked;
+
+  const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
+  if (!activeOpen && archivedTotal) {
+    const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+    const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
+    const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
+    const trackedFeatures = Number.isFinite(coordinationCounts.tracked_features) ? coordinationCounts.tracked_features : 0;
+    const runtimeVerified = Number.isFinite(coordinationCounts.runtime_verified) ? coordinationCounts.runtime_verified : 0;
+    const items = [
+      { label: "Active Open", value: 0, tone: "card-done" },
+      { label: "Archived Done", value: archivedDone, tone: "card-done" },
+      { label: "Superseded", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "" },
+      { label: "Frontend Loops", value: trackedFeatures, tone: trackedFeatures ? "card-active" : "" },
+      { label: "Runtime Proof", value: trackedFeatures ? `${runtimeVerified}/${trackedFeatures}` : "0/0", tone: runtimeVerified < trackedFeatures ? "card-review" : "card-done" },
+      { label: "Pending Bridge", value: pendingBridge, tone: pendingBridge ? "card-review" : "card-done" },
+    ];
+
+    container.innerHTML = items.map((item) => `
+      <article class="metric-card ${item.tone}">
+        <div class="metric-label">${item.label}</div>
+        <div class="metric-value">${item.value}</div>
+      </article>
+    `).join("");
+    return;
+  }
 
   const items = [
     { label: "待開始",    value: todo,           tone: "" },
@@ -2448,16 +2520,25 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     .join("");
 }
 
-export function renderProgressBar(tasks) {
+export function renderProgressBar(tasks, dashboardBundle = null) {
   const total = (tasks || []).length;
   const done = (tasks || []).filter((t) => t.status === "done").length;
   const approved = (tasks || []).filter((t) => t.status === "review_approved").length;
   const open = (tasks || []).filter((t) => ["todo", "in_progress", "review", "blocked"].includes(String(t.status || "").toLowerCase())).length;
+  const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
+  const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+  const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
   const pct = total ? Math.round((done / total) * 100) : 0;
   const label = qs("#progress-label");
   const fill = qs("#progress-fill");
-  if (label) label.textContent = `Sprint 進度：正式完成 ${done} / ${total} (${pct}%) · 待收尾 ${approved} · 其他 open ${open}`;
-  if (fill) fill.style.width = `${pct}%`;
+  if (label) {
+    label.textContent = open === 0 && archivedTotal
+      ? `Active board 已清空 · Archive completed ${archivedDone} / ${archivedTotal} · Pending bridge ${pendingBridge}`
+      : `Sprint 進度：正式完成 ${done} / ${total} (${pct}%) · 待收尾 ${approved} · 其他 open ${open}`;
+  }
+  if (fill) fill.style.width = open === 0 && archivedTotal ? "100%" : `${pct}%`;
 }
 
 export function renderActivity(entries) {
@@ -2726,11 +2807,14 @@ export function applyModeVisibility(status, planningState) {
   }
   planningSummary.innerHTML = summaryChips.join("");
 
+  const hasOpenExecutionWork = (status.tasks || []).some((task) => !terminalTaskStatus(task.status));
   const executionPreferenceKey = "dashboard:panel:execution";
   const storedExecutionPreference = safeReadStorage(executionPreferenceKey);
   const executionCollapsed = focusMode === "planning"
     ? (storedExecutionPreference ? storedExecutionPreference === "collapsed" : true)
-    : (storedExecutionPreference ? storedExecutionPreference === "collapsed" : false);
+    : hasOpenExecutionWork
+      ? false
+      : (storedExecutionPreference ? storedExecutionPreference === "collapsed" : false);
 
   executionShell.classList.toggle("mode-collapsed", executionCollapsed);
   executionToggle.textContent = executionCollapsed ? "展開" : "收合";

@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-04-24 20:11:04
+Last updated: 2026-04-28 15:44:32
 
 ## Objective
 
@@ -39,7 +39,7 @@ Last updated: 2026-04-24 20:11:04
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Qwen`: integration, schema, acceptance, code-agent; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-04-24 20:11:04
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `APP-003-RUNTIME-PROOF-RECON-001` | Execution / Runtime Verification Reconciliation | Reconcile runtime proof coverage and coordination exceptions | Codex | review_approved | - | 把 dashboard 仍顯示 runtime_verified=false 的 14 個 frontend coordination features 拉成正式追蹤，核對既有 APP-003-RUNTIME-PROOF-001/002 證據，修正 coordinator metadata 或補缺失 runtime proof，並保留 16 個 superseded tasks 的 audit trail。CW-03 partial route 與 KW-01 frontend-feedback metadata 例外必須在看板上可見且有明確結論。 |
 
 ### External / Upstream Integration Work
 
@@ -66,12 +66,13 @@ Last updated: 2026-04-24 20:11:04
 | `LUV-REVIEW-015` | Execution / Lovable Review Closeout | Review returned frontend feedback and close loop for governance-audit-rail | 審閱 PKT-009-governance-audit-rail 的 frontend feedback bundle，判定是否直接關閉、補小修，或拆出具體 follow-up。 | Gemini | Codex2 | done | - | 2026-04-17 22:36:00 | Owner finalized approved task and closed it. Frontend feedback bundle is contract-correct and ready for loop closure. |
 | `STATE-REBASE-001-SIDECAR-ACCEPTANCE` | Execution / Wave 1 - State Rebaseline | [Sidecar] [Auto] [Parent STATE-REBASE-001] Prepare STATE-REBASE-001 acceptance packet and dependency map | 平行支援 STATE-REBASE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | done | - | 2026-04-20 00:45:00 | Owner finalized approved sidecar acceptance packet and closed it. Verification confirmed for STATE-REBASE-001. |
 | `EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF` | Execution / Frontend Lane Implementation | [Sidecar] [Auto] [Parent EXEC-FRONT-CW03-PARTIAL-001] Prepare EXEC-FRONT-CW03-PARTIAL-001 BFF and frontend handoff packet | 平行支援 EXEC-FRONT-CW03-PARTIAL-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini | Codex2 | done | - | 2026-04-21 01:15:00 | Owner finalized approved sidecar handoff packet and closed it. |
+| `APP-003-RUNTIME-PROOF-RECON-001` | Execution / Runtime Verification Reconciliation | Reconcile runtime proof coverage and coordination exceptions | 把 dashboard 仍顯示 runtime_verified=false 的 14 個 frontend coordination features 拉成正式追蹤，核對既有 APP-003-RUNTIME-PROOF-001/002 證據，修正 coordinator metadata 或補缺失 runtime proof，並保留 16 個 superseded tasks 的 audit trail。CW-03 partial route 與 KW-01 frontend-feedback metadata 例外必須在看板上可見且有明確結論。 | Codex | Codex2 | review_approved | - | 2026-04-28 15:44:32 | Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `APP-003-RUNTIME-PROOF-RECON-001` | Codex2 | Codex | Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements. | pending | 2026-04-28 15:44:32 |
 
 ## Blockers
 
@@ -86,15 +87,16 @@ Last updated: 2026-04-24 20:11:04
 | `LUV-REVIEW-015` | Codex2 | 前端 feedback 與 review packet 已核對完成；契約、降級語義、篩選 round-trip 與 replayability 皆符合 PKT-009 要求，無需再開 follow-up。 | .coordination/reviews/PKT-009-governance-audit-rail-review.md |
 | `STATE-REBASE-001-SIDECAR-ACCEPTANCE` | Claude | Sidecar acceptance packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）依賴圖涵蓋 ai-status.json 中全部主線 STATE-REBASE-001 依賴任務；（3）引用的 docs/reviews/2026-04-19-state-rebaseline-001.md 確認存在，recompute_agents() 已在 ai_status.py:991 驗證。Packet 可作為 STATE-REBASE-001 正式 done 的支援材料。 | support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md |
 | `EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF` | Codex2 | packet 已核對：BFF route / projection / authority mapping 與 support handoff 一致；linked_evidence contract gap、transcript gate 與 partial activation 邊界敘述清楚，可交由 parent owner 決定是否吸收進主線。 | - |
+| `APP-003-RUNTIME-PROOF-RECON-001` | Codex2 | 審核通過：dashboard bundle 顯示 tracked_features 46、runtime_verified 46、frontend_feedback_received 46、runtime pending 0；14 個 reconciled frontend-feedback response 均含 runtime proof ref 與 APP-003-RUNTIME-PROOF-RECON-001 標記；CW-03 partial/lovable_ready=false 與 KW-01 Pantheon-side frontend-feedback 路徑在看板可見；archive_summary 保留 superseded 16。驗證已跑 scripts/test_ai_status.py、py_compile、YAML parse 與 proof-ref existence checks。 | - |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-04-24 20:10:53
+- Last coordination scan: 2026-04-28 15:42:25
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
 - UI-done returned: `46`
-- Frontend feedback returned: `45`
+- Frontend feedback returned: `46`
 - Open BFF gaps: `0`
 - Backend route live: `45`
 - Pantheon handoff published: `45`
@@ -103,7 +105,7 @@ Last updated: 2026-04-24 20:11:04
 - Receiver-visible payload on front default branch: `45`
 - Lovable consumed packet: `46`
 - UI activated: `46`
-- Runtime verified: `32`
+- Runtime verified: `46`
 
 | Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |
 |---|---|---|---|---|---|---|---|
@@ -112,12 +114,12 @@ Last updated: 2026-04-24 20:11:04
 | `CW-03-committee-board` | consultation-committee-board | `loop_complete` | no | no | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `CW-04-redteam-memo` | redteam-memo | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `EW-05-mutation-review` | mutation-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `F-042` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-01-institutional-memory` | institutional-memory | `loop_complete` | yes | yes | yes | no | Pantheon closeout record marks the current packet loop complete. |
+| `F-042` | promotion-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
+| `KW-01-institutional-memory` | institutional-memory | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `KW-02-research-notes` | knowledge-research-notes | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `KW-03-evidence-refs` | knowledge-evidence-refs | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `KW-04-insight-cards` | knowledge-insight-cards | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-05-strategy-spec` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
+| `KW-05-strategy-spec` | knowledge-strategy-spec | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-001-deployment-review` | deployment-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-001-governance-review-queue` | governance-review-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-002-incident-action-drawer` | incident-action-drawer | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
@@ -125,12 +127,12 @@ Last updated: 2026-04-24 20:11:04
 | `PKT-002-incident-home` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-003-evolution-center` | evolution-center | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-003-inspiration-graph` | inspiration-graph | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-lineage-view` | lineage-view | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
+| `PKT-003-lineage-view` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-003-post-incident-review` | post-incident-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-004-capital-binding-drilldowns` | capital-binding-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-004-deployment-approval-drilldowns` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-004-persona-drilldowns` | persona-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-persona-management` | persona-management | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
+| `PKT-004-persona-management` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-005-degradation-banner` | global-degradation-banner | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-005-sse-substrate` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
 | `PKT-006-approval-queue` | governance-approval-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
@@ -156,23 +158,23 @@ Last updated: 2026-04-24 20:11:04
 
 ## Latest Checkpoints
 
-- 2026-04-24 19:43:26 Codex2: `APP-003-PKT005-SSE-REPUBLISH-001` Supervisor auto-started APP-003-PKT005-SSE-REPUBLISH-001 after successful dispatch.
-- 2026-04-24 19:43:38 Orchestrator: `APP-003-PKT005-SSE-REPUBLISH-001` Supervisor auto-started APP-003-PKT005-SSE-REPUBLISH-001 after successful dispatch.
-- 2026-04-24 19:44:41 Codex2: `APP-003-PKT005-SSE-REPUBLISH-001` Preparing narrow PKT-005 republish: commit the corrected front request pair to a reachable source_commit and then update Pantheon delivery tracking with the Git-visible evidence.
-- 2026-04-24 19:45:06 Orchestrator: SessionStart: SessionStart
-- 2026-04-24 19:45:18 Orchestrator: SessionEnd: SessionEnd
-- 2026-04-24 19:46:49 Codex2: `APP-003-PKT005-SSE-REPUBLISH-001` Handoff to Codex: Completed the narrow PKT-005 republish. Front repo commit c63eebc8fb93c8be954725b26dcf662237f67c01 republishes both request files and points them to reachable source_commit 87088d718dcbc6f07cc66932f44b5f16985583a9. Pantheon commit 0ee754b syncs docs/pantheon-delivery/PKT-005-sse-substrate/DELIVERY_NOTE.md to delivered with the republish evidence. No new contract or BFF gap was opened.
-- 2026-04-24 19:47:21 Orchestrator: `APP-003-PKT005-SSE-REPUBLISH-001` Worker superseded after task responsibility moved to another agent.
-- 2026-04-24 19:47:23 Orchestrator: `APP-003-PKT005-SSE-REPUBLISH-001` Review task is in review, but branch `codex/2026-04-21-exec-sync` is not pushed to `origin` yet.
-- 2026-04-24 19:49:49 Orchestrator: `PKT-005-sse-substrate` GitHub coordination issue synced for PKT-005-sse-substrate in ajoe734/pantheon.
-- 2026-04-24 19:49:54 Orchestrator: SessionStart: SessionStart
-- 2026-04-24 19:50:00 Orchestrator: Stop: Stop
-- 2026-04-24 19:50:01 Orchestrator: SessionEnd: SessionEnd
-- 2026-04-24 19:50:28 Orchestrator: `PKT-005-sse-substrate` Mirrored backend-delivery bundle into front_ai_trading_system.
-- 2026-04-24 19:50:30 Orchestrator: `PKT-005-sse-substrate` GitHub coordination issue synced for PKT-005-sse-substrate in ajoe734/front-ai-trading-system.
-- 2026-04-24 19:50:35 Codex: `APP-003-PKT005-SSE-REPUBLISH-001` Narrow republish completed and absorbed into the refreshed PKT-005-sse-substrate closeout. Front origin/main now publishes reviewed UI snapshot 9725e0b638c53c0e3b21164c0a08fbb36851f806 plus request-pair republish 118c9647e1bb42f4a7a727201dcb9593e54a88e9, so no separate active follow-up task remains.
-- 2026-04-24 19:51:17 Orchestrator: underutilized but no sidecar candidates matched the catalog or dynamic fallback
-- 2026-04-24 19:57:26 Orchestrator: `PKT-005-sse-substrate` Mirrored backend-delivery bundle into front_ai_trading_system.
-- 2026-04-24 19:57:42 Orchestrator: `PKT-005-sse-substrate` GitHub coordination issue synced for PKT-005-sse-substrate in ajoe734/front-ai-trading-system.
-- 2026-04-24 19:58:49 Orchestrator: `PKT-005-sse-substrate` fatal: command line, 'showDelayedUpdateNote|SSE contract gap detected|acknowledgeEvent|markApplied|setRefreshKey\(|setDetailRefreshKey\(|setResponse\(|killSwitchActivated|Connected
-- 2026-04-24 20:06:22 Orchestrator: underutilized but no sidecar candidates matched the catalog or dynamic fallback
+- 2026-04-28 15:42:35 Orchestrator: `PKT-004-deployment-approval-drilldowns` GitHub coordination issue synced for PKT-004-deployment-approval-drilldowns in ajoe734/pantheon.
+- 2026-04-28 15:42:38 Orchestrator: `PKT-010-runtime-state-board` GitHub coordination issue synced for PKT-010-runtime-state-board in ajoe734/pantheon.
+- 2026-04-28 15:42:40 Orchestrator: `CW-01-consult-request` GitHub coordination issue synced for CW-01-consult-request in ajoe734/pantheon.
+- 2026-04-28 15:42:43 Orchestrator: `KW-01-institutional-memory` GitHub coordination issue synced for KW-01-institutional-memory in ajoe734/pantheon.
+- 2026-04-28 15:42:45 Orchestrator: `CW-03-committee-board` GitHub coordination issue synced for CW-03-committee-board in ajoe734/pantheon.
+- 2026-04-28 15:42:47 Orchestrator: `TW-03-before-after-compare` GitHub coordination issue synced for TW-03-before-after-compare in ajoe734/pantheon.
+- 2026-04-28 15:42:49 Orchestrator: `CW-04-redteam-memo` GitHub coordination issue synced for CW-04-redteam-memo in ajoe734/pantheon.
+- 2026-04-28 15:42:51 Orchestrator: `CW-02-debate-transcript` GitHub coordination issue synced for CW-02-debate-transcript in ajoe734/pantheon.
+- 2026-04-28 15:42:53 Orchestrator: `KW-02-research-notes` GitHub coordination issue synced for KW-02-research-notes in ajoe734/pantheon.
+- 2026-04-28 15:42:55 Orchestrator: `KW-03-evidence-refs` GitHub coordination issue synced for KW-03-evidence-refs in ajoe734/pantheon.
+- 2026-04-28 15:42:57 Orchestrator: `KW-04-insight-cards` GitHub coordination issue synced for KW-04-insight-cards in ajoe734/pantheon.
+- 2026-04-28 15:42:59 Orchestrator: `TW-02-parameter-controls` GitHub coordination issue synced for TW-02-parameter-controls in ajoe734/pantheon.
+- 2026-04-28 15:43:31 Claude: `REG-002` Review passed. Owner should finalize.
+- 2026-04-28 15:43:31 Codex: `REG-002` Owner finalized approved task
+- 2026-04-28 15:43:31 Codex: `REG-002` Handoff to Claude: Ready for review
+- 2026-04-28 15:43:31 Claude: `REG-002` Please address the requested changes
+- 2026-04-28 15:43:31 Codex: `REG-002` Superseded by REG-010 after accepted consensus.
+- 2026-04-28 15:43:31 Codex: Archived 1 terminal tasks from ai-status.json.
+- 2026-04-28 15:43:31 Codex: `APP-001-SIDECAR-BFF-HANDOFF` Assigned APP-001-SIDECAR-BFF-HANDOFF to Gemini with reviewer Copilot
+- 2026-04-28 15:44:32 Codex2: `APP-003-RUNTIME-PROOF-RECON-001` Review approved. Runtime proof reconciliation satisfies the 46/46 dashboard, CW-03/KW-01 exception visibility, and 16 superseded archive audit requirements.

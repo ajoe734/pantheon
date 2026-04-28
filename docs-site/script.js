@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260428-0142";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260428-0748";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260428-0142";
+} from "./js/dashboard-core.js?v=20260428-0748";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -45,7 +45,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260428-0142";
+} from "./js/dashboard-renderers.js?v=20260428-0748";
 
 let renderInFlight = false;
 
@@ -125,7 +125,7 @@ async function render({ syncFirst = false } = {}) {
     const agentStates = deriveAgentState(status, orchState);
     const renderFailures = [];
 
-    runRenderStep("progress_bar", renderFailures, () => renderProgressBar(status.tasks));
+    runRenderStep("progress_bar", renderFailures, () => renderProgressBar(status.tasks, dashboardBundle));
     runRenderStep("progress_breakdown", renderFailures, () => renderProgressBreakdown(status, planningState, dashboardBundle));
     runRenderStep("overview_metrics", renderFailures, () => renderOverviewMetrics(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("control_plane_strip", renderFailures, () => renderControlPlaneStrip(status, planningState, orchState, dashboardBundle));
