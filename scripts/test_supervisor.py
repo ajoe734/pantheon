@@ -99,7 +99,7 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
             "last_update": "2026-04-11T00:00:00Z",
         }
 
-    def test_detect_worker_failure_matches_qwen_and_copilot_quota_variants(self) -> None:
+    def test_detect_worker_failure_matches_qwen_and_copilot_terminal_quota_variants(self) -> None:
         qwen_log = self.root / ".orchestrator" / "logs" / "qwen.log"
         qwen_log.write_text(
             '{"type":"assistant","message":{"content":[{"type":"text","text":"Qwen OAuth quota exceeded: Your free daily quota has been reached."}]}}\n',
@@ -110,7 +110,7 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
         self.assertIsNotNone(qwen_reason)
         self.assertEqual(
             supervisor.classify_worker_failure(self.config, qwen_worker, qwen_reason)["kind"],
-            "capacity",
+            "quota_terminal",
         )
 
         copilot_log = self.root / ".orchestrator" / "logs" / "copilot.log"
@@ -120,7 +120,7 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
         self.assertIsNotNone(copilot_reason)
         self.assertEqual(
             supervisor.classify_worker_failure(self.config, copilot_worker, copilot_reason)["kind"],
-            "capacity",
+            "quota_terminal",
         )
 
     def test_poll_workers_pauses_provider_and_reassigns_capacity_failure(self) -> None:
