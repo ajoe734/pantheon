@@ -23,6 +23,7 @@ POST /api/openclaw-adapter/sessions            — stub session create (deferred
 
 from __future__ import annotations
 
+import json
 import os
 import urllib.error
 import urllib.request
@@ -79,23 +80,50 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
 }
 
 
+def _is_healthy_upstream_response(status: int, body: bytes) -> bool:
+    if status != 200:
+        return False
+    if not body:
+        return True
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return True
+    if isinstance(payload, dict):
+        if payload.get("ok") is True:
+            return True
+        if str(payload.get("status", "")).lower() == "ok":
+            return True
+    return False
+
+
 def _probe_upstream() -> Dict[str, Any]:
     """Probe the upstream OpenClaw gateway health endpoint without raising."""
     if not OPENCLAW_GATEWAY_URL:
         return {"reachable": False, "reason": "OPENCLAW_GATEWAY_URL not configured"}
-    try:
-        req = urllib.request.Request(
-            f"{OPENCLAW_GATEWAY_URL}/readyz",
-            headers={"Accept": "application/json"},
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=_UPSTREAM_TIMEOUT) as resp:
-            status = resp.getcode()
-            return {"reachable": status == 200, "http_status": status}
-    except urllib.error.HTTPError as exc:
-        return {"reachable": False, "http_status": exc.code, "reason": str(exc)}
-    except Exception as exc:  # noqa: BLE001
-        return {"reachable": False, "reason": str(exc)}
+    last_error: Dict[str, Any] = {}
+    for path in ("/healthz", "/readyz"):
+        try:
+            req = urllib.request.Request(
+                f"{OPENCLAW_GATEWAY_URL}{path}",
+                headers={"Accept": "application/json"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=_UPSTREAM_TIMEOUT) as resp:
+                status = resp.getcode()
+                body = resp.read()
+                return {
+                    "reachable": _is_healthy_upstream_response(status, body),
+                    "http_status": status,
+                    "probe": path,
+                }
+        except urllib.error.HTTPError as exc:
+            last_error = {"http_status": exc.code, "reason": str(exc), "probe": path}
+            if exc.code != 404:
+                break
+        except Exception as exc:  # noqa: BLE001
+            return {"reachable": False, "reason": str(exc), "probe": path}
+    return {"reachable": False, **last_error}
 
 
 def _upstream_health_dep() -> Dict[str, Any]:

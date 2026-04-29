@@ -24,8 +24,14 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert "/livez" in healthcheck
     assert "/readyz" not in healthcheck
 
+    init = services["openclaw-data-init"]
+    assert init["profiles"] == ["openclaw"]
+    assert "chown -R 1000:1000 /home/node/.openclaw" in " ".join(init["command"])
+
     upstream = services["openclaw-gateway"]
     assert upstream["profiles"] == ["openclaw"]
+    assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"
+    assert "/healthz" in " ".join(upstream["healthcheck"]["test"])
     assert "profiles" not in adapter
 
     smoke = services["smoke-stack"]

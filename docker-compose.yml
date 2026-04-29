@@ -219,11 +219,21 @@ services:
       retries: 10
       start_period: 5s
 
+  openclaw-data-init:
+    profiles: ["openclaw"]
+    image: busybox:1.36
+    command: ["sh", "-c", "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw"]
+    volumes:
+      - openclaw-data:/home/node/.openclaw
+
   openclaw-gateway:
     profiles: ["openclaw"]
     image: ghcr.io/openclaw/openclaw:2026.4.7
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+    depends_on:
+      openclaw-data-init:
+        condition: service_completed_successfully
     command:
       [
         "node",
@@ -247,7 +257,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:18789/readyz').then((r)=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s
