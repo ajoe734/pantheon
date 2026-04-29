@@ -1,10 +1,25 @@
 # BFF_HA_AND_CONTROL_PLANE_RESILIENCE
 
-Last updated: 2026-04-09
+Last updated: 2026-04-29
 Status: canonical BFF high availability and control plane resilience policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: BFF high availability, control-plane isolation from execution, degradation strategies, and secondary operator control paths
 Conflict rule: this document defines control-plane resilience; it overrides general HA mentions in planning docs
+
+## 0. 2026-04-29 scope disposition
+
+The multi-replica plus load-balancer BFF production topology is explicitly deferred
+and must not be materialized as current execution work.
+
+Reason: the operator frontend is expected to have low concurrent human usage, so a
+dedicated HA topology for the UI aggregation layer is not worth pulling into the
+current service-layer implementation wave. The current single-VM baseline may run
+one `operator-bff` replica as long as the non-BFF runtime/control safety paths
+remain reachable and active runtimes do not depend on BFF availability.
+
+Re-entry gate: reopen BFF HA topology only if operator concurrency, availability
+SLOs, external customer access, or audit requirements make BFF outage a material
+business or safety risk.
 
 ## 1. 目的
 

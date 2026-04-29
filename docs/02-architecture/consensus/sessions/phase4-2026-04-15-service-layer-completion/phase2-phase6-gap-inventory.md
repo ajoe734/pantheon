@@ -220,19 +220,21 @@ If we want the next wave to reduce the largest real delivery risk instead of jus
 7. `Phase 6 real integrations`
    Move OpenClaw and the deferred OSS stack from criteria to executable adapters and smoke tests.
 
-## 7. SVC-SERVICE-DISPOSITION Addendum (2026-04-28)
+## 7. SVC-SERVICE-DISPOSITION Addendum (2026-04-28, historical; updated 2026-04-29)
 
-`SVC-SERVICE-DISPOSITION` resolved the consultation/source-ingest/search boundary for the first single-VM service baseline:
+`SVC-SERVICE-DISPOSITION` originally deferred the consultation/source-ingest/search boundary for the first single-VM service baseline. That 2026-04-28 negative boundary is now historical only.
+
+After `SVC-CONSULTATION-SERVICE-ACTIVATION`, `SVC-SOURCE-INGEST-SERVICE`, `SVC-SEARCH-SERVICE`, and `SVC-COMPOSE`, current code truth is:
 
 | Component | Current evidence | Disposition for default single-VM compose |
 |---|---|---|
-| `consultation` | `services/consultation/main.py` exposes a FastAPI app with `/health`, `services/consultation/Dockerfile` exists, and the store is append/replay-backed. The root `docker-compose.yml` does not run it, and BFF consultation reads currently use a local data-dir `ConsultationStore` adapter rather than an HTTP client. | Code exists; deployable service activation deferred. It must not become a hidden default dependency for SVC-SURFACES until the BFF boundary is implemented explicitly. |
-| `source_ingestion` | `services/source_ingestion/` contains connector, ingest manager, scheduler, persisted watermark, DLQ, and audit logic. It has no HTTP entrypoint, service Dockerfile, health endpoint, port, or compose wiring. | Deployable service deferred. A later wrapper task must define job-trigger APIs, storage/env contracts, Dockerfile, health check, and smoke criteria before compose inclusion. |
-| `search` | `services/search/` contains governed filtering, gateway, index adapter/store, and retriever code. It has no HTTP entrypoint, service Dockerfile, health endpoint, port, or compose wiring. | Deployable service deferred. A later search API task must define the network contract, Dockerfile, health check, index storage, and smoke criteria before compose inclusion. |
+| `consultation-svc` | `docker-compose.yml` builds `services/consultation/Dockerfile`, sets `PORT=8096`, mounts `consultation-data`, maps `${CONSULTATION_PORT:-18096}:8096`, and checks `/readyz`. `services/consultation/main.py` also exposes `/health` and consultation APIs under `/api/consult/...`. `runtime-manager` and `operator-bff` point at `PANTHEON_CONSULTATION_API_URL=http://consultation-svc:8096`. | Activated in the default single-VM stack as an explicit HTTP service dependency. |
+| `source-ingest` | `docker-compose.yml` builds `services/source_ingestion/Dockerfile`, sets `PORT=8097`, mounts `source-ingest-data`, maps `${SOURCE_INGEST_PORT:-18097}:8097`, and checks `/readyz`. `services/source_ingestion/main.py` exposes `/health`, `POST /api/source-ingest/jobs`, job replay, watermark, DLQ, and audit endpoints. The smoke stack uses `SOURCE_INGEST_URL=http://source-ingest:8097`. | Activated in the default single-VM stack as a bounded job-trigger wrapper. The wrapper accepts already-fetched records in this slice; autonomous external fetching remains later pipeline work. |
+| `search-svc` | `docker-compose.yml` builds `services/search/Dockerfile`, sets `PORT=8098`, mounts `search-data`, maps `${SEARCH_PORT:-18098}:8098`, and checks `/readyz`. `services/search/main.py` exposes `/health`, `POST /api/search/query`, and `GET /api/search/snapshots/{request_id}`. `operator-bff` points at `PANTHEON_SEARCH_API_URL=http://search-svc:8098`. | Activated in the default single-VM stack as the governed search HTTP service. |
 
-SVC-SURFACES therefore inherits an explicit negative boundary: it should not add normal-path dependencies on consultation, source-ingestion, or search services in this wave. Where those surfaces are visible, they must expose degraded/unavailable semantics or clearly fenced test-only seed paths rather than silently presenting missing service data as live backend data.
+The old SVC-SURFACES negative boundary must no longer be used to omit these services from compose or describe them as missing wrappers. Normal-path dependencies are now explicit network dependencies and must keep the degraded/unavailable semantics from `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` when a downstream service is unhealthy.
 
-SVC-COMPOSE therefore satisfies this part of its acceptance by leaving these three components out of the default compose profile and citing this gap record; it should not add placeholder containers for them without real service entrypoints and smoke criteria.
+The BFF multi-replica/load-balancer topology remains separately deferred as a 2026-04-29 product-scope decision. This service activation update must not be read as reopening BFF HA implementation work.
 
 ## 8. Bottom Line
 
@@ -266,7 +268,7 @@ This inventory remains the historical planning bridge that justified the service
 - health-check endpoint expectations
 - compose profile boundaries
 - Dockerfile conventions
-- the explicit single-VM BFF HA deferral
+- the explicit single-VM BFF HA deferral, now recorded as a 2026-04-29 product-scope defer rather than current execution work because the operator frontend is expected to have low concurrent human usage
 
 The earlier evidence notes about missing Dockerfiles and an unlocked compose baseline should be read as 2026-04-15 planning evidence, not as the current implementation contract.
 
@@ -280,6 +282,7 @@ Default profile contents:
 
 - local infrastructure: `postgres`, `minio`, `minio-init`, `nats`, and `signal-store`
 - control/evidence services: `runtime-manager`, `governance`, `deployment`, `capital`, `evolution`, `telemetry`, `lineage-read`, `incidents`, and `postmortems`
+- activated consultation/source/search services: `consultation-svc`, `source-ingest`, and `search-svc`
 - operator/application surfaces: `operator-bff`, `persona`, `router`, and `feedback`
 - supporting service shells already in the baseline: `evaluation`, `memory`, `registry`, `optimizer-svc`, and `promotion`
 
@@ -299,4 +302,4 @@ docker compose down --volumes --remove-orphans
 
 The smoke path intentionally runs after the default stack is healthy, waits for every default HTTP service health endpoint through the `smoke` profile's dependency graph, then exercises an integration path across runtime deployment, telemetry ingest, incident/postmortem evidence creation, BFF honest-mode guidance, and BFF SSE replay. It is run as a separate `docker compose run` step because `minio-init` is a successful one-shot initialization service; using `--abort-on-container-exit` on the whole stack would treat that expected exit as a stack stop signal.
 
-The `consultation`, `source_ingestion`, and `search` disposition from section 7 remains active: they are not part of the default compose stack in this wave, because the required BFF network boundary, service wrapper, Dockerfile, health check, and smoke criteria are not all present yet.
+The 2026-04-28 `consultation`, `source_ingestion`, and `search` deferral from section 7 is historical. In the current root compose stack, `consultation-svc`, `source-ingest`, and `search-svc` are default services with Dockerfiles, `/readyz` health checks, mounted service-owned volumes, and HTTP entrypoints; downstream docs should cite the 2026-04-29 code-backed state instead of the old omission rationale.
