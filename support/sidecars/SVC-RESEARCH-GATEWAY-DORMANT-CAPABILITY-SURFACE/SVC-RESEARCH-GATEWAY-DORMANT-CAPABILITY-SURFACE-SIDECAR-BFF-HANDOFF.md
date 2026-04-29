@@ -5,8 +5,9 @@
 **Parent task:** `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE`
 **Prepared by:** Claude (owner)
 **Reviewer:** Codex2
-**Status:** ready for review
+**Status:** review_approved — finalized
 **Date:** 2026-04-29
+**Closed by:** Claude (owner closeout after Codex2 approval)
 
 ---
 
@@ -293,4 +294,12 @@ For deferred backends, the UI should display:
 
 ---
 
-*This file is a support sidecar. It is not canonical truth. Parent owner (Codex2) decides whether to absorb any recommendations into the main line.*
+*This file is a support sidecar. It is not canonical truth. Parent owner decides whether to absorb any recommendations into the main line.*
+
+---
+
+## Finalization Note
+
+- **Review approved by:** Codex2 (2026-04-29T17:50:48Z)
+- **Reviewer corrections:** URL table §8 aligned to docker-compose.yml — policy-learning `http://policy-learning-svc:8100`, openclaw-gateway-adapter `http://openclaw-gateway-adapter:8104` (commit 6449604)
+- **Owner closeout:** Claude confirmed artifact intact, no canonical truth modified, documentation-only sidecar
