@@ -1,0 +1,126 @@
+{
+  "generated_at": "2026-04-29T20:17:48Z",
+  "repo_root": "/home/edna/code/pantheon",
+  "rows": [
+    {
+      "activated": false,
+      "evidence": {
+        "activation_state": "facade_only",
+        "adapter_importable": true,
+        "broker_execution": "deferred",
+        "docker_available": true,
+        "image_digest": "sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c",
+        "image_ref": "ghcr.io/openclaw/openclaw:2026.4.7",
+        "startup_pull": false
+      },
+      "gate_mechanism": "docker-runtime-gated; activation_state=facade_only; broker_execution=deferred",
+      "gate_state": "closed",
+      "integration": "openclaw",
+      "result": "passed"
+    },
+    {
+      "activated": false,
+      "evidence": {
+        "artifact_state": "draft",
+        "assertions": "OK",
+        "deployment_stage": "none",
+        "direct_live_influence": false,
+        "preflight_activation_allowed": false,
+        "preflight_summary": "Blocked by required gates: rs003_candidate, governed_dataset, strategy_spec_binding"
+      },
+      "gate_mechanism": "preflight activation_allowed=false (rs003_candidate + governed_dataset + strategy_spec_binding BLOCKED)",
+      "gate_state": "closed",
+      "integration": "qlib",
+      "result": "passed"
+    },
+    {
+      "activated": false,
+      "evidence": {
+        "artifact_state": "draft",
+        "assertions": "OK",
+        "deployment_stage": "none",
+        "direct_live_influence": false,
+        "preflight_activation_allowed": false,
+        "preflight_summary": "Blocked by required gates: fb002_volume, preference_pairs"
+      },
+      "gate_mechanism": "preflight fb002_volume (0/200 events) + preference_pairs (0/100 pairs) BLOCKED",
+      "gate_state": "closed",
+      "integration": "trl",
+      "result": "passed"
+    },
+    {
+      "activated": false,
+      "evidence": {
+        "artifact_state": "draft",
+        "assertions": "OK",
+        "deployment_stage": "none",
+        "direct_live_influence": false,
+        "gate_denial_verified": true,
+        "gate_state": "closed",
+        "lean_consumption": "scoring_only_not_direct_action"
+      },
+      "gate_mechanism": "--enable-deferred-prep flag (FinRL DeferredPrepGate)",
+      "gate_state": "closed",
+      "integration": "finrl",
+      "result": "passed"
+    },
+    {
+      "activated": false,
+      "evidence": {
+        "artifact_state": "draft",
+        "assertions": "OK",
+        "deployment_stage": "none",
+        "direct_live_influence": false,
+        "gate_denial_verified": true,
+        "gate_state": "closed",
+        "search_strategy": "pbt"
+      },
+      "gate_mechanism": "--enable-deferred-prep flag (RLlib DeferredPrepGate)",
+      "gate_state": "closed",
+      "integration": "rllib",
+      "result": "passed"
+    },
+    {
+      "activated": false,
+      "evidence": {
+        "artifact_state": "draft",
+        "artifact_type": "optimizer_result",
+        "assertions": "OK",
+        "deployment_stage": "none",
+        "direct_live_influence": false,
+        "gate_denial_verified": true,
+        "gate_state": "closed"
+      },
+      "gate_mechanism": "--enable-deferred-prep flag (RayTuneDeferredPrepGate)",
+      "gate_state": "closed",
+      "integration": "raytune",
+      "result": "passed"
+    },
+    {
+      "activated": false,
+      "evidence": {
+        "activation_state": "deferred",
+        "assertions": "OK",
+        "backend": "wandb",
+        "gate_denial_verified": true,
+        "mode": "offline",
+        "prep_only": true,
+        "sdk_backed": false,
+        "wandb_sdk_present": false
+      },
+      "gate_mechanism": "EXPERIMENT_BACKEND=wandb requires PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 (config-level EnvironmentError gate)",
+      "gate_state": "closed",
+      "integration": "wandb",
+      "result": "passed"
+    }
+  ],
+  "summary": {
+    "acceptable": 7,
+    "activated_false": 7,
+    "gate_state_closed": 7,
+    "matrix_passed": true,
+    "total": 7,
+    "unexpected_failures": 0
+  },
+  "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX"
+}
