@@ -21,10 +21,10 @@ def test_governance_api_family_is_wired_in_root_compose() -> None:
     services = _compose()["services"]
 
     expected = {
-        "governance": ("services/governance/Dockerfile", "8082", "/health"),
-        "deployment": ("services/deployment/Dockerfile", "8095", "/health"),
-        "capital": ("services/capital/Dockerfile", "8092", "/health"),
-        "evolution": ("services/evolution/Dockerfile", "8093", "/health"),
+        "governance": ("services/governance/Dockerfile", "8082", "/readyz"),
+        "deployment": ("services/deployment/Dockerfile", "8095", "/readyz"),
+        "capital": ("services/capital/Dockerfile", "8092", "/readyz"),
+        "evolution": ("services/evolution/Dockerfile", "8093", "/readyz"),
     }
 
     for service_name, (dockerfile, port, health_path) in expected.items():

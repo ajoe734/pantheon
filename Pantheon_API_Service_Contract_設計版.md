@@ -1192,6 +1192,27 @@ sequenceDiagram
 - `/readyz`
 - `/metrics`
 
+標準 health JSON shape：
+
+```json
+{
+  "status": "ok",
+  "service": "service-name",
+  "timestamp": "2026-04-29T00:00:00Z",
+  "live": true,
+  "ready": true,
+  "dependencies": {},
+  "metrics": {"service_up": 1},
+  "details": {}
+}
+```
+
+- `/livez` 只代表 process 可回應。
+- `/readyz` 代表 service 可承接 compose/smoke traffic；若任一必要 dependency 為 `degraded`、`error`、`unavailable` 或 `failed`，回 503。
+- `/healthz` 回同一個 JSON contract，供 operator/API inspection。
+- `/metrics` 可先回 minimal JSON metrics；Prometheus text exposition 可作為後續替換，不改路由。
+- 舊 `/health` 與 `/__health__` 必須保留為相容 alias 或明確文件化例外；compose healthcheck 與 honest stack smoke 應使用 `/readyz`。
+
 ### 8.4 event audit 最低欄位
 - actor
 - target

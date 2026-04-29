@@ -83,14 +83,14 @@ def test_production_adapters_are_rejected_by_default() -> None:
     module = _load_service_module()
     client = TestClient(module.app)
 
-    for adapter in ("qlib", "trl", "rl", "wandb"):
+    for adapter, mode in (("qlib", "production"), ("trl", "paper"), ("rl", "canary"), ("wandb", "live")):
         result = client.post(
             "/api/policy-learning/jobs",
             json={
                 "policy_id": f"policy-{adapter}",
                 "objective": "Attempt production activation.",
                 "adapter": adapter,
-                "requested_mode": "production",
+                "requested_mode": mode,
                 "proposed_at": "2026-04-28T19:10:00Z",
             },
         )
