@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260428-0748";
+} from "./dashboard-config.js?v=20260428-0912";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
@@ -20,7 +20,7 @@ export function defaultPlanningState() {
     facilitator: "Claude",
     baton_owner: "Codex",
     starter_owner: "Codex",
-    next_reviewer: "Qwen",
+    next_reviewer: "Codex2",
     current_round: 0,
     consensus_status: "not_started",
     human_gate_status: "not_requested",
@@ -223,7 +223,6 @@ export function agentLabel(value) {
   if (normalized === "gemini") return "Gemini";
   if (normalized === "codex") return "Codex";
   if (normalized === "codex2") return "Codex (2)";
-  if (normalized === "qwen") return "Qwen";
   if (normalized === "grok") return "Copilot";
   if (normalized === "copilot") return "Copilot";
   return value;
@@ -247,7 +246,7 @@ export function logicalWorkerAgentId(worker) {
   for (const candidate of candidates) {
     const normalized = String(candidate || "").trim().toLowerCase();
     if (!normalized) continue;
-    if (["claude", "gemini", "codex", "codex2", "qwen"].includes(normalized)) return normalized;
+    if (["claude", "gemini", "codex", "codex2"].includes(normalized)) return normalized;
     if (["grok", "copilot"].includes(normalized)) return "copilot";
   }
   if (String(worker?.provider || "").toLowerCase() === "copilot") return "copilot";

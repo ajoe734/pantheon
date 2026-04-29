@@ -156,7 +156,7 @@ h1 {
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 
@@ -1023,10 +1023,31 @@ details[open].cockpit-details .cockpit-details-summary::before {
 .stack,
 .snapshot,
 .activity,
+.archive-records,
+.archive-record-grid,
 .artifact-grid,
 .gate-checklist {
   display: grid;
   gap: 12px;
+}
+
+.archive-record-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.archive-summary-card,
+.archive-record-card {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(22, 34, 32, 0.03);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.archive-record-card {
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .artifact-grid {

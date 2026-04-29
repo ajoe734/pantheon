@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>協作看板</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./style.css?v=20260428-0748" />
+    <link rel="stylesheet" href="./style.css?v=20260428-0912" />
   </head>
   <body>
     <div class="shell">
@@ -188,6 +188,14 @@
                 </div>
                 <div id="agent-lanes" class="agent-grid"></div>
               </section>
+
+              <section class="subpanel execution-span-2">
+                <div class="subpanel-head">
+                  <h3>歷史封存紀錄</h3>
+                  <p class="subpanel-copy">已完成或已取代的任務會移到 archive；這裡保留最近封存紀錄，避免 active board 看起來像資料消失。</p>
+                </div>
+                <div id="archive-records" class="archive-records"></div>
+              </section>
             </div>
           </section>
 
@@ -339,6 +347,6 @@
       </section>
     </div>
 
-    <script src="./script.js?v=20260428-0748" type="module"></script>
+    <script src="./script.js?v=20260428-0912" type="module"></script>
   </body>
 </html>

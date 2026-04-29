@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260428-0748";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260428-0912";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,12 +12,13 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260428-0748";
+} from "./js/dashboard-core.js?v=20260428-0912";
 import {
   applyModeVisibility,
   renderAlertStrip,
   renderActivity,
   renderAgentLanes,
+  renderArchiveRecords,
   renderAuditStatus,
   renderBoardSummary,
   renderBridgeCard,
@@ -45,7 +46,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260428-0748";
+} from "./js/dashboard-renderers.js?v=20260428-0912";
 
 let renderInFlight = false;
 
@@ -145,6 +146,7 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("workload", renderFailures, () => renderWorkload(status));
     runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState));
     runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
+    runRenderStep("archive_records", renderFailures, () => renderArchiveRecords(dashboardBundle));
     runRenderStep("lovable_coordination_summary", renderFailures, () => renderLovableCoordinationSummary(dashboardBundle));
     runRenderStep("lovable_coordination", renderFailures, () => renderLovableCoordination(orchState, status, dashboardBundle));
     runRenderStep("execution_summary", renderFailures, () => renderExecutionSummary(status, orchState, dashboardBundle));

@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260428-0748";
+} from "./dashboard-config.js?v=20260428-0912";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -28,7 +28,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260428-0748";
+} from "./dashboard-core.js?v=20260428-0912";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -41,6 +41,13 @@ function escapeHtml(value) {
 
 function compactWhitespace(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function shortText(value, maxLength = 180) {
+  const compacted = compactWhitespace(value || "");
+  if (!compacted) return "-";
+  const clipped = compacted.length > maxLength ? `${compacted.slice(0, maxLength)}...` : compacted;
+  return escapeHtml(clipped);
 }
 
 function summarizePausedReason(reason, provider) {
@@ -158,6 +165,76 @@ export function renderAgentLanes(status, agentStates) {
     `;
     container.appendChild(card);
   }
+}
+
+export function renderArchiveRecords(dashboardBundle = null) {
+  const container = qs("#archive-records");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const archive = dashboardBundle?.archive_summary || {};
+  const counts = archive.counts || {};
+  const records = Array.isArray(archive.recent_terminal_tasks) ? archive.recent_terminal_tasks : [];
+  const total = Number.isFinite(counts.total) ? counts.total : 0;
+  const completed = Number.isFinite(counts.completed) ? counts.completed : 0;
+  const superseded = Number.isFinite(counts.superseded) ? counts.superseded : 0;
+
+  if (!total && !records.length) {
+    container.innerHTML = '<p class="empty">目前沒有封存紀錄。</p>';
+    return;
+  }
+
+  const summary = document.createElement("article");
+  summary.className = "archive-summary-card";
+  summary.innerHTML = `
+    <div class="stack-head">
+      <strong>Archive index</strong>
+      <span class="status-pill status-ready">${total} 筆</span>
+    </div>
+    <div class="lane-meta">
+      <span class="chip">Completed ${completed}</span>
+      <span class="chip">Superseded ${superseded}</span>
+      <span class="chip">最近更新 ${formatTime(archive.updated_at)}</span>
+    </div>
+  `;
+  container.appendChild(summary);
+
+  if (!records.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "Archive index 有統計，但目前的 dashboard bundle 沒帶最近封存任務摘要。";
+    container.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "archive-record-grid";
+  for (const record of records) {
+    const outcome = String(record.terminal_outcome || record.status || "done").toLowerCase();
+    const card = document.createElement("article");
+    card.className = "archive-record-card";
+    card.innerHTML = `
+      <div class="task-head">
+        <strong>${escapeHtml(record.task_id || record.id || "-")}</strong>
+        <span class="status-pill status-${outcome}">${statusLabel(outcome)}</span>
+      </div>
+      <p>${shortText(record.title, 140)}</p>
+      <p class="task-summary">工作說明：${shortText(record.summary_zh, 180)}</p>
+      <div class="lane-meta">
+        <span class="chip">${escapeHtml(record.phase || "-")}</span>
+        <span class="chip">負責人 ${escapeHtml(record.owner || "-")}</span>
+        <span class="chip">審查者 ${escapeHtml(record.reviewer || "-")}</span>
+      </div>
+      <div class="lane-meta">
+        <span class="chip">更新 ${formatTime(record.last_update)}</span>
+        <span class="chip">封存 ${formatTime(record.archived_at)}</span>
+      </div>
+      <p class="card-copy">結案紀錄：${shortText(record.next, 220)}</p>
+      ${record.snapshot_path ? `<p class="card-copy">Snapshot：<code>${escapeHtml(record.snapshot_path)}</code></p>` : ""}
+    `;
+    list.appendChild(card);
+  }
+  container.appendChild(list);
 }
 
 export function renderDeliveryLayers(status, planningState) {
@@ -294,17 +371,21 @@ export function renderTaskBoard(status, orchState, dashboardBundle = null) {
   const pendingProposals = Array.isArray(bridgeSummary.pending_proposals) ? bridgeSummary.pending_proposals : [];
   const openTaskCount = canonicalTasks.filter((task) => !terminalTaskStatus(task.status)).length;
   const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
-  if (!openTaskCount && archivedTotal) {
+  if (archivedTotal) {
     const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
     const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
     const contextCard = document.createElement("article");
     contextCard.className = "stack-card board-context";
     contextCard.innerHTML = `
       <div class="stack-head">
-        <strong>Active task board 目前沒有 open task</strong>
+        <strong>舊紀錄在 archive，Active task board 只顯示目前任務</strong>
         <span class="status-pill status-ready">archive intact</span>
       </div>
-      <p class="card-copy">目前看板只顯示 active lifecycle task；已完成或已取代的工作已移到 <code>ai-task-archive</code>，不是被刪掉。</p>
+      <p class="card-copy">${
+        openTaskCount
+          ? `目前 active board 有 ${openTaskCount} 個 open task；以前完成或取代的工作已移到 <code>ai-task-archive</code>，不是被刪掉。`
+          : "目前 active board 沒有 open task；以前完成或取代的工作已移到 <code>ai-task-archive</code>，不是被刪掉。"
+      }</p>
       <div class="lane-meta">
         <span class="chip">Archived total ${archivedTotal}</span>
         <span class="chip">Completed ${archivedDone}</span>
@@ -865,9 +946,9 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const activeOpen = todo + inProgress + review + reviewApproved + blocked;
 
   const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
+  const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+  const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
   if (!activeOpen && archivedTotal) {
-    const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
-    const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
     const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
     const trackedFeatures = Number.isFinite(coordinationCounts.tracked_features) ? coordinationCounts.tracked_features : 0;
     const runtimeVerified = Number.isFinite(coordinationCounts.runtime_verified) ? coordinationCounts.runtime_verified : 0;
@@ -894,7 +975,14 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
     { label: "進行中",    value: inProgress,     tone: inProgress  ? "card-active"   : "" },
     { label: "待審查",    value: review,         tone: review      ? "card-review"   : "" },
     { label: "待收尾",    value: reviewApproved, tone: reviewApproved ? "card-review" : "" },
-    { label: "完成",      value: done,           tone: "card-done" },
+    { label: "本輪完成",  value: done,           tone: "card-done" },
+    ...(archivedTotal
+      ? [
+          { label: "歷史完成", value: archivedDone, tone: "card-done" },
+          { label: "封存總數", value: archivedTotal, tone: "card-done" },
+          { label: "已取代", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "card-done" },
+        ]
+      : []),
     { label: "阻塞",      value: blocked,        tone: blocked     ? "card-blocked"  : "" },
   ];
 
