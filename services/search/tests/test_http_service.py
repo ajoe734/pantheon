@@ -64,7 +64,7 @@ def _write_durable_evidence(path) -> None:
     )
 
 
-def test_search_service_filters_before_ranking_and_replays_refs(tmp_path) -> None:
+def test_search_service_request_documents_compat_route_filters_and_replays_refs(tmp_path) -> None:
     client = TestClient(create_app(tmp_path / "search-index.jsonl"))
     body = {
         "request_id": "svc-search-001",
@@ -101,7 +101,7 @@ def test_search_service_filters_before_ranking_and_replays_refs(tmp_path) -> Non
         },
     }
 
-    response = client.post("/api/search/query", json=body)
+    response = client.post("/api/search/query/request-documents-compat", json=body)
     assert response.status_code == 200, response.text
     payload = response.json()
 
@@ -116,6 +116,75 @@ def test_search_service_filters_before_ranking_and_replays_refs(tmp_path) -> Non
     replay = client.get("/api/search/snapshots/svc-search-001")
     assert replay.status_code == 200, replay.text
     assert replay.json()["snapshot"] == payload["index_snapshot"]
+
+
+def test_search_service_rejects_request_documents_without_compat_signal(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path / "search-index.jsonl"))
+
+    response = client.post(
+        "/api/search/query",
+        json={
+            "request_id": "svc-search-unflagged-documents",
+            "trace_id": "trace-svc-search-unflagged-documents",
+            "query": "momentum volatility",
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "documents": [
+                {
+                    "result_id": "search-public",
+                    "match_type": "ticket",
+                    "title": "Public momentum note",
+                    "excerpt": "Momentum volatility evidence is available to research operators.",
+                }
+            ],
+            "access_context": {
+                "persona_id": "operator-workbench",
+                "workspace_id": "research-workbench",
+                "environment": "paper",
+                "access_scopes": ["operator", "research"],
+                "license_scopes": ["internal"],
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert "request documents are compatibility-only" in response.json()["detail"]
+
+
+def test_search_service_accepts_request_documents_with_explicit_compat_flag(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path / "search-index.jsonl"))
+
+    response = client.post(
+        "/api/search/query",
+        json={
+            "request_id": "svc-search-flagged-documents",
+            "trace_id": "trace-svc-search-flagged-documents",
+            "query": "momentum volatility",
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "allow_request_documents_compat": True,
+            "documents": [
+                {
+                    "result_id": "search-public",
+                    "match_type": "ticket",
+                    "title": "Public momentum note",
+                    "excerpt": "Momentum volatility evidence is available to research operators.",
+                }
+            ],
+            "access_context": {
+                "persona_id": "operator-workbench",
+                "workspace_id": "research-workbench",
+                "environment": "paper",
+                "access_scopes": ["operator", "research"],
+                "license_scopes": ["internal"],
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert [item["result_id"] for item in payload["results"]] == ["search-public"]
+    assert payload["index_adapter"]["adapter_state"] == "request_documents_compat"
 
 
 def test_search_service_requires_scoped_access_context(tmp_path) -> None:

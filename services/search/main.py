@@ -88,6 +88,7 @@ class AccessContextBody(BaseModel):
 class SearchQueryBody(BaseModel):
     query: str
     documents: list[SearchDocumentBody] = Field(default_factory=list)
+    allow_request_documents_compat: bool = False
     request_id: str = "search-service-query"
     trace_id: str = "trace-search-service-query"
     persona_id: str | None = None
@@ -274,10 +275,14 @@ def create_app(index_store_path: Path | None = None, evidence_store_path: Path |
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/search/query")
-    def query_search(body: SearchQueryBody) -> dict[str, Any]:
+    def _query_search(body: SearchQueryBody, *, allow_request_documents_compat: bool = False) -> dict[str, Any]:
         try:
             if body.documents:
+                if not (allow_request_documents_compat or body.allow_request_documents_compat):
+                    raise ValueError(
+                        "request documents are compatibility-only; use "
+                        "allow_request_documents_compat=true or /api/search/query/request-documents-compat"
+                    )
                 repository = _repository_from_documents(body.documents)
                 adapter_state = "request_documents_compat"
             else:
@@ -312,6 +317,14 @@ def create_app(index_store_path: Path | None = None, evidence_store_path: Path |
             }
         except (EvidenceValidationError, SearchPolicyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/search/query")
+    def query_search(body: SearchQueryBody) -> dict[str, Any]:
+        return _query_search(body)
+
+    @app.post("/api/search/query/request-documents-compat")
+    def query_search_request_documents_compat(body: SearchQueryBody) -> dict[str, Any]:
+        return _query_search(body, allow_request_documents_compat=True)
 
     @app.get("/api/search/snapshots/{request_id}")
     def get_snapshot(request_id: str) -> dict[str, Any]:
