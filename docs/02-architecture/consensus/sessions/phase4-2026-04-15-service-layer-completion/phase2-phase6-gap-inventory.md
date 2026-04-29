@@ -1,6 +1,6 @@
 # Phase 2-Phase 6 Gap Inventory
 
-Last updated: 2026-04-15
+Last updated: 2026-04-29
 Status: planning support snapshot for the active `phase4-2026-04-15-service-layer-completion` session
 Scope: inventory the residual work still missing across roadmap phases 2 through 6, even though the canonical baseline tasks for those phases already have archived completion records
 
@@ -220,17 +220,17 @@ If we want the next wave to reduce the largest real delivery risk instead of jus
 7. `Phase 6 real integrations`
    Move OpenClaw and the deferred OSS stack from criteria to executable adapters and smoke tests.
 
-## 7. SVC-SERVICE-DISPOSITION Addendum (2026-04-28, historical; updated 2026-04-29)
+## 7. SVC-SERVICE-DISPOSITION Addendum (2026-04-28, historical; updated 2026-04-29; pipeline updated 2026-04-29)
 
 `SVC-SERVICE-DISPOSITION` originally deferred the consultation/source-ingest/search boundary for the first single-VM service baseline. That 2026-04-28 negative boundary is now historical only.
 
-After `SVC-CONSULTATION-SERVICE-ACTIVATION`, `SVC-SOURCE-INGEST-SERVICE`, `SVC-SEARCH-SERVICE`, and `SVC-COMPOSE`, current code truth is:
+After `SVC-CONSULTATION-SERVICE-ACTIVATION`, `SVC-SOURCE-INGEST-SERVICE`, `SVC-SEARCH-SERVICE`, `SVC-COMPOSE`, `SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE`, and `SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE`, current code truth is:
 
 | Component | Current evidence | Disposition for default single-VM compose |
 |---|---|---|
 | `consultation-svc` | `docker-compose.yml` builds `services/consultation/Dockerfile`, sets `PORT=8096`, mounts `consultation-data`, maps `${CONSULTATION_PORT:-18096}:8096`, and checks `/readyz`. `services/consultation/main.py` also exposes `/health` and consultation APIs under `/api/consult/...`. `runtime-manager` and `operator-bff` point at `PANTHEON_CONSULTATION_API_URL=http://consultation-svc:8096`. | Activated in the default single-VM stack as an explicit HTTP service dependency. |
-| `source-ingest` | `docker-compose.yml` builds `services/source_ingestion/Dockerfile`, sets `PORT=8097`, mounts `source-ingest-data`, maps `${SOURCE_INGEST_PORT:-18097}:8097`, and checks `/readyz`. `services/source_ingestion/main.py` exposes `/health`, `POST /api/source-ingest/jobs`, job replay, watermark, DLQ, and audit endpoints. The smoke stack uses `SOURCE_INGEST_URL=http://source-ingest:8097`. | Activated in the default single-VM stack as a bounded job-trigger wrapper. The wrapper accepts already-fetched records in this slice; autonomous external fetching remains later pipeline work. |
-| `search-svc` | `docker-compose.yml` builds `services/search/Dockerfile`, sets `PORT=8098`, mounts `search-data`, maps `${SEARCH_PORT:-18098}:8098`, and checks `/readyz`. `services/search/main.py` exposes `/health`, `POST /api/search/query`, and `GET /api/search/snapshots/{request_id}`. `operator-bff` points at `PANTHEON_SEARCH_API_URL=http://search-svc:8098`. | Activated in the default single-VM stack as the governed search HTTP service. |
+| `source-ingest` | `docker-compose.yml` builds `services/source_ingestion/Dockerfile`, sets `PORT=8097`, mounts `source-ingest-data`, maps `${SOURCE_INGEST_PORT:-18097}:8097`, and checks `/readyz`. `services/source_ingestion/main.py` exposes `/health`, `POST /api/source-ingest/connectors` (persist connector fetch config), `GET /api/source-ingest/connectors/{connector_id}`, `POST /api/source-ingest/jobs` (trigger by `connector_id` for configured autonomous fetch, or with inline records), watermark, DLQ inspection, `POST /api/source-ingest/dlq/replay` (operator-approved DLQ replay), source record and evidence bundle read endpoints, and audit endpoints. The smoke stack configures a connector, triggers a job by `connector_id` alone, verifies DLQ routing on configured failure, and replays from DLQ. | Activated in the default single-VM stack as the configured autonomous ingest pipeline. Connector fetch configurations are persisted; jobs triggered by `connector_id` alone use stored config for autonomous fetching. The service applies governed ingest lifecycle, watermark advancement, DLQ routing on failure, and operator-approved DLQ replay. Source records, evidence items, bundles, and knowledge objects are durably persisted. The "already-fetched-only" and "autonomous later" characterizations are no longer accurate. |
+| `search-svc` | `docker-compose.yml` builds `services/search/Dockerfile`, sets `PORT=8098`, mounts `search-data`, maps `${SEARCH_PORT:-18098}:8098`, and checks `/readyz`. `services/search/main.py` exposes `/health`, `POST /api/search/index/reload` (rebuild durable JSONL index from evidence store), `GET /api/search/index/status`, `POST /api/search/query` (durable no-doc path or request-document compat path), and `GET /api/search/snapshots/{request_id}`. `operator-bff` points at `PANTHEON_SEARCH_API_URL=http://search-svc:8098`. | Activated in the default single-VM stack as the governed search HTTP service with durable evidence/index path. When no request documents are supplied, the service queries the durable JSONL evidence index seeded by `source-ingest` (adapter_state `durable`). When request documents are supplied, it builds an in-memory index (adapter_state `request_documents_compat`) for backward compatibility. The smoke stack exercises the no-doc durable path. |
 
 The old SVC-SURFACES negative boundary must no longer be used to omit these services from compose or describe them as missing wrappers. Normal-path dependencies are now explicit network dependencies and must keep the degraded/unavailable semantics from `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` when a downstream service is unhealthy.
 
@@ -283,12 +283,13 @@ Default profile contents:
 - local infrastructure: `postgres`, `minio`, `minio-init`, `nats`, and `signal-store`
 - control/evidence services: `runtime-manager`, `governance`, `deployment`, `capital`, `evolution`, `telemetry`, `lineage-read`, `incidents`, and `postmortems`
 - activated consultation/source/search services: `consultation-svc`, `source-ingest`, and `search-svc`
+- OpenClaw boundary facade: `openclaw-gateway-adapter`
 - operator/application surfaces: `operator-bff`, `persona`, `router`, and `feedback`
 - supporting service shells already in the baseline: `evaluation`, `memory`, `registry`, `optimizer-svc`, and `promotion`
 
 Optional profile contents:
 
-- `openclaw-gateway` remains under the `openclaw` profile and proves only gateway reachability for this wave.
+- `openclaw-gateway` remains under the `openclaw` profile and proves only upstream gateway reachability for this wave.
 - `smoke-stack` remains under the `smoke` profile and runs `scripts/smoke_honest_stack.py` after the default stack is healthy.
 
 Repeatable verification commands:
@@ -300,6 +301,43 @@ docker compose --profile smoke run --rm smoke-stack
 docker compose down --volumes --remove-orphans
 ```
 
-The smoke path intentionally runs after the default stack is healthy, waits for every default HTTP service health endpoint through the `smoke` profile's dependency graph, then exercises an integration path across runtime deployment, telemetry ingest, incident/postmortem evidence creation, BFF honest-mode guidance, and BFF SSE replay. It is run as a separate `docker compose run` step because `minio-init` is a successful one-shot initialization service; using `--abort-on-container-exit` on the whole stack would treat that expected exit as a stack stop signal.
+The smoke path intentionally runs after the default stack is healthy, waits for every default HTTP service health endpoint through the `smoke` profile's dependency graph, then exercises an integration path across runtime deployment, telemetry ingest, incident/postmortem evidence creation, OpenClaw adapter degraded semantics, BFF honest-mode guidance, and BFF SSE replay. It is run as a separate `docker compose run` step because `minio-init` is a successful one-shot initialization service; using `--abort-on-container-exit` on the whole stack would treat that expected exit as a stack stop signal.
 
 The 2026-04-28 `consultation`, `source_ingestion`, and `search` deferral from section 7 is historical. In the current root compose stack, `consultation-svc`, `source-ingest`, and `search-svc` are default services with Dockerfiles, `/readyz` health checks, mounted service-owned volumes, and HTTP entrypoints; downstream docs should cite the 2026-04-29 code-backed state instead of the old omission rationale.
+
+## 11. Research And Learning Boundary Audit
+
+Updated: 2026-04-29
+
+`research-orchestrator-svc`, `policy-learning-svc`, and `research-worker-gateway-svc` now exist as default single-VM service boundaries, but this is not production activation of the deferred research/learning stack.
+
+Current code truth:
+
+- `research-orchestrator-svc` exposes task/run lifecycle, artifact handoff, and proposal handoff APIs. Default dispatch remains `stub`; Qlib, TRL, RL/RLlib, FinRL, W&B, and paper/canary/live requests are rejected while `RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS=false`.
+- `policy-learning-svc` records non-production policy-learning proposals and operator rejection state. Qlib, TRL, RL, W&B, and paper/canary/live requests are rejected by the service boundary.
+- `research-worker-gateway-svc` exposes safe `stub`, `handoff_only`, and `manual` worker dispatch records only. Qlib, TRL, RL/RLlib, FinRL, Ray Tune, VectorBT, Statsmodels, QuantLib, W&B, paper/canary/live, LEAN execution, SignalStore/live-trading paths, registry writes, governance writes, and EP5/production-learning activation are rejected.
+- Root compose sets `POLICY_LEARNING_ENABLE_PRODUCTION_ADAPTERS=false`, `RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS=false`, and `RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS=false`.
+- Regression coverage lives in `services/research/tests/`, `services/policy-learning/tests/`, and `services/research-worker-gateway/tests/`, including compose-default checks and rejection-path checks for production adapters and production modes.
+
+Disposition:
+
+These services should be described as service-boundary wrappers with safe replay and manual handoff paths. They must not be cited as evidence that the EP5 human gate, Qlib/TRL production adapters, RL production lane, W&B integration reopen, or paper/canary/live deployment activation is complete. Those remain future activation work requiring separate governance, adapter, evidence, and smoke-test tasks.
+
+## 12. OpenClaw Gateway Adapter Boundary
+
+Updated: 2026-04-29
+
+`openclaw-gateway-adapter` now exists as a Pantheon-owned default service boundary around the optional upstream `openclaw-gateway` container.
+
+Current code truth:
+
+- Root compose builds `services/openclaw-gateway-adapter/Dockerfile` as `openclaw-gateway-adapter` on port `8104`, published as `${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}`.
+- The upstream `openclaw-gateway` image remains optional under the `openclaw` profile. The adapter healthcheck uses `/livez`, so the Pantheon adapter process can be healthy while upstream OpenClaw is absent.
+- The adapter exposes `/healthz`, `/livez`, `/readyz`, `/metrics`, `/api/openclaw-adapter/upstream/status`, `/api/openclaw-adapter/capabilities`, and deferred session metadata routes under `/api/openclaw-adapter/sessions`.
+- `/readyz` degrades when the optional upstream gateway is absent or unhealthy. Capability metadata remains readable in degraded mode.
+- Session creation returns a non-retryable `CAPABILITY_DENIED` deferral. `OPENCLAW_PRODUCTION_BROKER_ENABLED=false` and `OPENCLAW_PAPER_ADAPTER_ENABLED=false` are locked in compose.
+- `scripts/smoke_honest_stack.py` now covers the adapter liveness facade, readiness/degraded semantics, capability metadata, and denied session creation path.
+
+Disposition:
+
+This closes the service-boundary gap for a controlled OpenClaw adapter facade only. It must not be cited as evidence that upstream OpenClaw runtime session execution, paper execution, production adapters, broker execution, or EP5 activation is complete.

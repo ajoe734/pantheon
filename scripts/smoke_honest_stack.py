@@ -37,6 +37,7 @@ POLICY_LEARNING_URL = os.getenv("POLICY_LEARNING_URL", "http://127.0.0.1:8100")
 RESEARCH_ORCHESTRATOR_URL = os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://127.0.0.1:8101")
 RECONCILIATION_DRIFT_URL = os.getenv("RECONCILIATION_DRIFT_URL", "http://127.0.0.1:8102")
 RESEARCH_WORKER_GATEWAY_URL = os.getenv("RESEARCH_WORKER_GATEWAY_URL", "http://127.0.0.1:8103")
+OPENCLAW_GATEWAY_ADAPTER_URL = os.getenv("OPENCLAW_GATEWAY_ADAPTER_URL", "http://127.0.0.1:8104")
 
 OPERATOR_TOKEN = "Bearer smoke-operator:operator"
 APPROVER_TOKEN = "Bearer smoke-approver:approver"
@@ -138,6 +139,46 @@ def main() -> int:
     _wait_for_health("research-orchestrator-svc", f"{RESEARCH_ORCHESTRATOR_URL}/readyz")
     _wait_for_health("reconciliation-drift-svc", f"{RECONCILIATION_DRIFT_URL}/readyz")
     _wait_for_health("research-worker-gateway-svc", f"{RESEARCH_WORKER_GATEWAY_URL}/readyz")
+    _wait_for_health("openclaw-gateway-adapter", f"{OPENCLAW_GATEWAY_ADAPTER_URL}/livez")
+
+    status, openclaw_health = _request_json("GET", f"{OPENCLAW_GATEWAY_ADAPTER_URL}/healthz")
+    if status != 200 or openclaw_health.get("status") not in {"ok", "degraded"}:
+        raise RuntimeError(f"openclaw-gateway-adapter health facade failed: {status} {openclaw_health}")
+    try:
+        status, openclaw_ready = _request_json("GET", f"{OPENCLAW_GATEWAY_ADAPTER_URL}/readyz")
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        body = exc.read().decode("utf-8", errors="replace")
+        openclaw_ready = json.loads(body) if body else {}
+    if status not in {200, 503} or openclaw_ready.get("status") not in {"ok", "degraded"}:
+        raise RuntimeError(f"openclaw-gateway-adapter readiness semantics failed: {status} {openclaw_ready}")
+    status, openclaw_capabilities = _request_json("GET", f"{OPENCLAW_GATEWAY_ADAPTER_URL}/api/openclaw-adapter/capabilities")
+    if (
+        status != 200
+        or openclaw_capabilities.get("activation_state") != "facade_only"
+        or openclaw_capabilities.get("broker_execution") != "deferred"
+        or openclaw_capabilities.get("paper_adapter") != "deferred"
+        or openclaw_capabilities.get("live_adapter") != "deferred"
+    ):
+        raise RuntimeError(f"openclaw-gateway-adapter capability facade unsafe: {status} {openclaw_capabilities}")
+    try:
+        status, openclaw_session = _request_json(
+            "POST",
+            f"{OPENCLAW_GATEWAY_ADAPTER_URL}/api/openclaw-adapter/sessions",
+            body={"agent_id": "agent-smoke", "session_type": "interactive"},
+        )
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        body = exc.read().decode("utf-8", errors="replace")
+        openclaw_session = json.loads(body) if body else {}
+    if (
+        status != 503
+        or openclaw_session.get("status") != "deferred"
+        or openclaw_session.get("error_code") != "CAPABILITY_DENIED"
+        or openclaw_session.get("retryable") is not False
+    ):
+        raise RuntimeError(f"openclaw-gateway-adapter session path was not safely deferred: {status} {openclaw_session}")
+    print("ok  openclaw-gateway-adapter exposes facade/degraded semantics without broker activation")
 
     status, matrix = _request_json("GET", f"{GOVERNANCE_URL}/api/governance/write-authority")
     if status != 200 or "matrix" not in (matrix or {}):
