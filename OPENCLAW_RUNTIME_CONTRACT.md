@@ -1,6 +1,6 @@
 # OPENCLAW_RUNTIME_CONTRACT.md
 
-Last updated: 2026-04-09
+Last updated: 2026-04-29
 Status: canonical runtime-boundary contract for upstream OpenClaw-compatible runtimes
 Tier: L1 Platform Architecture & Policy
 Scope: upstream runtime dependency, adapter boundary, and ownership split between Pantheon and runtime substrate
@@ -23,6 +23,10 @@ Conflict rule: this document overrides broader OpenClaw mentions in overview/pla
 > 實作邊界：OpenClaw 相關 adapter / facade / runtime-adoption scaffold 可以先開發並以
 > fail-closed 方式驗證；不得因此啟用 paper / canary / live execution、broker session、
 > capital binding，或讓 OpenClaw 成為 execution kernel。
+>
+> 目前 repo truth（2026-04-29）：OpenClaw 的 fail-closed runtime-adoption scaffold 已落地。
+> 這只證明 adapter/capability metadata 與拒絕路徑存在；broker session、paper/canary/live
+> route、capital binding 與 execution-kernel 角色仍然關閉，必須等未來明確 activation gate。
 
 ---
 
