@@ -12,13 +12,13 @@ from fastapi.testclient import TestClient
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 
 
-def _load_service_module(max_active_runs: str = "8"):
+def _load_service_module(max_active_runs: str = "8", production_adapters_enabled: str = "false"):
     with mock.patch.dict(
         "os.environ",
         {
             "RESEARCH_ORCHESTRATOR_DATA_DIR": tempfile.mkdtemp(),
             "RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS": max_active_runs,
-            "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": "false",
+            "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": production_adapters_enabled,
         },
     ):
         sys.modules.pop("store", None)
@@ -45,6 +45,10 @@ def test_research_orchestrator_lifecycle_handoff_is_idempotent() -> None:
     capabilities = client.get("/api/research-orchestrator/capabilities")
     assert capabilities.status_code == 200
     assert capabilities.json()["production_activation"] == "disabled"
+    capability_map = {entry["adapter"]: entry for entry in capabilities.json()["capabilities"]}
+    for adapter in ("openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"):
+        assert capability_map[adapter]["gate_state"] == "fail_closed"
+        assert capability_map[adapter]["allowed_scope"] == "capability_metadata_read_only"
 
     created = client.post(
         "/api/research-orchestrator/tasks",
@@ -197,9 +201,11 @@ def test_research_orchestrator_blocks_production_adapters_and_bounds_dispatch() 
 
     for index, (adapter, mode) in enumerate(
         (
+            ("openclaw", "stub"),
             ("qlib", "production"),
             ("trl", "paper"),
-            ("rl", "canary"),
+            ("rllib", "canary"),
+            ("ray_tune", "stub"),
             ("wandb", "live"),
         ),
         start=3,
@@ -218,3 +224,63 @@ def test_research_orchestrator_blocks_production_adapters_and_bounds_dispatch() 
         assert payload["status"] == "rejected"
         assert payload["rejection"]["reason"] == "production_adapter_disabled"
         assert payload["production_activation"] == "disabled"
+
+
+def test_research_orchestrator_rejects_write_paths_and_unknown_adapters() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={
+            "title": "Fail closed policy",
+            "objective": "Verify write-denial policy.",
+            "created_at": "2026-04-29T01:00:00Z",
+        },
+    ).json()
+
+    cases = [
+        ({"adapter": "stub", "parameters": {"direct_registry_write": True}}, "registry_write_disabled"),
+        ({"adapter": "stub", "parameters": {"governance_stage": "approved"}}, "governance_write_disabled"),
+        ({"adapter": "mystery", "requested_mode": "stub", "dispatch_mode": "stub"}, "unknown_adapter"),
+    ]
+    for index, (body, reason) in enumerate(cases, start=1):
+        body.setdefault("requested_mode", "stub")
+        body.setdefault("dispatch_mode", "stub")
+        body["requested_at"] = f"2026-04-29T01:0{index}:00Z"
+        result = client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json=body)
+        assert result.status_code == 201
+        payload = result.json()
+        assert payload["status"] == "rejected"
+        assert payload["rejection"]["reason"] == reason
+
+
+def test_research_orchestrator_dormant_dispatch_stays_fail_closed_when_legacy_env_is_enabled() -> None:
+    module = _load_service_module(production_adapters_enabled="true")
+    client = TestClient(module.app)
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={
+            "title": "Legacy env fail closed",
+            "objective": "Verify legacy production env does not activate dormant dispatch.",
+            "created_at": "2026-04-29T01:30:00Z",
+        },
+    ).json()
+
+    capabilities = client.get("/api/research-orchestrator/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["production_activation"] == "disabled"
+
+    result = client.post(
+        f"/api/research-orchestrator/tasks/{task['task_id']}/runs",
+        json={
+            "adapter": "qlib",
+            "requested_mode": "stub",
+            "dispatch_mode": "stub",
+            "requested_at": "2026-04-29T01:31:00Z",
+        },
+    )
+    assert result.status_code == 201
+    payload = result.json()
+    assert payload["status"] == "rejected"
+    assert payload["rejection"]["reason"] == "production_adapter_disabled"
+    assert payload["production_activation"] == "disabled"

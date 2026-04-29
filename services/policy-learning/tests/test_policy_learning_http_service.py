@@ -44,6 +44,10 @@ def test_policy_learning_stub_lifecycle_is_replayable() -> None:
     capabilities = client.get("/api/policy-learning/capabilities")
     assert capabilities.status_code == 200
     assert capabilities.json()["production_activation"] == "disabled"
+    capability_map = {entry["adapter"]: entry for entry in capabilities.json()["capabilities"]}
+    for adapter in ("openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"):
+        assert capability_map[adapter]["gate_state"] == "fail_closed"
+        assert capability_map[adapter]["allowed_scope"] == "capability_metadata_read_only"
 
     created = client.post(
         "/api/policy-learning/jobs",
@@ -79,11 +83,19 @@ def test_policy_learning_stub_lifecycle_is_replayable() -> None:
     assert replay.json()["rejection"]["reason"] == "operator_closed_stub"
 
 
-def test_production_adapters_are_rejected_by_default() -> None:
+def test_dormant_capabilities_are_readable_but_execution_is_rejected_by_default() -> None:
     module = _load_service_module()
     client = TestClient(module.app)
 
-    for adapter, mode in (("qlib", "production"), ("trl", "paper"), ("rl", "canary"), ("wandb", "live")):
+    for adapter, mode in (
+        ("openclaw", "stub"),
+        ("qlib", "production"),
+        ("trl", "paper"),
+        ("finrl", "stub"),
+        ("rllib", "canary"),
+        ("ray_tune", "stub"),
+        ("wandb", "live"),
+    ):
         result = client.post(
             "/api/policy-learning/jobs",
             json={
@@ -99,3 +111,29 @@ def test_production_adapters_are_rejected_by_default() -> None:
         assert payload["status"] == "rejected"
         assert payload["rejection"]["reason"] == "production_adapter_disabled"
         assert payload["production_activation"] == "disabled"
+
+
+def test_policy_learning_rejects_write_paths_and_unknown_adapters() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    cases = [
+        ({"adapter": "stub", "constraints": {"direct_registry_write": True}}, "registry_write_disabled"),
+        ({"adapter": "stub", "constraints": {"governance_stage": "approved"}}, "governance_write_disabled"),
+        ({"adapter": "mystery"}, "unknown_adapter"),
+    ]
+    for index, (body, reason) in enumerate(cases, start=1):
+        body.setdefault("requested_mode", "stub")
+        result = client.post(
+            "/api/policy-learning/jobs",
+            json={
+                "policy_id": f"policy-denied-{index}",
+                "objective": "Attempt denied policy-learning path.",
+                "proposed_at": f"2026-04-29T01:1{index}:00Z",
+                **body,
+            },
+        )
+        assert result.status_code == 201
+        payload = result.json()
+        assert payload["status"] == "rejected"
+        assert payload["rejection"]["reason"] == reason

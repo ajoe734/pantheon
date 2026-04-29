@@ -17,6 +17,7 @@ SAFE_DISPATCH_MODES = {"stub", "handoff_only", "manual"}
 PRODUCTION_MODES = {"production", "paper", "canary", "live"}
 ACTIVE_STATUSES = {"queued", "running", "cancel_requested"}
 TERMINAL_STATUSES = {"completed", "failed", "canceled", "rejected"}
+FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
 
 WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
     "stub": {
@@ -38,21 +39,29 @@ WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
         "status": "deferred",
         "entrypoint": "services/research/qlib/worker.py",
         "activation_gate": "services/research/qlib/requirements.txt",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
     },
     "finrl": {
         "status": "deferred",
         "entrypoint": "services/research/finrl/worker.py",
         "activation_gate": "PANTHEON_FINRL_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
     },
     "rllib": {
         "status": "deferred",
         "entrypoint": "services/research/rllib/worker.py",
         "activation_gate": "PANTHEON_RLLIB_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
     },
     "ray_tune": {
         "status": "deferred",
         "entrypoint": "services/research/rllib/ray_tune_worker.py",
         "activation_gate": "PANTHEON_RAYTUNE_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
     },
     "vectorbt": {
         "status": "deferred",
@@ -74,12 +83,26 @@ WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
         "purpose": "OpenClaw agent runtime substrate (consultation / teaching / workflow)",
         "activation_gate": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
         "gate_state": "fail_closed",
-        "allowed_scope": "capability_metadata_read_only",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
         "note": (
             "OpenClaw is an agent runtime substrate, not a direct research worker. "
             "Dispatch through this gateway is deferred; capability metadata is readable "
             "in fail-closed mode via services/openclaw-gateway-adapter."
         ),
+    },
+    "trl": {
+        "status": "deferred",
+        "entrypoint": "services/learning/trl/preflight.py",
+        "activation_gate": "services/learning/trl/ACTIVATION_CRITERIA.md",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "wandb": {
+        "status": "deferred",
+        "purpose": "optional experiment registry backend",
+        "activation_gate": "services/registry/experiments/WANDB_ACTIVATION.md",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
     },
 }
 
@@ -181,10 +204,10 @@ def _rejection_for(body: "DispatchJobBody", worker: str, requested_mode: str, di
             "rejected_at": timestamp,
             "rejected_by": "research-worker-gateway",
         }
-    if not PRODUCTION_ADAPTERS_ALLOWED and (worker in PRODUCTION_WORKERS or requested_mode in PRODUCTION_MODES):
+    if worker in PRODUCTION_WORKERS or requested_mode in PRODUCTION_MODES:
         return {
             "reason": "production_adapter_disabled",
-            "detail": "Production research adapters and paper/canary/live modes are disabled by default.",
+            "detail": "Production research adapters and paper/canary/live modes are fail-closed in this service boundary.",
             "rejected_at": timestamp,
             "rejected_by": "research-worker-gateway",
         }
@@ -277,7 +300,7 @@ def capabilities() -> Dict[str, Any]:
     return {
         "service": "research-worker-gateway",
         "default_dispatch_mode": "stub",
-        "production_activation": "enabled" if PRODUCTION_ADAPTERS_ALLOWED else "disabled",
+        "production_activation": "disabled",
         "bounded_dispatch": {"max_active_jobs": MAX_ACTIVE_JOBS},
         "safety_boundary": {
             "registry_writes": "disabled",
@@ -340,7 +363,7 @@ def dispatch_job(body: DispatchJobBody) -> Dict[str, Any]:
         "requested_mode": requested_mode,
         "dispatch_mode": dispatch_mode,
         "status": status,
-        "production_activation": "disabled" if not PRODUCTION_ADAPTERS_ALLOWED else "enabled",
+        "production_activation": "disabled",
         "input_refs": body.input_refs,
         "parameters": body.parameters,
         "output_refs": output_refs,

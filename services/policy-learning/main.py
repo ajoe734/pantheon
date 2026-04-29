@@ -11,8 +11,54 @@ from services.foundation.health import register_fastapi_health_routes
 from store import PolicyLearningStore
 
 
-PRODUCTION_ADAPTERS = {"qlib", "trl", "finrl", "rllib", "rl", "wandb"}
+PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
 STUB_ADAPTER = "stub"
+FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
+CAPABILITY_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "openclaw": {
+        "status": "deferred",
+        "purpose": "OpenClaw agent runtime substrate",
+        "activation_gate": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "qlib": {
+        "status": "deferred",
+        "activation_gate": "services/research/qlib/requirements.txt",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "trl": {
+        "status": "deferred",
+        "activation_gate": "services/learning/trl/ACTIVATION_CRITERIA.md",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "finrl": {
+        "status": "deferred",
+        "activation_gate": "PANTHEON_FINRL_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "rllib": {
+        "status": "deferred",
+        "activation_gate": "PANTHEON_RLLIB_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "ray_tune": {
+        "status": "deferred",
+        "activation_gate": "PANTHEON_RAYTUNE_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "wandb": {
+        "status": "deferred",
+        "activation_gate": "services/registry/experiments/WANDB_ACTIVATION.md",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+}
 
 
 def utc_now() -> str:
@@ -72,6 +118,15 @@ class RejectBody(BaseModel):
     rejected_at: Optional[str] = None
 
 
+def _proposal_text(body: ProposalBody) -> str:
+    parts = [body.adapter, body.requested_mode, body.objective]
+    parts.extend(str(ref.get("type") or "") for ref in body.source_refs)
+    parts.extend(str(ref.get("id") or "") for ref in body.source_refs)
+    parts.extend(str(key) for key in body.constraints.keys())
+    parts.extend(str(value) for value in body.constraints.values())
+    return " ".join(parts).lower()
+
+
 app = FastAPI(title="Pantheon Policy Learning Service", version="0.1.0")
 store = PolicyLearningStore(_data_dir())
 register_fastapi_health_routes(
@@ -102,32 +157,22 @@ def capabilities() -> Dict[str, Any]:
         "service": "policy-learning",
         "default_mode": "stub",
         "production_activation": "disabled",
+        "safety_boundary": {
+            "training_dispatch": "disabled",
+            "registry_writes": "disabled",
+            "governance_writes": "disabled",
+            "paper_canary_live": "disabled",
+        },
         "capabilities": [
             {
                 "adapter": STUB_ADAPTER,
                 "status": "available",
                 "purpose": "non-production lifecycle replay and contract validation",
-            },
-            {
-                "adapter": "qlib",
-                "status": "deferred",
-                "activation_gate": "services/learning/qlib/ACTIVATION_CRITERIA.md",
-            },
-            {
-                "adapter": "trl",
-                "status": "deferred",
-                "activation_gate": "services/learning/trl/ACTIVATION_CRITERIA.md",
-            },
-            {
-                "adapter": "rl",
-                "status": "closed",
-                "activation_gate": "services/learning/rl/RL_PATH_APPROVAL_GATE.md",
-            },
-            {
-                "adapter": "wandb",
-                "status": "deferred",
-                "activation_gate": "services/registry/experiments/WANDB_ACTIVATION.md",
-            },
+            }
+        ]
+        + [
+            {"adapter": adapter, **metadata}
+            for adapter, metadata in sorted(CAPABILITY_REGISTRY.items())
         ],
     }
 
@@ -150,8 +195,36 @@ def propose_job(body: ProposalBody) -> Dict[str, Any]:
     existing_ids = {str(job.get("job_id") or "") for job in store.list_jobs()}
     job_id = _next_job_id(timestamp, existing_ids)
     events: List[Dict[str, Any]] = []
-    rejected = adapter in PRODUCTION_ADAPTERS or requested_mode in {"production", "paper", "canary", "live"}
-    if rejected:
+    request_text = _proposal_text(body)
+    rejection = None
+    if any(token in request_text for token in ("registry_write", "direct_registry_write", "promote_to_registry")):
+        status = "rejected"
+        rejection = {
+            "reason": "registry_write_disabled",
+            "detail": "Policy-learning jobs may record proposals only; canonical registry writes are not allowed.",
+            "rejected_at": timestamp,
+            "rejected_by": "policy-learning-service",
+        }
+        events.append(_event(timestamp, "proposal_rejected", rejection["detail"], "system", events))
+    elif any(token in request_text for token in ("governance_write", "governance_stage", "approve_governance")):
+        status = "rejected"
+        rejection = {
+            "reason": "governance_write_disabled",
+            "detail": "Policy-learning jobs cannot approve governance decisions or change deployment stages.",
+            "rejected_at": timestamp,
+            "rejected_by": "policy-learning-service",
+        }
+        events.append(_event(timestamp, "proposal_rejected", rejection["detail"], "system", events))
+    elif adapter != STUB_ADAPTER and adapter not in CAPABILITY_REGISTRY:
+        status = "rejected"
+        rejection = {
+            "reason": "unknown_adapter",
+            "detail": f"Adapter family '{adapter}' is not registered for policy learning.",
+            "rejected_at": timestamp,
+            "rejected_by": "policy-learning-service",
+        }
+        events.append(_event(timestamp, "proposal_rejected", rejection["detail"], "system", events))
+    elif adapter in PRODUCTION_ADAPTERS or requested_mode in {"production", "paper", "canary", "live"}:
         status = "rejected"
         rejection = {
             "reason": "production_adapter_disabled",
@@ -162,7 +235,6 @@ def propose_job(body: ProposalBody) -> Dict[str, Any]:
         events.append(_event(timestamp, "proposal_rejected", rejection["detail"], "system", events))
     else:
         status = "proposed"
-        rejection = None
         events.append(_event(timestamp, "proposal_recorded", "Stub policy-learning job proposal recorded.", body.actor_id, events))
     job = {
         "id": job_id,

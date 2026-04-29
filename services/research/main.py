@@ -11,10 +11,56 @@ from services.foundation.health import register_fastapi_health_routes
 from store import ResearchOrchestratorStore
 
 
-PRODUCTION_ADAPTERS = {"qlib", "trl", "rl", "rllib", "finrl", "wandb"}
+PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
 PRODUCTION_MODES = {"production", "paper", "canary", "live"}
 STUB_ADAPTERS = {"stub", "handoff_only", "manual"}
 ACTIVE_STATUSES = {"queued", "running", "dispatching"}
+FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
+CAPABILITY_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "openclaw": {
+        "status": "deferred",
+        "purpose": "OpenClaw agent runtime substrate",
+        "activation_gate": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "qlib": {
+        "status": "deferred",
+        "activation_gate": "services/research/qlib/requirements.txt",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "trl": {
+        "status": "deferred",
+        "activation_gate": "services/learning/trl/ACTIVATION_CRITERIA.md",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "finrl": {
+        "status": "deferred",
+        "activation_gate": "PANTHEON_FINRL_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "rllib": {
+        "status": "deferred",
+        "activation_gate": "PANTHEON_RLLIB_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "ray_tune": {
+        "status": "deferred",
+        "activation_gate": "PANTHEON_RAYTUNE_PREP_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+    "wandb": {
+        "status": "deferred",
+        "activation_gate": "services/registry/experiments/WANDB_ACTIVATION.md",
+        "gate_state": "fail_closed",
+        "allowed_scope": FAIL_CLOSED_SCOPE,
+    },
+}
 
 
 def utc_now() -> str:
@@ -68,6 +114,15 @@ def _idempotent_match(records: List[Dict[str, Any]], key: str | None) -> Optiona
         if record.get("idempotency_key") == key:
             return record
     return None
+
+
+def _request_text(body: DispatchRunBody) -> str:
+    parts = [body.adapter, body.requested_mode, body.dispatch_mode]
+    parts.extend(str(ref.get("type") or "") for ref in body.input_refs)
+    parts.extend(str(ref.get("id") or "") for ref in body.input_refs)
+    parts.extend(str(key) for key in body.parameters.keys())
+    parts.extend(str(value) for value in body.parameters.values())
+    return " ".join(parts).lower()
 
 
 class CreateTaskBody(BaseModel):
@@ -159,19 +214,21 @@ def capabilities() -> Dict[str, Any]:
     return {
         "service": "research-orchestrator",
         "default_dispatch_mode": "stub",
-        "production_activation": "enabled" if PRODUCTION_ADAPTERS_ALLOWED else "disabled",
+        "production_activation": "disabled",
         "bounded_dispatch": {"max_active_runs": MAX_ACTIVE_RUNS},
+        "safety_boundary": {
+            "training_dispatch": "disabled",
+            "registry_writes": "disabled",
+            "governance_writes": "disabled",
+            "paper_canary_live": "disabled",
+        },
         "capabilities": [
             {"adapter": adapter, "status": "available", "purpose": "lifecycle replay and handoff validation"}
             for adapter in sorted(STUB_ADAPTERS)
         ]
         + [
-            {
-                "adapter": adapter,
-                "status": "deferred",
-                "activation_gate": f"services/research/{adapter}/ACTIVATION_CRITERIA.md",
-            }
-            for adapter in sorted(PRODUCTION_ADAPTERS)
+            {"adapter": adapter, **metadata}
+            for adapter, metadata in sorted(CAPABILITY_REGISTRY.items())
         ],
     }
 
@@ -230,11 +287,36 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     dispatch_mode = body.dispatch_mode.lower().strip()
     rejected = False
     rejection = None
-    if not PRODUCTION_ADAPTERS_ALLOWED and (adapter in PRODUCTION_ADAPTERS or requested_mode in PRODUCTION_MODES):
+    request_text = _request_text(body)
+    if any(token in request_text for token in ("registry_write", "direct_registry_write", "promote_to_registry")):
+        rejected = True
+        rejection = {
+            "reason": "registry_write_disabled",
+            "detail": "Research orchestrator may emit draft handoff records only; canonical registry writes are not allowed.",
+            "rejected_at": timestamp,
+            "rejected_by": "research-orchestrator-service",
+        }
+    elif any(token in request_text for token in ("governance_write", "governance_stage", "approve_governance")):
+        rejected = True
+        rejection = {
+            "reason": "governance_write_disabled",
+            "detail": "Research orchestrator cannot approve governance decisions or change deployment stages.",
+            "rejected_at": timestamp,
+            "rejected_by": "research-orchestrator-service",
+        }
+    elif adapter not in STUB_ADAPTERS and adapter not in CAPABILITY_REGISTRY:
+        rejected = True
+        rejection = {
+            "reason": "unknown_adapter",
+            "detail": f"Adapter family '{adapter}' is not registered for research orchestration.",
+            "rejected_at": timestamp,
+            "rejected_by": "research-orchestrator-service",
+        }
+    elif adapter in PRODUCTION_ADAPTERS or requested_mode in PRODUCTION_MODES:
         rejected = True
         rejection = {
             "reason": "production_adapter_disabled",
-            "detail": "Research orchestrator does not activate Qlib/TRL/RL production paths in this service boundary.",
+            "detail": "Research orchestrator production adapters and paper/canary/live modes are fail-closed in this service boundary.",
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }

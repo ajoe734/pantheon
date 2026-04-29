@@ -12,13 +12,17 @@ from fastapi.testclient import TestClient
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 
 
-def _load_service_module(data_dir: str | None = None, max_active_jobs: str = "4"):
+def _load_service_module(
+    data_dir: str | None = None,
+    max_active_jobs: str = "4",
+    production_adapters_enabled: str = "false",
+):
     with mock.patch.dict(
         "os.environ",
         {
             "RESEARCH_WORKER_GATEWAY_DATA_DIR": data_dir or tempfile.mkdtemp(),
             "RESEARCH_WORKER_GATEWAY_MAX_ACTIVE_JOBS": max_active_jobs,
-            "RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS": "false",
+            "RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS": production_adapters_enabled,
             "RESEARCH_ORCHESTRATOR_URL": "http://research-orchestrator-svc:8101",
         },
     ):

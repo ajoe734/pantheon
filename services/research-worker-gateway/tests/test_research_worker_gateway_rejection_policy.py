@@ -118,6 +118,61 @@ def test_gateway_rejects_execution_registry_governance_learning_and_unknown_work
         assert result.json()["rejection"]["reason"] == reason
 
 
+def test_capabilities_list_activation_gated_backend_inventory() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    resp = client.get("/api/research-worker-gateway/capabilities")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["safety_boundary"]["registry_writes"] == "disabled"
+    workers = {entry["worker"]: entry for entry in body["capabilities"]}
+
+    for worker in ("openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"):
+        assert worker in workers
+        assert workers[worker]["gate_state"] == "fail_closed"
+        assert workers[worker]["allowed_scope"] == "capability_metadata_read_only"
+
+        denied = client.post(
+            "/api/research-worker-gateway/jobs",
+            json={
+                "worker": worker,
+                "requested_mode": "stub",
+                "dispatch_mode": "stub",
+                "idempotency_key": f"deny-{worker}",
+                "requested_at": "2026-04-29T01:00:00Z",
+            },
+        )
+        assert denied.status_code == 201
+        assert denied.json()["status"] == "rejected"
+        assert denied.json()["rejection"]["reason"] == "production_adapter_disabled"
+
+
+def test_dormant_worker_dispatch_remains_fail_closed_even_if_legacy_env_is_enabled() -> None:
+    module = _load_service_module(production_adapters_enabled="true")
+    client = TestClient(module.app)
+
+    capabilities = client.get("/api/research-worker-gateway/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["production_activation"] == "disabled"
+
+    result = client.post(
+        "/api/research-worker-gateway/jobs",
+        json={
+            "worker": "qlib",
+            "requested_mode": "stub",
+            "dispatch_mode": "stub",
+            "idempotency_key": "legacy-env-still-closed",
+            "requested_at": "2026-04-29T01:30:00Z",
+        },
+    )
+    assert result.status_code == 201
+    payload = result.json()
+    assert payload["status"] == "rejected"
+    assert payload["production_activation"] == "disabled"
+    assert payload["rejection"]["reason"] == "production_adapter_disabled"
+
+
 def test_active_job_bound_rejects_safe_dispatch_before_second_job_starts() -> None:
     module = _load_service_module(max_active_jobs="1")
     client = TestClient(module.app)
