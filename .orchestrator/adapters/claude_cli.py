@@ -7,6 +7,7 @@ from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.claude_code import ClaudeCodeAdapter
 from common import (
     agent_config_for,
+    apply_claude_oauth_token_file,
     claude_auth_ready as shared_claude_auth_ready,
     config_path,
     new_runtime_id,
@@ -48,6 +49,7 @@ def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> di
         if value is None:
             continue
         env[str(key)] = os.path.expanduser(str(value))
+    apply_claude_oauth_token_file(env, runtime)
     return env
 
 

@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
 EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
+CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
@@ -233,6 +234,28 @@ def claude_oauth_token_expired(oauth: dict[str, Any], *, skew_seconds: int = 300
     return expires_at_ms <= int(time.time() * 1000) + (skew_seconds * 1000)
 
 
+def claude_oauth_token_from_env(env: dict[str, str] | None = None) -> str | None:
+    source = env or os.environ
+    token = str(source.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
+    return token if token.startswith("sk-ant-") else None
+
+
+def apply_claude_oauth_token_file(env: dict[str, str], runtime: dict[str, Any]) -> dict[str, str]:
+    if claude_oauth_token_from_env(env):
+        return env
+    token_file = str(runtime.get("oauth_token_file") or runtime.get("oauth_token_path") or "").strip()
+    if not token_file:
+        return env
+    path = Path(os.path.expanduser(token_file))
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return env
+    if token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    return env
+
+
 def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: float = 15.0) -> dict[str, Any] | None:
     loaded = load_claude_oauth_tokens(env)
     if not loaded:
@@ -283,6 +306,8 @@ def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: f
 def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, refresh_if_needed: bool = True) -> bool:
     if not binary:
         return False
+    if claude_oauth_token_from_env(env):
+        return True
     status = run_command([binary, "auth", "status"], env=env)
     if status.returncode != 0 or not status.stdout:
         return False
@@ -722,7 +747,7 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
 
 
 def execution_context_files(config: dict[str, Any], task_id: str | None) -> list[str]:
-    files = ["AI_COLLABORATION_GUIDE.md", "ai-status.json"]
+    files = ["AI_COLLABORATION_GUIDE.md"]
     try:
         brief = write_task_brief(config, task_id)
     except Exception as exc:
@@ -734,9 +759,13 @@ def execution_context_files(config: dict[str, Any], task_id: str | None) -> list
                 "message": f"Fell back to minimal execution context after task brief generation failed: {type(exc).__name__}: {exc}",
             },
         )
+        files.append("ai-status.json")
         return unique_strings(files)
     if brief is not None:
-        files.insert(1, relpath(brief))
+        files.append(relpath(brief))
+    if CLOSEOUT_SPEC_PATH.exists():
+        files.append(relpath(CLOSEOUT_SPEC_PATH))
+    files.append("ai-status.json")
     return unique_strings(files)
 
 

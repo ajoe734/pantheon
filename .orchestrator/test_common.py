@@ -100,6 +100,14 @@ class FailureSummaryTests(unittest.TestCase):
 
 
 class ClaudeAuthTests(unittest.TestCase):
+    def test_claude_auth_ready_accepts_long_lived_oauth_token_env(self) -> None:
+        env = {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-test-token"}
+
+        with mock.patch.object(common, "run_command") as run_command:
+            self.assertTrue(common.claude_auth_ready("claude", env=env))
+
+        run_command.assert_not_called()
+
     def test_claude_auth_ready_refreshes_expired_oauth(self) -> None:
         env = {"HOME": "/tmp/test-home"}
         status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))

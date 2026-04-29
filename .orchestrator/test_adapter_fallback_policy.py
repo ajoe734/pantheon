@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -13,11 +14,63 @@ if str(THIS_DIR) not in sys.path:
 from adapters.base import DeliveryRequest
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.copilot_local import CopilotLocalAdapter
+from adapters.codex import CodexAdapter
 from adapters.gemini import GeminiAdapter
 from adapters.qwen import QwenAdapter
 
 
 class AdapterFallbackPolicyTests(unittest.TestCase):
+    def test_codex_alias_sets_agent_identity_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "codex2": {
+                        "id": "codex2",
+                        "display_name": "Codex2",
+                        "provider": "codex2",
+                        "adapter": "codex",
+                    }
+                },
+                "providers": {
+                    "codex2": {
+                        "codex": {
+                            "cli": "codex",
+                            "api_key_env": "OPENAI_API_KEY_CODEX2",
+                            "codex_home": "~/.codex2",
+                        }
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="codex2",
+                provider="codex2",
+                delivery_mode="codex",
+                message="wake",
+                task_id="T-REVIEW",
+                reason="review_ready_dispatch",
+            )
+            adapter = CodexAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY_CODEX2": "codex2-key"}, clear=False),
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["AI_NAME"], "Codex2")
+        self.assertEqual(env["ORCH_AGENT_ID"], "codex2")
+        self.assertEqual(env["ORCH_PROVIDER"], "codex2")
+        self.assertEqual(env["ORCH_TASK_ID"], "T-REVIEW")
+        self.assertEqual(env["ORCH_REASON"], "review_ready_dispatch")
+        self.assertEqual(env["OPENAI_API_KEY"], "codex2-key")
+        self.assertEqual(env["CODEX_HOME"], os.path.expanduser("~/.codex2"))
+
     def test_claude_can_disable_inbox_fallback(self) -> None:
         config = {
             "providers": {
@@ -76,6 +129,40 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["HOME"], os.path.expanduser("~/.claude2"))
         self.assertEqual(env["ORCH_PROVIDER"], "claude2")
         self.assertIn("--permission-mode", result.command)
+
+    def test_claude_runtime_loads_oauth_token_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            token_file = root / "claude-token"
+            token_file.write_text("sk-ant-oat01-test-token\n", encoding="utf-8")
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "providers": {
+                    "claude": {
+                        "allow_inbox_fallback": False,
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "oauth_token_file": str(token_file),
+                            "output_format": "stream-json",
+                            "include_hook_events": True,
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
+            adapter = ClaudeCLIAdapter(config=config, provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-test-token")
 
     def test_gemini_can_disable_inbox_fallback(self) -> None:
         config = {

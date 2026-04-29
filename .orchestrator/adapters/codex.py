@@ -58,6 +58,8 @@ class CodexAdapter(BaseAdapter):
             )
 
         _provider, codex_settings = self._provider_settings(request.agent_id)
+        agent_cfg = agent_config_for(self.config, request.agent_id)
+        display_name = str(agent_cfg.get("display_name") or request.agent_id)
         cli = codex_settings.get("cli") or "codex"
         command = [
             cli,
@@ -75,19 +77,24 @@ class CodexAdapter(BaseAdapter):
         command.append(request.message)
 
         # Build env: inherit current environment, then apply overrides.
-        spawn_env: dict[str, str] | None = None
+        spawn_env: dict[str, str] = dict(os.environ)
+        spawn_env["AI_NAME"] = display_name
+        spawn_env["ORCH_AGENT_ID"] = request.agent_id
+        spawn_env["ORCH_PROVIDER"] = request.provider
+        if request.task_id:
+            spawn_env["ORCH_TASK_ID"] = request.task_id
+        if request.reason:
+            spawn_env["ORCH_REASON"] = request.reason
 
         api_key_env = codex_settings.get("api_key_env", "").strip()
         codex_home = codex_settings.get("codex_home", "").strip()
 
-        if (api_key_env and api_key_env != "OPENAI_API_KEY") or codex_home:
-            spawn_env = dict(os.environ)
-            if api_key_env and api_key_env != "OPENAI_API_KEY":
-                api_key_value = os.environ.get(api_key_env, "")
-                if api_key_value:
-                    spawn_env["OPENAI_API_KEY"] = api_key_value
-            if codex_home:
-                spawn_env["CODEX_HOME"] = os.path.expanduser(codex_home)
+        if api_key_env and api_key_env != "OPENAI_API_KEY":
+            api_key_value = os.environ.get(api_key_env, "")
+            if api_key_value:
+                spawn_env["OPENAI_API_KEY"] = api_key_value
+        if codex_home:
+            spawn_env["CODEX_HOME"] = os.path.expanduser(codex_home)
 
         run_id = new_runtime_id("codex")
         log_path = runtime_log_path("codex", request.agent_id)
@@ -102,7 +109,7 @@ class CodexAdapter(BaseAdapter):
             ok=True,
             adapter=self.name,
             mode="codex",
-            target=agent_config_for(self.config, request.agent_id).get("display_name", request.agent_id),
+            target=display_name,
             auto_delivered=True,
             manual_confirmation_required=False,
             notes="Codex CLI wake-up started in the background.",

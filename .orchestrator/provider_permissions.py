@@ -10,6 +10,7 @@ from typing import Any
 
 from common import (
     ROOT,
+    apply_claude_oauth_token_file,
     claude_auth_ready,
     claude_credentials_path,
     command_exists,
@@ -175,6 +176,7 @@ def _provider_runtime_env(config: dict[str, Any], provider_id: str) -> dict[str,
         if value is None:
             continue
         env[str(key)] = os.path.expanduser(str(value))
+    apply_claude_oauth_token_file(env, runtime)
     return env
 
 

@@ -1,6 +1,6 @@
 # AI Collaboration Guide
 
-Last updated: 2026-04-18
+Last updated: 2026-04-29
 Status: canonical collaboration rules for the Pantheon project
 
 ## 0. Repository Architecture (2026-04-04 — migration complete)
@@ -60,6 +60,7 @@ Canonical truth now uses five layers:
 - `AI_COLLABORATION_GUIDE.md`: stable collaboration rules and command usage
 - `ai-status.json`: machine-readable live task state, ownership, blockers, handoffs
 - `ai-activity-log.jsonl`: append-only activity history
+- `.orchestrator/skills/task-closeout-finalization.md`: owner finalization, commit, and publication rules for `review_approved -> done`
 
 ### L0.5 Derived Narrative
 
@@ -192,7 +193,7 @@ Separate stable capability lanes from sprint ownership.
 - `Claude`: execution plane, control plane, governance review
 - `Gemini`: GCP, CI/CD, runtime packaging, worker operations
 - `Codex`: integration contracts, status system, schema, acceptance
-- `Qwen`: integration, schema, acceptance, code-agent execution
+- `Codex2`: integration contracts, schema, acceptance, sidecar review
 - `Copilot`: coding assist, research ingestion, external search, spec review, critique
 
 Recommended local mode for `Copilot`:
@@ -226,6 +227,36 @@ Lifecycle rule:
 - `review_approved`: reviewer gate passed; the task returns to the owner for finalization
 - `done`: owner has finished final checks, accepted the approved state, and formally closed the task
 - `supersede`: exceptional retirement path for obsolete lanes; it closes the task with a terminal note instead of pretending the original scope was fully implemented
+
+### Task Closeout And Publication
+
+`review_approved` is not terminal. It means the reviewer gate passed and the owner must run the closeout checklist before `done`.
+
+Closeout is governed by `.orchestrator/skills/task-closeout-finalization.md`.
+
+Owner finalization requirements:
+
+- re-read the task brief, reviewer approval, and touched artifacts
+- update required task-specific records, docs, evidence notes, or handoff / acceptance packets
+- run focused verification and record exact commands or evidence
+- inspect `git status --short` and keep task-owned changes separate from unrelated dirty worktree changes
+- create a task-scoped commit whenever the task changed repo files and an isolated commit is possible
+- use `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"` only after closeout is complete
+
+Commit requirements:
+
+- subject includes the task id
+- body includes `LLM-Agent: <owner>`, `Task-ID: <task-id>`, and `Reviewer: <reviewer>`
+- body includes a concise verification summary when tests or checks were run
+
+Publication rule:
+
+- `done` does not automatically mean remote publication
+- `scripts/ai-status.sh done` records branch, commit, dirty count, remote/upstream, and push status
+- default behavior is no automatic `git push`
+- if delivery metadata shows `push_status: ahead`, the task is locally finalized but publish-pending
+- chair man may approve a normal non-force `git push` only when branch/upstream are clear, closeout commit metadata matches the task, and no human hold is present
+- never use force, mirror, delete, all-branch, or tag-wide pushes as routine closeout
 
 ### Discussion Planning Mode
 
@@ -272,7 +303,7 @@ Typical flow:
 1. all lanes read L0 -> L1 -> L2 canonical docs
 2. each lane writes an independent readout
 3. `Codex` creates the first starter draft
-4. `Qwen -> Gemini -> Copilot -> Claude` run cited cross-review rounds
+4. `Codex2 -> Gemini -> Copilot -> Claude` run cited cross-review rounds
 5. unresolved semantic conflicts become explicit `human_required` items
 6. `Claude` synthesizes the final `consensus-packet.md`
 7. after human acceptance, convert the agreed slices into execution tasks through `scripts/ai-status.sh`
@@ -299,12 +330,12 @@ Planning commands:
 ```bash
 ./scripts/planning-state.sh start phase1 "Kick off the discussion planning session"
 ./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
-./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cited cross-review"
+./scripts/planning-state.sh baton Codex2 Gemini "Baton moved to Codex2 for cited cross-review"
 ./scripts/planning-state.sh round 1 open "Opened review round 1"
 ./scripts/planning-state.sh issue DIV-001 high human_required "Ownership/source-of-truth conflict"
 ./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted and waiting for human acceptance"
 ./scripts/planning-state.sh human-gate approved "Human accepted the planning packet"
-./scripts/planning-state.sh propose-task W3-001A Qwen Claude "Callcenter & CTI correlation baseline"
+./scripts/planning-state.sh propose-task W3-001A Codex2 Claude "Callcenter & CTI correlation baseline"
 ./scripts/sync-state.sh
 ```
 
@@ -440,7 +471,7 @@ Please read these files before starting:
 - the L1 policy document that matches your task
 - L3 supporting docs only if you need rationale or migration history
 
-You are [Claude/Gemini/Codex/Qwen/Copilot].
+You are [Claude/Claude2/Gemini/Codex/Codex2/Copilot].
 Follow the current owner/reviewer assignments from ai-status.json.
 Update progress through scripts/ai-status.sh instead of manually editing multiple Markdown files.
 Work in this order: finish assigned reviews first, then finalize your own `review_approved` tasks, then continue your own unblocked tasks, then claim other safe tasks and set the original owner as reviewer.
