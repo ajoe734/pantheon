@@ -5,7 +5,7 @@
 **Reviewer**: Claude
 **Scope**: Define the executable activation path for deferred Qlib, TRL, FinRL, RLlib, and W&B rows
 **Status**: Done — review approved by Claude 2026-04-16
-**Last Updated**: 2026-04-24
+**Last Updated**: 2026-04-29
 
 ---
 
@@ -51,6 +51,9 @@ and workflow design. This map adds:
 - Governed adapter baseline is implemented in `services/research/qlib/adapter/`:
   `GovernedQlibDataAdapter`, `StubLightGBMBackend`, `QlibLightGBMBackend`,
   and `run_qlib_workflow()`.
+- A fail-closed, offline pre-activation preflight scaffold exists at
+  `services/research/qlib/preflight.py`; it reports readiness only and does not
+  run LightGBM or write registry/governance state.
 - Smoke path and unit coverage are already present:
   `services/research/qlib/smoke_test.py`, `services/research/qlib/test_adapter.py`,
   and evidence in `integrations/qlib/{integration,governance,smoke_test}.md`.
@@ -80,9 +83,11 @@ and workflow design. This map adds:
 4. `pyqlib==0.9.6` package compatibility with the governed research stack remains verified
 
 **Executable next step**: When the RS-003 candidate, governed market-data, and target StrategySpec
-binding gates clear, run the first target-universe LightGBM activation through
-`QlibLightGBMBackend` and submit the resulting registry artifact envelope using canonical
-`artifact_state=draft` per `ACTIVATION_CRITERIA.md §3.1`.
+binding evidence is assembled, run the offline preflight first via
+`services/research/qlib/preflight.py`. Only if that report opens all required gates should the
+first target-universe LightGBM activation run through `QlibLightGBMBackend` and submit the
+resulting registry artifact envelope using canonical `artifact_state=draft` per
+`ACTIVATION_CRITERIA.md §3.1`.
 
 **Activation owner for follow-on work**: Qwen (Qlib gate owner). The adapter + smoke baseline is
 already landed; the remaining follow-on is the first governed production activation once the data

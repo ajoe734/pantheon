@@ -1,6 +1,6 @@
 # Qlib Production Activation Packet
 
-Last updated: 2026-04-24
+Last updated: 2026-04-29
 Owner: APP-003-QLIB-ACTIVATION-001 (Codex2)
 Reviewer: Codex
 Status: prepared for first governed LightGBM alpha activation; data-gated
@@ -24,9 +24,10 @@ gates, not missing repo-local adapter code.
 
 Current row status remains `smoke-tested`.
 
-Repo-local truth as of 2026-04-24:
+Repo-local truth as of 2026-04-29:
 
 - the governed Qlib adapter exists at `services/research/qlib/adapter/qlib_adapter.py`
+- the offline pre-activation preflight scaffold exists at `services/research/qlib/preflight.py`
 - the default smoke path still passes via `python3 services/research/qlib/smoke_test.py`
 - unit coverage still passes via
   `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
@@ -48,6 +49,20 @@ The gate is therefore cleared only in the truthful sense:
 | Governed dataset of ≥50 instruments with ≥2 years OHLCV history is available | blocked | `services/learning/qlib/ACTIVATION_CRITERIA.md §1.3` sets the threshold; `services/research/qlib/examples/equity_dataset_sample.json` is only a smoke sample (`dataset:equity-universe-top10-2024-daily`) and does not prove the production bar | attach a governed dataset manifest with universe size, date window, frequency, and dataset refs for the target run |
 | Supervised alpha framing is documented for the target strategy | blocked | the gate doc defines the correct problem shape, and the sample dataset uses `strategy_id: equity-cross-sectional-alpha`, but no task-local packet yet cites the concrete governed StrategySpec that binds the target alpha statement, label definition, and universe | cite the target StrategySpec version and summarize why LightGBM supervised ranking/prediction is still the right fit |
 | No upstream dependency conflicts | satisfied | `services/research/qlib/requirements.txt`, `integrations/qlib/integration.md`, and the passing smoke/unit baselines show the pinned package path is compatible with the current governed research stack | keep this revalidated when dependency pins change |
+
+## 3.1 Offline Preflight
+
+`services/research/qlib/preflight.py` provides a repo-local readiness report for
+the three production activation blockers above:
+
+1. RS-003 candidate registry ref and pass evidence
+2. governed dataset manifest with >=50 instruments, >=2 years of OHLCV history,
+   allowed frequency, and lineage refs
+3. concrete StrategySpec binding with supervised label/target framing
+
+The preflight is deliberately non-writing and fail-closed. Missing probes return
+`activation_allowed=false`; they do not query or update registry/governance, and
+they do not execute `QlibLightGBMBackend` or the production LightGBM path.
 
 ## 4. First Governed LightGBM Activation Bundle
 
@@ -88,7 +103,7 @@ The governed output target remains unchanged:
 
 ## 5. Verification Snapshot
 
-Revalidated in this session on 2026-04-24:
+Revalidated in this session on 2026-04-29:
 
 1. `python3 services/research/qlib/smoke_test.py`
    - Result: passed
@@ -96,7 +111,7 @@ Revalidated in this session on 2026-04-24:
    - Output confirms `artifact_state=draft`, `deployment_stage=none`, and
      governed storage under `research/qlib/`
 2. `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
-   - Result: 14 tests passed
+   - Result: 19 tests passed, including the fail-closed preflight checks
 
 These checks prove the adapter is still runnable and governance-safe. They do
 not satisfy the production activation thresholds by themselves.
