@@ -33,7 +33,7 @@ Current task state read from `ai-status.json`:
 
 | Task | Owner | Reviewer | Status |
 |---|---|---|---|
-| `SVC-OSS-DORMANT-COMPOSE-PROFILES` | `Codex2` | `Claude` | `review_approved` |
+| `SVC-OSS-DORMANT-COMPOSE-PROFILES` | `Codex2` | `Claude` | `done` |
 | `SVC-OSS-DORMANT-COMPOSE-PROFILES-SIDECAR-ACCEPTANCE` | `Codex` | `Claude` | `review_approved` |
 
 ---
@@ -172,9 +172,10 @@ Observed result:
   dormant smoke services.
 - Explicit `docker compose --profile dormant-smoke config --services` output
   includes all six candidate dormant smoke services.
-- Build/run evidence was not produced by this sidecar because parent
-  implementation is still in progress and the build-context risk above belongs
-  to parent implementation, not to this support packet.
+- Build/run evidence was not produced by this sidecar because the build-context
+  risk above belonged to parent implementation, not to this support packet.
+  Parent build/run evidence is now recorded in
+  `support/sidecars/SVC-OSS-DORMANT-COMPOSE-PROFILES/PARENT-VERIFICATION.md`.
 
 ---
 
@@ -194,3 +195,20 @@ Recommended parent-owner use:
 3. Keep the parent implementation scoped to dormant packaging. Do not use this
    packet to change canonical truth, reopen activation gates, or introduce live
    runtime/registry routes.
+
+---
+
+## 9. Owner Closeout
+
+Codex closed out this sidecar after Claude approval. The reviewed deliverable is
+durable in parent commit `0a25cca`, and this closeout records the owner-side
+verification without changing canonical truth or parent runtime files.
+
+Closeout verification commands:
+
+```bash
+jq -r '.tasks[] | select(.id=="SVC-OSS-DORMANT-COMPOSE-PROFILES-SIDECAR-ACCEPTANCE") | [.owner,.reviewer,.status,.review_file] | @tsv' ai-status.json
+rg -n 'Closeout note|Outcome: APPROVED|support-only|review_approved' support/sidecars/SVC-OSS-DORMANT-COMPOSE-PROFILES/SVC-OSS-DORMANT-COMPOSE-PROFILES-SIDECAR-ACCEPTANCE.md support/sidecars/SVC-OSS-DORMANT-COMPOSE-PROFILES/SIDECAR-CLAUDE-REVIEW.md
+git diff --check -- support/sidecars/SVC-OSS-DORMANT-COMPOSE-PROFILES/SVC-OSS-DORMANT-COMPOSE-PROFILES-SIDECAR-ACCEPTANCE.md
+git status --short -- support/sidecars/SVC-OSS-DORMANT-COMPOSE-PROFILES ai-status.json ai-task-archive/index.json current-work.md
+```
