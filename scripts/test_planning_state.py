@@ -390,7 +390,7 @@ class PlanningStateTests(unittest.TestCase):
                         "title": "Operationally reassigned title",
                         "summary_zh": "保留目前 execution truth。",
                         "phase": "Blueprint Gap P0",
-                        "owner": "Qwen",
+                        "owner": "Codex2",
                         "reviewer": "Codex",
                         "status": "in_progress",
                         "depends_on": ["PLAN-002"],
@@ -415,7 +415,7 @@ class PlanningStateTests(unittest.TestCase):
                 task_map = {task["id"]: task for task in status["tasks"]}
 
         self.assertEqual(task_map["BG-000"]["title"], "Operationally reassigned title")
-        self.assertEqual(task_map["BG-000"]["owner"], "Qwen")
+        self.assertEqual(task_map["BG-000"]["owner"], "Codex2")
         self.assertEqual(task_map["BG-000"]["status"], "in_progress")
         self.assertEqual(task_map["BG-000"]["last_update"], "2026-04-13T07:00:00Z")
         self.assertEqual(task_map["BG-000"]["source_plane"], "planning")

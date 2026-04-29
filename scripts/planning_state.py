@@ -27,9 +27,9 @@ PLANNING_POINTER_FILE = ROOT / ".orchestrator" / "planning-session-pointer.json"
 ORCHESTRATOR_STATE_FILE = ROOT / ".orchestrator" / "state.json"
 PLANNING_LOCK_FILE = ROOT / ".orchestrator" / "planning-state.lock"
 
-AGENT_ORDER = ["Claude", "Claude2", "Codex", "Gemini", "Qwen", "Copilot"]
-BATON_SEQUENCE = ["Codex", "Qwen", "Gemini", "Copilot", "Claude", "Claude2"]
-REVIEW_SEQUENCE = ["Qwen", "Gemini", "Copilot", "Claude", "Claude2"]
+AGENT_ORDER = ["Claude", "Claude2", "Codex", "Codex2", "Gemini", "Copilot"]
+BATON_SEQUENCE = ["Codex", "Codex2", "Gemini", "Copilot", "Claude", "Claude2"]
+REVIEW_SEQUENCE = ["Codex2", "Gemini", "Copilot", "Claude", "Claude2"]
 PHASE2_SESSION_ID = "phase2-2026-04-12-blueprint-gap-convergence"
 SESSION_PROFILE_GENERIC = "generic"
 SESSION_PROFILE_BACKEND_COMPLETION = "backend-completion"
@@ -443,16 +443,16 @@ def default_lane_focus(profile: str) -> dict[str, str]:
     generic = {
         "Claude": "Facilitate consensus, synthesize cited disagreements, and prepare the human gate packet.",
         "Codex": "Ground the plan in repo evidence and turn converged decisions into execution slices.",
+        "Codex2": "Audit schemas, object boundaries, and contract formalization gaps.",
         "Gemini": "Stress-test runtime, replay, and tooling feasibility.",
-        "Qwen": "Audit schemas, object boundaries, and contract formalization gaps.",
         "Copilot": "Pressure-test research readiness, external source assumptions, and acceptance wording.",
     }
     if profile == SESSION_PROFILE_BLUEPRINT_GAP:
         return {
             "Claude": "Facilitate the blueprint-gap session, integrate readouts and unresolved items, and draft the final consensus packet after every lane is resolved or waived.",
             "Codex": "Verify each gap claim against repo evidence, own the shared starter draft, and draft execution materialization for the next delivery wave.",
+            "Codex2": "Audit schema and object formalization for GAP-01, GAP-03, and GAP-06, especially canonical object boundaries and acceptance surface coverage.",
             "Gemini": "Evaluate runtime, replay, and tooling feasibility for GAP-02 and GAP-05; report blockers with cited implementation constraints.",
-            "Qwen": "Audit schema and object formalization for GAP-01, GAP-03, and GAP-06, especially canonical object boundaries and acceptance surface coverage.",
             "Copilot": "Critique market-source scope, research backend maturity, and product-facing acceptance language for GAP-00, GAP-02, and GAP-07.",
         }
     return generic
@@ -495,7 +495,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
         {
             "id": "BG-001",
             "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
-            "owner": "Qwen",
+            "owner": "Codex2",
             "reviewer": "Codex",
             "phase": "Blueprint Gap P0",
             "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
@@ -513,7 +513,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
         {
             "id": "BG-003",
             "title": "Formalize decision-front objects and adjudication boundaries",
-            "owner": "Qwen",
+            "owner": "Codex2",
             "reviewer": "Claude",
             "phase": "Blueprint Gap P0",
             "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
@@ -532,7 +532,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
             "id": "BG-005",
             "title": "Define golden replay scenario and acceptance runbook",
             "owner": "Codex",
-            "reviewer": "Qwen",
+            "reviewer": "Codex2",
             "phase": "Blueprint Gap P2",
             "summary_zh": "定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。",
             "depends_on": ["BG-000", "BG-001", "BG-003"],
@@ -540,7 +540,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
         {
             "id": "BG-006",
             "title": "Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths",
-            "owner": "Qwen",
+            "owner": "Codex2",
             "reviewer": "Claude",
             "phase": "Blueprint Gap P1",
             "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
@@ -673,7 +673,7 @@ def default_session(
         "facilitator": "Claude",
         "baton_owner": "Codex",
         "starter_owner": "Codex",
-        "next_reviewer": "Qwen",
+        "next_reviewer": "Codex2",
         "baton_sequence": BATON_SEQUENCE,
         "review_sequence": REVIEW_SEQUENCE,
         "brief_files": default_brief_files(resolved_profile),
@@ -706,7 +706,7 @@ def default_session(
                 ),
                 "baton_owner": "Codex",
                 "starter_owner": "Codex",
-                "next_reviewer": "Qwen",
+                "next_reviewer": "Codex2",
             }
         )
     return session
@@ -1222,7 +1222,7 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
     session["facilitator"] = canonical_agent(session.get("facilitator"), "Claude")
     session["baton_owner"] = canonical_agent(session.get("baton_owner"), "Codex")
     session["starter_owner"] = canonical_agent(session.get("starter_owner"), "Codex")
-    session["next_reviewer"] = canonical_agent(session.get("next_reviewer"), "Qwen")
+    session["next_reviewer"] = canonical_agent(session.get("next_reviewer"), "Codex2")
     fixed_baton_owner = profile_fixed_baton_owner(profile)
     if fixed_baton_owner:
         session["starter_owner"] = fixed_baton_owner
