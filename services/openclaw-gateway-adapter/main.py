@@ -43,19 +43,23 @@ from services.foundation.health import (
 OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 _UPSTREAM_TIMEOUT = int(os.getenv("OPENCLAW_UPSTREAM_TIMEOUT", "3"))
 
-# Explicit deferral guard: these env vars must be absent or falsy in all compose configs.
+# Explicit deferral guards: these env vars must be absent or falsy in all compose configs.
 # Production adapter activation is intentionally deferred (no EP5 human gate completed).
 _PRODUCTION_BROKER_ENABLED = os.getenv("OPENCLAW_PRODUCTION_BROKER_ENABLED", "").lower() in {"1", "true", "yes"}
 _PAPER_ADAPTER_ENABLED = os.getenv("OPENCLAW_PAPER_ADAPTER_ENABLED", "").lower() in {"1", "true", "yes"}
+_LIVE_ADAPTER_ENABLED = os.getenv("OPENCLAW_LIVE_ADAPTER_ENABLED", "").lower() in {"1", "true", "yes"}
+_CAPITAL_BINDING_ENABLED = os.getenv("OPENCLAW_CAPITAL_BINDING_ENABLED", "").lower() in {"1", "true", "yes"}
 
 # Static capability snapshot — reflects the minimum runtime contract from OPENCLAW_RUNTIME_CONTRACT.md §4.
-# This is returned without a live upstream call so the adapter remains useful in degraded mode.
+# Returned without a live upstream call so the adapter remains useful in degraded mode.
 _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     "adapter_version": "0.1.0",
     "activation_state": "facade_only",
     "broker_execution": "deferred",
     "paper_adapter": "deferred",
     "live_adapter": "deferred",
+    "capital_binding": "deferred",
+    "fail_closed": True,
     "supported_session_types": [
         "interactive",
         "trainer",
@@ -73,9 +77,15 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "multi_agent_consultation": "defined",
         "workflow_cron_hooks": "defined",
     },
+    "activation_gates": {
+        "broker_execution": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
+        "paper_adapter": "OPENCLAW_PAPER_ADAPTER_ENABLED",
+        "live_adapter": "OPENCLAW_LIVE_ADAPTER_ENABLED",
+        "capital_binding": "OPENCLAW_CAPITAL_BINDING_ENABLED",
+    },
     "note": (
         "This adapter exposes the Pantheon boundary facade only. "
-        "Live runtime contract methods are deferred until the EP5 human gate is passed."
+        "All live runtime contract methods are deferred until the EP5 human gate is passed."
     ),
 }
 
@@ -149,6 +159,8 @@ register_fastapi_health_routes(
         "gateway_url": OPENCLAW_GATEWAY_URL or "not_configured",
         "production_broker_enabled": _PRODUCTION_BROKER_ENABLED,
         "paper_adapter_enabled": _PAPER_ADAPTER_ENABLED,
+        "live_adapter_enabled": _LIVE_ADAPTER_ENABLED,
+        "capital_binding_enabled": _CAPITAL_BINDING_ENABLED,
     },
 )
 

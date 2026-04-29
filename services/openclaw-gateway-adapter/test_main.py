@@ -230,6 +230,45 @@ class TestProductionGuard(unittest.TestCase):
     def test_paper_adapter_disabled_by_default(self):
         self.assertFalse(adapter_main._PAPER_ADAPTER_ENABLED)
 
+    def test_live_adapter_disabled_by_default(self):
+        self.assertFalse(adapter_main._LIVE_ADAPTER_ENABLED)
+
+    def test_capital_binding_disabled_by_default(self):
+        self.assertFalse(adapter_main._CAPITAL_BINDING_ENABLED)
+
+
+class TestCapabilityFenceCompleteness(unittest.TestCase):
+    """Verify the capability snapshot exposes all fail-closed execution paths."""
+
+    def test_capabilities_capital_binding_deferred(self):
+        resp = client.get("/api/openclaw-adapter/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["capital_binding"], "deferred")
+
+    def test_capabilities_fail_closed_flag_set(self):
+        resp = client.get("/api/openclaw-adapter/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["fail_closed"])
+
+    def test_capabilities_activation_gates_present(self):
+        resp = client.get("/api/openclaw-adapter/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        gates = body.get("activation_gates", {})
+        self.assertIn("broker_execution", gates)
+        self.assertIn("paper_adapter", gates)
+        self.assertIn("live_adapter", gates)
+        self.assertIn("capital_binding", gates)
+
+    def test_no_execution_paths_enabled(self):
+        resp = client.get("/api/openclaw-adapter/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        for field in ("broker_execution", "paper_adapter", "live_adapter", "capital_binding"):
+            self.assertNotEqual(body.get(field), "enabled", f"Expected {field} to be deferred, not enabled")
+
 
 if __name__ == "__main__":
     unittest.main()

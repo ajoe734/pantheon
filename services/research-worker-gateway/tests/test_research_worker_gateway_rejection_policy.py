@@ -156,3 +156,42 @@ def test_active_job_bound_rejects_safe_dispatch_before_second_job_starts() -> No
     )
     assert rejected_does_not_count_against_bound.status_code == 201
     assert rejected_does_not_count_against_bound.json()["status"] == "rejected"
+
+
+def test_openclaw_dispatch_is_fail_closed_production_adapter_denied() -> None:
+    """OpenClaw is registered as a deferred production worker; dispatch must be rejected."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    result = client.post(
+        "/api/research-worker-gateway/jobs",
+        json={
+            "worker": "openclaw",
+            "requested_mode": "stub",
+            "dispatch_mode": "stub",
+            "objective": "attempt openclaw agent session dispatch",
+            "idempotency_key": "openclaw-fail-closed-check",
+            "requested_at": "2026-04-29T00:00:00Z",
+        },
+    )
+    assert result.status_code == 201
+    payload = result.json()
+    assert payload["status"] == "rejected"
+    assert payload["rejection"]["reason"] == "production_adapter_disabled"
+    assert payload["production_activation"] == "disabled"
+
+
+def test_openclaw_capabilities_surface_gate_state() -> None:
+    """The research-worker-gateway capabilities endpoint must expose openclaw as fail_closed."""
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    resp = client.get("/api/research-worker-gateway/capabilities")
+    assert resp.status_code == 200
+    body = resp.json()
+    workers = {entry["worker"]: entry for entry in body["capabilities"]}
+    assert "openclaw" in workers, "openclaw must appear in capabilities surface"
+    openclaw = workers["openclaw"]
+    assert openclaw["status"] == "deferred"
+    assert openclaw.get("gate_state") == "fail_closed"
+    assert openclaw.get("allowed_scope") == "capability_metadata_read_only"

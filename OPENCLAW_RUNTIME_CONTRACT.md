@@ -20,6 +20,10 @@ Conflict rule: this document overrides broader OpenClaw mentions in overview/pla
 > 核心決議：**OpenClaw 在 Pantheon 中被視為外部 agent runtime / control-plane substrate。**  
 > Pantheon 不重寫 OpenClaw，本文件描述的是 **Pantheon 對 OpenClaw-compatible runtime 的最小依賴契約**。
 
+> 實作邊界：OpenClaw 相關 adapter / facade / runtime-adoption scaffold 可以先開發並以
+> fail-closed 方式驗證；不得因此啟用 paper / canary / live execution、broker session、
+> capital binding，或讓 OpenClaw 成為 execution kernel。
+
 ---
 
 ## 2. 定義與範圍

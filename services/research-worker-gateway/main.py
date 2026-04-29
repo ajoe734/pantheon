@@ -12,7 +12,7 @@ from store import ResearchWorkerGatewayStore
 
 
 SAFE_WORKERS = {"stub", "handoff_only", "manual"}
-PRODUCTION_WORKERS = {"qlib", "finrl", "rllib", "ray_tune", "vectorbt", "statsmodels", "quantlib", "trl", "rl", "wandb"}
+PRODUCTION_WORKERS = {"qlib", "finrl", "rllib", "ray_tune", "vectorbt", "statsmodels", "quantlib", "trl", "rl", "wandb", "openclaw"}
 SAFE_DISPATCH_MODES = {"stub", "handoff_only", "manual"}
 PRODUCTION_MODES = {"production", "paper", "canary", "live"}
 ACTIVE_STATUSES = {"queued", "running", "cancel_requested"}
@@ -68,6 +68,18 @@ WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
         "status": "deferred",
         "entrypoint": "services/research/quantlib/worker.py",
         "activation_gate": "services/research/quantlib/ACTIVATION_CRITERIA.md",
+    },
+    "openclaw": {
+        "status": "deferred",
+        "purpose": "OpenClaw agent runtime substrate (consultation / teaching / workflow)",
+        "activation_gate": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
+        "gate_state": "fail_closed",
+        "allowed_scope": "capability_metadata_read_only",
+        "note": (
+            "OpenClaw is an agent runtime substrate, not a direct research worker. "
+            "Dispatch through this gateway is deferred; capability metadata is readable "
+            "in fail-closed mode via services/openclaw-gateway-adapter."
+        ),
     },
 }
 
