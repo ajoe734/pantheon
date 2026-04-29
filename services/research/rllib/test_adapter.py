@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import os
 import sys
 import types
@@ -22,6 +23,8 @@ from adapter.rllib_adapter import (
     StubRLlibBackend,
     run_rllib_workflow,
 )
+from smoke_test import main as smoke_main
+from worker import main as worker_main
 
 
 def build_dataset() -> dict:
@@ -132,6 +135,18 @@ class TestDeferredPrepGate(unittest.TestCase):
     def test_env_gate_accepts_enabled_value(self) -> None:
         with patch.dict(os.environ, {"PANTHEON_RLLIB_PREP_ENABLED": "1"}, clear=False):
             DeferredPrepGate.require_env()
+
+
+class TestRLlibEntrypointGates(unittest.TestCase):
+    def test_smoke_entrypoint_requires_cli_flag(self) -> None:
+        with patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(smoke_main([]), 2)
+
+    def test_worker_entrypoint_requires_env_gate(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_RLLIB_PREP_ENABLED", None)
+            with patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(worker_main(), 2)
 
 
 class TestRunRLlibWorkflow(unittest.TestCase):

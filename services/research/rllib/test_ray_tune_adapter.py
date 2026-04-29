@@ -1,6 +1,7 @@
 """Unit tests for the governed Ray Tune deferred-prep adapter."""
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -23,6 +24,8 @@ from adapter import (
     StubRayTuneBackend,
     run_ray_tune_workflow,
 )
+from ray_tune_smoke_test import main as ray_tune_smoke_main
+from ray_tune_worker import main as ray_tune_worker_main
 
 
 def load_dataset() -> dict:
@@ -102,6 +105,18 @@ class TestRayTuneDeferredPrepGate(unittest.TestCase):
     def test_env_gate_accepts_enabled_value(self) -> None:
         with patch.dict(os.environ, {"PANTHEON_RAYTUNE_PREP_ENABLED": "1"}, clear=False):
             RayTuneDeferredPrepGate.require_env()
+
+
+class TestRayTuneEntrypointGates(unittest.TestCase):
+    def test_smoke_entrypoint_requires_cli_flag(self) -> None:
+        with patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(ray_tune_smoke_main([]), 2)
+
+    def test_worker_entrypoint_requires_env_gate(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_RAYTUNE_PREP_ENABLED", None)
+            with patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(ray_tune_worker_main(), 2)
 
 
 class TestRunRayTuneWorkflow(unittest.TestCase):

@@ -39,7 +39,7 @@ and workflow design. This map adds:
 | `Qlib` | `smoke-tested` | Yes — `pyqlib==0.9.6` in `services/research/qlib/requirements.txt`; Qlib Dockerfile exists | Yes — `GovernedQlibDataAdapter` + `StubLightGBMBackend` + `QlibLightGBMBackend` + `run_qlib_workflow` | Yes — smoke passes (14 unit tests + smoke assertions OK, revalidated 2026-04-24); activation packet now in `integrations/qlib/activation_packet.md` | Qwen (Qlib gate owner) — production blocked on RS-003 candidate readiness, governed market-data proof, and target StrategySpec binding |
 | `TRL` | `smoke-tested` | Yes — `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt` | Yes — `GovernedPreferencePairAdapter` + `StubDPOBackend` + `TRLDPOBackend` + `run_trl_dpo_workflow` | Yes — smoke passes (29 unit tests + assertions OK, revalidated 2026-04-29); evidence in `integrations/trl/` | Claude (OSS-NEXT-002 owner) — production blocked on runtime data gates |
 | `FinRL` | `criteria-defined` | Yes — `finrl==0.3.6` in `services/research/finrl/requirements.txt`; FinRL Dockerfile exists | No | No | Copilot (RL path owner) → governed adapter path requires explicit RL-path approval first |
-| `RLlib` | `version-pinned` | Yes — `ray[rllib]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile stub exists | No | No | Copilot (RL path owner) → RL path approval gate required before adapter work |
+| `RLlib` | `version-pinned` | Yes — `ray[rllib]>=2.9.0,<3.0.0` and `ray[tune]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile carries the deferred-prep scaffold | Prep-only yes — RLlib train/eval and Ray Tune search adapters exist, but production activation remains closed | Prep-only yes — both smoke paths require `--enable-deferred-prep` and emit draft/none only | Copilot (RL path owner) → dormant environment contracts/offline harnesses may proceed fail-closed; governed train/eval activation requires the RL path approval gate |
 | `W&B` | `criteria-defined` | No SDK pin landed yet | Partial — blocking design exists against real MLflow-first adapter; `EXPERIMENT_BACKEND` selector now in `services/registry/experiments/config.py` (default `"mlflow"`, no W&B backend wired) | No | Qwen (gate doc owner) → blocked on adapter generalization; no implementation work may begin until MLflow-first stabilizes |
 
 ---
@@ -217,11 +217,21 @@ once the RL path gate is passed.
 **Current repo truth**:
 
 - `ray[rllib]>=2.9.0,<3.0.0` and `ray[tune]>=2.9.0,<3.0.0` are now pinned in
-  `services/research/rllib/requirements.txt`. A Dockerfile stub exists at
-  `services/research/rllib/Dockerfile` with a clear comment that it is a stub and no adapter
-  is wired yet.
-- The container stub closes the "where is the pin?" ambiguity that previously left RLlib only
-  implied inside LP-005 prose.
+  `services/research/rllib/requirements.txt`. The Dockerfile now copies the repo-local
+  deferred-prep adapters, workers, examples, and smoke paths while keeping the default command
+  inert.
+- Repo-local dormant adapters exist:
+  `GovernedRLlibTrainEvalAdapter`, `StubRLlibBackend`, `RLlibPPOBackend`,
+  `GovernedRayTuneSearchAdapter`, `StubRayTuneBackend`, `RayTuneImportBackend`,
+  `run_rllib_workflow()`, and `run_ray_tune_workflow()`.
+- The prep workers require explicit env gates:
+  `PANTHEON_RLLIB_PREP_ENABLED=1` for RLlib and `PANTHEON_RAYTUNE_PREP_ENABLED=1` for Ray Tune.
+- The prep smoke paths require explicit CLI gates:
+  `--enable-deferred-prep` for both `smoke_test.py` and `ray_tune_smoke_test.py`.
+- The dormant outputs are in-memory registry envelopes only: `artifact_state=draft`,
+  `deployment_summary.current_stage=none`, `gate_state=closed`, and no registry/governance write.
+- This scaffold closes the "where is the pin and prep boundary?" ambiguity that previously left
+  RLlib only implied inside LP-005 prose.
 - The LP-005 workflow in `PATH_DEFINITION.md §2` describes the RLlib + Ray Tune runtime boundary
   in detail (PPO algorithm, hyperparameter sweep, environment state/action shapes).
 - `services/evaluation/optimizers/contract.md` already models RLlib/FinRL outputs as governed
@@ -233,20 +243,22 @@ once the RL path gate is passed.
 |---|---|
 | RLlib version pin (`ray[rllib]>=2.9.0`) in `services/research/rllib/requirements.txt` | Done — landed as part of BP5-OSS-004 |
 | Ray Tune version pin (reconcile `version-pinned` checklist entry with actual file) | Done — `ray[tune]>=2.9.0,<3.0.0` in same `requirements.txt` |
-| RLlib environment contract instantiation (state/action shape, episode config) | Missing as repo-local artifact |
-| One governed train/eval loop with explicit RLlib/Tune runtime boundary | Missing |
+| RLlib environment contract instantiation (state/action shape, episode config) | Prep-only done — repo-local adapter schema and sample dataset exist; production environment activation remains gated |
+| One governed train/eval loop with explicit RLlib/Tune runtime boundary | Prep-only done — offline stub/import-path scaffold exists; governed production train/eval remains gated |
 | RL path approval gate (same as FinRL) | Not met |
 
 **Activation prerequisite chain** (same RL gate as FinRL, plus):
-1. Environment contract must be instantiated as a repo-local file, not only described in prose
+1. Production environment contract must be approved from the dormant repo-local scaffold
 2. All five `PATH_DEFINITION.md §1` RL entry criteria must be met
 
-**Executable next step**: The version-pin gap is now closed. The blocking gate is the RL path
-approval decision (same as FinRL). No adapter or training work may proceed until all five entry
+**Executable next step**: The version-pin and dormant-prep scaffold gaps are now closed. The
+blocking gate is the RL path approval decision (same as FinRL). The scaffold may be kept current
+with offline, explicit-gate tests only; no governed production train/eval loop, registry-writing
+adapter, paper/canary/live path, or active RLlib/Tune dispatch may proceed until all five entry
 criteria in `PATH_DEFINITION.md §1` are met and formally recorded (including Qlib supervised alpha
 exhaustion). That checkpoint now lives in `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; after
 it reopens, Pantheon should materialize the **FinRL-first** lane before opening any governed
-RLlib/Tune implementation lane.
+RLlib/Tune activation lane.
 
 **Activation owner for follow-on work**: Copilot (LP-005/RL path owner). Same RL path gate applies.
 
@@ -308,20 +320,23 @@ separate execution task once all six re-entry conditions in `WANDB_ACTIVATION.md
 | `Qlib` | Smoke-tested baseline landed — package pin, governed adapter, LightGBM smoke path, and activation packet are present | RS-003 candidate readiness + governed dataset availability (>=50 instruments, >=2 years data) + target StrategySpec binding | Run the first governed alpha activation through `QlibLightGBMBackend` when the gates clear |
 | `TRL` | Smoke-tested baseline landed — blocked on runtime data gates; non-writing preflight scaffold present | ≥200 FB-002 events, ≥100 pairs, active LP-002, and a ready downstream consumer | Accumulate FB-002 volume, run the TRL preflight, then run the first governed production DPO activation with `TRLDPOBackend` |
 | `FinRL` | Package/container stub exists; control-plane consumer exists | RL path approval gate not met (Qlib must plateau first) | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed single-agent policy-output mapping |
-| `RLlib` | Version pin now landed — package/container stub closed | Same RL path approval gate as FinRL; environment contract not yet a repo-local artifact | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed adapter |
+| `RLlib` | Version pin and dormant RLlib/Ray Tune prep scaffold landed; workers/smokes require explicit gates and output draft/none only | Same RL path approval gate as FinRL; production train/eval and registry-writing adapters remain closed | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed activation lane after FinRL proof |
 | `W&B` | Deferred honestly; `EXPERIMENT_BACKEND` selector now landed | Adapter not generalized; MLflow 30-day operational history not yet met | Generalize `RegistryExperimentAdapter` for configurable backends (Qwen lane), after MLflow history gate clears |
 
 ---
 
 ## What This Document Does Not Do
 
-- It does not implement adapters, smoke tests, or package pins (except the RLlib and W&B stubs
-  called out as immediate executable next steps above).
+- It does not approve dormant adapters, smoke tests, or package pins as production activation
+  evidence unless the row explicitly says so.
 - It does not approve or open the RL path. That remains a governance checkpoint.
 - It does not by itself promote any activation-gated framework into active production use.
   Some rows now have runnable baselines, but the map only records the remaining gates and next
-  executable proofs. Note: BP5-OSS-004 did advance the RLlib checklist row from
-  `criteria-defined` to `version-pinned` by landing the package pin and Dockerfile stub.
+  executable proofs. Note: BP5-OSS-004 advanced the RLlib checklist row to `version-pinned`;
+  this later dormant scaffold is still prep-only and does not change the activation gate.
+- It does not forbid dormant implementation. It forbids activation before the named gate: no
+  production dispatch, paper/canary/live, canonical registry/governance writes, or
+  broker/capital-bound runtime path may be inferred from prep-only work.
 
 ---
 

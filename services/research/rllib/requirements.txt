@@ -1,6 +1,7 @@
 # RLlib + Ray Tune research container dependencies
-# Status: version-pinned stub — no governed adapter implemented yet
-# Activation gate: RL path approval required before adapter/smoke work begins
+# Status: version-pinned deferred-prep scaffold; repo-local adapters and smoke paths exist
+# Activation gate: explicit prep env/CLI gates are required; RL path approval is still required
+# before production training/eval, registry writes, or paper/live activation
 # See: services/learning/rl/PATH_DEFINITION.md §1
 # See: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §4
 
