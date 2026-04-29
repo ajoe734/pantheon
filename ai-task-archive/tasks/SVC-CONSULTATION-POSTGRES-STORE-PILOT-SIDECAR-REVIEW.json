@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+  "archived_at": "2026-04-29T19:14:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+    "title": "Prepare SVC-CONSULTATION-POSTGRES-STORE-PILOT review packet and evidence summary",
+    "summary_zh": "平行支援 SVC-CONSULTATION-POSTGRES-STORE-PILOT，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-DATA-OWNERSHIP-MIGRATION-MAP"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-CONSULTATION-POSTGRES-STORE-PILOT/SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed out approved support-only sidecar packet. Commit 49472d9 records the packet and Claude review notes; no canonical truth or runtime files changed by this task. Verification: pytest -q services/consultation/test_postgres_store.py services/consultation/test_compose_activation.py (5 passed); python3 -m py_compile services/consultation/store.py services/consultation/main.py services/consultation/test_postgres_store.py; git diff --cached --check -- support/sidecars/SVC-CONSULTATION-POSTGRES-STORE-PILOT.",
+    "last_update": "2026-04-29T19:14:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：補充證據充足，父 task 已 done，不需修改 canonical truth",
+      "如日後 Postgres store 升為生產，需另開 truth-sync task"
+    ],
+    "review_file": "support/sidecars/SVC-CONSULTATION-POSTGRES-STORE-PILOT/review-notes-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T19:14:25Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "49472d9a45eaa81ed5701e97c4dc867979e5ef8d",
+      "commit_subject": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 43,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T18:38:03Z",
+      "resolved_at": "2026-04-29T18:39:40Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T18:39:40Z",
+      "resolved_at": "2026-04-29T18:41:34Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T18:41:34Z",
+      "resolved_at": "2026-04-29T18:43:02Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T18:43:02Z",
+      "resolved_at": "2026-04-29T18:44:37Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only review packet created at support/sidecars/SVC-CONSULTATION-POSTGRES-STORE-PILOT/SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW.md. Scope: supplemental evidence for already archived parent task; no canonical truth or runtime changes. Verification: pytest -q services/consultation/test_postgres_store.py services/consultation/test_compose_activation.py (5 passed); python3 -m py_compile services/consultation/store.py services/consultation/main.py services/consultation/test_postgres_store.py; git diff --check scoped pilot files.",
+      "status": "done",
+      "created_at": "2026-04-29T18:47:21Z",
+      "resolved_at": "2026-04-29T18:50:03Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: sidecar packet is accurate and scoped; JSONL default confirmed, Postgres activation is env-gated, no canonical truth changes, 5 tests passed. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T18:50:03Z",
+      "resolved_at": "2026-04-29T19:14:25Z"
+    }
+  ],
+  "blockers": []
+}

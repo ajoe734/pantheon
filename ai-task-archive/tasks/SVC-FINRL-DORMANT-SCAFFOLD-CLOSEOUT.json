@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+  "archived_at": "2026-04-29T17:13:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+    "title": "Close out FinRL dormant scaffold hardening",
+    "summary_zh": "把已存在的 FinRL dormant scaffold 收斂成 reviewable closeout：fail-closed gate、draft-only rl_policy artifact、offline smoke、truth docs 對齊，不重開 RL gate。",
+    "phase": "Activation-Gated RL Scaffold",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/finrl",
+      "services/learning/rl",
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+    ],
+    "acceptance": [
+      "FinRL worker and smoke require explicit deferred-prep gate",
+      "outputs remain artifact_state draft and deployment_stage none",
+      "no registry governance paper canary live writes are possible",
+      "activation map and maturity truth no longer understate landed dormant scaffold"
+    ],
+    "next": "Finalized FinRL dormant scaffold closeout in commit dba3e45: verified fail-closed smoke/worker gates, draft/none output, non-writing behavior, and FinRL activation docs/review artifact.",
+    "last_update": "2026-04-29T17:13:00Z",
+    "review_notes_zh": [
+      "FinRL dormant scaffold review approved: smoke/worker fail closed without explicit gate; gated paths emit draft rl_policy with deployment_stage none; no registry/governance/paper/live write path found. Scope limited to FinRL statements in shared docs."
+    ],
+    "review_file": ".orchestrator/chair-reviews/20260429-review-codex-finrl-dormant-scaffold-closeout.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T17:13:00Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "dba3e455bbb913ea571b701a3ba4031016f76fa6",
+      "commit_subject": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT finalize dormant scaffold",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 33,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T16:13:42Z",
+      "resolved_at": "2026-04-29T16:30:30Z"
+    },
+    {
+      "task_id": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T16:49:12Z",
+      "resolved_at": "2026-04-29T16:50:49Z"
+    },
+    {
+      "task_id": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T16:53:44Z",
+      "resolved_at": "2026-04-29T16:55:15Z"
+    },
+    {
+      "task_id": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: FinRL dormant scaffold is fail-closed via CLI/env gates, emits draft rl_policy with deployment_stage none only, Dockerfile now copies runnable prep worker/smoke assets, and activation/maturity docs acknowledge the dormant scaffold without reopening RL activation. Verified: pytest services/research/finrl/test_adapter.py -q; smoke without gate exits 2; smoke with --enable-deferred-prep passes; worker without env exits 2; worker with PANTHEON_FINRL_PREP_ENABLED=1 emits draft/none.",
+      "status": "done",
+      "created_at": "2026-04-29T16:57:41Z",
+      "resolved_at": "2026-04-29T17:08:07Z"
+    },
+    {
+      "task_id": "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: FinRL dormant scaffold is fail-closed, offline-only, draft/none, and non-writing. Returned to Codex2 for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T17:08:07Z",
+      "resolved_at": "2026-04-29T17:13:00Z"
+    }
+  ],
+  "blockers": []
+}

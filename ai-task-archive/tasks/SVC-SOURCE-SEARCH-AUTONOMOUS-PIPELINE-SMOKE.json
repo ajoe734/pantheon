@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-SEARCH-AUTONOMOUS-PIPELINE-SMOKE",
+  "archived_at": "2026-04-29T16:59:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-SEARCH-AUTONOMOUS-PIPELINE-SMOKE",
+    "title": "Add end-to-end bounded autonomous source-to-search smoke",
+    "summary_zh": "把 source-ingest bounded fetch baseline 與 search durable index 收成 default-stack 可驗證的 end-to-end autonomous source-to-search smoke；不啟用任意 crawler 或 live web scraping。",
+    "phase": "Service Hardening / Durable Source Search Pipeline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+      "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/search",
+      "docker-compose.yml",
+      "services/source_ingestion/test_service.py",
+      "services/search/tests/test_http_service.py"
+    ],
+    "acceptance": [
+      "compose smoke seeds bounded configured connector into source evidence store",
+      "search durable query succeeds without caller supplied documents",
+      "DLQ audit watermark behavior is covered by tests",
+      "request document compatibility stays explicit and quarantined"
+    ],
+    "next": "Finalized approved source-to-search autonomous smoke with task-scoped commit 4d3c220. Verification: python3 -m pytest services/source_ingestion/test_service.py services/source_ingestion/test_compose_activation.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py -q (21 passed); python3 -m pytest services/source_ingestion services/search/tests -q (34 passed).",
+    "last_update": "2026-04-29T16:59:15Z",
+    "review_notes_zh": [
+      "Reviewed source-ingest/search smoke: bounded external_feed connector path is wired into honest-stack smoke, search query uses durable evidence without caller documents, request-document compatibility remains explicit/quarantined, and DLQ audit metadata preserves the prior watermark.",
+      "Reviewer added a narrow smoke repeatability fix: source/search smoke now uses a per-run source_search_token so durable source-ingest-data history cannot pollute repeated search assertions.",
+      "Verification: python3 -m pytest services/source_ingestion/test_service.py services/source_ingestion/test_compose_activation.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py -q (21 passed); python3 -m pytest services/source_ingestion services/search/tests -q (34 passed).",
+      "Approved for owner finalization; task-owned files include scripts/smoke_honest_stack.py in addition to the listed service artifacts."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T16:59:15Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "4d3c220b51d8772e9028b5b3359c1447c7459034",
+      "commit_subject": "SVC-SOURCE-SEARCH-AUTONOMOUS-PIPELINE-SMOKE finalize smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SOURCE-SEARCH-AUTONOMOUS-PIPELINE-SMOKE",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/source_ingestion/test_service.py services/source_ingestion/test_compose_activation.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py -q; python3 -m pytest services/source_ingestion services/search/tests -q"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 47,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-AUTONOMOUS-PIPELINE-SMOKE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: source-ingest bounded external feed path is covered in the default-stack smoke assertions, search durable query path stays document-free, DLQ audit metadata preserves the prior watermark, and request-document compatibility remains quarantined. Verified: python3 -m pytest services/source_ingestion/test_service.py services/source_ingestion/test_compose_activation.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py -q (21 passed); python3 -m pytest services/source_ingestion services/search/tests -q (34 passed).",
+      "status": "done",
+      "created_at": "2026-04-29T16:41:21Z",
+      "resolved_at": "2026-04-29T16:57:07Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-AUTONOMOUS-PIPELINE-SMOKE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after focused source-ingest/search smoke verification. Owner should finalize with task-scoped commit; include the reviewer smoke repeatability fix in scripts/smoke_honest_stack.py.",
+      "status": "done",
+      "created_at": "2026-04-29T16:57:07Z",
+      "resolved_at": "2026-04-29T16:59:16Z"
+    }
+  ],
+  "blockers": []
+}

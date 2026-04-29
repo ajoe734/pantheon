@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-29T17:11:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-DATA-OWNERSHIP-MIGRATION-MAP acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-DATA-OWNERSHIP-MIGRATION-MAP，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-DATA-OWNERSHIP-MIGRATION-MAP/SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: acceptance packet finalized with review outcome note (bc6768a). 15 store groups, 2 write-boundary violations, 1 naming collision documented. 5 open decisions recorded for parent owner (Claude). No canonical truth modified. Isolated commit includes sidecar artifact and review file only.",
+    "last_update": "2026-04-29T17:11:17Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：15個服務儲存群完整盤點、2項寫入邊界違規及1項命名衝突已正確標記、L1所有權交叉參考完整、gap assessment誠實標記開放項目",
+      "後續追蹤：parent owner (Claude) 需決定 incidents/postmortems 寫入所有者、search 讀取路徑、7個無L1 schema 的命名、首批 pilot 範圍及 priority tier"
+    ],
+    "review_file": ".orchestrator/chair-reviews/20260429-SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T17:11:17Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "bc6768aa699b69d1fdf80636bdcd9c7f4f169dc7",
+      "commit_subject": "SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verification": "store inventory derived from grep of services/*/main.py and"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 38,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Acceptance packet ready for review. Contains: (1) code-backed inventory of all 15 JSONL/JSON service store groups from docker-compose.yml and service code; (2) 2 write-boundary violations — incidents/postmortems shared IncidentStore write, and search-svc reading source-ingest volume directly; (3) naming collision between governance-svc and promotion-svc approval_decisions.json; (4) cross-reference to DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md §4 ownership targets; (5) expanded acceptance checklist with gap assessment; (6) dependency map for the 3 blocked pilot tasks; (7) consultation-svc recommended as first pilot (sole write owner, no cross-service volume deps). Parent owner (Claude) needs to decide: incident/postmortem write owner, search read path post-migration, schema names for 7 stores not yet in L1, and first pilot scope.",
+      "status": "done",
+      "created_at": "2026-04-29T17:06:06Z",
+      "resolved_at": "2026-04-29T17:09:30Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: code-backed inventory of 15 store groups, 2 write-boundary violations, and 1 naming collision correctly identified; L1 cross-reference accurate; gap assessment honest. Parent owner (Claude) must resolve 5 open decisions before downstream pilots can start. Returning to Claude2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T17:09:30Z",
+      "resolved_at": "2026-04-29T17:11:18Z"
+    }
+  ],
+  "blockers": []
+}

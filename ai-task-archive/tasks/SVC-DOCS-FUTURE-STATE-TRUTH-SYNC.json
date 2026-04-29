@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "SVC-DOCS-FUTURE-STATE-TRUTH-SYNC",
+  "archived_at": "2026-04-29T16:14:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-DOCS-FUTURE-STATE-TRUTH-SYNC",
+    "title": "Sync docs with current code truth and active deferred boundaries",
+    "summary_zh": "清掉 phase4 starter/gap inventory 的歷史誤導段落，明確分出 code truth/current task/future-deferred。保留 research-learning production activation、OpenClaw live adapter、BFF HA 不排入。",
+    "phase": "Planning Truth / Code Alignment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md",
+      "current-work.md"
+    ],
+    "acceptance": [
+      "research and learning default service status no longer conflicts with compose",
+      "OpenClaw live broker session creation remains explicit deferral not active task",
+      "BFF HA remains product-scope defer",
+      "source search limitations and active execution tasks are represented without claiming production crawler",
+      "docs links cite code and compose truth"
+    ],
+    "next": "Finalized reviewed docs truth sync with task-scoped commit 6b29a76. Verification: git diff --check on reviewed docs/review note; rg claims for safe wrappers, BFF HA defer, OpenClaw CAPABILITY_DENIED, source/search compat boundaries; code citation checks for configured.py, search/main.py, and openclaw adapter. Commit excludes unrelated dirty worktree state.",
+    "last_update": "2026-04-29T16:14:36Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：5/5 接受標準全達標，code citations 驗證正確，三層分類（code truth/current tasks/future-deferred）清晰",
+      "Codex 請做 closeout commit 再 done"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-DOCS-FUTURE-STATE-TRUTH-SYNC-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T16:14:36Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "6b29a76065b323b45819f7d5ad09d16522ff17fe",
+      "commit_subject": "SVC-DOCS-FUTURE-STATE-TRUTH-SYNC align planning docs",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-DOCS-FUTURE-STATE-TRUTH-SYNC",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 28,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-DOCS-FUTURE-STATE-TRUTH-SYNC",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Docs synced with code truth/current hardening tasks/future-deferred boundaries; verified with git diff --check and docker compose config --quiet.",
+      "status": "done",
+      "created_at": "2026-04-29T14:25:21Z",
+      "resolved_at": "2026-04-29T15:27:29Z"
+    },
+    {
+      "task_id": "SVC-DOCS-FUTURE-STATE-TRUTH-SYNC",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria met, code citations verified (configured.py:122-169, search/main.py:278-327). Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T15:27:29Z",
+      "resolved_at": "2026-04-29T16:14:36Z"
+    }
+  ],
+  "blockers": []
+}

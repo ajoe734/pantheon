@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+  "archived_at": "2026-04-29T18:02:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+    "title": "Prepare SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT review packet and evidence summary",
+    "summary_zh": "平行支援 SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Activation-Gated Experiment Backend Scaffold",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only review packet after Claude approval. Artifacts committed in 9410553; verification rerun: unittest registry experiments 9 OK, memory smoke OK, W&B deferred-prep smoke OK, py_compile OK, no wandb import or dependency pin found. No canonical truth or runtime implementation changed by this sidecar.",
+    "last_update": "2026-04-29T18:02:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 準確反映 parent task 狀態、evidence 驗證充分、無 SDK/network/canonical 邊界違規",
+      "cosmetic: 封包 intended reviewer 仍寫 Gemini，但內容正確不影響審查結論"
+    ],
+    "review_file": "support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/claude-review-note.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T18:02:13Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9410553518c9e8e6b1a53cb025a70afdfe42ead9",
+      "commit_subject": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m unittest discover -s services/registry/experiments -p 'test_*.py'; python3 services/registry/experiments/smoke_test.py; PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; rg checks found no wandb import or dependency pin."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 45,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 14,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T17:40:03Z",
+      "resolved_at": "2026-04-29T17:40:03Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Ready for Gemini review: created support-only review packet at support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md. Verification rerun: unittest discovery for services/registry/experiments (9 OK), memory smoke, W&B offline smoke, py_compile, rg checks for no wandb import or SDK pin. No canonical truth or runtime implementation changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-29T17:43:57Z",
+      "resolved_at": "2026-04-29T17:57:16Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-29T17:57:16Z",
+      "resolved_at": "2026-04-29T17:59:18Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar review packet approved by Claude: fail-closed guard verified, rollback pre-validation confirmed, no W&B SDK import or canonical truth change. Cosmetic header mismatch noted but does not affect substance. Task returned to owner Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T17:59:18Z",
+      "resolved_at": "2026-04-29T18:02:13Z"
+    }
+  ],
+  "blockers": []
+}

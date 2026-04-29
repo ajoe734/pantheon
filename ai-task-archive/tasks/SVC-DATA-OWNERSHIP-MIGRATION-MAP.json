@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+  "archived_at": "2026-04-29T17:52:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+    "title": "Map JSONL service stores to Postgres ownership migration slices",
+    "summary_zh": "依程式碼盤點 JSONL/volume stores，映射到 shared Postgres cluster 的 schema/table/write-owner/read-only API migration order，作為後續 store pilot 的 blocking input。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+      "Pantheon_資料表_Schema_設計版.md",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md"
+    ],
+    "acceptance": [
+      "code-backed inventory lists every default compose JSONL store",
+      "each store has owner service target schema and migration priority",
+      "cross-service read and write rules match DATABASE ownership policy",
+      "first pilot scope and rollback path are named",
+      "no runtime behavior changes"
+    ],
+    "next": "Closed after review approval with task-scoped commit 8c3ae26. Artifact maps default compose JSON/JSONL service stores to Postgres ownership migration slices, names consultation-svc as first pilot, preserves owner API/read-role rules, and documents rollback. Verification: git diff --check on task docs; rg evidence scan across docker-compose.yml and service store implementations. No runtime behavior changes.",
+    "last_update": "2026-04-29T17:52:20Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：svc-data-ownership-migration-map.md 以 docker-compose.yml default /data volume 與 service store implementation 交叉盤點，coverage check 顯示 default data-backed service store groups missing from map: none。",
+      "審查通過：每個 migration slice 都有 target schema/table family、write owner 與 priority；search 對 source-ingest evidence 的直接 volume read 已改寫為 owner API/read role 規則，incidents/postmortems 共用 JSON store 已標為 table-level owner split，governance/promotion 同名 approval_decisions stores 已拆成不同 owner table families。",
+      "驗證：git diff --check -- docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/svc-data-ownership-migration-map.md；python3 compose/map coverage check reported missing: none。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T17:52:20Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8c3ae266cec60c16d87dccb6b3cdb7c14f7b72c9",
+      "commit_subject": "SVC-DATA-OWNERSHIP-MIGRATION-MAP document store migration slices",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+        "Reviewer": "Codex",
+        "Verification": "git diff --check -- docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/svc-data-ownership-migration-map.md; rg -n compose/store evidence paths across docker-compose.yml and services."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 37,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T16:37:39Z",
+      "resolved_at": "2026-04-29T16:39:18Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:03:10Z",
+      "resolved_at": "2026-04-29T17:05:56Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:05:56Z",
+      "resolved_at": "2026-04-29T17:09:41Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:09:41Z",
+      "resolved_at": "2026-04-29T17:12:49Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:12:48Z",
+      "resolved_at": "2026-04-29T17:14:08Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Migration map ready for review: added svc-data-ownership-migration-map.md with code-backed default compose store inventory, owner schema/table targets, migration priority, first pilot scope, and rollback path; updated gap inventory to reference the artifact. Verification: git diff --check on touched docs; compose-derived default data-backed service coverage script reported missing from map: none.",
+      "status": "done",
+      "created_at": "2026-04-29T17:33:29Z",
+      "resolved_at": "2026-04-29T17:48:25Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: migration map satisfies inventory, owner/schema/priority, cross-service read-write policy, first pilot, rollback, and no-runtime-change acceptance. Owner should finalize with a task-scoped commit.",
+      "status": "done",
+      "created_at": "2026-04-29T17:48:25Z",
+      "resolved_at": "2026-04-29T17:52:20Z"
+    }
+  ],
+  "blockers": []
+}

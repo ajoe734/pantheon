@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-29T20:13:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-OSS-DORMANT-SMOKE-MATRIX acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-OSS-DORMANT-SMOKE-MATRIX，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Activation-Gated Smoke Evidence",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+      "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "SVC-OSS-DORMANT-COMPOSE-PROFILES"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-OSS-DORMANT-SMOKE-MATRIX/SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete after Claude review approval. Finalized support-only acceptance packet and dependency map at support/sidecars/SVC-OSS-DORMANT-SMOKE-MATRIX/SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE.md. Task-scoped commit: 92e1a5f. Verification: confirmed packet covers OpenClaw, Qlib, TRL, FinRL, RLlib, Ray Tune, and W&B; confirmed support-only/canonical-boundary/review_approved closeout markers; staged only the sidecar support artifact.",
+    "last_update": "2026-04-29T20:13:50Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T20:13:50Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "92e1a5f450c62ab855b772f3443c9b7f3eb43030",
+      "commit_subject": "SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 54,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 23,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet ready at support/sidecars/SVC-OSS-DORMANT-SMOKE-MATRIX/SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE.md. It maps dependencies, matrix contract, per-framework closed-state checks, W&B gate risk, reviewer checklist, and focused verification. Support-only scope; no canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-04-29T20:02:05Z",
+      "resolved_at": "2026-04-29T20:11:00Z"
+    },
+    {
+      "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved: acceptance packet is accurate and support-only. All 7 framework rows covered with exact offline commands, closed-state evidence, and negative checks. W&B direct-smoke bypass risk and compose memory-backend scope are correctly flagged for parent owner. Reviewer checklist and failure taxonomy are clear. No canonical truth modified. Owner (Codex) to finalize.",
+      "status": "done",
+      "created_at": "2026-04-29T20:11:00Z",
+      "resolved_at": "2026-04-29T20:13:50Z"
+    }
+  ],
+  "blockers": []
+}

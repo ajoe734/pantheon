@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+  "archived_at": "2026-04-29T18:41:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+    "title": "Add optional Postgres store pilot for consultation-svc",
+    "summary_zh": "在不破壞 JSONL default 的前提下，為 consultation-svc 增加 optional Postgres-backed store pilot，透過 env 啟用，保留現有 API contract 與 audit/outbox behavior。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-DATA-OWNERSHIP-MIGRATION-MAP"
+    ],
+    "artifacts": [
+      "services/consultation/store.py",
+      "services/consultation/main.py",
+      "services/consultation/test_compose_activation.py",
+      "services/consultation/test_*.py",
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md"
+    ],
+    "acceptance": [
+      "JSONL remains default for single-VM baseline",
+      "Postgres store can be enabled by explicit env only",
+      "consult request memo handoff audit and outbox tests pass against new store abstraction",
+      "migration or schema bootstrap is documented",
+      "compose default remains unchanged unless explicitly profiled"
+    ],
+    "next": "Closeout complete in task-scoped commit 5729f5d. Optional consultation Postgres store pilot keeps JSONL default, env-gated Postgres activation, documented bootstrap/schema ownership, and compose default unchanged. Verification: pytest -q services/consultation/test_postgres_store.py services/consultation/test_compose_activation.py services/control_plane/test_internal_api_incident.py services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_consultation_surfaces.py; pytest -q services/consultation; python3 -m py_compile services/consultation/store.py services/consultation/main.py services/consultation/test_postgres_store.py; git diff --check on consultation pilot files.",
+    "last_update": "2026-04-29T18:41:37Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "JSONL default remains intact via build_consultation_store fallback and compose ${CONSULTATION_STORE_BACKEND:-jsonl}.",
+      "Postgres activation is explicit via CONSULTATION_STORE_BACKEND=postgres plus CONSULTATION_STORE_DSN or DATABASE_URL; invalid backends fail closed.",
+      "Postgres pilot documents owned lifecycle/audit/memo_publications/outbox tables and keeps consultation-svc as write owner.",
+      "Focused verification passed: pytest -q services/consultation/test_postgres_store.py services/consultation/test_compose_activation.py services/control_plane/test_internal_api_incident.py services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_consultation_surfaces.py; pytest -q services/consultation; python3 -m py_compile services/consultation/store.py services/consultation/main.py services/consultation/test_postgres_store.py; git diff --check on task files."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T18:41:37Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "5729f5d680bb644ee635537b2d5d708aaea90270",
+      "commit_subject": "SVC-CONSULTATION-POSTGRES-STORE-PILOT add optional postgres store",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 56,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 16,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T18:15:59Z",
+      "resolved_at": "2026-04-29T18:17:28Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: optional CONSULTATION_STORE_BACKEND=postgres pilot added; JSONL default preserved; lifecycle/audit/memo publication/outbox Postgres tables documented; verification: pytest -q services/consultation/test_postgres_store.py services/consultation/test_compose_activation.py services/control_plane/test_internal_api_incident.py services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_consultation_surfaces.py; python3 -m py_compile services/consultation/store.py services/consultation/main.py services/consultation/test_postgres_store.py",
+      "status": "done",
+      "created_at": "2026-04-29T18:25:47Z",
+      "resolved_at": "2026-04-29T18:38:48Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex. Optional Postgres consultation store pilot preserves JSONL default, explicit Postgres env gating, documented schema/bootstrap ownership, and passing focused verification. Owner Codex2 should perform task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T18:38:48Z",
+      "resolved_at": "2026-04-29T18:41:37Z"
+    }
+  ],
+  "blockers": []
+}

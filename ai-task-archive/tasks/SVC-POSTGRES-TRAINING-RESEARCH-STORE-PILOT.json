@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT",
+  "archived_at": "2026-04-29T18:05:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT",
+    "title": "Add optional Postgres event-store pilot for training and research services",
+    "summary_zh": "為 training-session/research/policy-learning/research-worker-gateway 的 JSONL event stores 規劃並實作第一個 optional Postgres event-store pilot；不啟用 production research adapters。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-DATA-OWNERSHIP-MIGRATION-MAP"
+    ],
+    "artifacts": [
+      "services/training-session",
+      "services/research",
+      "services/policy-learning",
+      "services/research-worker-gateway",
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md"
+    ],
+    "acceptance": [
+      "migration slice names table owner and read contract for each event store",
+      "one service lands optional Postgres event-store pilot behind env flag",
+      "JSONL default remains unchanged",
+      "research learning production adapters stay disabled"
+    ],
+    "next": "Finalized optional training-session Postgres event-store pilot after Claude review approval. Task commit ed05343 created. Verification: python3 -m pytest services/training-session/tests -v (5 passed); python3 -m py_compile services/training-session/store.py services/training-session/main.py (passed). JSONL default unchanged; research/policy-learning/research-worker-gateway remain documented planned slices only; production research adapters remain disabled.",
+    "last_update": "2026-04-29T18:05:06Z",
+    "review_notes_zh": [
+      "審查通過：env-gated Postgres pilot 實作正確；JSONL default 未變；migration slice 完整標示 4 個服務的 write owner 和 read contract；研究 adapter 仍停用；5 個測試全過",
+      "minor: psycopg[binary] 加入 requirements.txt，JSONL 模式也會安裝，可接受作為 pilot 範圍"
+    ],
+    "review_file": "support/sidecars/SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT/claude-review-note.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T18:05:06Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "ed0534350a0c4e492f73cb9b37fb50635587d4c8",
+      "commit_subject": "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT add training postgres event store pilot",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/training-session/tests -v (5 passed); python3 -m py_compile services/training-session/store.py services/training-session/main.py (passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 41,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 15,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: added env-gated Postgres event-store pilot for training-session only. JSONL remains default; compose default unchanged; research adapters remain disabled. Added migration slice artifact listing owner/table/read contract for training-session, research, policy-learning, and research-worker-gateway. Verification: python3 -m pytest services/training-session/tests (5 passed); python3 -m py_compile services/training-session/store.py services/training-session/main.py.",
+      "status": "done",
+      "created_at": "2026-04-29T17:58:04Z",
+      "resolved_at": "2026-04-29T18:02:28Z"
+    },
+    {
+      "task_id": "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: env-gated Postgres event-store pilot for training-session is correct and minimal. JSONL default unchanged, compose default unchanged, research adapters disabled, migration slice documents all 4 services. All 5 tests pass. Returned to owner Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T18:02:28Z",
+      "resolved_at": "2026-04-29T18:05:06Z"
+    }
+  ],
+  "blockers": []
+}

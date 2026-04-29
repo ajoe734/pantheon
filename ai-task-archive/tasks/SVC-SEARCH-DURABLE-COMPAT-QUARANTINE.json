@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE",
+  "archived_at": "2026-04-29T15:25:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE",
+    "title": "Quarantine request-document compatibility in search normal path",
+    "summary_zh": "把 search normal path 收斂到 durable evidence/index；caller-supplied documents 只能以明確 compat flag/path 使用，BFF/smoke/tests 不再把 request documents 當正常路徑。",
+    "phase": "Service Hardening / Durable Search Pipeline",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/search/main.py",
+      "services/search/tests",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_search_service_client.py",
+      "scripts/smoke_honest_stack.py"
+    ],
+    "acceptance": [
+      "durable no-document query remains default normal path",
+      "request-document mode requires explicit compatibility signal or compat route",
+      "BFF search client never sends documents in normal path",
+      "smoke keeps durable index reload and snapshot replay",
+      "focused search and BFF client tests pass"
+    ],
+    "next": "Closeout complete: request-document compat is quarantined behind explicit flag/route, durable no-document search remains normal path, Claude review artifact committed in 80e2a5a. Verification: python3 -m pytest services/search/tests/test_http_service.py services/control-plane/bff/test_search_service_client.py -v; git diff --check -- services/search/main.py services/search/tests/test_http_service.py .orchestrator/chair-reviews/SVC-SEARCH-DURABLE-COMPAT-QUARANTINE-claude-review.md.",
+    "last_update": "2026-04-29T15:25:46Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：6/6 tests pass，durable 正常路徑／compat 隔離／BFF 無 documents 均達標",
+      "Codex2 請做 closeout commit 再 done"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-SEARCH-DURABLE-COMPAT-QUARANTINE-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T15:25:46Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "80e2a5a0d0fc93ba73c59b73842a03f9e963eb16",
+      "commit_subject": "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE quarantine request documents",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/search/tests/test_http_service.py services/control-plane/bff/test_search_service_client.py -v; git diff --check -- services/search/main.py services/search/tests/test_http_service.py .orchestrator/chair-reviews/SVC-SEARCH-DURABLE-COMPAT-QUARANTINE-claude-review.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 21,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: /api/search/query now rejects caller documents unless allow_request_documents_compat=true; added /api/search/query/request-documents-compat for explicit compatibility use; durable no-document query remains normal path. Verification: python3 -m pytest services/search/tests services/control-plane/bff/test_search_service_client.py; git diff --check -- services/search/main.py services/search/tests/test_http_service.py.",
+      "status": "done",
+      "created_at": "2026-04-29T14:18:30Z",
+      "resolved_at": "2026-04-29T15:08:21Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 6 tests pass, durable normal path and compat quarantine correct, BFF client sends no documents. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T15:08:21Z",
+      "resolved_at": "2026-04-29T15:25:46Z"
+    }
+  ],
+  "blockers": []
+}

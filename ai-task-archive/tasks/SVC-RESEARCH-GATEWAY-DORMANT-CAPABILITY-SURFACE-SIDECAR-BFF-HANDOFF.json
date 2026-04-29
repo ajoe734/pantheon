@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-29T17:52:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Activation-Gated Research Capability Surface",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized review_approved sidecar. Artifact support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md complete with reviewer URL corrections (policy-learning:8100, openclaw-gateway-adapter:8104). Commits: f28beec (artifact), 6449604 (reviewer correction), 9c4f3cf (closeout note). No canonical truth modified. Documentation-only sidecar.",
+    "last_update": "2026-04-29T17:52:51Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：handoff packet 為 support/sidecars 底下的 task-scoped 支援 artifact，未修改 L1 canonical truth、核心 contract 或 runtime/registry/governance 實作。",
+      "審查修正：將 Service URL References 對齊 docker-compose.yml 與 compose tests；policy-learning 改為 http://policy-learning-svc:8100，openclaw-gateway-adapter 改為 http://openclaw-gateway-adapter:8104。修正 commit: 6449604。",
+      "驗證：git diff --check -- support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md；rg 檢查三個 capabilities endpoints、job/run/task endpoints、fail_closed/allowed_scope/rejection policy；compose URL/port cross-check against docker-compose.yml and service compose tests。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T17:52:51Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9c4f3cf154a4f0fa2bd9398ca1e5371775ca87dc",
+      "commit_subject": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF finalize closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verification": "artifact reviewed; status/finalization fields updated; no L1 docs touched; documentation-only sidecar"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 38,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 13,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:06:06Z",
+      "resolved_at": "2026-04-29T17:07:44Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:11:20Z",
+      "resolved_at": "2026-04-29T17:42:59Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "BFF handoff packet ready for review. Artifact: support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md. Covers: (1) BFF query gap analysis — 6 missing cross-service aggregation endpoints identified; (2) normalized capability inventory for all 7 dormant backends with maturity tier and next-gate criteria; (3) operator journey map — 4 journeys; (4) frontend display rules and BFF design constraints; (5) recommended future BFF endpoints. No canonical docs modified. Commit: f28beec.",
+      "status": "done",
+      "created_at": "2026-04-29T17:47:55Z",
+      "resolved_at": "2026-04-29T17:50:48Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved after reviewer URL-table correction in sidecar artifact. Owner Claude should finalize to done with task-scoped closeout; support artifact commit f28beec plus reviewer correction commit 6449604.",
+      "status": "done",
+      "created_at": "2026-04-29T17:50:48Z",
+      "resolved_at": "2026-04-29T17:52:51Z"
+    }
+  ],
+  "blockers": []
+}

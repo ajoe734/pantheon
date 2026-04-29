@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-04-30 01:47:15
+Last updated: 2026-04-30 06:23:49
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-04-30 01:47:15
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: BFF handoff packet created: support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md — covers BFF query gap analysis (6 missing cross-service endpoints identified), operator journey map (4 journeys), normalized capability inventory for all 7 dormant backends, frontend display rules, and BFF design constraints. No canonical docs modified.
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
-- `Codex2`: integration, status-system, schema, acceptance; next: Ready for Gemini review: created support-only review packet at support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md. Verification rerun: unittest discovery for services/registry/experiments (9 OK), memory smoke, W&B offline smoke, py_compile, rg checks for no wandb import or SDK pin. No canonical truth or runtime implementation changed by this sidecar.
+- `Codex`: integration, status-system, schema, acceptance; next: Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Assignment created
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
 
 ## Delivery Layers
 
@@ -50,16 +50,7 @@ Last updated: 2026-04-30 01:47:15
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-DATA-OWNERSHIP-MIGRATION-MAP` | Production Readiness / Data Ownership | Map JSONL service stores to Postgres ownership migration slices | Codex2 | review | - | 依程式碼盤點 JSONL/volume stores，映射到 shared Postgres cluster 的 schema/table/write-owner/read-only API migration order，作為後續 store pilot 的 blocking input。 |
-| `SVC-CONSULTATION-POSTGRES-STORE-PILOT` | Production Readiness / Data Ownership | Add optional Postgres store pilot for consultation-svc | Claude2 | todo | `SVC-DATA-OWNERSHIP-MIGRATION-MAP` | 在不破壞 JSONL default 的前提下，為 consultation-svc 增加 optional Postgres-backed store pilot，透過 env 啟用，保留現有 API contract 與 audit/outbox behavior。 |
-| `SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT` | Production Readiness / Data Ownership | Add optional Postgres store pilot for source-ingest and search | Claude2 | todo | `SVC-DATA-OWNERSHIP-MIGRATION-MAP`, `SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE`, `SVC-SEARCH-DURABLE-COMPAT-QUARANTINE` | 為 source-ingest/search 增加 optional Postgres-backed store pilot；JSONL 仍是 default baseline，透過 env 啟用 Postgres，驗證 write ownership 與 read-only sharing 邊界。 |
-| `SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT` | Production Readiness / Data Ownership | Add optional Postgres event-store pilot for training and research services | Codex2 | todo | `SVC-DATA-OWNERSHIP-MIGRATION-MAP` | 為 training-session/research/policy-learning/research-worker-gateway 的 JSONL event stores 規劃並實作第一個 optional Postgres event-store pilot；不啟用 production research adapters。 |
-| `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT` | Activation-Gated Experiment Backend Scaffold | Close out W&B offline prep scaffold hardening | Codex2 | review | - | 把 W&B offline/prep-only scaffold 收斂成 reviewable closeout：無 SDK、無 network、需 explicit flag、canonical artifact/deployment fields 對齊；不做 SDK-backed activation。 |
-| `SVC-OSS-DORMANT-COMPOSE-PROFILES` | Activation-Gated Runtime Packaging | Add non-default dormant OSS smoke packaging profiles | Claude2 | todo | `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT` | 為 dormant/offline OSS scaffold 增加非 default 的 compose/profile 或 equivalent smoke packaging；只跑 explicit prep/offline smoke，不開 service default、不開 network/live/registry write。 |
-| `SVC-OSS-DORMANT-SMOKE-MATRIX` | Activation-Gated Smoke Evidence | Add activation-gated dormant OSS smoke matrix | Codex | todo | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-OSS-DORMANT-COMPOSE-PROFILES` | 建立 activation-gated OSS dormant smoke matrix：用 explicit flags/env 跑 OpenClaw/Qlib/TRL/FinRL/RLlib/Ray Tune/W&B offline smoke，輸出 gate_state closed / activation false 證據。 |
-| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` | Planning Truth / Activation-Gated Code Alignment | Sync activation-gated OSS truth after dormant scaffold work | Claude2 | todo | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE`, `SVC-OSS-DORMANT-COMPOSE-PROFILES`, `SVC-OSS-DORMANT-SMOKE-MATRIX` | 在 dormant/pre-activation scaffold 完成後，同步 Deferred OSS map、maturity matrix、checklist、current-work，使 code truth 區分已開發 scaffold 與仍未啟用 production activation。 |
-| `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF` | Activation-Gated Research Capability Surface | [Sidecar] [Auto] [Parent SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE] Prepare SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE BFF and frontend handoff packet | Claude | in_progress | - | 平行支援 SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
-| `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW` | Activation-Gated Experiment Backend Scaffold | [Sidecar] [Auto] [Parent SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT] Prepare SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT review packet and evidence summary | Codex2 | review | - | 平行支援 SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` | Planning Truth / Activation-Gated Code Alignment | [Sidecar] [Auto] [Parent SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC] Prepare SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC acceptance packet and dependency map | Codex | review_approved | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE`, `SVC-OSS-DORMANT-COMPOSE-PROFILES`, `SVC-OSS-DORMANT-SMOKE-MATRIX` | 平行支援 SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -71,24 +62,13 @@ Last updated: 2026-04-30 01:47:15
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-DATA-OWNERSHIP-MIGRATION-MAP` | Production Readiness / Data Ownership | Map JSONL service stores to Postgres ownership migration slices | 依程式碼盤點 JSONL/volume stores，映射到 shared Postgres cluster 的 schema/table/write-owner/read-only API migration order，作為後續 store pilot 的 blocking input。 | Codex2 | Codex | review | - | 2026-04-30 01:33:29 | Migration map ready for review: added svc-data-ownership-migration-map.md with code-backed default compose store inventory, owner schema/table targets, migration priority, first pilot scope, and rollback path; updated gap inventory to reference the artifact. Verification: git diff --check on touched docs; compose-derived default data-backed service coverage script reported missing from map: none. |
-| `SVC-CONSULTATION-POSTGRES-STORE-PILOT` | Production Readiness / Data Ownership | Add optional Postgres store pilot for consultation-svc | 在不破壞 JSONL default 的前提下，為 consultation-svc 增加 optional Postgres-backed store pilot，透過 env 啟用，保留現有 API contract 與 audit/outbox behavior。 | Claude2 | Gemini | todo | `SVC-DATA-OWNERSHIP-MIGRATION-MAP` | 2026-04-29 22:14:40 | Assignment created |
-| `SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT` | Production Readiness / Data Ownership | Add optional Postgres store pilot for source-ingest and search | 為 source-ingest/search 增加 optional Postgres-backed store pilot；JSONL 仍是 default baseline，透過 env 啟用 Postgres，驗證 write ownership 與 read-only sharing 邊界。 | Claude2 | Codex | todo | `SVC-DATA-OWNERSHIP-MIGRATION-MAP`, `SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE`, `SVC-SEARCH-DURABLE-COMPAT-QUARANTINE` | 2026-04-29 23:05:27 | Assignment created |
-| `SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT` | Production Readiness / Data Ownership | Add optional Postgres event-store pilot for training and research services | 為 training-session/research/policy-learning/research-worker-gateway 的 JSONL event stores 規劃並實作第一個 optional Postgres event-store pilot；不啟用 production research adapters。 | Codex2 | Claude | todo | `SVC-DATA-OWNERSHIP-MIGRATION-MAP` | 2026-04-29 23:05:42 | Assignment created |
-| `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT` | Activation-Gated Experiment Backend Scaffold | Close out W&B offline prep scaffold hardening | 把 W&B offline/prep-only scaffold 收斂成 reviewable closeout：無 SDK、無 network、需 explicit flag、canonical artifact/deployment fields 對齊；不做 SDK-backed activation。 | Codex2 | Codex | review | - | 2026-04-30 01:22:35 | Ready for review: W&B offline/prep scaffold is canonical-state aligned and still fail-closed. Changes: adapter now accepts artifact_state/deployment_stage as primary, maps legacy lifecycle_state only to compatibility fields, uses deployment_stage=live for rollback enforcement, keeps W&B behind PANTHEON_ENABLE_WANDB_DEFERRED_PREP and offline/dryrun modes only, and updates experiments README/WANDB gate/deferred map/maturity matrix. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (9 tests OK); python3 services/registry/experiments/smoke_test.py; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; rg import/pin checks found no W&B SDK import or requirements pin. Note: worktree already contains unrelated dirty orchestrator/RLlib/archive files; review task-scoped files only. |
-| `SVC-OSS-DORMANT-COMPOSE-PROFILES` | Activation-Gated Runtime Packaging | Add non-default dormant OSS smoke packaging profiles | 為 dormant/offline OSS scaffold 增加非 default 的 compose/profile 或 equivalent smoke packaging；只跑 explicit prep/offline smoke，不開 service default、不開 network/live/registry write。 | Claude2 | Codex | todo | `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT` | 2026-04-29 23:23:06 | Assignment created |
-| `SVC-OSS-DORMANT-SMOKE-MATRIX` | Activation-Gated Smoke Evidence | Add activation-gated dormant OSS smoke matrix | 建立 activation-gated OSS dormant smoke matrix：用 explicit flags/env 跑 OpenClaw/Qlib/TRL/FinRL/RLlib/Ray Tune/W&B offline smoke，輸出 gate_state closed / activation false 證據。 | Codex | Claude | todo | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-OSS-DORMANT-COMPOSE-PROFILES` | 2026-04-29 23:23:22 | Assignment created |
-| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` | Planning Truth / Activation-Gated Code Alignment | Sync activation-gated OSS truth after dormant scaffold work | 在 dormant/pre-activation scaffold 完成後，同步 Deferred OSS map、maturity matrix、checklist、current-work，使 code truth 區分已開發 scaffold 與仍未啟用 production activation。 | Claude2 | Codex | todo | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE`, `SVC-OSS-DORMANT-COMPOSE-PROFILES`, `SVC-OSS-DORMANT-SMOKE-MATRIX` | 2026-04-29 23:23:39 | Assignment created |
-| `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF` | Activation-Gated Research Capability Surface | [Sidecar] [Auto] [Parent SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE] Prepare SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE BFF and frontend handoff packet | 平行支援 SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex2 | in_progress | - | 2026-04-30 01:47:15 | BFF handoff packet created: support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md — covers BFF query gap analysis (6 missing cross-service endpoints identified), operator journey map (4 journeys), normalized capability inventory for all 7 dormant backends, frontend display rules, and BFF design constraints. No canonical docs modified. |
-| `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW` | Activation-Gated Experiment Backend Scaffold | [Sidecar] [Auto] [Parent SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT] Prepare SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT review packet and evidence summary | 平行支援 SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Codex2 | Gemini | review | - | 2026-04-30 01:43:57 | Ready for Gemini review: created support-only review packet at support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md. Verification rerun: unittest discovery for services/registry/experiments (9 OK), memory smoke, W&B offline smoke, py_compile, rg checks for no wandb import or SDK pin. No canonical truth or runtime implementation changed by this sidecar. |
+| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` | Planning Truth / Activation-Gated Code Alignment | [Sidecar] [Auto] [Parent SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC] Prepare SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC acceptance packet and dependency map | 平行支援 SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | review_approved | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE`, `SVC-OSS-DORMANT-COMPOSE-PROFILES`, `SVC-OSS-DORMANT-SMOKE-MATRIX` | 2026-04-30 06:23:49 | Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE for finalize after successful dispatch. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT` | Codex2 | Codex | Ready for review: W&B offline/prep scaffold is canonical-state aligned and still fail-closed. Changes: adapter now accepts artifact_state/deployment_stage as primary, maps legacy lifecycle_state only to compatibility fields, uses deployment_stage=live for rollback enforcement, keeps W&B behind PANTHEON_ENABLE_WANDB_DEFERRED_PREP and offline/dryrun modes only, and updates experiments README/WANDB gate/deferred map/maturity matrix. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (9 tests OK); python3 services/registry/experiments/smoke_test.py; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; rg import/pin checks found no W&B SDK import or requirements pin. Note: worktree already contains unrelated dirty orchestrator/RLlib/archive files; review task-scoped files only. | pending | 2026-04-30 01:22:35 |
-| `SVC-DATA-OWNERSHIP-MIGRATION-MAP` | Codex2 | Codex | Migration map ready for review: added svc-data-ownership-migration-map.md with code-backed default compose store inventory, owner schema/table targets, migration priority, first pilot scope, and rollback path; updated gap inventory to reference the artifact. Verification: git diff --check on touched docs; compose-derived default data-backed service coverage script reported missing from map: none. | pending | 2026-04-30 01:33:29 |
-| `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW` | Codex2 | Gemini | Ready for Gemini review: created support-only review packet at support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md. Verification rerun: unittest discovery for services/registry/experiments (9 OK), memory smoke, W&B offline smoke, py_compile, rg checks for no wandb import or SDK pin. No canonical truth or runtime implementation changed by this sidecar. | pending | 2026-04-30 01:43:57 |
+| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` | Claude | Codex | Review approved by Claude (reassigned from Claude2). All nine dependency rows are correctly mapped with commit SHAs and gate assertions. Smoke matrix rerun: 7/7 closed, activated=false. No canonical truth was modified. Parent owner (Codex) should absorb the sync watchlist items into the canonical truth-sync task. | pending | 2026-04-30 06:10:21 |
 
 ## Blockers
 
@@ -104,7 +84,7 @@ Last updated: 2026-04-30 01:47:15
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-04-30 01:45:47
+- Last coordination scan: 2026-04-30 06:22:38
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -171,23 +151,23 @@ Last updated: 2026-04-30 01:47:15
 
 ## Latest Checkpoints
 
-- 2026-04-30 01:44:49 Orchestrator: PreToolUse: Grep
-- 2026-04-30 01:44:50 Orchestrator: PostToolUse: Grep
-- 2026-04-30 01:44:51 Orchestrator: PreToolUse: Read
-- 2026-04-30 01:44:52 Orchestrator: PostToolUse: Read
-- 2026-04-30 01:45:34 Orchestrator: PostToolUse: Agent
-- 2026-04-30 01:45:41 Orchestrator: PreToolUse: Bash
-- 2026-04-30 01:45:41 Orchestrator: PostToolUse: Bash
-- 2026-04-30 01:45:41 Orchestrator: PreToolUse: Read
-- 2026-04-30 01:45:41 Orchestrator: PostToolUse: Read
-- 2026-04-30 01:45:44 Orchestrator: PreToolUse: Read
-- 2026-04-30 01:45:45 Orchestrator: PostToolUse: Read
-- 2026-04-30 01:45:51 Orchestrator: `SVC-DATA-OWNERSHIP-MIGRATION-MAP` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-04-30 01:45:55 Orchestrator: `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-04-30 01:45:58 Orchestrator: `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-04-30 01:47:06 Orchestrator: PreToolUse: Write
-- 2026-04-30 01:47:06 Orchestrator: PostToolUse: Write
-- 2026-04-30 01:47:12 Orchestrator: `SVC-DATA-OWNERSHIP-MIGRATION-MAP` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-04-30 01:47:15 Orchestrator: PreToolUse: Bash
-- 2026-04-30 01:47:15 Orchestrator: `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-04-30 01:47:15 Claude: `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF` BFF handoff packet created: support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md — covers BFF query gap analysis (6 missing cross-service endpoints identified), operator journey map (4 journeys), normalized capability inventory for all 7 dormant backends, frontend display rules, and BFF design constraints. No canonical docs modified.
+- 2026-04-30 06:16:15 Orchestrator: PostToolUse: TodoWrite
+- 2026-04-30 06:16:22 Orchestrator: PreToolUse: Bash
+- 2026-04-30 06:16:22 Claude: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Claude review approved: independent smoke matrix rerun 7/7 gate_state=closed activated=false; all docs correctly distinguish dormant scaffold from production activation; no gated paths opened; return to Codex2 for closeout
+- 2026-04-30 06:16:33 Orchestrator: PostToolUse: Bash
+- 2026-04-30 06:16:35 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Worker superseded after task responsibility moved to another agent.
+- 2026-04-30 06:16:35 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-04-30 06:16:36 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Worker started via codex: owned_finalize_dispatch
+- 2026-04-30 06:16:36 Orchestrator: SessionEnd: SessionEnd
+- 2026-04-30 06:16:36 Codex2: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC for finalize after successful dispatch.
+- 2026-04-30 06:16:36 Orchestrator: PreToolUse: Bash
+- 2026-04-30 06:16:47 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC for finalize after successful dispatch.
+- 2026-04-30 06:17:54 Codex2: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Done: activation-gated OSS truth sync finalized in commit 036daa7. Closeout verification rerun: git diff --check on task docs/evidence; python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC.closeout.matrix.json => 7/7 acceptable, gate_state=closed 7/7, activated=false 7/7; stale wording rg scan returned no matches. Docs now distinguish landed dormant scaffolds from future production activation gates without opening broker/live/capital/registry/governance paths.
+- 2026-04-30 06:17:56 Orchestrator: Dispatch pause for copilot expired at 2026-04-30 06:17:27; dispatch is enabled again.
+- 2026-04-30 06:17:57 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Worker superseded after task responsibility moved to another agent.
+- 2026-04-30 06:19:06 Orchestrator: Dispatch pause for gemini expired at 2026-04-30 06:18:42; dispatch is enabled again.
+- 2026-04-30 06:20:17 Orchestrator: underutilized but no sidecar candidates matched the catalog or dynamic fallback
+- 2026-04-30 06:23:47 Orchestrator: Dispatch pause for codex expired at 2026-04-30 06:22:47; dispatch is enabled again.
+- 2026-04-30 06:23:48 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-04-30 06:23:48 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` Worker started via codex: owned_finalize_dispatch
+- 2026-04-30 06:23:49 Codex: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE for finalize after successful dispatch.

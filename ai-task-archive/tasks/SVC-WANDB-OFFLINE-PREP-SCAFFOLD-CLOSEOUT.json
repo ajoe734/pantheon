@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+  "archived_at": "2026-04-29T19:14:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+    "title": "Close out W&B offline prep scaffold hardening",
+    "summary_zh": "把 W&B offline/prep-only scaffold 收斂成 reviewable closeout：無 SDK、無 network、需 explicit flag、canonical artifact/deployment fields 對齊；不做 SDK-backed activation。",
+    "phase": "Activation-Gated Experiment Backend Scaffold",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/registry/experiments",
+      "services/registry/experiments/WANDB_ACTIVATION.md",
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+    ],
+    "acceptance": [
+      "EXPERIMENT_BACKEND wandb without deferred-prep flag fails closed",
+      "W&B mode only allows offline or dryrun",
+      "no wandb SDK import or network call is introduced",
+      "experiment records preserve canonical artifact_state and deployment_stage semantics in tests"
+    ],
+    "next": "Closeout finalized in task-scoped commit 45d0ea3. Verified W&B prep scaffold remains fail-closed/offline-only with canonical artifact_state/deployment_stage parity: python3 -m unittest test_adapter.py from services/registry/experiments; python3 services/registry/experiments/smoke_test.py --backend memory; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile adapter/config/smoke/test modules; rg checks confirmed no wandb SDK import and no wandb requirements pin. Unrelated dirty worktree files were left unstaged.",
+    "last_update": "2026-04-29T19:14:05Z",
+    "review_notes_zh": [
+      "審查通過：W&B offline/prep-only scaffold 維持 fail-closed，EXPERIMENT_BACKEND=wandb 仍需 PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1，W&B mode 限 offline/dryrun。",
+      "審查通過：adapter 以 canonical artifact_state/deployment_stage 為 primary，支援 frozen，且 non-none deployment_stage + non-approved artifact_state 會在 backend.record() 前被拒絕；回歸測試確認 backend.runs 保持空。",
+      "審查通過：未引入 wandb SDK import、requirements pin 或 networked backend activation；SDK-backed/online W&B 仍由 WANDB_ACTIVATION gate deferred。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T19:14:05Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "45d0ea3e6a594d39fe6815022b0a7c433987d32c",
+      "commit_subject": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT finalize offline prep scaffold",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 44,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 19,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T16:50:38Z",
+      "resolved_at": "2026-04-29T17:07:54Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:15:38Z",
+      "resolved_at": "2026-04-29T17:16:58Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: W&B offline/prep scaffold is canonical-state aligned and still fail-closed. Changes: adapter now accepts artifact_state/deployment_stage as primary, maps legacy lifecycle_state only to compatibility fields, uses deployment_stage=live for rollback enforcement, keeps W&B behind PANTHEON_ENABLE_WANDB_DEFERRED_PREP and offline/dryrun modes only, and updates experiments README/WANDB gate/deferred map/maturity matrix. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (9 tests OK); python3 services/registry/experiments/smoke_test.py; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; rg import/pin checks found no W&B SDK import or requirements pin. Note: worktree already contains unrelated dirty orchestrator/RLlib/archive files; review task-scoped files only.",
+      "status": "done",
+      "created_at": "2026-04-29T17:22:35Z",
+      "resolved_at": "2026-04-29T17:51:03Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review reopened: required fix before approval. In RegistryExperimentAdapter.sync_registry_entry, validate promoted metadata/lineage/rollback before backend.record so rejected deployment_stage=live entries do not leave any backend run or future SDK call side effect; add a regression assertion for missing live rollback leaving backend.runs empty. Rerun results before reopen: unittest discovery 9 OK, memory smoke OK, W&B offline smoke OK, py_compile OK, no wandb SDK import/pin found.",
+      "status": "done",
+      "created_at": "2026-04-29T17:51:03Z",
+      "resolved_at": "2026-04-29T17:51:03Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer reopen fix applied: sync_registry_entry now validates promoted metadata lineage/rollback before backend.record, and missing live rollback regression asserts backend.runs remains empty. Verification: unittest discovery 9 OK; memory smoke OK; W&B offline smoke OK; py_compile OK; code search found no W&B SDK import/call or requirements pin, only deferred docs references.",
+      "status": "done",
+      "created_at": "2026-04-29T17:54:21Z",
+      "resolved_at": "2026-04-29T18:17:26Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review reopened: code fix is correct and focused verification passed (unittest discovery 9 OK; memory smoke OK; W&B offline smoke OK; py_compile OK; git diff --check OK; no W&B SDK import/call or requirements pin found). One task-artifact doc inconsistency remains: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md W&B summary table still says no W&B backend wired and Smoke Proof Present: No, while the current repo truth below it and this task now have prep-only OfflineWandbPrepBackend plus offline smoke coverage. Please update that row to say prep-only/offline scaffold exists, no SDK pin/networked activation, and smoke proof is prep-only behind the explicit deferred-prep flag.",
+      "status": "done",
+      "created_at": "2026-04-29T18:17:26Z",
+      "resolved_at": "2026-04-29T18:17:26Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reopened doc inconsistency fixed: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md W&B summary row now says prep-only/offline scaffold exists, no SDK pin/networked activation, and smoke proof is prep-only behind PANTHEON_ENABLE_WANDB_DEFERRED_PREP. Verification: python3 -m unittest discover services/registry/experiments (9 OK); python3 services/registry/experiments/smoke_test.py --backend memory; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; git diff --check scoped artifacts; rg found no wandb requirements pin.",
+      "status": "done",
+      "created_at": "2026-04-29T18:19:29Z",
+      "resolved_at": "2026-04-29T18:42:54Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review reopened: W&B prep scaffold verification passed, but canonical deployment_stage semantics are still incomplete. Required fix: include canonical deployment_stage=frozen in the adapter/docs where deployment_stage values are listed, and reject any non-none deployment_stage unless artifact_state=approved before backend.record so invalid combinations like artifact_state=candidate with deployment_stage=paper leave backend.runs empty. Add focused regression tests for frozen acceptance/mirroring and non-approved non-none rejection. Verification run before reopen: python3 -m unittest discover services/registry/experiments (9 OK); python3 services/registry/experiments/smoke_test.py --backend memory; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; git diff --check scoped artifacts; rg found no W&B SDK import or requirements pin.",
+      "status": "done",
+      "created_at": "2026-04-29T18:42:54Z",
+      "resolved_at": "2026-04-29T18:42:54Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer reopen fixed: adapter now includes canonical deployment_stage=frozen, rejects any non-none deployment_stage unless artifact_state=approved before backend.record, and regression tests cover frozen mirroring plus candidate+paper rejection with backend.runs empty. Verification: python3 -m unittest discover services/registry/experiments (11 OK); python3 services/registry/experiments/smoke_test.py --backend memory; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; git diff --check scoped artifacts; no W&B SDK imports under services; no W&B requirements pin.",
+      "status": "done",
+      "created_at": "2026-04-29T18:49:37Z",
+      "resolved_at": "2026-04-29T19:12:06Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: scoped artifacts satisfy W&B deferred-prep acceptance. Verified unit/smoke/compile/diff checks, no wandb SDK import, no requirements pin. Owner Codex2 should finalize with task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T19:12:06Z",
+      "resolved_at": "2026-04-29T19:14:05Z"
+    }
+  ],
+  "blockers": []
+}

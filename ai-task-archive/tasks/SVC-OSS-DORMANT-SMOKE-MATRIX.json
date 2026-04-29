@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+  "archived_at": "2026-04-29T20:50:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+    "title": "Add activation-gated dormant OSS smoke matrix",
+    "summary_zh": "建立 activation-gated OSS dormant smoke matrix：用 explicit flags/env 跑 OpenClaw/Qlib/TRL/FinRL/RLlib/Ray Tune/W&B offline smoke，輸出 gate_state closed / activation false 證據。",
+    "phase": "Activation-Gated Smoke Evidence",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+      "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "SVC-OSS-DORMANT-COMPOSE-PROFILES"
+    ],
+    "artifacts": [
+      "scripts/smoke_honest_stack.py",
+      "integrations/openclaw",
+      "integrations/qlib",
+      "integrations/trl",
+      "services/research/finrl",
+      "services/research/rllib",
+      "services/registry/experiments"
+    ],
+    "acceptance": [
+      "smoke matrix records activated false for every gated row",
+      "all commands are offline or local fixture only",
+      "no registry governance network or live execution writes occur",
+      "failures clearly distinguish missing optional deps from activation permission"
+    ],
+    "next": "Closeout verified: python3 scripts/smoke_dormant_oss_matrix.py exit 0, 7/7 rows gate_state=closed activated=false matrix_passed=true. Task artifacts committed in 3ed1d24 (enforcement) and 628f851 (checklist). Reviewer Codex approved after rerunning matrix and W&B scrubbed-env repro. Acceptance criteria met: all commands offline, no registry/network writes, gate denial verified for all 7 integrations.",
+    "last_update": "2026-04-29T20:50:12Z",
+    "review_notes_zh": [
+      "No blocking findings.",
+      "Verified commit 3ed1d24 enforces W&B gate denial in a scrubbed env and requires every row to remain gate_state=closed and activated=false for matrix_passed=true.",
+      "Reviewer reran python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-DORMANT-SMOKE-MATRIX.review.json and PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-DORMANT-SMOKE-MATRIX.wandb-env-review.json; both exited 0 with 7/7 rows closed and activated=false.",
+      "Also verified python3 -m py_compile scripts/smoke_dormant_oss_matrix.py and git diff --check on the task-owned script/evidence paths."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T20:50:12Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "628f8511a0a4c4a52d6517b251763b3f2d5aed99",
+      "commit_subject": "SVC-OSS-DORMANT-SMOKE-MATRIX closeout: update OSS checklist dormant scaffold truth",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 54,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 25,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T19:53:47Z",
+      "resolved_at": "2026-04-29T19:55:40Z"
+    },
+    {
+      "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Please review SVC-OSS-DORMANT-SMOKE-MATRIX: new scripts/smoke_dormant_oss_matrix.py runs dormant smoke for all 7 OSS integrations (openclaw/qlib/trl/finrl/rllib/raytune/wandb). Evidence: support/evidence/SVC-OSS-DORMANT-SMOKE-MATRIX/dormant_oss_smoke_matrix.json. 7/7 rows: gate_state=closed, activated=false. All paths offline, no network/registry writes. Gate denial verified (FinRL/RLlib/RayTune exit 2, W&B config EnvironmentError). Acceptance: smoke matrix records activated=false for every gated row — confirmed.",
+      "status": "done",
+      "created_at": "2026-04-29T20:08:10Z",
+      "resolved_at": "2026-04-29T20:11:47Z"
+    },
+    {
+      "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested by Codex review: scripts/smoke_dormant_oss_matrix.py currently records some closed-state evidence without enforcing it. Repro: PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-DORMANT-SMOKE-MATRIX.wandb-env-contamination.json exits 0 and summary.matrix_passed=true while wandb evidence.gate_denial_verified=false. Please make row success/exit code require gate_state=closed, activated=false, expected artifact/preflight fields, and negative gate checks in a scrubbed env; then regenerate support/evidence/SVC-OSS-DORMANT-SMOKE-MATRIX/dormant_oss_smoke_matrix.json.",
+      "status": "done",
+      "created_at": "2026-04-29T20:11:47Z",
+      "resolved_at": "2026-04-29T20:11:47Z"
+    },
+    {
+      "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "addressed Codex review: _run() now scrubs gate-bypassing env vars in denial checks; _smoke_wandb() enforces gate_denial_verified=True from scrubbed env; qlib/trl enforce preflight_activation_allowed=False and assertions=OK; finrl/rllib/raytune enforce gate_state=closed from actual output and assertions=OK; matrix_passed now requires all gate_state=closed+activated=false; evidence regenerated; commit 3ed1d24",
+      "status": "done",
+      "created_at": "2026-04-29T20:19:55Z",
+      "resolved_at": "2026-04-29T20:23:58Z"
+    },
+    {
+      "task_id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after rechecking commit 3ed1d24 and rerunning the dormant OSS matrix plus W&B parent-env contamination repro. Owner should finalize with the task-scoped smoke/evidence commit and closeout checklist.",
+      "status": "done",
+      "created_at": "2026-04-29T20:23:58Z",
+      "resolved_at": "2026-04-29T20:50:12Z"
+    }
+  ],
+  "blockers": []
+}
