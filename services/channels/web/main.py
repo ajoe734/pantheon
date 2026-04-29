@@ -54,7 +54,7 @@ def _health_details() -> dict[str, object]:
         "router_url": ROUTER_URL,
         "router_probe": "/readyz",
         "channel": "web",
-        "compose_default": False,
+        "compose_default": True,
     }
 
 

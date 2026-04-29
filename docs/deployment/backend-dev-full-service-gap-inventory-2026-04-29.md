@@ -166,8 +166,10 @@ run as a separate module group:
 9 passed
 ```
 
-It is intentionally out of default compose today. To make dev run it, add an
-explicit Dockerfile and compose profile or default service, wired to `router`.
+It is now included in the default dev compose stack through
+`services/channels/web/Dockerfile`, exposed on `${WEB_CHANNEL_PORT:-18105}`, and
+wired to the internal `router` service through `ROUTER_URL=http://router:8001`.
+The smoke stack also waits for its `/readyz` endpoint.
 
 `services/channels/telegram` and `services/channels/discord` are SDK bot
 processes. They require real tokens and do not expose the repository-standard

@@ -38,6 +38,7 @@ RESEARCH_ORCHESTRATOR_URL = os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://127.0
 RECONCILIATION_DRIFT_URL = os.getenv("RECONCILIATION_DRIFT_URL", "http://127.0.0.1:8102")
 RESEARCH_WORKER_GATEWAY_URL = os.getenv("RESEARCH_WORKER_GATEWAY_URL", "http://127.0.0.1:8103")
 OPENCLAW_GATEWAY_ADAPTER_URL = os.getenv("OPENCLAW_GATEWAY_ADAPTER_URL", "http://127.0.0.1:8104")
+WEB_CHANNEL_URL = os.getenv("WEB_CHANNEL_URL", "http://127.0.0.1:8000")
 
 OPERATOR_TOKEN = "Bearer smoke-operator:operator"
 APPROVER_TOKEN = "Bearer smoke-approver:approver"
@@ -140,6 +141,7 @@ def main() -> int:
     _wait_for_health("reconciliation-drift-svc", f"{RECONCILIATION_DRIFT_URL}/readyz")
     _wait_for_health("research-worker-gateway-svc", f"{RESEARCH_WORKER_GATEWAY_URL}/readyz")
     _wait_for_health("openclaw-gateway-adapter", f"{OPENCLAW_GATEWAY_ADAPTER_URL}/livez")
+    _wait_for_health("web-channel", f"{WEB_CHANNEL_URL}/readyz")
 
     status, openclaw_health = _request_json("GET", f"{OPENCLAW_GATEWAY_ADAPTER_URL}/healthz")
     if status != 200 or openclaw_health.get("status") not in {"ok", "degraded"}:

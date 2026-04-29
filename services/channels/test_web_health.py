@@ -132,17 +132,16 @@ def test_readyz_falls_back_to_legacy_router_health_when_readyz_is_missing() -> N
     assert response.json()["dependencies"]["router"]["probe"] == "/health"
 
 
-def test_web_channel_is_not_in_default_compose_services() -> None:
+def test_web_channel_is_in_default_compose_services_for_dev() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     services = compose.get("services", {})
+    web_channel = services.get("web-channel")
 
-    serialized_services = {
-        service_name: yaml.safe_dump(service_config)
-        for service_name, service_config in services.items()
-    }
-
-    assert "web-channel" not in services
-    assert all("services/channels/web" not in payload for payload in serialized_services.values())
+    assert web_channel is not None
+    assert web_channel["build"]["dockerfile"] == "services/channels/web/Dockerfile"
+    assert web_channel["environment"]["ROUTER_URL"] == "http://router:8001"
+    assert web_channel["depends_on"]["router"]["condition"] == "service_healthy"
+    assert "${WEB_CHANNEL_PORT:-18105}:8000" in web_channel["ports"]
 
 
 def test_bot_channels_are_scoped_out_of_http_health_contract() -> None:
