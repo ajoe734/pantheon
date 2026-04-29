@@ -42,17 +42,28 @@ PANTHEON_RUNTIME_MFA_REQUIRED
 PANTHEON_RUNTIME_DEFAULT_ROLE
     Role assigned to plain (non-structured, non-JWT) bearer tokens in
     permissive mode. Defaults to ``operator``.
+PANTHEON_RUNTIME_JWKS_URI
+    Optional JWKS endpoint. When set, JWT-shaped bearer tokens are verified
+    through the JWKS path instead of the HS256 shared-secret path.
+PANTHEON_RUNTIME_OIDC_ISSUER
+    Optional issuer override for JWKS/OIDC tokens.
+PANTHEON_RUNTIME_OIDC_AUDIENCE
+    Optional audience override for JWKS/OIDC tokens.
 """
 from __future__ import annotations
 
 import base64
+import binascii
 import functools
 import hmac
 import hashlib
 import json
 import os
 import re
+import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Tuple
 
@@ -201,6 +212,211 @@ def encode_jwt_hs256(
 
 
 # --------------------------------------------------------------------------- #
+# JWKS / OIDC verification
+# --------------------------------------------------------------------------- #
+
+_JWKS_CACHE: dict[str, tuple[list, float]] = {}
+_JWKS_CACHE_LOCK = threading.Lock()
+_JWKS_CACHE_TTL = 300.0  # 5 minutes
+_JWKS_ALLOWED_ALGS = frozenset({"RS256", "ES256"})
+
+
+def _fetch_jwks_keys(uri: str, *, now: Optional[float] = None) -> list:
+    """Fetch JWKS keys from *uri* with an in-memory TTL cache.
+
+    Returns the list of JWK dicts from the ``keys`` array.
+    Raises ``AuthError`` on any fetch or parse failure so callers never see
+    raw network exceptions or internal URIs in error output.
+    """
+    current = now if now is not None else time.time()
+    with _JWKS_CACHE_LOCK:
+        entry = _JWKS_CACHE.get(uri)
+        if entry is not None:
+            cached_keys, fetched_at = entry
+            if current - fetched_at < _JWKS_CACHE_TTL:
+                return cached_keys
+
+    try:
+        req = urllib.request.Request(uri, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.read().decode("utf-8")
+        data = json.loads(raw)
+        keys = data.get("keys", [])
+        if not isinstance(keys, list):
+            raise ValueError("JWKS 'keys' is not a list")
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, json.JSONDecodeError) as exc:
+        raise AuthError("JWKS_FETCH_FAILED", "JWKS endpoint unavailable", 401) from exc
+
+    with _JWKS_CACHE_LOCK:
+        _JWKS_CACHE[uri] = (keys, current)
+    return keys
+
+
+def _find_jwks_key(keys: list, kid: Optional[str]) -> Optional[dict]:
+    """Return the JWK matching *kid*, or the first key when *kid* is absent."""
+    if kid:
+        for k in keys:
+            if isinstance(k, dict) and k.get("kid") == kid:
+                return k
+        return None
+    return keys[0] if keys else None
+
+
+def _b64url_uint(segment: str) -> int:
+    return int.from_bytes(_b64url_decode(segment), "big")
+
+
+def _public_key_from_jwk(jwk: Mapping[str, Any], alg: str) -> Any:
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec, rsa
+    except ImportError as exc:
+        raise AuthError(
+            "JWKS_LIBRARY_UNAVAILABLE",
+            "JWKS validation requires cryptography to be installed",
+            500,
+        ) from exc
+
+    try:
+        jwk_alg = str(jwk.get("alg") or "")
+        if jwk_alg and jwk_alg != alg:
+            raise ValueError("JWK alg mismatch")
+        jwk_use = str(jwk.get("use") or "")
+        if jwk_use and jwk_use != "sig":
+            raise ValueError("JWK use is not sig")
+        kty = str(jwk.get("kty") or "")
+        if alg == "RS256":
+            if kty != "RSA":
+                raise ValueError("RSA key required")
+            return rsa.RSAPublicNumbers(
+                e=_b64url_uint(str(jwk["e"])),
+                n=_b64url_uint(str(jwk["n"])),
+            ).public_key()
+        if alg == "ES256":
+            if kty != "EC" or jwk.get("crv") != "P-256":
+                raise ValueError("P-256 EC key required")
+            return ec.EllipticCurvePublicNumbers(
+                x=_b64url_uint(str(jwk["x"])),
+                y=_b64url_uint(str(jwk["y"])),
+                curve=ec.SECP256R1(),
+            ).public_key()
+    except (binascii.Error, KeyError, TypeError, ValueError) as exc:
+        raise AuthError("JWKS_INVALID_KEY", "JWKS key is not usable", 401) from exc
+    raise AuthError("AUTH_JWT_ALG_UNSUPPORTED", "JWT alg is not supported", 401)
+
+
+def _verify_jwks_signature(
+    *,
+    alg: str,
+    public_key: Any,
+    signing_input: bytes,
+    signature: bytes,
+) -> None:
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, padding, utils
+    except ImportError as exc:
+        raise AuthError(
+            "JWKS_LIBRARY_UNAVAILABLE",
+            "JWKS validation requires cryptography to be installed",
+            500,
+        ) from exc
+
+    try:
+        if alg == "RS256":
+            public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+            return
+        if alg == "ES256":
+            if len(signature) != 64:
+                raise InvalidSignature("ES256 signature must be raw r||s")
+            r = int.from_bytes(signature[:32], "big")
+            s = int.from_bytes(signature[32:], "big")
+            public_key.verify(
+                utils.encode_dss_signature(r, s),
+                signing_input,
+                ec.ECDSA(hashes.SHA256()),
+            )
+            return
+    except InvalidSignature as exc:
+        raise AuthError("AUTH_JWT_INVALID", "JWT validation failed", 401) from exc
+    raise AuthError("AUTH_JWT_ALG_UNSUPPORTED", "JWT alg is not supported", 401)
+
+
+def _validate_jwt_time_claims(payload: Mapping[str, Any], *, now: Optional[float]) -> None:
+    current = now if now is not None else time.time()
+    exp = payload.get("exp")
+    try:
+        if exp is not None and current >= float(exp):
+            raise AuthError("AUTH_JWT_EXPIRED", "JWT has expired", 401)
+        nbf = payload.get("nbf")
+        if nbf is not None and current < float(nbf):
+            raise AuthError("AUTH_JWT_NOT_YET_VALID", "JWT is not yet valid", 401)
+    except (TypeError, ValueError) as exc:
+        raise AuthError("AUTH_JWT_CLAIMS_INVALID", "JWT claims validation failed", 401) from exc
+
+
+def _validate_jwt_issuer_audience(
+    payload: Mapping[str, Any],
+    *,
+    issuer: Optional[str],
+    audience: Optional[str],
+) -> None:
+    if issuer and payload.get("iss") != issuer:
+        raise AuthError("AUTH_JWT_ISSUER_MISMATCH", "JWT issuer mismatch", 401)
+    if audience:
+        aud_claim = payload.get("aud")
+        aud_values = aud_claim if isinstance(aud_claim, list) else [aud_claim]
+        if audience not in aud_values:
+            raise AuthError("AUTH_JWT_AUDIENCE_MISMATCH", "JWT audience mismatch", 401)
+
+
+def _verify_jwt_jwks(
+    token: str,
+    *,
+    jwks_uri: str,
+    issuer: Optional[str],
+    audience: Optional[str],
+    now: Optional[float] = None,
+) -> Mapping[str, Any]:
+    """Verify *token* against the JWKS at *jwks_uri*.
+
+    Validates issuer, audience, expiry, nbf, and signature.
+    Returns the verified payload dict.
+    Raises ``AuthError`` on any failure; error messages never include the URI
+    or raw exception text to avoid leaking configuration.
+    """
+    try:
+        header_b64, payload_b64, signature_b64 = token.split(".")
+        header = json.loads(_b64url_decode(header_b64))
+        payload = json.loads(_b64url_decode(payload_b64))
+        signature = _b64url_decode(signature_b64)
+    except (binascii.Error, ValueError, json.JSONDecodeError) as exc:
+        raise AuthError("AUTH_JWT_MALFORMED", "Bearer token is not a valid JWT", 401) from exc
+
+    alg = str(header.get("alg") or "")
+    if alg not in _JWKS_ALLOWED_ALGS:
+        raise AuthError("AUTH_JWT_ALG_UNSUPPORTED", "JWT alg is not supported", 401)
+    kid = header.get("kid")
+
+    keys = _fetch_jwks_keys(jwks_uri, now=now)
+    key = _find_jwks_key(keys, kid)
+    if key is None:
+        raise AuthError("JWKS_NO_MATCHING_KEY", "No matching JWKS key for this token", 401)
+
+    public_key = _public_key_from_jwk(key, alg)
+    _verify_jwks_signature(
+        alg=alg,
+        public_key=public_key,
+        signing_input=f"{header_b64}.{payload_b64}".encode("ascii"),
+        signature=signature,
+    )
+    _validate_jwt_time_claims(payload, now=now)
+    _validate_jwt_issuer_audience(payload, issuer=issuer, audience=audience)
+
+    return payload
+
+
+# --------------------------------------------------------------------------- #
 # Token resolution
 # --------------------------------------------------------------------------- #
 
@@ -279,13 +495,26 @@ def validate_request_auth(
     default_role = _env(env, "PANTHEON_RUNTIME_DEFAULT_ROLE") or _DEFAULT_ROLE
 
     if _looks_like_jwt(token):
-        if not secret and mode == "strict":
+        jwks_uri = _env(env, "PANTHEON_RUNTIME_JWKS_URI")
+        if jwks_uri:
+            # OIDC/JWKS path: active when PANTHEON_RUNTIME_JWKS_URI is configured.
+            # OIDC-specific issuer/audience override the generic JWT ones when set.
+            oidc_issuer = _env(env, "PANTHEON_RUNTIME_OIDC_ISSUER") or issuer
+            oidc_audience = _env(env, "PANTHEON_RUNTIME_OIDC_AUDIENCE") or audience
+            claims = _verify_jwt_jwks(
+                token,
+                jwks_uri=jwks_uri,
+                issuer=oidc_issuer,
+                audience=oidc_audience,
+            )
+            ctx = _claims_to_context(claims, default_role=default_role)
+        elif not secret and mode == "strict":
             raise AuthError(
                 "AUTH_JWT_SECRET_MISSING",
                 "Strict auth mode requires PANTHEON_RUNTIME_JWT_SECRET",
                 500,
             )
-        if secret:
+        elif secret:
             claims = _verify_jwt_hs256(
                 token,
                 secret=secret,

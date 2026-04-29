@@ -7,9 +7,11 @@ Covers:
  - MFA denial -> 403
  - dev/test stub compatibility (PANTHEON_BFF_AUTH_STUB=true)
  - downstream header propagation sanity (auth + MFA headers reach identity)
+ - OIDC/JWKS validation (kid matching, issuer/audience/expiry, cache, error sanitization)
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -389,3 +391,370 @@ class TestSettingsAuthIntegration:
             headers={"Authorization": "Bearer op-operator:operator"},
         )
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# OIDC / JWKS validation tests (SVC-BFF-OIDC-JWKS-AUTH-FACADE)
+# ---------------------------------------------------------------------------
+
+def _build_rsa_test_fixtures():
+    """Generate a one-time RSA-2048 keypair and matching JWK for tests."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives import serialization
+        import base64 as _b64
+    except ImportError:
+        return None, None, None
+
+    priv = rsa.generate_private_key(65537, 2048, default_backend())
+    priv_pem = priv.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    pub_numbers = priv.public_key().public_numbers()
+
+    def _int_to_b64url(n: int) -> str:
+        byte_len = (n.bit_length() + 7) // 8
+        return _b64.urlsafe_b64encode(n.to_bytes(byte_len, "big")).rstrip(b"=").decode()
+
+    jwk = {
+        "kty": "RSA",
+        "kid": "test-kid-1",
+        "use": "sig",
+        "alg": "RS256",
+        "n": _int_to_b64url(pub_numbers.n),
+        "e": _int_to_b64url(pub_numbers.e),
+    }
+    return priv_pem, jwk, pub_numbers
+
+
+def _build_ec_test_fixtures():
+    """Generate a one-time P-256 keypair and matching JWK for tests."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+        import base64 as _b64
+    except ImportError:
+        return None, None, None
+
+    priv = ec.generate_private_key(ec.SECP256R1())
+    priv_pem = priv.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    pub_numbers = priv.public_key().public_numbers()
+
+    def _int_to_b64url(n: int) -> str:
+        return _b64.urlsafe_b64encode(n.to_bytes(32, "big")).rstrip(b"=").decode()
+
+    jwk = {
+        "kty": "EC",
+        "kid": "test-ec-kid-1",
+        "use": "sig",
+        "alg": "ES256",
+        "crv": "P-256",
+        "x": _int_to_b64url(pub_numbers.x),
+        "y": _int_to_b64url(pub_numbers.y),
+    }
+    return priv_pem, jwk, pub_numbers
+
+
+try:
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa_mod
+    _CRYPTO_AVAILABLE = True
+except ImportError:
+    _CRYPTO_AVAILABLE = False
+
+if _CRYPTO_AVAILABLE:
+    _RSA_PRIV_PEM, _TEST_JWK, _ = _build_rsa_test_fixtures()
+    _EC_PRIV_PEM, _TEST_EC_JWK, _ = _build_ec_test_fixtures()
+    _TEST_JWKS = [_TEST_JWK]
+    _TEST_JWKS_ALT_KID = [{**_TEST_JWK, "kid": "other-kid"}]
+else:
+    _RSA_PRIV_PEM = _EC_PRIV_PEM = _TEST_JWK = _TEST_EC_JWK = _TEST_JWKS = _TEST_JWKS_ALT_KID = None
+
+
+def _b64_json(data: dict) -> str:
+    return (
+        base64.urlsafe_b64encode(
+            json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+
+
+def _make_rs256_jwt(
+    *,
+    sub: str = "op-oidc",
+    roles: list | None = None,
+    issuer: str = "https://idp.example.com",
+    audience: str = "bff-operators",
+    kid: str | None = "test-kid-1",
+    alg: str = "RS256",
+    exp_offset: int = 3600,
+) -> str:
+    """Sign an RS256 JWT with the test RSA private key."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    payload: dict = {
+        "sub": sub,
+        "iss": issuer,
+        "aud": audience,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + exp_offset,
+    }
+    if roles is not None:
+        payload["roles"] = roles
+    header = {"alg": alg, "typ": "JWT"}
+    if kid is not None:
+        header["kid"] = kid
+
+    header_b64 = _b64_json(header)
+    payload_b64 = _b64_json(payload)
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    private_key = serialization.load_pem_private_key(_RSA_PRIV_PEM, password=None)
+    signature = private_key.sign(
+        signing_input,
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+    signature_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    return f"{header_b64}.{payload_b64}.{signature_b64}"
+
+
+def _make_es256_jwt(
+    *,
+    sub: str = "op-oidc-ec",
+    roles: list | None = None,
+    issuer: str = "https://idp.example.com",
+    audience: str = "bff-operators",
+    kid: str = "test-ec-kid-1",
+    exp_offset: int = 3600,
+) -> str:
+    """Sign an ES256 JWT with the test P-256 private key."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+    payload: dict = {
+        "sub": sub,
+        "iss": issuer,
+        "aud": audience,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + exp_offset,
+    }
+    if roles is not None:
+        payload["roles"] = roles
+    header = {"alg": "ES256", "typ": "JWT", "kid": kid}
+    header_b64 = _b64_json(header)
+    payload_b64 = _b64_json(payload)
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    private_key = serialization.load_pem_private_key(_EC_PRIV_PEM, password=None)
+    der_signature = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+    r, s = utils.decode_dss_signature(der_signature)
+    signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    signature_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    return f"{header_b64}.{payload_b64}.{signature_b64}"
+
+
+_JWKS_ENV = {
+    "PANTHEON_BFF_AUTH_STUB": "",
+    "PANTHEON_BFF_AUTH_MODE": "strict",
+    "PANTHEON_BFF_JWT_SECRET": "",
+    "PANTHEON_BFF_JWKS_URI": "https://idp.example.com/.well-known/jwks.json",
+    "PANTHEON_BFF_OIDC_ISSUER": "https://idp.example.com",
+    "PANTHEON_BFF_OIDC_AUDIENCE": "bff-operators",
+    "PANTHEON_BFF_MFA_REQUIRED": "false",
+}
+
+_JWKS_FETCH_TARGET = "services.runtime_auth_inbound._fetch_jwks_keys"
+
+
+@pytest.mark.skipif(not _CRYPTO_AVAILABLE, reason="cryptography package not installed")
+class TestExtractIdentityJwks:
+    """OIDC/JWKS validation tests — require cryptography."""
+
+    def _call(
+        self,
+        authorization: str,
+        *,
+        mfa_token: str | None = None,
+        env_overrides: dict | None = None,
+        mock_keys: list | None = None,
+    ):
+        env = {**_JWKS_ENV, **(env_overrides or {})}
+        keys = mock_keys if mock_keys is not None else _TEST_JWKS
+        with patch(_JWKS_FETCH_TARGET, return_value=keys):
+            with patch.dict(os.environ, env, clear=False):
+                return _extract_identity_jwt(authorization, mfa_token=mfa_token)
+
+    # ---- happy path ----
+
+    def test_valid_jwks_token_returns_identity(self):
+        token = _make_rs256_jwt(sub="op-oidc", roles=["operator"])
+        identity = self._call(f"Bearer {token}")
+        assert identity.operator_id == "op-oidc"
+        assert "operator" in identity.roles
+
+    def test_valid_jwks_token_multiple_roles(self):
+        token = _make_rs256_jwt(sub="op-admin", roles=["admin", "operator"])
+        identity = self._call(f"Bearer {token}")
+        assert "admin" in identity.roles
+        assert "operator" in identity.roles
+
+    def test_valid_es256_jwks_token_returns_identity(self):
+        token = _make_es256_jwt(sub="op-ec", roles=["operator"])
+        identity = self._call(f"Bearer {token}", mock_keys=[_TEST_EC_JWK])
+        assert identity.operator_id == "op-ec"
+        assert "operator" in identity.roles
+
+    def test_valid_jwks_mfa_verified_when_header_present(self):
+        token = _make_rs256_jwt(sub="op-admin", roles=["admin"])
+        identity = self._call(f"Bearer {token}", mfa_token="123456")
+        assert identity.mfa_verified is True
+
+    # ---- kid matching ----
+
+    def test_kid_mismatch_raises_401(self):
+        """Token kid not present in JWKS keys must be rejected."""
+        from fastapi import HTTPException
+        token = _make_rs256_jwt(kid="unknown-kid")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(f"Bearer {token}", mock_keys=_TEST_JWKS)
+        assert exc_info.value.status_code == 401
+
+    def test_empty_jwks_keys_raises_401(self):
+        """Empty JWKS key list must return 401."""
+        from fastapi import HTTPException
+        token = _make_rs256_jwt()
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(f"Bearer {token}", mock_keys=[])
+        assert exc_info.value.status_code == 401
+
+    def test_first_key_used_when_no_kid_in_token(self):
+        """When JWT has no kid header, the first JWKS key should be tried."""
+        token = _make_rs256_jwt(sub="op-nokid", roles=["operator"], kid=None)
+        identity = self._call(f"Bearer {token}")
+        assert identity.operator_id == "op-nokid"
+
+    def test_unsupported_jwks_alg_raises_401(self):
+        """JWKS mode must reject unsupported header algorithms before verification."""
+        from fastapi import HTTPException
+        token = _make_rs256_jwt(alg="HS256")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+
+    # ---- issuer / audience / expiry ----
+
+    def test_issuer_mismatch_raises_401(self):
+        from fastapi import HTTPException
+        token = _make_rs256_jwt(issuer="https://wrong-idp.example.com")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+
+    def test_audience_mismatch_raises_401(self):
+        from fastapi import HTTPException
+        token = _make_rs256_jwt(audience="wrong-audience")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+
+    def test_expired_jwks_token_raises_401(self):
+        from fastapi import HTTPException
+        token = _make_rs256_jwt(exp_offset=-60)
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+
+    def test_missing_subject_raises_401(self):
+        """JWT with blank sub must be rejected."""
+        from fastapi import HTTPException
+        token = _make_rs256_jwt(sub="")
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+
+    # ---- JWKS fetch failure — env leak check ----
+
+    def test_jwks_fetch_failure_returns_generic_401(self):
+        """JWKS fetch error must not leak URI or config in the response."""
+        from fastapi import HTTPException
+        from services.runtime_auth_inbound import AuthError
+        jwks_uri = "https://idp.example.com/.well-known/jwks.json"
+        token = _make_rs256_jwt()
+        with patch(
+            _JWKS_FETCH_TARGET,
+            side_effect=AuthError("JWKS_FETCH_FAILED", "JWKS endpoint unavailable", 401),
+        ):
+            with patch.dict(os.environ, _JWKS_ENV, clear=False):
+                with pytest.raises(HTTPException) as exc_info:
+                    _extract_identity_jwt(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+        detail_str = json.dumps(exc_info.value.detail)
+        assert jwks_uri not in detail_str
+        assert "JWKS_FETCH_FAILED" not in detail_str
+
+    def test_jwks_no_matching_key_returns_generic_401(self):
+        """JWKS_NO_MATCHING_KEY must not leak the code in the response."""
+        from fastapi import HTTPException
+        from services.runtime_auth_inbound import AuthError
+        token = _make_rs256_jwt()
+        with patch(
+            _JWKS_FETCH_TARGET,
+            side_effect=AuthError("JWKS_NO_MATCHING_KEY", "No matching JWKS key", 401),
+        ):
+            with patch.dict(os.environ, _JWKS_ENV, clear=False):
+                with pytest.raises(HTTPException) as exc_info:
+                    _extract_identity_jwt(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+        assert "JWKS_NO_MATCHING_KEY" not in json.dumps(exc_info.value.detail)
+
+    # ---- cache behaviour ----
+
+    def test_jwks_cache_used_on_second_call(self):
+        """_fetch_jwks_keys should call urlopen once while the TTL cache is warm."""
+        from unittest.mock import MagicMock
+        import services.runtime_auth_inbound as auth_mod
+
+        original_cache = dict(auth_mod._JWKS_CACHE)
+        jwks_uri = _JWKS_ENV["PANTHEON_BFF_JWKS_URI"]
+        auth_mod._JWKS_CACHE.clear()
+        try:
+            response = MagicMock()
+            response.read.return_value = json.dumps({"keys": _TEST_JWKS}).encode("utf-8")
+            response.__enter__.return_value = response
+            with patch("services.runtime_auth_inbound.urllib.request.urlopen", return_value=response) as urlopen:
+                first = auth_mod._fetch_jwks_keys(jwks_uri, now=1000.0)
+                second = auth_mod._fetch_jwks_keys(jwks_uri, now=1001.0)
+            assert first == _TEST_JWKS
+            assert second == _TEST_JWKS
+            assert urlopen.call_count == 1
+        finally:
+            auth_mod._JWKS_CACHE.clear()
+            auth_mod._JWKS_CACHE.update(original_cache)
+
+    # ---- HS256 backward compatibility ----
+
+    def test_hs256_still_works_when_jwks_uri_not_set(self):
+        """When JWKS_URI is absent, HS256 path must work unchanged."""
+        token = _make_jwt(sub="op-hs256", roles=["operator"])
+        env = {**_BFF_ENV}  # no JWKS_URI
+        with patch.dict(os.environ, env, clear=False):
+            identity = _extract_identity_jwt(f"Bearer {token}")
+        assert identity.operator_id == "op-hs256"
+        assert "operator" in identity.roles
+
+    # ---- stub token rejected in JWKS mode ----
+
+    def test_stub_token_rejected_in_jwks_mode(self):
+        """Colon-format stub tokens must not work when JWKS mode is active."""
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            self._call("Bearer op-admin:admin:mfa")
+        assert exc_info.value.status_code == 401

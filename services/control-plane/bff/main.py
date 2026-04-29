@@ -164,6 +164,13 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_JWT_AUDIENCE  - optional expected aud claim
 #   PANTHEON_BFF_MFA_REQUIRED  - "true" to enforce X-MFA-Token on mfa_required routes
 #   PANTHEON_BFF_DEFAULT_ROLE  - default role for JWT sub without explicit roles claim
+#
+# OIDC/JWKS mode (optional; activated when PANTHEON_BFF_JWKS_URI is non-empty):
+#   PANTHEON_BFF_JWKS_URI      - JWKS endpoint URI (e.g. https://idp/.well-known/jwks.json)
+#   PANTHEON_BFF_OIDC_ISSUER   - expected iss claim for OIDC tokens (overrides JWT_ISSUER)
+#   PANTHEON_BFF_OIDC_AUDIENCE - expected aud claim for OIDC tokens (overrides JWT_AUDIENCE)
+#   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
+#   Strict default still applies: stub tokens are never accepted unless AUTH_STUB=true.
 
 _BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
 
@@ -226,6 +233,10 @@ def _extract_identity_jwt(
         "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_BFF_JWT_AUDIENCE", ""),
         "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_BFF_DEFAULT_ROLE", "operator"),
         "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_BFF_MFA_REQUIRED", "false"),
+        # OIDC/JWKS optional path — active only when JWKS_URI is set.
+        "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_BFF_JWKS_URI", ""),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_BFF_OIDC_ISSUER", ""),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": os.getenv("PANTHEON_BFF_OIDC_AUDIENCE", ""),
     }
     mfa_required = bff_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
     try:
@@ -242,8 +253,15 @@ def _extract_identity_jwt(
             code = ErrorCode.MFA_REQUIRED
         else:
             code = ErrorCode.INVALID_TOKEN
-        # Return a generic 401 rather than leaking server misconfiguration.
-        if exc.code == "AUTH_JWT_SECRET_MISSING":
+        # Sanitize codes that would leak server config details.
+        _opaque_codes = {
+            "AUTH_JWT_SECRET_MISSING",
+            "JWKS_FETCH_FAILED",
+            "JWKS_NO_MATCHING_KEY",
+            "JWKS_INVALID_KEY",
+            "JWKS_LIBRARY_UNAVAILABLE",
+        }
+        if exc.code in _opaque_codes:
             effective_status = 401
             effective_message = "JWT bearer token cannot be verified"
             effective_reason = "AUTH_TOKEN_UNVERIFIED"
