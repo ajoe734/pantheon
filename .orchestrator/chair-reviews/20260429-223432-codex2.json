@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 0,
+  "max_sidecars": 0,
+  "reason": "No active task or runnable backlog exists for safe sidecar generation.",
+  "blocked_by": [
+    "execution_backlog_empty",
+    "no_active_parent_support_need"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": []
+}

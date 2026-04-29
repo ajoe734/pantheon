@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Mainline is only approval-bound and one safe smoke-matrix support slice remains parallelizable.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T192025Z-a24d394d",
+      "decision": "allow",
+      "reason": "Read-only docker compose config validation scoped to the active compose-profile task; it does not start containers or mutate files.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OSS-DORMANT-SMOKE-MATRIX"
+  ]
+}

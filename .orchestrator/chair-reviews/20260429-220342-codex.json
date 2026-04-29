@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle unpaused capacity exists, but the only active parent already has a sidecar in review and needs reassignment off Claude2.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "role": "owner",
+      "from": "Claude2",
+      "to": "Claude",
+      "reason": "Claude2 is rate-limit paused until 2026-04-30T13:30:00Z; Claude is unpaused, idle, and has the same execution/governance-review lane, while Codex can remain reviewer."
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Claude2",
+      "to": "Claude",
+      "reason": "The acceptance packet has been ready since 2026-04-29T21:05:26Z and Claude2 cannot review during the pause; Claude is now unpaused and can review the support-only packet."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ]
+}

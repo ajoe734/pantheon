@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization 0.1667 below threshold; Claude idle after stale sidecar wake-up skip; no global blockers; 1 active sidecar well under cap.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+    "SVC-BFF-OIDC-JWKS-AUTH-FACADE",
+    "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+    "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+    "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT"
+  ],
+  "ops_notes": [
+    {
+      "id": "OPS-20260429-1",
+      "priority": "high",
+      "action": "Issue fresh owned_ready_dispatch for SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF to Claude",
+      "reason": "Stale wake-up skipped at 17:11:29; Claude sidecar slot is idle and the BFF handoff packet is not progressing."
+    },
+    {
+      "id": "OPS-20260429-2",
+      "priority": "medium",
+      "action": "Queue SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT finalize dispatch to Codex immediately after SVC-BFF-OIDC-JWKS-AUTH-FACADE closes",
+      "reason": "review_approved dwell is ~32 min; next cycle should not let it exceed one full supervisor cycle without a live worker."
+    },
+    {
+      "id": "OPS-20260429-3",
+      "priority": "low",
+      "action": "Queue SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT to Codex after RLLIB finalization completes",
+      "reason": "Auto-reassigned from quota-terminated Copilot; no blockers; can enter queue once Codex finalization backlog clears."
+    },
+    {
+      "id": "OPS-20260429-4",
+      "priority": "monitor",
+      "action": "Confirm worker run_id prefix codex- for agent_id codex2 is expected shared-binary behavior",
+      "reason": "Cosmetic naming inconsistency observed in codex-20260429T171000Z-4594842c; functional mapping is correct but warrants confirmation."
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Claude2 lane is paused; sidecar review is stuck waiting for Claude2 as reviewer — reassign reviewer to Claude (idle, governance-review capable) so execution can resume without waiting on the pause window.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Claude2",
+      "to": "Claude",
+      "reason": "Claude2 dispatch lane is paused; the sidecar acceptance packet is fully prepared and verified (7/7 closed, all 9 dependency commits anchored). Claude is idle and has governance-review capability, making it a safe reviewer substitute that unblocks the sidecar review immediately without waiting for Claude2's pause to expire."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ]
+}

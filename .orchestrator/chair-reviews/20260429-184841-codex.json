@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization remains below threshold and runnable support work exists, with parent-specific duplicate sidecar limits.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+    "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+      "role": "owner",
+      "from": "Claude2",
+      "to": "Claude",
+      "reason": "Claude2 is quota-paused until 2026-04-30T13:30:00Z and this is the next critical-path owner task after W&B approval; Claude has the same execution lane."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+    "SVC-CONSULTATION-POSTGRES-STORE-PILOT-SIDECAR-REVIEW",
+    "SVC-OSS-DORMANT-COMPOSE-PROFILES"
+  ]
+}

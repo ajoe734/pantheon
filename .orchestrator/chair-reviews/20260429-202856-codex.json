@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle capacity remains and the only active blocker is a scoped closeout commit approval.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OSS-DORMANT-SMOKE-MATRIX"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T202530Z-e665ada0",
+      "decision": "allow",
+      "reason": "Staged tree contains only OSS_INTEGRATION_CHECKLIST.md, diff check passes, and the local commit message is task-scoped with required agent/task/reviewer metadata.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OSS-DORMANT-SMOKE-MATRIX",
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle workers exist and support-only work can help the active dormant packaging path without blocking mainline execution.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+    "SVC-OSS-DORMANT-SMOKE-MATRIX"
+  ]
+}

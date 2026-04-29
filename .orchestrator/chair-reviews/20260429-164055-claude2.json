@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Claude2 is idle with all main-line tasks dependency-blocked; execution backlog has runnable sidecar support work for active in_progress tasks; no global blocker present.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-BFF-OIDC-JWKS-AUTH-FACADE",
+    "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T163934Z-4d2cf063",
+      "decision": "allow",
+      "reason": "Read-only Agent exploration of research gateway directory structure for the active SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE task; non-destructive, non-writing, scoped to the current task repo path.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+    "SVC-SOURCE-SEARCH-AUTONOMOUS-PIPELINE-SMOKE",
+    "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+    "SVC-BFF-OIDC-JWKS-AUTH-FACADE",
+    "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT"
+  ]
+}

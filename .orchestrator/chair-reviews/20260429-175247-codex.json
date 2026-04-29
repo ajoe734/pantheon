@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle capacity and parallelizable backlog exist with no pending approvals or global blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT",
+      "role": "owner",
+      "from": "Claude2",
+      "to": "Claude",
+      "reason": "Claude2 is paused by quota until 2026-04-30T13:30:00Z; this todo task is safely parallelizable and Claude is idle in the same execution/control-plane lane."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+    "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+    "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT"
+  ]
+}
