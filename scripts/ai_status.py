@@ -75,11 +75,6 @@ KNOWN_AGENTS = {
         "default_branch": "feat/codex-collab-system",
         "target_workload": 30,
     },
-    "Qwen": {
-        "capability_lane": ["integration", "schema", "acceptance", "code-agent"],
-        "default_branch": "feat/qwen-code-agent",
-        "target_workload": 15,
-    },
     "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
         "default_branch": "feat/copilot-research-critique",
@@ -94,15 +89,18 @@ AGENT_ALIASES = {
     "codex (2)": "Codex2",
     "codex3": "Codex",
     "codex (3)": "Codex",
-    "qwen": "Qwen",
-    "qwen coder": "Qwen",
-    "qwen2.5-coder": "Qwen",
-    "qwen3": "Qwen",
-    "千問": "Qwen",
     "grok": "Copilot",
     "copilot": "Copilot",
     "copilot host": "Copilot",
     "copilot_host": "Copilot",
+}
+
+RETIRED_AGENT_REPLACEMENTS = {
+    "qwen": "Codex2",
+    "qwen coder": "Codex2",
+    "qwen2.5-coder": "Codex2",
+    "qwen3": "Codex2",
+    "千問": "Codex2",
 }
 
 STATUS_LABELS = {
@@ -393,6 +391,12 @@ def canonical_agent_name(name: str | None) -> str:
     if alias_target:
         return alias_target
     return trimmed
+
+
+def active_agent_name(name: str | None) -> str:
+    canonical = canonical_agent_name(name)
+    replacement = RETIRED_AGENT_REPLACEMENTS.get(canonical.lower())
+    return replacement or canonical
 
 
 def current_actor(default: str = "Codex") -> str:
@@ -984,21 +988,21 @@ def validate_state(state: dict[str, Any]) -> None:
 
 def normalize_state_agents(state: dict[str, Any]) -> None:
     for task in state.get("tasks", []):
-        task["owner"] = canonical_agent_name(task.get("owner"))
-        task["reviewer"] = canonical_agent_name(task.get("reviewer"))
+        task["owner"] = active_agent_name(task.get("owner"))
+        task["reviewer"] = active_agent_name(task.get("reviewer"))
         if task.get("waiting_for"):
-            task["waiting_for"] = canonical_agent_name(task.get("waiting_for"))
+            task["waiting_for"] = active_agent_name(task.get("waiting_for"))
 
     for blocker in state.get("blockers", []):
-        blocker["owner"] = canonical_agent_name(blocker.get("owner"))
-        blocker["waiting_for"] = canonical_agent_name(blocker.get("waiting_for"))
+        blocker["owner"] = active_agent_name(blocker.get("owner"))
+        blocker["waiting_for"] = active_agent_name(blocker.get("waiting_for"))
 
     for handoff in state.get("handoffs", []):
-        handoff["from"] = canonical_agent_name(handoff.get("from"))
-        handoff["to"] = canonical_agent_name(handoff.get("to"))
+        handoff["from"] = active_agent_name(handoff.get("from"))
+        handoff["to"] = active_agent_name(handoff.get("to"))
 
     for agent in state.get("agents", []):
-        agent["name"] = canonical_agent_name(agent.get("name"))
+        agent["name"] = active_agent_name(agent.get("name"))
 
 
 def recompute_agents(state: dict[str, Any]) -> None:
@@ -1364,8 +1368,9 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     if current_logs:
         for entry in current_logs:
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
+            timestamp = entry.get("ts") or entry.get("timestamp")
             lines.append(
-                f"- {format_display_timestamp(entry['ts'])} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
+                f"- {format_display_timestamp(timestamp)} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
             )
     else:
         lines.append("- No checkpoints yet.")
@@ -2634,7 +2639,10 @@ def build_dashboard_bundle(
 def write_dashboard_bundle(state: dict[str, Any]) -> None:
     config = load_config()
     planning_state = load_planning_state()
-    orchestrator_state = load_runtime_state(config)
+    try:
+        orchestrator_state = load_runtime_state(config)
+    except KeyError:
+        orchestrator_state = {}
     approval_state = load_json_file(APPROVAL_QUEUE_FILE, {"pending": [], "history": []})
     bundle = build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
     DASHBOARD_BUNDLE_FILE.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
