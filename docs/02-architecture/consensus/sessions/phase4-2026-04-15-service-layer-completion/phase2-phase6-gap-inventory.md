@@ -220,7 +220,7 @@ The old cross-phase order closed the missing service-wrapper baseline. The curre
 3. `SVC-SEARCH-DURABLE-COMPAT-QUARANTINE`
    Keep durable evidence/index search as the normal path and isolate request-document mode behind explicit compatibility paths.
 4. `SVC-DATA-OWNERSHIP-MIGRATION-MAP`
-   Map JSONL service stores to Postgres ownership migration slices before store pilots.
+   Map JSONL service stores to Postgres ownership migration slices before store pilots. The execution artifact is `svc-data-ownership-migration-map.md`.
 5. BFF security/read-path hardening
    Complete optional OIDC/JWKS validation and keep degraded downstream semantics explicit.
 6. Workbench/front-end closure
