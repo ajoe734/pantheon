@@ -69,6 +69,7 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"free daily quota has been reached", re.IGNORECASE),
     re.compile(r"you have no quota", re.IGNORECASE),
     re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
+    re.compile(r"\bnot authenticated\b", re.IGNORECASE),
     re.compile(r"invalid authentication credentials", re.IGNORECASE),
     re.compile(
         r"^reason:\s*.*\b("
@@ -1202,24 +1203,60 @@ def chair_review_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("chair_review", {}) or {})
     settings.setdefault("enabled", True)
     settings.setdefault("cooldown_seconds", 1800)
-    settings.setdefault("candidates", ["Codex", "Codex2", "Claude", "Claude2"])
+    settings.setdefault("candidates", ["Codex", "Codex2", "Claude", "Claude2", "Copilot", "Gemini"])
     settings.setdefault("task_id", "OPS-CHAIR-REVIEW")
     settings.setdefault("output_dir", ".orchestrator/chair-reviews")
+    settings.setdefault("skill_path", ".orchestrator/skills/chairman-review.md")
     settings.setdefault("recent_summary_lines", 6)
+    settings.setdefault("decision_schema_version", 1)
+    settings.setdefault("approval_ttl_minutes", 45)
+    settings.setdefault("min_approval_ttl_minutes", 5)
+    settings.setdefault("max_approval_ttl_minutes", 120)
+    settings.setdefault("approval_actions_enabled", True)
+    settings.setdefault("max_pending_approvals_in_prompt", 6)
+    settings.setdefault("bypass_cooldown_for_pending_approvals", True)
+    settings.setdefault("reassignment_actions_enabled", True)
+    settings.setdefault("max_reassignment_actions", 4)
+    settings.setdefault("failure_loop_reassignment_threshold", int(worker_reassignment_settings(config).get("after_attempts", 2)))
+    settings.setdefault("max_failure_loops_in_prompt", 6)
+    settings.setdefault("bypass_cooldown_for_failure_loops", True)
     return settings
+
+
+def chair_review_base_dir(config: dict[str, Any]) -> Path:
+    try:
+        return config_path(config, "state_file").parent.parent
+    except KeyError:
+        status_file = ((config.get("paths", {}) or {}).get("status_file") or "").strip()
+        return Path(status_file).resolve().parent if status_file else THIS_DIR.parent
 
 
 def chair_review_output_dir(config: dict[str, Any]) -> Path:
     raw_path = str(chair_review_settings(config).get("output_dir") or ".orchestrator/chair-reviews").strip()
     path = Path(raw_path)
     if not path.is_absolute():
-        try:
-            base_dir = config_path(config, "state_file").parent.parent
-        except KeyError:
-            status_file = ((config.get("paths", {}) or {}).get("status_file") or "").strip()
-            base_dir = Path(status_file).resolve().parent if status_file else THIS_DIR.parent
-        path = base_dir / path
+        path = chair_review_base_dir(config) / path
     return path
+
+
+def chair_review_skill_path(config: dict[str, Any]) -> Path | None:
+    raw_path = str(chair_review_settings(config).get("skill_path") or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = chair_review_base_dir(config) / path
+    return path
+
+
+def chair_review_context_files(config: dict[str, Any]) -> list[str]:
+    paths = [relpath(path) for path in selected_shared_files(config)]
+    skill_path = chair_review_skill_path(config)
+    if skill_path and skill_path.exists():
+        skill_relpath = relpath(skill_path)
+        if skill_relpath not in paths:
+            paths.append(skill_relpath)
+    return paths
 
 
 def chair_rotation_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -1231,8 +1268,11 @@ def chair_rotation_state(state: dict[str, Any]) -> dict[str, Any]:
     rotation.setdefault("last_review_path", None)
     rotation.setdefault("last_review_summary", None)
     rotation.setdefault("pending_review_path", None)
+    rotation.setdefault("pending_decision_path", None)
+    rotation.setdefault("pending_review_event_id", None)
     rotation.setdefault("pending_review_agent", None)
     rotation.setdefault("sidecar_approved_until", None)
+    rotation.setdefault("sidecar_approval_max_sidecars", None)
     return rotation
 
 
@@ -1245,29 +1285,672 @@ def chair_review_summary_lines(path: Path, *, max_lines: int) -> list[str]:
     return lines[: max(1, max_lines)]
 
 
+def chair_review_decision_path(review_path: Path) -> Path:
+    return review_path.with_suffix(".json")
+
+
+def chair_review_state_path(value: str | None) -> Path | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    path = Path(raw_value)
+    if path.is_absolute():
+        return path
+    return THIS_DIR.parent / path
+
+
+def chair_review_worker_path(worker: dict[str, Any]) -> str:
+    snapshot = worker.get("request_snapshot", {}) or {}
+    metadata = snapshot.get("metadata", {}) or {}
+    chair = metadata.get("chair") if isinstance(metadata, dict) else None
+    if isinstance(chair, dict):
+        return str(chair.get("review_path") or "")
+    metadata = worker.get("metadata", {}) or {}
+    chair = metadata.get("chair") if isinstance(metadata, dict) else None
+    if isinstance(chair, dict):
+        return str(chair.get("review_path") or "")
+    return ""
+
+
+def pending_chair_review_active(state: dict[str, Any], pending_review_path: str) -> bool:
+    active_statuses = {
+        "running",
+        "started",
+        "waiting_approval",
+        "manual_pending",
+        "retry_backoff",
+        "suspended_approval",
+        "stalled",
+        "fallback",
+    }
+    for worker in state.get("workers", {}).values():
+        if not worker_is_chair_review(worker):
+            continue
+        if chair_review_worker_path(worker) != pending_review_path:
+            continue
+        if str(worker.get("status") or "") in active_statuses:
+            return True
+
+    rotation = chair_rotation_state(state)
+    pending_event_id = str(rotation.get("pending_review_event_id") or "").strip()
+    if pending_event_id:
+        record = (state.get("queue", {}) or {}).get("events", {}).get(pending_event_id, {}) or {}
+        if record and str(record.get("status") or "") not in {"completed", "failed"}:
+            return True
+    return False
+
+
+def normalize_chair_review_decision(
+    config: dict[str, Any],
+    payload: Any,
+) -> tuple[dict[str, Any] | None, str | None]:
+    settings = chair_review_settings(config)
+    if not isinstance(payload, dict):
+        return None, "decision JSON must be an object"
+
+    expected_version = int(settings.get("decision_schema_version", 1))
+    try:
+        version = int(payload.get("version", expected_version))
+    except (TypeError, ValueError):
+        return None, "version must be an integer"
+    if version != expected_version:
+        return None, f"unsupported decision schema version {version}"
+
+    decision = str(payload.get("decision") or "").strip().lower()
+    approved_value = payload.get("sidecar_approved")
+    if isinstance(approved_value, bool):
+        sidecar_approved = approved_value
+    elif decision in {"approve_sidecars", "approve", "approved"}:
+        sidecar_approved = True
+    elif decision in {"deny_sidecars", "deny", "denied", "hold"}:
+        sidecar_approved = False
+    else:
+        return None, "sidecar_approved must be boolean or decision must approve/deny sidecars"
+
+    if not decision:
+        decision = "approve_sidecars" if sidecar_approved else "deny_sidecars"
+
+    try:
+        ttl_minutes = int(payload.get("approval_ttl_minutes", settings.get("approval_ttl_minutes", 45)))
+    except (TypeError, ValueError):
+        return None, "approval_ttl_minutes must be an integer"
+    if sidecar_approved:
+        min_ttl = int(settings.get("min_approval_ttl_minutes", 5))
+        max_ttl = int(settings.get("max_approval_ttl_minutes", 120))
+        ttl_minutes = max(min_ttl, min(max_ttl, ttl_minutes))
+    else:
+        ttl_minutes = 0
+
+    blocked_by = payload.get("blocked_by") or []
+    if not isinstance(blocked_by, list):
+        return None, "blocked_by must be a list"
+    blocked_sidecar_parents = payload.get("blocked_sidecar_parents") or []
+    if not isinstance(blocked_sidecar_parents, list):
+        return None, "blocked_sidecar_parents must be a list"
+    recommended_focus = payload.get("recommended_focus") or []
+    if not isinstance(recommended_focus, list):
+        return None, "recommended_focus must be a list"
+    approval_actions = payload.get("approval_actions") or []
+    if not isinstance(approval_actions, list):
+        return None, "approval_actions must be a list"
+    normalized_approval_actions: list[dict[str, Any]] = []
+    for index, action in enumerate(approval_actions):
+        if not isinstance(action, dict):
+            return None, f"approval_actions[{index}] must be an object"
+        approval_id = str(action.get("approval_id") or "").strip()
+        if not approval_id:
+            return None, f"approval_actions[{index}].approval_id is required"
+        action_decision = str(action.get("decision") or "").strip().lower()
+        if action_decision not in {"allow", "deny"}:
+            return None, f"approval_actions[{index}].decision must be allow or deny"
+        action_reason = str(action.get("reason") or "").strip()
+        if not action_reason:
+            return None, f"approval_actions[{index}].reason is required"
+        normalized_approval_actions.append(
+            {
+                "approval_id": approval_id,
+                "decision": action_decision,
+                "reason": action_reason,
+                "remember": bool(action.get("remember", False)),
+            }
+        )
+
+    reassignment_actions = payload.get("reassignment_actions") or []
+    if not isinstance(reassignment_actions, list):
+        return None, "reassignment_actions must be a list"
+    normalized_reassignment_actions: list[dict[str, Any]] = []
+    max_reassignment_actions = max(0, int(settings.get("max_reassignment_actions", 4)))
+    for index, action in enumerate(reassignment_actions[:max_reassignment_actions]):
+        if not isinstance(action, dict):
+            return None, f"reassignment_actions[{index}] must be an object"
+        task_id = str(action.get("task_id") or "").strip()
+        if not task_id:
+            return None, f"reassignment_actions[{index}].task_id is required"
+        role = str(action.get("role") or "").strip().lower()
+        if role not in {"owner", "reviewer"}:
+            return None, f"reassignment_actions[{index}].role must be owner or reviewer"
+        to_agent = str(action.get("to") or action.get("to_agent") or "").strip()
+        if not to_agent:
+            return None, f"reassignment_actions[{index}].to is required"
+        action_reason = str(action.get("reason") or "").strip()
+        if not action_reason:
+            return None, f"reassignment_actions[{index}].reason is required"
+        normalized_reassignment_actions.append(
+            {
+                "task_id": task_id,
+                "role": role,
+                "from": str(action.get("from") or action.get("from_agent") or "").strip(),
+                "to": to_agent,
+                "reason": action_reason,
+            }
+        )
+
+    max_sidecars = payload.get("max_sidecars")
+    normalized_max_sidecars = None
+    if max_sidecars is not None:
+        try:
+            normalized_max_sidecars = max(0, int(max_sidecars))
+        except (TypeError, ValueError):
+            return None, "max_sidecars must be an integer when present"
+
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        reason = "Chair review approved sidecar dispatch." if sidecar_approved else "Chair review denied sidecar dispatch."
+
+    return (
+        {
+            "version": version,
+            "decision": decision,
+            "sidecar_approved": sidecar_approved,
+            "approval_ttl_minutes": ttl_minutes,
+            "max_sidecars": normalized_max_sidecars,
+            "reason": reason,
+            "blocked_by": [str(item) for item in blocked_by if str(item).strip()],
+            "blocked_sidecar_parents": [str(item) for item in blocked_sidecar_parents if str(item).strip()],
+            "recommended_focus": [str(item) for item in recommended_focus if str(item).strip()],
+            "approval_actions": normalized_approval_actions,
+            "reassignment_actions": normalized_reassignment_actions,
+        },
+        None,
+    )
+
+
+def mark_chair_review_problem(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    problem_type: str,
+    message: str,
+    review_path: Path | None = None,
+    decision_path: Path | None = None,
+) -> bool:
+    rotation = chair_rotation_state(state)
+    now = utc_now()
+    rotation["last_chair_problem"] = problem_type
+    rotation["last_chair_problem_at"] = now
+    rotation["last_chair_problem_message"] = message
+    rotation["last_review_valid"] = False
+    if review_path is not None and review_path.exists():
+        rotation["last_review_path"] = relpath(review_path)
+        rotation["last_review_summary"] = chair_review_summary_lines(
+            review_path,
+            max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)),
+        )
+    if decision_path is not None:
+        rotation["last_review_decision_path"] = relpath(decision_path)
+    rotation["pending_review_path"] = None
+    rotation["pending_decision_path"] = None
+    rotation["pending_review_event_id"] = None
+    rotation["pending_review_agent"] = None
+    rotation["last_chair_run_at"] = None
+    write_activity_log(
+        config,
+        {
+            "type": problem_type,
+            "task_id": chair_review_settings(config).get("task_id"),
+            "message": message,
+            "review_path": relpath(review_path) if review_path is not None else None,
+            "decision_path": relpath(decision_path) if decision_path is not None else None,
+        },
+    )
+    return True
+
+
+def apply_chair_review_decision(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    review_path: Path,
+    decision_path: Path,
+    decision: dict[str, Any],
+) -> bool:
+    rotation = chair_rotation_state(state)
+    summary_lines = chair_review_summary_lines(
+        review_path,
+        max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)),
+    )
+    if not summary_lines:
+        summary_lines = [str(decision.get("reason") or "Chair review decision recorded.")]
+
+    now = utc_now()
+    current_dt = _parse_iso_utc(now) or datetime.now(timezone.utc)
+    approved = bool(decision.get("sidecar_approved"))
+    if approved:
+        approval_until = current_dt + timedelta(minutes=int(decision.get("approval_ttl_minutes") or 0))
+        rotation["sidecar_approved_until"] = approval_until.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        rotation["sidecar_approval_max_sidecars"] = decision.get("max_sidecars")
+    else:
+        rotation["sidecar_approved_until"] = None
+        rotation["sidecar_approval_max_sidecars"] = None
+
+    rotation["last_review_path"] = relpath(review_path)
+    rotation["last_review_decision_path"] = relpath(decision_path)
+    rotation["last_review_summary"] = summary_lines
+    rotation["last_review_decision"] = decision.get("decision")
+    rotation["last_review_valid"] = True
+    rotation["last_review_sidecar_approved"] = approved
+    rotation["last_review_reason"] = decision.get("reason")
+    rotation["last_review_blocked_by"] = decision.get("blocked_by", [])
+    rotation["last_review_blocked_sidecar_parents"] = decision.get("blocked_sidecar_parents", [])
+    rotation["last_review_recommended_focus"] = decision.get("recommended_focus", [])
+    rotation["last_review_approval_actions"] = decision.get("approval_actions", [])
+    rotation["last_review_reassignment_actions"] = decision.get("reassignment_actions", [])
+    rotation["last_review_at"] = now
+    rotation["last_chair_problem"] = None
+    rotation["last_chair_problem_message"] = None
+    rotation["sidecar_blocked_parents"] = decision.get("blocked_sidecar_parents", [])
+
+    if rotation.get("pending_review_path") == relpath(review_path):
+        rotation["pending_review_path"] = None
+        rotation["pending_decision_path"] = None
+        rotation["pending_review_event_id"] = None
+        rotation["pending_review_agent"] = None
+
+    write_activity_log(
+        config,
+        {
+            "type": "chair_review_approved_sidecars" if approved else "chair_review_denied_sidecars",
+            "task_id": chair_review_settings(config).get("task_id"),
+            "message": str(decision.get("reason") or ""),
+            "review_path": relpath(review_path),
+            "decision_path": relpath(decision_path),
+            "sidecar_approved_until": rotation.get("sidecar_approved_until"),
+            "max_sidecars": decision.get("max_sidecars"),
+            "blocked_by": decision.get("blocked_by", []),
+            "blocked_sidecar_parents": decision.get("blocked_sidecar_parents", []),
+            "approval_actions": decision.get("approval_actions", []),
+            "reassignment_actions": decision.get("reassignment_actions", []),
+        },
+    )
+    apply_chair_review_reassignment_actions(config, state, decision.get("reassignment_actions", []), review_path=review_path)
+    apply_chair_review_approval_actions(config, decision.get("approval_actions", []), review_path=review_path)
+    return True
+
+
+def canonical_agent_name(config: dict[str, Any], value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    agent_id = normalize_agent_id(raw)
+    if agent_id and agent_id in config.get("agents", {}):
+        return display_name_for(config, agent_id)
+    for known in known_agent_display_names(config):
+        if known.casefold() == raw.casefold():
+            return known
+    return raw
+
+
+def log_chair_reassignment_skip(
+    config: dict[str, Any],
+    *,
+    review_path: Path,
+    action: dict[str, Any],
+    message: str,
+) -> None:
+    write_activity_log(
+        config,
+        {
+            "type": "chair_review_reassignment_skipped",
+            "task_id": action.get("task_id"),
+            "message": message,
+            "review_path": relpath(review_path),
+            "action": action,
+        },
+    )
+
+
+def apply_chair_review_reassignment_actions(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    reassignment_actions: list[dict[str, Any]],
+    *,
+    review_path: Path,
+) -> None:
+    if not reassignment_actions:
+        return
+    if not chair_review_settings(config).get("reassignment_actions_enabled", True):
+        write_activity_log(
+            config,
+            {
+                "type": "chair_review_reassignment_actions_skipped",
+                "task_id": chair_review_settings(config).get("task_id"),
+                "message": "Chair review included reassignment actions, but reassignment action execution is disabled.",
+                "review_path": relpath(review_path),
+                "count": len(reassignment_actions),
+            },
+        )
+        return
+
+    dispatch_settings = ready_dispatch_settings(config)
+    review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
+    finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
+    owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
+
+    for action in reassignment_actions:
+        task_id = str(action.get("task_id") or "").strip()
+        role = str(action.get("role") or "").strip().lower()
+        to_agent = canonical_agent_name(config, str(action.get("to") or ""))
+        from_agent = canonical_agent_name(config, str(action.get("from") or ""))
+        reason = str(action.get("reason") or "Chair review reassignment.").strip()
+
+        status = load_status(config)
+        task = task_index_from_status(config, status).get(task_id)
+        if not task:
+            log_chair_reassignment_skip(
+                config,
+                review_path=review_path,
+                action=action,
+                message=f"Chair reassignment skipped because task {task_id} no longer exists.",
+            )
+            continue
+        if to_agent not in known_agent_display_names(config):
+            log_chair_reassignment_skip(
+                config,
+                review_path=review_path,
+                action=action,
+                message=f"Chair reassignment skipped because target agent {to_agent} is not configured.",
+            )
+            continue
+        if agent_dispatch_paused(config, state, to_agent):
+            log_chair_reassignment_skip(
+                config,
+                review_path=review_path,
+                action=action,
+                message=f"Chair reassignment skipped because target agent {to_agent} is dispatch-paused.",
+            )
+            continue
+        if not agent_can_take_task(config, to_agent, task):
+            log_chair_reassignment_skip(
+                config,
+                review_path=review_path,
+                action=action,
+                message=f"Chair reassignment skipped because {to_agent} is not eligible for task {task_id}.",
+            )
+            continue
+
+        task_status = str(task.get("status") or "").lower()
+        owner = str(task.get("owner") or "").strip()
+        reviewer = str(task.get("reviewer") or "").strip()
+        applied = False
+        message = ""
+
+        if role == "reviewer":
+            if task_status not in review_statuses:
+                log_chair_reassignment_skip(
+                    config,
+                    review_path=review_path,
+                    action=action,
+                    message=f"Chair reviewer reassignment skipped because task {task_id} is status={task_status}.",
+                )
+                continue
+            if from_agent and reviewer != from_agent:
+                log_chair_reassignment_skip(
+                    config,
+                    review_path=review_path,
+                    action=action,
+                    message=f"Chair reviewer reassignment skipped because reviewer moved from {from_agent} to {reviewer}.",
+                )
+                continue
+            if to_agent in {owner, reviewer}:
+                log_chair_reassignment_skip(
+                    config,
+                    review_path=review_path,
+                    action=action,
+                    message=f"Chair reviewer reassignment skipped because target {to_agent} would duplicate owner or reviewer.",
+                )
+                continue
+            message = f"Chair reassigned review from {reviewer} to {to_agent}: {reason}"
+            applied = persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=owner,
+                new_reviewer=to_agent,
+                message=message,
+                handoff_to=to_agent,
+                handoff_from=reviewer,
+            )
+        elif role == "owner":
+            if task_status not in owned_statuses | finalize_statuses:
+                log_chair_reassignment_skip(
+                    config,
+                    review_path=review_path,
+                    action=action,
+                    message=f"Chair owner reassignment skipped because task {task_id} is status={task_status}.",
+                )
+                continue
+            if from_agent and owner != from_agent:
+                log_chair_reassignment_skip(
+                    config,
+                    review_path=review_path,
+                    action=action,
+                    message=f"Chair owner reassignment skipped because owner moved from {from_agent} to {owner}.",
+                )
+                continue
+            if to_agent == reviewer:
+                log_chair_reassignment_skip(
+                    config,
+                    review_path=review_path,
+                    action=action,
+                    message=f"Chair owner reassignment skipped because target {to_agent} is already reviewer.",
+                )
+                continue
+            requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
+            message = f"Chair reassigned owner from {owner} to {to_agent}: {reason}"
+            if requeue_for_fresh_dispatch:
+                message = f"{message}. Task returned to todo for a fresh run."
+            applied = persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=to_agent,
+                new_reviewer=reviewer,
+                message=message,
+                new_status="todo" if requeue_for_fresh_dispatch else None,
+                handoff_to=to_agent,
+                handoff_from=owner,
+            )
+
+        if not applied:
+            log_chair_reassignment_skip(
+                config,
+                review_path=review_path,
+                action=action,
+                message=f"Chair reassignment for {task_id} could not be persisted.",
+            )
+            continue
+
+        clear_task_failure_streaks_for_task(state, task_id)
+        write_activity_log(
+            config,
+            {
+                "type": "chair_review_reassignment_applied",
+                "task_id": task_id,
+                "message": message,
+                "role": role,
+                "from_agent": from_agent or (reviewer if role == "reviewer" else owner),
+                "to_agent": to_agent,
+                "review_path": relpath(review_path),
+            },
+        )
+
+
+def apply_chair_review_approval_actions(
+    config: dict[str, Any],
+    approval_actions: list[dict[str, Any]],
+    *,
+    review_path: Path,
+) -> None:
+    if not approval_actions:
+        return
+    if not chair_review_settings(config).get("approval_actions_enabled", True):
+        write_activity_log(
+            config,
+            {
+                "type": "chair_review_approval_actions_skipped",
+                "task_id": chair_review_settings(config).get("task_id"),
+                "message": "Chair review included approval actions, but approval action execution is disabled.",
+                "review_path": relpath(review_path),
+                "count": len(approval_actions),
+            },
+        )
+        return
+
+    pending_by_id = {
+        str(item.get("approval_id") or ""): item
+        for item in safe_load_approval_state(config).get("pending", []) or []
+        if item.get("approval_id")
+    }
+    for action in approval_actions:
+        approval_id = str(action.get("approval_id") or "").strip()
+        action_decision = str(action.get("decision") or "").strip().lower()
+        if approval_id not in pending_by_id:
+            write_activity_log(
+                config,
+                {
+                    "type": "chair_review_approval_action_skipped",
+                    "task_id": chair_review_settings(config).get("task_id"),
+                    "message": f"Chair review approval action skipped because {approval_id} is no longer pending.",
+                    "approval_id": approval_id,
+                    "decision": action_decision,
+                    "review_path": relpath(review_path),
+                },
+            )
+            continue
+        try:
+            resolve_approval(
+                config,
+                approval_id,
+                decision=action_decision,
+                note=f"Chair review {relpath(review_path)}: {action.get('reason')}",
+                remember=bool(action.get("remember", False)),
+            )
+        except KeyError:
+            write_activity_log(
+                config,
+                {
+                    "type": "chair_review_approval_action_skipped",
+                    "task_id": chair_review_settings(config).get("task_id"),
+                    "message": f"Chair review approval action skipped because {approval_id} disappeared during resolution.",
+                    "approval_id": approval_id,
+                    "decision": action_decision,
+                    "review_path": relpath(review_path),
+                },
+            )
+
+
+def refresh_chair_review_artifact(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    review_path: Path,
+    decision_path: Path,
+) -> bool:
+    if not decision_path.exists():
+        return mark_chair_review_problem(
+            config,
+            state,
+            problem_type="chair_review_invalid_schema",
+            message=f"Chair review {relpath(review_path)} did not produce required decision JSON {relpath(decision_path)}.",
+            review_path=review_path,
+            decision_path=decision_path,
+        )
+    try:
+        payload = load_json(decision_path, default={})
+    except (OSError, json.JSONDecodeError) as exc:
+        return mark_chair_review_problem(
+            config,
+            state,
+            problem_type="chair_review_invalid_schema",
+            message=f"Chair review decision JSON could not be parsed: {exc}",
+            review_path=review_path,
+            decision_path=decision_path,
+        )
+
+    decision, error = normalize_chair_review_decision(config, payload)
+    if decision is None:
+        return mark_chair_review_problem(
+            config,
+            state,
+            problem_type="chair_review_invalid_schema",
+            message=f"Chair review decision JSON failed validation: {error}",
+            review_path=review_path,
+            decision_path=decision_path,
+        )
+    return apply_chair_review_decision(config, state, review_path=review_path, decision_path=decision_path, decision=decision)
+
+
 def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) -> bool:
     rotation = chair_rotation_state(state)
     output_dir = chair_review_output_dir(config)
+    pending_review_relpath = str(rotation.get("pending_review_path") or "").strip()
+    if pending_review_relpath:
+        pending_review_path = chair_review_state_path(pending_review_relpath)
+        pending_decision_path = chair_review_state_path(str(rotation.get("pending_decision_path") or "")) if rotation.get("pending_decision_path") else None
+        if pending_review_path is not None:
+            pending_decision_path = pending_decision_path or chair_review_decision_path(pending_review_path)
+            if pending_decision_path.exists():
+                return refresh_chair_review_artifact(
+                    config,
+                    state,
+                    review_path=pending_review_path,
+                    decision_path=pending_decision_path,
+                )
+            if pending_review_path.exists() and not pending_chair_review_active(state, pending_review_relpath):
+                return refresh_chair_review_artifact(
+                    config,
+                    state,
+                    review_path=pending_review_path,
+                    decision_path=pending_decision_path,
+                )
+            if not pending_chair_review_active(state, pending_review_relpath):
+                return mark_chair_review_problem(
+                    config,
+                    state,
+                    problem_type="chair_review_missing_report",
+                    message=f"Chair review worker finished without producing {pending_review_relpath}.",
+                    review_path=pending_review_path,
+                    decision_path=pending_decision_path,
+                )
+
     if not output_dir.exists():
         return False
     review_files = sorted(output_dir.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
     if not review_files:
         return False
     latest = review_files[0]
-    summary_lines = chair_review_summary_lines(latest, max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)))
     latest_relpath = relpath(latest)
-    changed = False
-    if rotation.get("last_review_path") != latest_relpath:
-        rotation["last_review_path"] = latest_relpath
-        changed = True
-    if rotation.get("last_review_summary") != summary_lines:
-        rotation["last_review_summary"] = summary_lines
-        changed = True
-    if rotation.get("pending_review_path") == latest_relpath:
-        rotation["pending_review_path"] = None
-        rotation["pending_review_agent"] = None
-        changed = True
-    return changed
+    if rotation.get("last_review_path") == latest_relpath:
+        return False
+    decision_path = chair_review_decision_path(latest)
+    if decision_path.exists():
+        return refresh_chair_review_artifact(config, state, review_path=latest, decision_path=decision_path)
+
+    summary_lines = chair_review_summary_lines(latest, max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)))
+    rotation["last_review_path"] = latest_relpath
+    rotation["last_review_summary"] = summary_lines
+    rotation["last_review_valid"] = False
+    rotation["last_chair_problem"] = "chair_review_invalid_schema"
+    rotation["last_chair_problem_message"] = f"Chair review {latest_relpath} has no decision JSON."
+    return True
 
 
 def chair_review_candidates(config: dict[str, Any]) -> list[str]:
@@ -1303,6 +1986,162 @@ def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_
     return chair_review_output_dir(config) / filename
 
 
+def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    settings = chair_review_settings(config)
+    if not settings.get("reassignment_actions_enabled", True):
+        return []
+    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
+    try:
+        status = load_status(config)
+    except KeyError:
+        return []
+    task_map = task_index_from_status(config, status)
+    dispatch_settings = ready_dispatch_settings(config)
+    review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
+    finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
+    owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
+    eligible_statuses = {str(value).lower() for value in worker_reassignment_settings(config).get("eligible_statuses", [])}
+    max_items = max(1, int(settings.get("max_failure_loops_in_prompt", 6)))
+    loops: list[dict[str, Any]] = []
+
+    for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
+        if not isinstance(record, dict):
+            continue
+        try:
+            count = int(record.get("count", 0))
+        except (TypeError, ValueError):
+            continue
+        if count < threshold:
+            continue
+        task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
+        provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
+        task = task_map.get(task_id)
+        if not task or not provider:
+            continue
+        task_status = str(task.get("status") or "").lower()
+        if eligible_statuses and task_status not in eligible_statuses:
+            continue
+        agent_name = display_name_for(config, provider)
+        owner = str(task.get("owner") or "").strip()
+        reviewer = str(task.get("reviewer") or "").strip()
+        role = ""
+        exclude: set[str] = set()
+        candidates: list[str] = []
+        if task_status in review_statuses and reviewer == agent_name:
+            role = "reviewer"
+            exclude = {owner, reviewer}
+            candidates = normalized_mapping_values(worker_reassignment_settings(config).get("reviewer_fallbacks", {}), agent_name)
+        elif task_status in owned_statuses | finalize_statuses and owner == agent_name:
+            role = "owner"
+            exclude = {owner, reviewer}
+            candidates = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), agent_name)
+        if not role:
+            continue
+        viable_candidates = [
+            candidate
+            for candidate in candidates
+            if first_viable_agent(config, [candidate], exclude=exclude, state=state, task=task) == candidate
+        ]
+        loops.append(
+            {
+                "task_id": task_id,
+                "status": task_status,
+                "role": role,
+                "agent": agent_name,
+                "count": count,
+                "last_failure_kind": record.get("last_failure_kind"),
+                "last_failure_at": record.get("last_failure_at"),
+                "last_reason": record.get("last_reason"),
+                "owner": owner,
+                "reviewer": reviewer,
+                "viable_reassignment_targets": viable_candidates,
+            }
+        )
+
+    loops.sort(key=lambda item: (-int(item.get("count") or 0), str(item.get("task_id") or "")))
+    return loops[:max_items]
+
+
+def chair_review_failure_loop_lines(config: dict[str, Any], state: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for item in chair_review_failure_loop_details(config, state):
+        reason = str(item.get("last_reason") or "").replace("\n", " ").strip()
+        if len(reason) > 220:
+            reason = reason[:217] + "..."
+        lines.append(
+            "- "
+            f"task={item.get('task_id')} "
+            f"status={item.get('status')} "
+            f"role={item.get('role')} "
+            f"agent={item.get('agent')} "
+            f"failures={item.get('count')} "
+            f"targets={json.dumps(item.get('viable_reassignment_targets') or [], ensure_ascii=False)} "
+            f"last_reason={json.dumps(reason, ensure_ascii=False)}"
+        )
+    return lines
+
+
+def chair_reassignment_triage_needed_for_task(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_id: str,
+    agent_name: str,
+) -> bool:
+    settings = chair_review_settings(config)
+    if not settings.get("reassignment_actions_enabled", True):
+        return False
+    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
+    provider_id = normalize_agent_id(agent_name)
+    if not task_id or not provider_id:
+        return False
+    record = ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).get(
+        _failure_streak_key(task_id, provider_id)
+    )
+    if not isinstance(record, dict):
+        return False
+    try:
+        return int(record.get("count", 0)) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
+def failure_loop_agents_for_task_map(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> set[str]:
+    settings = chair_review_settings(config)
+    if not settings.get("reassignment_actions_enabled", True):
+        return set()
+    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
+    dispatch_settings = ready_dispatch_settings(config)
+    review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
+    finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
+    owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
+    agents: set[str] = set()
+    for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
+        if not isinstance(record, dict):
+            continue
+        try:
+            count = int(record.get("count", 0))
+        except (TypeError, ValueError):
+            continue
+        if count < threshold:
+            continue
+        task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
+        provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
+        task = task_map.get(task_id)
+        if not task or not provider:
+            continue
+        agent_name = display_name_for(config, provider)
+        task_status = str(task.get("status") or "").lower()
+        if task_status in review_statuses and str(task.get("reviewer") or "").strip() == agent_name:
+            agents.add(agent_name)
+        elif task_status in owned_statuses | finalize_statuses and str(task.get("owner") or "").strip() == agent_name:
+            agents.add(agent_name)
+    return agents
+
+
 def build_chair_review_message(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1315,15 +2154,28 @@ def build_chair_review_message(
     underutilization = state.get("underutilization", {}) or {}
     occupancy = (state.get("supervisor", {}) or {}).get("mode_occupancy", {}) or {}
     queue_depth = len(load_event_queue(config))
+    decision_path = chair_review_decision_path(review_path)
+    skill_path = chair_review_skill_path(config)
+    skill_line = f"- Skill Reference: {relpath(skill_path)}\n" if skill_path and skill_path.exists() else ""
+    pending_approval_lines = chair_review_pending_approval_lines(config, approval_state)
+    pending_approvals_block = "\n".join(pending_approval_lines) if pending_approval_lines else "- none"
+    failure_loop_lines = chair_review_failure_loop_lines(config, state)
+    failure_loops_block = "\n".join(failure_loop_lines) if failure_loop_lines else "- none"
     return (
         "你是本輪輪值主席，請做一次 operational review，不接主線實作。\n\n"
         f"- Chair Agent: {agent_name}\n"
-        f"- Review Output: {relpath(review_path)}\n"
+        f"- Markdown Review Output: {relpath(review_path)}\n"
+        f"- Required Decision JSON Output: {relpath(decision_path)}\n"
+        f"{skill_line}"
         f"- Queue Depth: {queue_depth}\n"
         f"- Pending Approvals: {len(approval_state.get('pending') or [])}\n"
         f"- Paused Lanes: {', '.join(paused_lanes) if paused_lanes else 'none'}\n"
         f"- Underutilization Ratio: {underutilization.get('last_ratio') if underutilization.get('last_ratio') is not None else 'unknown'}\n"
         f"- Mode Occupancy: {json.dumps(occupancy, ensure_ascii=False)}\n\n"
+        "Pending Approval Details:\n"
+        f"{pending_approvals_block}\n\n"
+        "Repeated Failure Details:\n"
+        f"{failure_loops_block}\n\n"
         "請檢查以下事項：\n"
         "1. task board 是否有假的 in_progress（沒有 live worker）。\n"
         "2. worker 是否跑錯 owner/reviewer 或 queue event 對不上。\n"
@@ -1331,9 +2183,67 @@ def build_chair_review_message(
         "4. provider guardrail 是否讓主線無法推進。\n"
         "5. review / review_approved 是否有長時間滯留。\n"
         "6. sidecar 是否過多、重複、或缺少明確 parent support need。\n\n"
-        "請把結論寫成 markdown 檔，格式建議包含 Summary、Findings、Suggested Repairs、Sidecar Recommendation。\n"
-        "你可以提出 repair commands 或建立 OPS-/SUP- follow-up task 建議，但不要直接改 task owner/reviewer，也不要直接把 task 標成 done。\n"
+        "請一定要產生兩個檔案：\n"
+        f"1. markdown 人類報告：{relpath(review_path)}，格式建議包含 Summary、Findings、Suggested Repairs、Sidecar Recommendation。\n"
+        f"2. JSON 決策檔：{relpath(decision_path)}，必須符合以下 schema。\n\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "version": 1,\n'
+        '  "decision": "approve_sidecars | deny_sidecars",\n'
+        '  "sidecar_approved": true,\n'
+        '  "approval_ttl_minutes": 45,\n'
+        '  "max_sidecars": 2,\n'
+        '  "reason": "one concise operational reason",\n'
+        '  "blocked_by": [],\n'
+        '  "blocked_sidecar_parents": [],\n'
+        '  "approval_actions": [\n'
+        "    {\n"
+        '      "approval_id": "apr-...",\n'
+        '      "decision": "allow | deny",\n'
+        '      "reason": "why this approval is safe or should be denied",\n'
+        '      "remember": false\n'
+        "    }\n"
+        "  ],\n"
+        '  "reassignment_actions": [\n'
+        "    {\n"
+        '      "task_id": "SVC-...",\n'
+        '      "role": "owner | reviewer",\n'
+        '      "from": "Codex2",\n'
+        '      "to": "Claude",\n'
+        '      "reason": "why this reassignment is the right repair"\n'
+        "    }\n"
+        "  ],\n"
+        '  "recommended_focus": []\n'
+        "}\n\n"
+        "如果目前有 idle auto worker、execution backlog 有可安全平行化的工作、且沒有 global blocker，預設應 approve_sidecars。\n"
+        "如果 deny_sidecars，blocked_by 必須列出具體 blocker；如果只有特定 parent 不應產生 sidecar，請放進 blocked_sidecar_parents。\n"
+        "如果 Pending Approval Details 裡有你能判斷的低風險 approval，請在 approval_actions 裡 allow 或 deny；不能判斷就不要列入。\n"
+        "如果 Repeated Failure Details 顯示同一 agent 在同一 task 壞循環，請用 reassignment_actions 指定是否改派；不需要就留空。\n"
+        "你可以提出 repair commands 或建立 OPS-/SUP- follow-up task 建議；不要直接手改 task board，也不要直接把 task 標成 done。\n"
     )
+
+
+def chair_review_pending_approval_lines(config: dict[str, Any], approval_state: dict[str, Any]) -> list[str]:
+    max_items = max(1, int(chair_review_settings(config).get("max_pending_approvals_in_prompt", 6)))
+    lines: list[str] = []
+    for item in (approval_state.get("pending", []) or [])[:max_items]:
+        preview = str(item.get("tool_input_preview") or "").replace("\n", " ").strip()
+        if len(preview) > 240:
+            preview = preview[:237] + "..."
+        lines.append(
+            "- "
+            f"approval_id={item.get('approval_id')} "
+            f"provider={item.get('provider')} "
+            f"task={item.get('task_id')} "
+            f"worker={item.get('worker_run_id')} "
+            f"tool={item.get('tool_name')} "
+            f"risk={item.get('risk_class')} "
+            f"created_at={item.get('created_at')} "
+            f"preview={json.dumps(preview, ensure_ascii=False)}"
+        )
+    if len(approval_state.get("pending", []) or []) > max_items:
+        lines.append(f"- ... {len(approval_state.get('pending', []) or []) - max_items} more pending approvals omitted")
+    return lines
 
 
 def queue_chair_review_event(
@@ -1346,6 +2256,7 @@ def queue_chair_review_event(
 ) -> str:
     agent = agent_config_for(config, agent_name)
     review_path = chair_review_report_path(config, agent_name, issued_at=issued_at)
+    decision_path = chair_review_decision_path(review_path)
     review_path.parent.mkdir(parents=True, exist_ok=True)
     queue_payload = {
         "event_id": new_runtime_id("evt"),
@@ -1357,13 +2268,14 @@ def queue_chair_review_event(
         "provider": agent.get("provider", agent["id"]),
         "reason": reason,
         "message": build_chair_review_message(config, state, agent_name=agent_name, review_path=review_path),
-        "context_files": [relpath(path) for path in selected_shared_files(config)],
-        "target_files": [relpath(review_path)],
+        "context_files": chair_review_context_files(config),
+        "target_files": [relpath(review_path), relpath(decision_path)],
         "metadata": {
             "chair": {
                 "mode": "chair_review",
                 "agent": agent_name,
                 "review_path": relpath(review_path),
+                "decision_path": relpath(decision_path),
             }
         },
     }
@@ -1373,6 +2285,8 @@ def queue_chair_review_event(
     rotation["last_chair_agent"] = agent_name
     rotation["last_chair_reason"] = reason
     rotation["pending_review_path"] = relpath(review_path)
+    rotation["pending_decision_path"] = relpath(decision_path)
+    rotation["pending_review_event_id"] = queue_payload["event_id"]
     rotation["pending_review_agent"] = agent_name
     write_activity_log(
         config,
@@ -1545,6 +2459,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "status: 401",
         "unauthorized",
         "authentication",
+        "not authenticated",
         "auth failed",
         "invalid api key",
         "forbidden",
@@ -3274,6 +4189,25 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
+            if worker_is_chair_review(worker):
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                clear_task_failure_streak(state, worker=worker)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": "Chair review worker exited; supervisor will validate the review artifacts.",
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "completed")
+                changed = True
+                continue
             task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
             terminal_statuses = {
                 str(value).lower()
@@ -3288,7 +4222,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
                 reassigned_to = None
-                if failure_count >= generic_threshold:
+                if failure_count >= generic_threshold and not chair_review_settings(config).get("reassignment_actions_enabled", True):
                     reassigned_to = maybe_reassign_task_after_worker_failure(
                         config,
                         state,
@@ -4395,6 +5329,8 @@ def worker_matches_current_assignment(
         return True
     if worker_is_coordination_dispatch(worker):
         return True
+    if worker_is_chair_review(worker):
+        return True
     task_id = str(worker.get("task_id") or "")
     task = task_map.get(task_id)
     if not task:
@@ -4549,6 +5485,7 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
     agent_loads = agent_dispatch_loads(config, state, active_statuses)
     helper_settings = helper_claim_settings(config)
     seen = state.setdefault("seen_event_keys", {})
+    failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
 
     changed = False
     normalized = False
@@ -4569,12 +5506,14 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
             break
+        target_agent = display_name_for(config, agent_id)
+        if target_agent in failure_loop_agents:
+            continue
         if agent_dispatch_paused(config, state, agent_id):
             continue
         if agent_id in active_agents or agent_id in pending_agents:
             continue
 
-        target_agent = display_name_for(config, agent_id)
         candidates: list[tuple[int, int, dict[str, Any], str]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
@@ -4604,6 +5543,8 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
                 priority = 3
 
             if reason is not None and not agent_can_take_task(config, target_agent, task):
+                continue
+            if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent):
                 continue
 
             helper_claim_candidate = (
@@ -4698,7 +5639,27 @@ def dispatch_chair_review(config: dict[str, Any], state: dict[str, Any], plannin
     if chair_review_active(state):
         return False
     now = utc_now()
-    if chair_review_cooldown_active(config, state, now=now):
+    pending_approval_count = len(safe_load_approval_state(config).get("pending", []) or [])
+    failure_loop_details = chair_review_failure_loop_details(config, state)
+    failure_loop_count = len(failure_loop_details)
+    failure_loop_agents = {
+        str(item.get("agent") or "").strip()
+        for item in failure_loop_details
+        if str(item.get("agent") or "").strip()
+    }
+    bypass_cooldown = bool(
+        (
+            pending_approval_count
+            and settings.get("approval_actions_enabled", True)
+            and settings.get("bypass_cooldown_for_pending_approvals", True)
+        )
+        or (
+            failure_loop_count
+            and settings.get("reassignment_actions_enabled", True)
+            and settings.get("bypass_cooldown_for_failure_loops", True)
+        )
+    )
+    if chair_review_cooldown_active(config, state, now=now) and not bypass_cooldown:
         return False
 
     candidates = chair_review_candidates(config)
@@ -4721,11 +5682,18 @@ def dispatch_chair_review(config: dict[str, Any], state: dict[str, Any], plannin
             continue
         if agent_dispatch_paused(config, state, agent_id):
             continue
+        if agent_name in failure_loop_agents:
+            continue
         if agent_id in active_agents or agent_id in pending_agents:
             continue
         if agent_has_dispatchable_primary_work(config, status, agent_name, task_map):
             continue
-        reason = "chair_review:operational_review"
+        if failure_loop_count:
+            reason = "chair_review:reassignment_triage"
+        elif pending_approval_count:
+            reason = "chair_review:approval_triage"
+        else:
+            reason = "chair_review:operational_review"
         event_key = f"chair:{agent_id}:{reason}:{now}"
         if event_key in pending_event_keys:
             continue
@@ -4807,6 +5775,9 @@ def dispatch_underutilization_sidecars(config: dict[str, Any], state: dict[str, 
     candidates = build_catalog_sidecar_candidates(config, status, task_map, existing_signatures)
     if not candidates:
         candidates = build_dynamic_sidecar_candidates(config, status, task_map, existing_signatures)
+    blocked_sidecar_parents = {str(item) for item in rotation.get("sidecar_blocked_parents", []) or [] if str(item).strip()}
+    if blocked_sidecar_parents:
+        candidates = [candidate for candidate in candidates if str(candidate.get("parent_task_id") or "") not in blocked_sidecar_parents]
     if not candidates:
         tracking["last_sidecar_wave_at"] = now
         tracking["last_sidecar_wave_reason"] = "underutilized but no sidecar candidates matched the catalog or dynamic fallback"
@@ -4820,16 +5791,38 @@ def dispatch_underutilization_sidecars(config: dict[str, Any], state: dict[str, 
         )
         return True
 
-    candidates.sort(key=lambda item: (int(item.get("priority", 9)), str(item.get("parent_task_id") or ""), str(item.get("kind") or "")))
+    recommended_focus = {
+        str(item)
+        for item in rotation.get("last_review_recommended_focus", []) or []
+        if str(item).strip()
+    }
+    candidates.sort(
+        key=lambda item: (
+            0
+            if not recommended_focus
+            or str(item.get("parent_task_id") or "") in recommended_focus
+            or str(item.get("sidecar_id") or "") in recommended_focus
+            else 1,
+            int(item.get("priority", 9)),
+            str(item.get("parent_task_id") or ""),
+            str(item.get("kind") or ""),
+        )
+    )
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     _active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     _pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     seen = state.setdefault("seen_event_keys", {})
     per_agent_counts = {agent: count_open_sidecars_for_agent(status, agent) for agent in idle_agents}
+    max_new_sidecars = int(settings.get("max_new_sidecars_per_wave", 2))
+    if rotation.get("sidecar_approval_max_sidecars") is not None:
+        try:
+            max_new_sidecars = min(max_new_sidecars, max(0, int(rotation.get("sidecar_approval_max_sidecars"))))
+        except (TypeError, ValueError):
+            pass
     created = 0
 
     for candidate in candidates:
-        if created >= int(settings.get("max_new_sidecars_per_wave", 2)):
+        if created >= max_new_sidecars:
             break
 
         parent_owner = str(candidate.get("reviewer") or "").strip()
@@ -4995,8 +5988,14 @@ def run_once(
         if discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state) or changed
         else:
-            changed = dispatch_ready_tasks(config, state) or changed
-            changed = dispatch_chair_review(config, state, planning_state) or changed
+            if chair_review_failure_loop_details(config, state):
+                chair_dispatched = dispatch_chair_review(config, state, planning_state)
+                changed = chair_dispatched or changed
+                if not chair_dispatched and not chair_review_active(state):
+                    changed = dispatch_ready_tasks(config, state) or changed
+            else:
+                changed = dispatch_ready_tasks(config, state) or changed
+                changed = dispatch_chair_review(config, state, planning_state) or changed
             changed = dispatch_underutilization_sidecars(config, state) or changed
         changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed

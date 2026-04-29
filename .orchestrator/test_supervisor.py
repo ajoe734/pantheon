@@ -201,6 +201,15 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "auth")
         self.assertFalse(result["transient"])
 
+    def test_classifies_not_authenticated_failure_as_auth(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "claude2"}
+
+        result = supervisor.classify_worker_failure(config, worker, "Claude CLI is not authenticated; inbox fallback is disabled.")
+
+        self.assertEqual(result["kind"], "auth")
+        self.assertFalse(result["transient"])
+
     def test_auth_failures_pause_provider_dispatch(self) -> None:
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("auth"))
 
@@ -2243,6 +2252,7 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         write_activity_log.assert_not_called()
 
     def test_creates_visible_sidecar_after_continuous_low_utilization_window(self) -> None:
+        self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
         state = {
             "queue": {"events": {}},
             "workers": {
@@ -2259,6 +2269,10 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
                 "below_threshold_since": "2026-04-10T00:00:00Z",
                 "last_sidecar_wave_at": None,
                 "last_sidecar_wave_reason": None,
+            },
+            "chair_rotation": {
+                "sidecar_approved_until": "2026-04-10T01:00:00Z",
+                "sidecar_approval_max_sidecars": 1,
             },
         }
         parent_task = {
@@ -2504,6 +2518,12 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(state["chair_rotation"]["current_index"], 1)
         self.assertEqual(state["chair_rotation"]["pending_review_agent"], "Codex")
         self.assertTrue(str(state["chair_rotation"]["pending_review_path"]).endswith("-codex.md"))
+        self.assertTrue(str(state["chair_rotation"]["pending_decision_path"]).endswith("-codex.json"))
+        events = supervisor.load_event_queue(self.config)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(any(path.endswith("-codex.md") for path in events[0]["target_files"]))
+        self.assertTrue(any(path.endswith("-codex.json") for path in events[0]["target_files"]))
+        self.assertIn("Required Decision JSON Output", events[0]["message"])
 
     def test_dispatch_chair_review_skips_when_planning_active(self) -> None:
         state = {"queue": {"events": {}}, "workers": {}, "chair_rotation": {"current_index": 0}}
@@ -2540,6 +2560,515 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(state["chair_rotation"]["last_chair_agent"], "Codex2")
         self.assertEqual(state["chair_rotation"]["current_index"], 2)
+
+    def test_dispatch_chair_review_bypasses_cooldown_for_pending_approval(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "chair_rotation": {
+                "current_index": 0,
+                "last_chair_run_at": "2026-04-28T12:00:00Z",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(
+                supervisor,
+                "safe_load_approval_state",
+                return_value={
+                    "pending": [
+                        {
+                            "approval_id": "apr-1",
+                            "provider": "claude",
+                            "task_id": "SVC-GOVERNANCE-API",
+                            "worker_run_id": "run-1",
+                            "tool_name": "Bash",
+                            "risk_class": "needs_review",
+                            "created_at": "2026-04-28T12:00:10Z",
+                            "tool_input_preview": "docker compose config --quiet",
+                        }
+                    ],
+                    "history": [],
+                },
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:05:00Z"),
+        ):
+            changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
+
+        self.assertTrue(changed)
+        events = supervisor.load_event_queue(self.config)
+        self.assertEqual(events[0]["reason"], "chair_review:approval_triage")
+        self.assertIn("approval_id=apr-1", events[0]["message"])
+
+    def test_dispatch_chair_review_bypasses_cooldown_for_failure_loop(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "chair_rotation": {
+                "current_index": 0,
+                "last_chair_run_at": "2026-04-28T12:00:00Z",
+            },
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:codex2": {
+                        "task_id": "T-REVIEW",
+                        "provider": "codex2",
+                        "count": 3,
+                        "last_reason": "Worker exited before terminal state.",
+                    }
+                }
+            },
+        }
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:05:00Z"),
+        ):
+            changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
+
+        self.assertTrue(changed)
+        events = supervisor.load_event_queue(self.config)
+        self.assertEqual(events[0]["reason"], "chair_review:reassignment_triage")
+        self.assertIn("Repeated Failure Details:", events[0]["message"])
+        self.assertIn("task=T-REVIEW", events[0]["message"])
+        self.assertIn('"reassignment_actions"', events[0]["message"])
+
+    def test_dispatch_chair_review_skips_agent_in_failure_loop(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "chair_rotation": {
+                "current_index": 1,
+                "last_chair_run_at": "2026-04-28T12:00:00Z",
+            },
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:codex2": {
+                        "task_id": "T-REVIEW",
+                        "provider": "codex2",
+                        "count": 3,
+                        "last_reason": "Worker exited before terminal state.",
+                    }
+                }
+            },
+        }
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:05:00Z"),
+        ):
+            changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_chair_agent"], "Claude")
+
+    def test_dispatch_ready_skips_task_waiting_for_chair_reassignment_triage(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:codex2": {
+                        "task_id": "T-REVIEW",
+                        "provider": "codex2",
+                        "count": 3,
+                        "last_reason": "Worker exited before terminal state.",
+                    }
+                }
+            },
+        }
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
+
+    def test_dispatch_ready_skips_all_work_for_agent_in_failure_loop(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:codex2": {
+                        "task_id": "T-REVIEW",
+                        "provider": "codex2",
+                        "count": 3,
+                        "last_reason": "Worker exited before terminal state.",
+                    }
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"},
+                {"id": "T-FINALIZE", "status": "review_approved", "owner": "Codex2", "reviewer": "Codex"},
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
+
+    def test_chair_worker_matches_current_assignment_without_task(self) -> None:
+        worker = {
+            "run_id": "chair-1",
+            "agent_id": "codex",
+            "provider": "codex",
+            "task_id": None,
+            "status": "running",
+            "request_snapshot": {
+                "reason": "chair_review:operational_review",
+                "metadata": {
+                    "chair": {
+                        "mode": "chair_review",
+                        "review_path": str(self.root / "chair-reviews" / "review.md"),
+                    }
+                },
+            },
+        }
+
+        self.assertTrue(supervisor.worker_matches_current_assignment(self.config, worker, {}))
+
+    def test_refresh_chair_review_approves_sidecars_from_decision_json(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text("# Summary\n\nApprove a small sidecar wave.\n", encoding="utf-8")
+        decision_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decision": "approve_sidecars",
+                    "sidecar_approved": True,
+                    "approval_ttl_minutes": 45,
+                    "max_sidecars": 2,
+                    "reason": "Idle workers are available and runnable support work exists.",
+                    "blocked_by": [],
+                    "blocked_sidecar_parents": ["SVC-RUNTIME-CONTROL-CLOSEOUT"],
+                    "recommended_focus": ["SVC-EVIDENCE"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+            "workers": {},
+            "chair_rotation": {
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-1",
+                "pending_review_agent": "Codex",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        rotation = state["chair_rotation"]
+        self.assertIsNone(rotation["pending_review_path"])
+        self.assertIsNone(rotation["pending_decision_path"])
+        self.assertEqual(rotation["sidecar_approved_until"], "2026-04-28T13:00:00Z")
+        self.assertEqual(rotation["sidecar_approval_max_sidecars"], 2)
+        self.assertTrue(rotation["last_review_sidecar_approved"])
+        self.assertEqual(rotation["last_review_decision"], "approve_sidecars")
+        self.assertEqual(rotation["sidecar_blocked_parents"], ["SVC-RUNTIME-CONTROL-CLOSEOUT"])
+        self.assertEqual(rotation["last_review_recommended_focus"], ["SVC-EVIDENCE"])
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_approved_sidecars")
+
+    def test_refresh_chair_review_denies_sidecars_and_clears_approval(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text("# Summary\n\nHold sidecars.\n", encoding="utf-8")
+        decision_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decision": "deny_sidecars",
+                    "sidecar_approved": False,
+                    "reason": "Human approval queue is blocking execution.",
+                    "blocked_by": ["pending human approval"],
+                    "recommended_focus": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+            "workers": {},
+            "chair_rotation": {
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-1",
+                "pending_review_agent": "Codex",
+                "sidecar_approved_until": "2026-04-28T13:00:00Z",
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        rotation = state["chair_rotation"]
+        self.assertIsNone(rotation["sidecar_approved_until"])
+        self.assertFalse(rotation["last_review_sidecar_approved"])
+        self.assertEqual(rotation["last_review_blocked_by"], ["pending human approval"])
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_denied_sidecars")
+
+    def test_refresh_chair_review_applies_approval_actions(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text("# Summary\n\nApprove compose validation.\n", encoding="utf-8")
+        decision_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decision": "approve_sidecars",
+                    "sidecar_approved": True,
+                    "approval_ttl_minutes": 45,
+                    "reason": "Execution can proceed.",
+                    "blocked_by": [],
+                    "recommended_focus": [],
+                    "approval_actions": [
+                        {
+                            "approval_id": "apr-1",
+                            "decision": "allow",
+                            "reason": "Low-risk compose config validation.",
+                            "remember": False,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+            "workers": {},
+            "chair_rotation": {
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-1",
+                "pending_review_agent": "Codex",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
+            mock.patch.object(
+                supervisor,
+                "safe_load_approval_state",
+                return_value={"pending": [{"approval_id": "apr-1"}], "history": []},
+            ),
+            mock.patch.object(supervisor, "resolve_approval") as resolve_approval,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_review_approval_actions"][0]["approval_id"], "apr-1")
+        resolve_approval.assert_called_once_with(
+            self.config,
+            "apr-1",
+            decision="allow",
+            note=f"Chair review {supervisor.relpath(review_path)}: Low-risk compose config validation.",
+            remember=False,
+        )
+
+    def test_refresh_chair_review_applies_reassignment_actions(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text("# Summary\n\nMove the stuck review lane.\n", encoding="utf-8")
+        decision_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decision": "approve_sidecars",
+                    "sidecar_approved": True,
+                    "approval_ttl_minutes": 45,
+                    "reason": "Execution can proceed after moving the stuck reviewer.",
+                    "blocked_by": [],
+                    "recommended_focus": [],
+                    "reassignment_actions": [
+                        {
+                            "task_id": "T-REVIEW",
+                            "role": "reviewer",
+                            "from": "Codex2",
+                            "to": "Claude",
+                            "reason": "Codex2 repeatedly exits without approve/reject.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:codex2": {
+                        "task_id": "T-REVIEW",
+                        "provider": "codex2",
+                        "count": 3,
+                    }
+                }
+            },
+            "chair_rotation": {
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-1",
+                "pending_review_agent": "Codex",
+            },
+        }
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_task_reassignment,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_review_reassignment_actions"][0]["to"], "Claude")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        persist_task_reassignment.assert_called_once_with(
+            self.config,
+            task_id="T-REVIEW",
+            new_owner="Codex",
+            new_reviewer="Claude",
+            message="Chair reassigned review from Codex2 to Claude: Codex2 repeatedly exits without approve/reject.",
+            handoff_to="Claude",
+            handoff_from="Codex2",
+        )
+
+    def test_chair_review_prompt_includes_pending_approval_details(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        with (
+            mock.patch.object(
+                supervisor,
+                "safe_load_approval_state",
+                return_value={
+                    "pending": [
+                        {
+                            "approval_id": "apr-1",
+                            "provider": "claude",
+                            "task_id": "SVC-GOVERNANCE-API",
+                            "worker_run_id": "run-1",
+                            "tool_name": "Bash",
+                            "risk_class": "needs_review",
+                            "created_at": "2026-04-28T12:00:00Z",
+                            "tool_input_preview": "docker compose config --quiet",
+                        }
+                    ]
+                },
+            ),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            message = supervisor.build_chair_review_message(self.config, {}, agent_name="Codex", review_path=review_path)
+
+        self.assertIn("Pending Approval Details:", message)
+        self.assertIn("approval_id=apr-1", message)
+        self.assertIn("docker compose config --quiet", message)
+        self.assertIn('"approval_actions"', message)
+
+    def test_refresh_chair_review_invalid_decision_retries_next_chair(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text("# Summary\n\nMalformed decision.\n", encoding="utf-8")
+        decision_path.write_text('{"version": 1, "decision": "maybe"}\n', encoding="utf-8")
+        state = {
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+            "workers": {},
+            "chair_rotation": {
+                "last_chair_run_at": "2026-04-28T12:00:00Z",
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-1",
+                "pending_review_agent": "Codex",
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        rotation = state["chair_rotation"]
+        self.assertIsNone(rotation["pending_review_path"])
+        self.assertIsNone(rotation["last_chair_run_at"])
+        self.assertFalse(rotation["last_review_valid"])
+        self.assertEqual(rotation["last_chair_problem"], "chair_review_invalid_schema")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_invalid_schema")
+
+    def test_refresh_chair_review_missing_report_retries_next_chair(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        state = {
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+            "workers": {
+                "chair-1": {
+                    "run_id": "chair-1",
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "task_id": None,
+                    "status": "completed",
+                    "queue_event_id": "evt-1",
+                    "request_snapshot": {
+                        "reason": "chair_review:operational_review",
+                        "metadata": {
+                            "chair": {
+                                "mode": "chair_review",
+                                "review_path": str(review_path),
+                                "decision_path": str(decision_path),
+                            }
+                        },
+                    },
+                }
+            },
+            "chair_rotation": {
+                "last_chair_run_at": "2026-04-28T12:00:00Z",
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-1",
+                "pending_review_agent": "Codex",
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        rotation = state["chair_rotation"]
+        self.assertIsNone(rotation["pending_review_path"])
+        self.assertIsNone(rotation["last_chair_run_at"])
+        self.assertEqual(rotation["last_chair_problem"], "chair_review_missing_report")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_missing_report")
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):

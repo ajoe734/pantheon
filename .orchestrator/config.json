@@ -35,7 +35,9 @@
       "Codex",
       "Codex2",
       "Claude",
-      "Claude2"
+      "Claude2",
+      "Copilot",
+      "Gemini"
     ],
     "task_id": "OPS-CHAIR-REVIEW",
     "output_dir": ".orchestrator/chair-reviews",
@@ -93,27 +95,23 @@
       "Claude": [
         "Codex",
         "Codex2",
-        "Qwen",
         "Copilot",
         "Gemini"
       ],
       "Gemini": [
         "Codex",
         "Codex2",
-        "Qwen",
         "Claude",
         "Copilot"
       ],
       "Codex": [
         "Codex2",
-        "Qwen",
         "Claude",
         "Copilot",
         "Gemini"
       ],
       "Codex2": [
         "Codex",
-        "Qwen",
         "Claude",
         "Copilot",
         "Gemini"
@@ -121,15 +119,7 @@
       "Copilot": [
         "Codex",
         "Codex2",
-        "Qwen",
         "Claude",
-        "Gemini"
-      ],
-      "Qwen": [
-        "Codex",
-        "Codex2",
-        "Claude",
-        "Copilot",
         "Gemini"
       ]
     },
@@ -137,27 +127,23 @@
       "Claude": [
         "Codex",
         "Codex2",
-        "Qwen",
         "Copilot",
         "Gemini"
       ],
       "Gemini": [
         "Codex",
         "Codex2",
-        "Qwen",
         "Claude",
         "Copilot"
       ],
       "Codex": [
         "Codex2",
-        "Qwen",
         "Claude",
         "Copilot",
         "Gemini"
       ],
       "Codex2": [
         "Codex",
-        "Qwen",
         "Claude",
         "Copilot",
         "Gemini"
@@ -165,15 +151,7 @@
       "Copilot": [
         "Codex",
         "Codex2",
-        "Qwen",
         "Claude",
-        "Gemini"
-      ],
-      "Qwen": [
-        "Codex",
-        "Codex2",
-        "Claude",
-        "Copilot",
         "Gemini"
       ]
     }
@@ -223,9 +201,6 @@
         "ajoe734"
       ],
       "Copilot": [
-        "ajoe734"
-      ],
-      "Qwen": [
         "ajoe734"
       ]
     },
@@ -326,13 +301,6 @@
       "adapter": "copilot_local",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/copilot.md"
-    },
-    "qwen": {
-      "display_name": "Qwen",
-      "provider": "qwen",
-      "adapter": "qwen",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/qwen.md"
     },
     "grok": {
       "display_name": "Copilot (legacy alias)",
@@ -524,31 +492,6 @@
       "retry": {
         "fallback_mode": null
       }
-    },
-    "qwen": {
-      "delivery_mode": "qwen",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/qwen.md",
-        "open_in_vscode": false
-      },
-      "qwen": {
-        "cli": ".orchestrator/bin/qwen",
-        "approval_mode": "yolo",
-        "include_directories": true,
-        "output_format": "stream-json",
-        "include_partial_messages": false,
-        "channel": "CI",
-        "auth_type": "openai",
-        "model": null,
-        "model_env": "OPENAI_MODEL",
-        "openai_api_key_env": "OPENAI_API_KEY",
-        "openai_base_url_env": "OPENAI_BASE_URL",
-        "extra_args": []
-      },
-      "retry": {
-        "fallback_mode": null
-      }
     }
   },
   "ready_dispatcher": {
@@ -563,9 +506,7 @@
       "in_progress",
       "todo"
     ],
-    "sidecar_only_agents": [
-      "Qwen"
-    ],
+    "sidecar_only_agents": [],
     "dependency_done_statuses": [
       "done"
     ],
