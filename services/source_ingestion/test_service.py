@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import importlib
 import os
 import sys
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -60,6 +63,30 @@ def _record(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def _serve_json(payload: dict):
+    body = json.dumps(payload).encode("utf-8")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+            if self.path != "/feed.json":
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://127.0.0.1:{server.server_port}/feed.json"
 
 
 def test_health_exposes_storage_contract(client) -> None:
@@ -169,6 +196,187 @@ def test_configured_connector_fetch_runs_without_inline_records_and_persists_evi
     assert replayed_source.status_code == 200
     replayed_item = replay_client.get(f"/api/source-ingest/evidence/items/{evidence_item_id}")
     assert replayed_item.status_code == 200
+
+
+def test_external_http_feed_is_allowlisted_bounded_and_preserves_license_access_scope(client) -> None:
+    test_client, _, _ = client
+    feed_payload = {
+        "next_watermark": "2026-04-28T22:00:00Z",
+        "records": [
+            {
+                "source_id": "src-http-feed-note-1",
+                "title": "HTTP feed note",
+                "content_ref": "https://feeds.example.test/source/http-note-1",
+                "metadata": {
+                    "body": "HTTP feed evidence is bounded and allowlisted.",
+                    "keywords": ["http", "feed"],
+                },
+            }
+        ],
+    }
+    server, feed_url = _serve_json(feed_payload)
+    try:
+        configured = test_client.post(
+            "/api/source-ingest/connectors",
+            json={
+                "connector": _connector(
+                    connector_id="conn-http-feed-notes",
+                    source_type="internal_note",
+                    license_scope="internal",
+                ),
+                "fetch": {
+                    "mode": "external_feed",
+                    "url": feed_url,
+                    "allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"],
+                    "timeout_seconds": 2,
+                    "max_bytes": 4096,
+                    "max_records": 3,
+                    "default_access_scope": ["operator", "research"],
+                },
+            },
+        )
+        assert configured.status_code == 201, configured.text
+
+        response = test_client.post(
+            "/api/source-ingest/jobs",
+            json={
+                "connector_id": "conn-http-feed-notes",
+                "trace_id": "trace-source-ingest-http-feed",
+                "trigger_type": "scheduled",
+            },
+        )
+        assert response.status_code == 201, response.text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    body = response.json()
+    assert body["run"]["status"] == "completed"
+    assert body["watermark"]["value"] == "2026-04-28T22:00:00Z"
+    metadata = body["records"][0]["metadata"]
+    assert metadata["license_scope"] == "internal"
+    assert metadata["access_scope"] == ["operator", "research"]
+    assert metadata["source_feed_url"] == feed_url
+    assert body["evidence_refs"]["knowledge_object_ids"]
+
+
+def test_external_file_feed_runs_under_same_allowlist_contract(client) -> None:
+    test_client, data_dir, _ = client
+    feed_path = data_dir / "allowlisted-feed.json"
+    feed_path.write_text(
+        json.dumps(
+            {
+                "next_watermark": "2026-04-28T22:30:00Z",
+                "records": [
+                    {
+                        "source_id": "src-file-feed-note-1",
+                        "title": "File feed note",
+                        "content_ref": "file-feed://note-1",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    feed_url = feed_path.as_uri()
+
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-file-feed-notes", source_type="internal_note"),
+            "fetch": {
+                "mode": "external_feed",
+                "url": feed_url,
+                "allowed_url_prefixes": [(data_dir / "").as_uri()],
+                "max_bytes": 4096,
+                "max_records": 3,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-file-feed-notes",
+            "trace_id": "trace-source-ingest-file-feed",
+            "trigger_type": "scheduled",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["run"]["status"] == "completed"
+    assert response.json()["watermark"]["value"] == "2026-04-28T22:30:00Z"
+
+
+def test_external_feed_rejects_unallowlisted_url_at_configuration(client) -> None:
+    test_client, _, _ = client
+
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-rejected-feed", source_type="internal_note"),
+            "fetch": {
+                "mode": "external_feed",
+                "url": "https://not-allowed.example.test/feed.json",
+                "allowed_url_prefixes": ["https://allowed.example.test/"],
+                "max_records": 3,
+            },
+        },
+    )
+
+    assert configured.status_code == 400
+    assert "outside allowed_url_prefixes" in configured.json()["detail"]
+
+
+def test_external_feed_size_failure_routes_to_dlq_without_advancing_watermark(client) -> None:
+    test_client, data_dir, _ = client
+    feed_path = data_dir / "oversized-feed.json"
+    feed_path.write_text(
+        json.dumps(
+            {
+                "next_watermark": "2026-04-28T23:00:00Z",
+                "records": [
+                    {
+                        "source_id": "src-oversized-feed-note-1",
+                        "title": "Oversized feed note",
+                        "content_ref": "file-feed://oversized-note-1",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-oversized-feed", source_type="internal_note"),
+            "fetch": {
+                "mode": "external_feed",
+                "url": feed_path.as_uri(),
+                "allowed_url_prefixes": [(data_dir / "").as_uri()],
+                "max_bytes": 16,
+                "max_records": 3,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    failed = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-oversized-feed",
+            "trace_id": "trace-source-ingest-oversized-feed",
+            "trigger_type": "scheduled",
+        },
+    )
+    assert failed.status_code == 201, failed.text
+    body = failed.json()
+    assert body["run"]["status"] == "failed"
+    assert body["watermark"] is None
+    assert "exceeds fetch.max_bytes=16" in body["dlq_entries"][0]["reason"]
+    watermark = test_client.get("/api/source-ingest/watermarks/conn-oversized-feed")
+    assert watermark.status_code == 404
 
 
 def test_configured_connector_preserves_per_record_access_scope_for_search_index(client) -> None:

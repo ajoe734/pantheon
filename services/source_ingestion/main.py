@@ -164,20 +164,38 @@ class ConfiguredFetchRecordBody(BaseModel):
 
 
 class ConfiguredFetchBody(BaseModel):
-    mode: Literal["static_records"] = "static_records"
+    mode: Literal["static_records", "external_feed"] = "static_records"
     records: list[ConfiguredFetchRecordBody] = Field(default_factory=list)
+    url: str | None = None
+    allowed_url_prefixes: list[str] = Field(default_factory=list)
+    timeout_seconds: float = 5.0
+    max_bytes: int = 1_000_000
+    max_records: int = 100
+    default_access_scope: list[str] = Field(default_factory=lambda: ["public"])
     next_watermark: str | None = None
     fail_until_attempt: int = 0
     failure_reason: str = "configured connector fetch failed"
 
     def to_config(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "mode": self.mode,
             "records": [record.to_config() for record in self.records],
             "next_watermark": self.next_watermark,
             "fail_until_attempt": self.fail_until_attempt,
             "failure_reason": self.failure_reason,
         }
+        if self.mode == "external_feed":
+            payload.update(
+                {
+                    "url": self.url,
+                    "allowed_url_prefixes": self.allowed_url_prefixes,
+                    "timeout_seconds": self.timeout_seconds,
+                    "max_bytes": self.max_bytes,
+                    "max_records": self.max_records,
+                    "default_access_scope": self.default_access_scope,
+                }
+            )
+        return payload
 
 
 class ConfigureConnectorRequest(BaseModel):
@@ -214,6 +232,11 @@ def _register_or_validate_connector(connector: SourceConnector) -> SourceConnect
 def _assert_fetch_within_limit(fetch: ConfiguredFetchBody) -> None:
     if len(fetch.records) > MAX_RECORDS_PER_JOB:
         raise HTTPException(status_code=413, detail=f"fetch.records exceeds SOURCE_INGEST_MAX_RECORDS={MAX_RECORDS_PER_JOB}")
+    if fetch.mode == "external_feed" and fetch.max_records > MAX_RECORDS_PER_JOB:
+        raise HTTPException(
+            status_code=413,
+            detail=f"fetch.max_records exceeds SOURCE_INGEST_MAX_RECORDS={MAX_RECORDS_PER_JOB}",
+        )
 
 
 def _configure_connector(request: ConfigureConnectorRequest) -> dict[str, Any]:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,21 +121,58 @@ class JsonlConfiguredConnectorStore:
 
     def _validate_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
         mode = str(fetch.get("mode") or "").strip()
-        if mode != "static_records":
-            raise SourceEvidenceError("fetch.mode must be static_records")
-        records = fetch.get("records")
-        if not isinstance(records, list):
-            raise SourceEvidenceError("fetch.records must be a list")
         fail_until_attempt = int(fetch.get("fail_until_attempt") or 0)
         if fail_until_attempt < 0:
             raise SourceEvidenceError("fetch.fail_until_attempt must be >= 0")
-        return {
-            "mode": mode,
-            "records": [dict(record) for record in records],
-            "next_watermark": fetch.get("next_watermark"),
-            "fail_until_attempt": fail_until_attempt,
-            "failure_reason": str(fetch.get("failure_reason") or "configured connector fetch failed"),
-        }
+        failure_reason = str(fetch.get("failure_reason") or "configured connector fetch failed")
+
+        if mode == "static_records":
+            records = fetch.get("records")
+            if not isinstance(records, list):
+                raise SourceEvidenceError("fetch.records must be a list")
+            return {
+                "mode": mode,
+                "records": [dict(record) for record in records],
+                "next_watermark": fetch.get("next_watermark"),
+                "fail_until_attempt": fail_until_attempt,
+                "failure_reason": failure_reason,
+            }
+
+        if mode == "external_feed":
+            url = str(fetch.get("url") or "").strip()
+            if not url:
+                raise SourceEvidenceError("fetch.url is required for external_feed")
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme not in {"http", "https", "file"}:
+                raise SourceEvidenceError("fetch.url must use http, https, or file scheme")
+            allowed_prefixes = _normalized_string_list(fetch.get("allowed_url_prefixes"))
+            if not allowed_prefixes:
+                raise SourceEvidenceError("fetch.allowed_url_prefixes is required for external_feed")
+            if not _url_is_allowed(url, allowed_prefixes):
+                raise SourceEvidenceError("fetch.url is outside allowed_url_prefixes")
+            timeout_seconds = float(fetch.get("timeout_seconds") or 5.0)
+            if timeout_seconds <= 0 or timeout_seconds > 30:
+                raise SourceEvidenceError("fetch.timeout_seconds must be > 0 and <= 30")
+            max_bytes = int(fetch.get("max_bytes") or 1_000_000)
+            if max_bytes <= 0 or max_bytes > 10_000_000:
+                raise SourceEvidenceError("fetch.max_bytes must be > 0 and <= 10000000")
+            max_records = int(fetch.get("max_records") or 100)
+            if max_records <= 0 or max_records > 1000:
+                raise SourceEvidenceError("fetch.max_records must be > 0 and <= 1000")
+            return {
+                "mode": mode,
+                "url": url,
+                "allowed_url_prefixes": allowed_prefixes,
+                "timeout_seconds": timeout_seconds,
+                "max_bytes": max_bytes,
+                "max_records": max_records,
+                "next_watermark": fetch.get("next_watermark"),
+                "default_access_scope": _normalized_string_list(fetch.get("default_access_scope")) or ["public"],
+                "fail_until_attempt": fail_until_attempt,
+                "failure_reason": failure_reason,
+            }
+
+        raise SourceEvidenceError("fetch.mode must be static_records or external_feed")
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,16 +205,65 @@ class ConfiguredConnectorFetcher:
             self.store.record_fetch_attempt(connector_id, success=False, error=reason)
             raise SourceEvidenceError(reason)
 
-        records = tuple(
-            self._source_record_from_config(
-                payload,
-                connector=config.connector,
-                watermark=watermark,
+        try:
+            if config.fetch.get("mode") == "external_feed":
+                payload = self._fetch_external_payload(config.fetch)
+                record_payloads = payload.get("records")
+                if not isinstance(record_payloads, list):
+                    raise SourceEvidenceError("external feed records must be a list")
+                max_records = int(config.fetch.get("max_records") or 0)
+                if len(record_payloads) > max_records:
+                    raise SourceEvidenceError(f"external feed records exceeds fetch.max_records={max_records}")
+                next_watermark = payload.get("next_watermark", config.fetch.get("next_watermark"))
+            else:
+                record_payloads = config.fetch.get("records", [])
+                next_watermark = config.fetch.get("next_watermark")
+
+            records = tuple(
+                self._source_record_from_config(
+                    payload,
+                    connector=config.connector,
+                    watermark=watermark,
+                    fetch=config.fetch,
+                )
+                for payload in record_payloads
             )
-            for payload in config.fetch.get("records", [])
-        )
+        except Exception as exc:
+            self.store.record_fetch_attempt(connector_id, success=False, error=str(exc))
+            raise
         self.store.record_fetch_attempt(connector_id, success=True)
-        return IngestBatch(records=records, next_watermark=config.fetch.get("next_watermark"))
+        return IngestBatch(records=records, next_watermark=next_watermark)
+
+    def _fetch_external_payload(self, fetch: Mapping[str, Any]) -> Mapping[str, Any]:
+        url = str(fetch["url"])
+        allowed_prefixes = _normalized_string_list(fetch.get("allowed_url_prefixes"))
+        if not _url_is_allowed(url, allowed_prefixes):
+            raise SourceEvidenceError("external feed URL is outside allowed_url_prefixes")
+        max_bytes = int(fetch["max_bytes"])
+        raw: bytes
+        if url.startswith("file://"):
+            path = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path))
+            with path.open("rb") as handle:
+                raw = handle.read(max_bytes + 1)
+        else:
+            request = urllib.request.Request(
+                url,
+                headers={"Accept": "application/json", "User-Agent": "pantheon-source-ingest/0.1"},
+            )
+            with urllib.request.urlopen(request, timeout=float(fetch["timeout_seconds"])) as response:
+                final_url = response.geturl()
+                if not _url_is_allowed(final_url, allowed_prefixes):
+                    raise SourceEvidenceError("external feed redirect is outside allowed_url_prefixes")
+                raw = response.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise SourceEvidenceError(f"external feed response exceeds fetch.max_bytes={max_bytes}")
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SourceEvidenceError("external feed response must be UTF-8 JSON") from exc
+        if not isinstance(payload, Mapping):
+            raise SourceEvidenceError("external feed response must be a JSON object")
+        return payload
 
     def _source_record_from_config(
         self,
@@ -183,11 +271,16 @@ class ConfiguredConnectorFetcher:
         *,
         connector: SourceConnector,
         watermark: str | None,
+        fetch: Mapping[str, Any],
     ) -> SourceRecord:
         metadata = dict(payload.get("metadata") or {})
         if watermark is not None:
             metadata.setdefault("starting_watermark", watermark)
         metadata.setdefault("license_scope", connector.license_scope)
+        metadata.setdefault("access_scope", list(fetch.get("default_access_scope") or ["public"]))
+        if fetch.get("mode") == "external_feed":
+            metadata.setdefault("source_feed_url", fetch.get("url"))
+            metadata.setdefault("source_fetch_mode", "external_feed")
         return SourceRecord(
             source_id=str(payload["source_id"]),
             connector_id=str(payload.get("connector_id") or connector.connector_id),
@@ -199,3 +292,15 @@ class ConfiguredConnectorFetcher:
             trace_id=str(payload.get("trace_id") or ""),
             created_at=payload.get("created_at") or _utc_now(),
         )
+
+
+def _normalized_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _url_is_allowed(url: str, allowed_prefixes: list[str]) -> bool:
+    return any(url.startswith(prefix) for prefix in allowed_prefixes)

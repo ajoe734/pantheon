@@ -9,6 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
 
 GOVERNANCE_URL = os.getenv("GOVERNANCE_URL", "http://127.0.0.1:8082")
@@ -39,6 +41,7 @@ RECONCILIATION_DRIFT_URL = os.getenv("RECONCILIATION_DRIFT_URL", "http://127.0.0
 RESEARCH_WORKER_GATEWAY_URL = os.getenv("RESEARCH_WORKER_GATEWAY_URL", "http://127.0.0.1:8103")
 OPENCLAW_GATEWAY_ADAPTER_URL = os.getenv("OPENCLAW_GATEWAY_ADAPTER_URL", "http://127.0.0.1:8104")
 WEB_CHANNEL_URL = os.getenv("WEB_CHANNEL_URL", "http://127.0.0.1:8000")
+SOURCE_INGEST_EXTERNAL_FEED_HOST = os.getenv("SOURCE_INGEST_EXTERNAL_FEED_HOST", "smoke-stack")
 
 OPERATOR_TOKEN = "Bearer smoke-operator:operator"
 APPROVER_TOKEN = "Bearer smoke-approver:approver"
@@ -79,6 +82,30 @@ def _wait_for_health(name: str, url: str, timeout_seconds: int = 60) -> None:
             last_error = str(exc)
         time.sleep(1)
     raise RuntimeError(f"{name} health check did not become ready: {last_error}")
+
+
+def _serve_source_feed(payload: dict) -> tuple[ThreadingHTTPServer, str]:
+    body = json.dumps(payload).encode("utf-8")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+            if self.path != "/feed.json":
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args) -> None:
+            return
+
+    server = ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    feed_url = f"http://{SOURCE_INGEST_EXTERNAL_FEED_HOST}:{server.server_port}/feed.json"
+    return server, feed_url
 
 
 def _verify_sse_replay() -> None:
@@ -344,15 +371,8 @@ def main() -> int:
         raise RuntimeError(f"consultation-svc did not persist BFF request: {status} {service_request}")
     print("ok  consultation-svc persisted a BFF-created consult request")
 
-    source_connector_body = {
-        "connector": {
-            "connector_id": "conn-smoke-notes",
-            "source_type": "internal_note",
-            "provider": "Pantheon smoke",
-            "license_scope": "internal",
-        },
-        "fetch": {
-            "mode": "static_records",
+    source_feed_server, source_feed_url = _serve_source_feed(
+        {
             "next_watermark": future_timestamp,
             "records": [
                 {
@@ -374,29 +394,50 @@ def main() -> int:
                         "access_scope": ["risk-committee"],
                         "keywords": ["momentum", "volatility"],
                     },
-                }
+                },
             ],
+        }
+    )
+    source_connector_body = {
+        "connector": {
+            "connector_id": "conn-smoke-notes",
+            "source_type": "internal_note",
+            "provider": "Pantheon smoke",
+            "license_scope": "internal",
+        },
+        "fetch": {
+            "mode": "external_feed",
+            "url": source_feed_url,
+            "allowed_url_prefixes": [source_feed_url.rsplit("/", 1)[0] + "/"],
+            "timeout_seconds": 5,
+            "max_bytes": 8192,
+            "max_records": 10,
+            "default_access_scope": ["operator", "research"],
         },
     }
-    status, configured_source = _request_json(
-        "POST",
-        f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
-        body=source_connector_body,
-    )
-    if status != 201 or configured_source.get("connector", {}).get("connector_id") != "conn-smoke-notes":
-        raise RuntimeError(f"source-ingest connector configuration failed: {status} {configured_source}")
-    source_ingest_body = {
-        "connector_id": "conn-smoke-notes",
-        "trace_id": f"trace-source-ingest-smoke-{suffix}",
-        "trigger_type": "compose_smoke",
-    }
-    status, ingest_result = _request_json(
-        "POST",
-        f"{SOURCE_INGEST_URL}/api/source-ingest/jobs",
-        body=source_ingest_body,
-    )
-    if status != 201 or ingest_result.get("run", {}).get("status") != "completed":
-        raise RuntimeError(f"source-ingest job trigger failed: {status} {ingest_result}")
+    try:
+        status, configured_source = _request_json(
+            "POST",
+            f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
+            body=source_connector_body,
+        )
+        if status != 201 or configured_source.get("connector", {}).get("connector_id") != "conn-smoke-notes":
+            raise RuntimeError(f"source-ingest connector configuration failed: {status} {configured_source}")
+        source_ingest_body = {
+            "connector_id": "conn-smoke-notes",
+            "trace_id": f"trace-source-ingest-smoke-{suffix}",
+            "trigger_type": "compose_smoke",
+        }
+        status, ingest_result = _request_json(
+            "POST",
+            f"{SOURCE_INGEST_URL}/api/source-ingest/jobs",
+            body=source_ingest_body,
+        )
+        if status != 201 or ingest_result.get("run", {}).get("status") != "completed":
+            raise RuntimeError(f"source-ingest job trigger failed: {status} {ingest_result}")
+    finally:
+        source_feed_server.shutdown()
+        source_feed_server.server_close()
     run_id = ingest_result["run"]["ingest_run_id"]
     status, replayed_run = _request_json("GET", f"{SOURCE_INGEST_URL}/api/source-ingest/jobs/{run_id}")
     if status != 200 or replayed_run.get("run", {}).get("ingest_run_id") != run_id:
