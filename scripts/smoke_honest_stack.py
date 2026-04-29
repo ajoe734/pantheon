@@ -371,6 +371,7 @@ def main() -> int:
         raise RuntimeError(f"consultation-svc did not persist BFF request: {status} {service_request}")
     print("ok  consultation-svc persisted a BFF-created consult request")
 
+    source_search_token = f"source-smoke-{suffix}"
     source_feed_server, source_feed_url = _serve_source_feed(
         {
             "next_watermark": future_timestamp,
@@ -380,9 +381,12 @@ def main() -> int:
                     "title": "Compose smoke note",
                     "content_ref": f"memory://compose-smoke/{suffix}",
                     "metadata": {
-                        "body": "Compose smoke source evidence should be durable for momentum volatility search.",
+                        "body": (
+                            "Compose smoke source evidence should be durable for "
+                            f"momentum volatility search {source_search_token}."
+                        ),
                         "access_scope": ["operator", "research"],
-                        "keywords": ["compose", "smoke", "momentum", "volatility"],
+                        "keywords": ["compose", "smoke", "momentum", "volatility", source_search_token],
                     },
                 },
                 {
@@ -390,9 +394,12 @@ def main() -> int:
                     "title": "Compose private smoke note",
                     "content_ref": f"memory://compose-smoke/private/{suffix}",
                     "metadata": {
-                        "body": "Momentum volatility evidence that should be filtered before ranking.",
+                        "body": (
+                            "Momentum volatility evidence that should be filtered before "
+                            f"ranking {source_search_token}."
+                        ),
                         "access_scope": ["risk-committee"],
-                        "keywords": ["momentum", "volatility"],
+                        "keywords": ["momentum", "volatility", source_search_token],
                     },
                 },
             ],
@@ -537,7 +544,7 @@ def main() -> int:
     search_body = {
         "request_id": f"search-smoke-{suffix}",
         "trace_id": f"trace-search-smoke-{suffix}",
-        "query": "momentum volatility",
+        "query": f"momentum volatility {source_search_token}",
         "persona_id": "operator-workbench",
         "workspace_id": "research-workbench",
         "source_types": ["internal_note"],

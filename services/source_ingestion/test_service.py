@@ -379,6 +379,82 @@ def test_external_feed_size_failure_routes_to_dlq_without_advancing_watermark(cl
     assert watermark.status_code == 404
 
 
+def test_configured_failure_dlq_audit_preserves_existing_watermark(client) -> None:
+    test_client, _, _ = client
+    connector = _connector(connector_id="conn-watermarked-failure", source_type="internal_note")
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": connector,
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-04-28T20:00:00Z",
+                "records": [
+                    {
+                        "source_id": "src-watermark-baseline",
+                        "title": "Watermark baseline",
+                        "content_ref": "memory://watermark/baseline",
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    completed = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-watermarked-failure",
+            "trace_id": "trace-watermark-baseline",
+            "trigger_type": "scheduled",
+        },
+    )
+    assert completed.status_code == 201, completed.text
+    first_run_id = completed.json()["run"]["ingest_run_id"]
+
+    reconfigured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": connector,
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-04-28T21:00:00Z",
+                "fail_until_attempt": 3,
+                "failure_reason": "bounded feed temporarily unavailable",
+                "records": [
+                    {
+                        "source_id": "src-watermark-newer",
+                        "title": "Watermark newer",
+                        "content_ref": "memory://watermark/newer",
+                    }
+                ],
+            },
+        },
+    )
+    assert reconfigured.status_code == 201, reconfigured.text
+
+    failed = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-watermarked-failure",
+            "trace_id": "trace-watermark-failure",
+            "trigger_type": "scheduled",
+        },
+    )
+    assert failed.status_code == 201, failed.text
+    body = failed.json()
+    assert body["run"]["status"] == "failed"
+    assert body["watermark"]["value"] == "2026-04-28T20:00:00Z"
+    assert body["watermark"]["last_ingest_run_id"] == first_run_id
+    assert body["dlq_entries"][0]["event"]["payload"]["watermark"] == "2026-04-28T20:00:00Z"
+    assert body["audit_actions"][0]["action_type"] == "source_ingestion.scheduled_run.dead_lettered"
+    assert body["audit_actions"][0]["metadata"]["watermark"] == "2026-04-28T20:00:00Z"
+
+    replayed_watermark = test_client.get("/api/source-ingest/watermarks/conn-watermarked-failure")
+    assert replayed_watermark.status_code == 200
+    assert replayed_watermark.json()["watermark"]["value"] == "2026-04-28T20:00:00Z"
+    assert replayed_watermark.json()["watermark"]["last_ingest_run_id"] == first_run_id
+
+
 def test_configured_connector_preserves_per_record_access_scope_for_search_index(client) -> None:
     test_client, data_dir, _ = client
     configured = test_client.post(

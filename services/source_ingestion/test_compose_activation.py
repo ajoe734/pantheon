@@ -40,3 +40,14 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert smoke_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert "source-ingest" in services["smoke-stack"]["depends_on"]
     assert "source-ingest-data" in compose["volumes"]
+
+    smoke = (compose_path.parent / "scripts/smoke_honest_stack.py").read_text(encoding="utf-8")
+    assert 'SOURCE_INGEST_EXTERNAL_FEED_HOST = os.getenv("SOURCE_INGEST_EXTERNAL_FEED_HOST", "smoke-stack")' in smoke
+    assert 'source_search_token = f"source-smoke-{suffix}"' in smoke
+    assert '"mode": "external_feed"' in smoke
+    assert '"allowed_url_prefixes": [source_feed_url.rsplit("/", 1)[0] + "/"]' in smoke
+    assert '"max_records": 10' in smoke
+    assert '"keywords": ["compose", "smoke", "momentum", "volatility", source_search_token]' in smoke
+    assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/connectors"' in smoke
+    assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/jobs"' in smoke
+    assert 'f"{SEARCH_URL}/api/search/query"' in smoke

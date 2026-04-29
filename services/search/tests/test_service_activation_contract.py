@@ -36,6 +36,7 @@ def test_honest_stack_smoke_waits_for_and_queries_search_service() -> None:
     assert 'f"{SEARCH_URL}/api/search/index/reload"' in smoke
     assert 'f"{SEARCH_URL}/api/search/query"' in smoke
     assert 'f"{SEARCH_URL}/api/search/snapshots/{search_body[\'request_id\']}"' in smoke
+    assert '"query": f"momentum volatility {source_search_token}"' in smoke
     assert '"documents": [' not in smoke
 
 

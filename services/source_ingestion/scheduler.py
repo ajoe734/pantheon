@@ -289,7 +289,11 @@ class IngestionScheduler:
             reason="scheduled ingest exhausted retries",
             trace=trace,
             payload=event.payload,
-            metadata={"connector_id": connector_id, "attempts": self.max_attempts},
+            metadata={
+                "connector_id": connector_id,
+                "attempts": self.max_attempts,
+                "watermark": starting_watermark.value if starting_watermark else None,
+            },
         )
         dlq_entry = self.dead_letter_queue.reject(
             event,
