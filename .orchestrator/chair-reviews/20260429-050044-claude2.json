@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Four of six lanes are paused (claude, codex2, copilot, gemini); only codex is dispatchable and is already on three primary tasks, so no idle worker exists to absorb sidecars.",
+  "blocked_by": [
+    "no idle eligible auto worker: codex2/copilot/gemini paused with quota_terminal/capacity, claude paused until 2026-04-29T12:20:00Z and auth_ready=false",
+    "codex lane is already covering three primary tasks (SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE owner, SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE owner, SVC-DOCS-CODE-TRUTH-SYNC owner)",
+    "claude2 lane is occupied by this chair review",
+    "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE remains stale in_progress with no live worker (carried over from prior chair cycle)",
+    "open sidecar SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE is in a 2-strike Copilot quota loop and needs reviewer repair first"
+  ],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-DOCS-CODE-TRUTH-SYNC",
+    "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Copilot",
+      "to": "Claude2",
+      "reason": "Copilot has hit quota_terminal twice on this task and is paused until 05:15:44Z; the prior reviewer Codex2 is also paused (05:15:34Z); owner is Codex; Claude2 shares the governance-review capability lane and is the only non-paused, non-owner reviewer available, breaking the bad-loop without retrying a paused quota lane."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+    "SVC-DOCS-CODE-TRUTH-SYNC",
+    "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+    "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE"
+  ]
+}

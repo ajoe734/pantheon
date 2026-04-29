@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Low utilization and no global guardrail; keep sidecars capped while clearing the current review queue.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260428T194342Z-35ce2b59",
+      "decision": "allow",
+      "reason": "Read-only docker compose config validation; it does not start containers or mutate files and output is bounded.",
+      "remember": false
+    }
+  ],
+  "recommended_focus": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY"
+  ]
+}

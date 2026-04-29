@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle auto workers (Claude2, Copilot) are available, underutilization 0.1667 is below threshold, dispatch and approval queues are clean, no provider-wide guardrail pause, and runnable support work exists for non-active parents.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RECONCILIATION-DRIFT-SERVICE",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF"
+  ],
+  "approval_actions": [],
+  "recommended_focus": [
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ]
+}

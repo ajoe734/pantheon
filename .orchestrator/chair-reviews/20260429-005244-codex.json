@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "No eligible idle workers remain while current sidecar review and finalization debt is stuck behind provider pauses and a Codex2 reviewer loop.",
+  "blocked_by": [
+    "no_eligible_idle_sidecar_worker: claude quota-paused until 2026-04-29T12:20:00Z, claude2 auth-paused, copilot quota-paused, gemini capacity-paused, codex is chair, and codex2 is in a 50-failure reviewer loop",
+    "review_loop:SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE reviewer Codex2 has 50 non-terminal exits",
+    "review_finalization_debt:SVC-RESEARCH-WORKER-GATEWAY is review_approved but finalize was preempted, with an additional sidecar still in review"
+  ],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Codex2",
+      "to": "Claude",
+      "reason": "Codex2 has 50 non-terminal reviewer exits on this sidecar; Claude is an independent reviewer lane, so reroute after the Claude quota pause clears instead of retrying the same Codex2 loop."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "OPS-GITHUB-REVIEW-PR-BRANCH-ANCESTRY",
+    "OPS-CLAUDE2-AUTH"
+  ]
+}

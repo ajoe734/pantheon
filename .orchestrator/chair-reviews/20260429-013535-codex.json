@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Existing review and finalize debt is blocked by provider pauses and a Codex2 reviewer failure loop.",
+  "blocked_by": [
+    "review_loop:SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE reviewer Codex2 has 50 non-terminal exits, last 2026-04-29T00:33:30Z",
+    "review_finalization_debt:SVC-RESEARCH-WORKER-GATEWAY is review_approved with finalize handoff pending since 2026-04-28T20:05:05Z and recent Codex2 finalize dispatches were preempted",
+    "provider_guardrails: claude is paused until 2026-04-29T12:20:00Z, copilot until 2026-04-29T01:45:14Z, and gemini until 2026-04-29T01:50:35Z",
+    "no_safe_new_sidecar_backlog: active parents already have support packets or archived sidecar support, while the review queue remains undrained"
+  ],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Codex2",
+      "to": "Claude2",
+      "reason": "Codex2 has 50 consecutive non-terminal exits on this review; Claude2 is an independent reviewer for owner Codex and is not currently listed in dispatch pauses."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "OPS-CODEX2-REVIEWER-EXIT",
+    "OPS-GITHUB-REVIEW-PR-BRANCH"
+  ]
+}

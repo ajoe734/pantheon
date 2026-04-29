@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization 0.1667 with idle Claude2/Copilot lanes and runnable backlog; no global blocker, only short codex2/gemini quota pauses that auto-clear by 15:50Z.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260428T154111Z-acfe93d8",
+      "decision": "allow",
+      "reason": "Read-only docker-compose YAML validation scoped to current SVC-GOVERNANCE-API review work; no filesystem mutation, no network egress, no credential exposure.",
+      "remember": false
+    }
+  ],
+  "recommended_focus": [
+    "SVC-GOVERNANCE-API",
+    "SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF",
+    "SVC-RUNTIME-CONTROL"
+  ]
+}

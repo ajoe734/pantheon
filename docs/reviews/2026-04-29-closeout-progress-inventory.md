@@ -73,4 +73,3 @@ Publish state to reconcile:
 - Current active board is clean after archive migration.
 - Do not create a broad retroactive commit from the current dirty worktree; it contains many unrelated/generated changes. Use task-scoped commits only.
 - Chair man should use this inventory when deciding whether closeout follow-ups or scoped push approvals are needed.
-

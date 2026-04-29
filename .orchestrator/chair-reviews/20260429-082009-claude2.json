@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "All agents idle, board fully closed, no active provider pauses, no stuck approvals/dispatch — safe to keep sidecar door open for when a runnable parent appears.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": []
+}

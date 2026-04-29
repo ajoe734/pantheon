@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle capacity remains available, the search pipeline can use bounded support, and the Copilot quota pause is localized rather than global.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-DOCS-CODE-TRUTH-SYNC"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "role": "reviewer",
+      "from": "Copilot",
+      "to": "Claude2",
+      "reason": "Copilot is quota-paused while this mainline review is waiting; Claude2 is an available non-paused reviewer lane."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE"
+  ]
+}

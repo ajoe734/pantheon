@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is present, no global blocker is active, and service backlog support work can run safely in parallel.",
+  "blocked_by": [],
+  "recommended_focus": [
+    "SVC-SERVICE-DISPOSITION",
+    "SVC-SURFACES"
+  ]
+}

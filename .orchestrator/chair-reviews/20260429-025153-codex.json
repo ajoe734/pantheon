@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Mainline has a live Codex2 worker and no approval/global blocker; block parents with open sidecar reviews or archived sidecar-id collision.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Gemini",
+      "to": "Claude2",
+      "reason": "Gemini reviewer run hit terminal quota and its PID is defunct while state still shows running; route review to an available independent reviewer."
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Claude",
+      "to": "Claude2",
+      "reason": "Review has been idle since 2026-04-28T19:44:21Z while Claude is quota-paused until 2026-04-29T12:20:00Z."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE"
+  ]
+}

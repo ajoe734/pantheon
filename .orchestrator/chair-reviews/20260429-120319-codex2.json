@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is low and bounded support work remains, with only provider-specific quota pauses.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY",
+    "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD",
+    "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T115256Z-cfbc8af0",
+      "decision": "allow",
+      "reason": "Scoped test-dependency install and pytest version check for the active BFF auth task; no repository source or canonical state mutation.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-BFF-AUTH-FACADE-HARDENING",
+    "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS",
+    "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD",
+    "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 0,
+  "reason": "No active execution backlog or clear parent support need exists for sidecars.",
+  "blocked_by": [
+    "no_active_execution_backlog",
+    "no_clear_sidecar_parent_support_need"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-SPRINT-NEXT-PLANNING",
+    "OPS-PROVIDER-GUARDRAIL-HYGIENE",
+    "OPS-STATE-SEEN-KEYS-COMPACTION"
+  ]
+}

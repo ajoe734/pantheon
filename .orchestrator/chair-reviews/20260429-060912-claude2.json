@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle capacity (utilization 0.0), one parent has live sidecar but other parents remain available; no global blocker — provider pauses are local quota and expire within ~10 min.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+    "SVC-DOCS-CODE-TRUTH-SYNC"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T060420Z-35daf4fb",
+      "decision": "allow",
+      "reason": "Read-only Agent/Explore call scoped to the active SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF packet. Reads five specific files (services/search/main.py, services/source_ingestion/main.py, services/control-plane/bff/main.py, docker-compose.yml, an existing sidecar template) with no mutation, no shell, no credentials.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF",
+    "SVC-DOCS-CODE-TRUTH-SYNC"
+  ]
+}

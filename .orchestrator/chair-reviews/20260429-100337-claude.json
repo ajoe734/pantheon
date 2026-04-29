@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Board is fully idle with no active tasks, no dispatch pauses, and no pending approvals; no concrete blockers exist, authorization is advisory until new sprint tasks are created.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-SPRINT-NEXT-PLANNING",
+    "OPS-STATE-SEEN-KEYS-COMPACTION",
+    "OPS-CLAUDE2-AUTH-CHECK"
+  ]
+}
