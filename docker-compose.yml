@@ -975,6 +975,95 @@ services:
         condition: service_healthy
     command: ["python", "scripts/smoke_honest_stack.py"]
 
+  # ===========================================================================
+  # Dormant OSS deferred-prep smoke profiles — activation-gated; not started by default
+  #
+  # Run a single service:
+  #   docker compose --profile dormant-smoke run --rm finrl-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm rllib-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm ray-tune-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm qlib-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm trl-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm experiments-dormant-smoke
+  #
+  # No ports, secrets, or live broker routes are exposed in this profile.
+  # Each service exits after the smoke run completes.
+  # ===========================================================================
+
+  finrl-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/finrl/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      FINRL_BACKEND: "stub"
+    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    restart: "no"
+
+  rllib-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/rllib/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      RLLIB_BACKEND: "stub"
+    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    restart: "no"
+
+  ray-tune-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/rllib/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      RAY_TUNE_BACKEND: "stub"
+    command: ["python", "ray_tune_smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    restart: "no"
+
+  qlib-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/qlib/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      QLIB_BACKEND: "stub"
+    command: ["python", "smoke_test.py", "--backend", "stub"]
+    restart: "no"
+
+  trl-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/learning/trl/Dockerfile
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      TRL_BACKEND: "stub"
+    command: ["python", "services/learning/trl/smoke_test.py", "--backend", "stub"]
+    restart: "no"
+
+  experiments-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/registry/experiments/Dockerfile
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      EXPERIMENT_BACKEND: "memory"
+    command: ["python", "smoke_test.py", "--backend", "memory"]
+    restart: "no"
+
 volumes:
   bff-data:
   capital-data:

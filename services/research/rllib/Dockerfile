@@ -6,11 +6,12 @@
 # See: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §4
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY adapter ./adapter
-COPY examples ./examples
-COPY config.py worker.py ray_tune_worker.py smoke_test.py ray_tune_smoke_test.py ./
+COPY services/research/rllib/requirements.txt .
+ARG PANTHEON_INSTALL_UPSTREAM_DEPS=true
+RUN if [ "$PANTHEON_INSTALL_UPSTREAM_DEPS" = "true" ]; then pip install --no-cache-dir -r requirements.txt; fi
+COPY services/research/rllib/adapter/ ./adapter/
+COPY services/research/rllib/examples/ ./examples/
+COPY services/research/rllib/config.py services/research/rllib/worker.py services/research/rllib/ray_tune_worker.py services/research/rllib/smoke_test.py services/research/rllib/ray_tune_smoke_test.py ./
 # Default command is inert. Run worker.py or ray_tune_worker.py with the explicit
 # prep env gate when exercising the offline scaffold.
 CMD ["python", "-c", "print('RLlib/Ray Tune deferred-prep image: explicit prep gate required; activation remains closed')"]
