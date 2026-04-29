@@ -14,7 +14,6 @@ from services.knowledge.evidence import (
     EvidenceBundle,
     EvidenceItem,
     InMemoryEvidenceRepository,
-    JsonlEvidenceRepository,
     KnowledgeObject,
 )
 from services.knowledge.evidence.models import EvidenceValidationError
@@ -24,6 +23,7 @@ from .filters import SearchAccessContext, SearchPolicyError, SearchRequest
 from .gateway import SearchGateway
 from .index_adapter import KeywordIndexAdapter
 from .index_store import JsonlSearchIndexStore
+from .pg_store import build_search_evidence_repository, build_search_index_store
 
 
 def _resolve_data_dir() -> Path:
@@ -213,8 +213,8 @@ def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str 
 
 def create_app(index_store_path: Path | None = None, evidence_store_path: Path | None = None) -> FastAPI:
     app = FastAPI(title="Pantheon Search Service", version="0.1.0")
-    store = JsonlSearchIndexStore(index_store_path or INDEX_STORE_PATH)
-    durable_repository = JsonlEvidenceRepository(evidence_store_path or EVIDENCE_STORE_PATH)
+    store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
+    durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
     register_fastapi_health_routes(
         app,
         "pantheon-search",

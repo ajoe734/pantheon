@@ -20,6 +20,9 @@ class InMemoryEvidenceRepository:
         self._bundles: Dict[str, EvidenceBundle] = {}
         self._knowledge_objects: Dict[str, KnowledgeObject] = {}
 
+    def reload(self) -> None:
+        """No-op for in-memory store; subclasses override to re-read from durable storage."""
+
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
         self._source_records[source.source_id] = source
         return source

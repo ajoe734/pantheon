@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from services.foundation import ActorRef, ActorType, DeadLetterQueue, DeadLetterReplayProcessor, SchemaRegistry
 from services.foundation.health import register_fastapi_health_routes
-from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, JsonlEvidenceRepository
+from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem
 from services.knowledge.evidence.models import EvidenceValidationError
 
 from .connectors import (
@@ -36,6 +36,7 @@ from .connectors import (
 )
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore
 from .ingest_manager import IngestManager
+from .pg_store import build_source_evidence_repository
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 
 
@@ -58,7 +59,7 @@ manager = IngestManager()
 store = JsonlIngestScheduleStore(SCHEDULE_STORE_PATH)
 connector_store = JsonlConfiguredConnectorStore(CONNECTOR_STORE_PATH)
 configured_fetcher = ConfiguredConnectorFetcher(connector_store)
-evidence_repository = JsonlEvidenceRepository(SOURCE_EVIDENCE_STORE_PATH)
+evidence_repository = build_source_evidence_repository(SOURCE_EVIDENCE_STORE_PATH)
 evidence_builder = EvidenceBundleBuilder(evidence_repository)
 dead_letter_queue = DeadLetterQueue(DLQ_STORE_PATH)
 dead_letter_queue.load_from_spill()

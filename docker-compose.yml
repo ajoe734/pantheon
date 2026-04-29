@@ -114,6 +114,10 @@ services:
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
+      # Postgres evidence store pilot — disabled by default (JSONL is baseline).
+      # Set SOURCE_INGEST_EVIDENCE_BACKEND=postgres and add postgres to depends_on to enable.
+      SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
+      SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
     volumes:
       - source-ingest-data:/data/source-ingest
     ports:
@@ -138,6 +142,12 @@ services:
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
       SEARCH_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      # Postgres store pilots — disabled by default (JSONL is baseline).
+      # Set *_BACKEND=postgres and add postgres to depends_on to enable.
+      SEARCH_INDEX_STORE_BACKEND: ${SEARCH_INDEX_STORE_BACKEND:-jsonl}
+      SEARCH_INDEX_STORE_DSN: ${SEARCH_INDEX_STORE_DSN:-}
+      SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-jsonl}
+      SEARCH_EVIDENCE_DSN: ${SEARCH_EVIDENCE_DSN:-}
     volumes:
       - search-data:/data/search
       - source-ingest-data:/data/source-ingest:ro
