@@ -46,11 +46,11 @@ This keeps runs grouped by artifact class and strategy family.
 ### Run name
 
 ```text
-{version}:{lifecycle_state}
+{version}:{artifact_state}:{deployment_stage}
 ```
 
-This makes lifecycle progression visible without letting the experiment backend become the
-promotion source of truth.
+This makes artifact promotion and deployment projection visible without letting the experiment
+backend become the source of truth for either field.
 
 ### Required mirrored tags
 
@@ -60,7 +60,8 @@ The adapter writes these core tags into the selected experiment backend:
 - `pantheon.strategy_id`
 - `pantheon.version`
 - `pantheon.artifact_type`
-- `pantheon.lifecycle_state`
+- `pantheon.artifact_state`
+- `pantheon.deployment_stage`
 - `pantheon.checksum`
 - `pantheon.storage_backend`
 - `pantheon.storage_path`
@@ -86,24 +87,33 @@ Lineage subfields are also broken out into dedicated tags when present:
 - `pantheon.lineage.source_dataset_refs`
 - `pantheon.lineage.source_strategy_spec_id`
 
+Legacy `lifecycle_state` input is accepted only as a compatibility projection during migration.
+The adapter maps it into canonical `artifact_state` and `deployment_stage` fields before building
+records, and emits `pantheon.compat.lifecycle_state` instead of treating the legacy value as
+canonical state.
+
 ## Promotion Metadata and Aliases
 
 The experiment backend does not decide Pantheon promotion state. Instead, the adapter mirrors that
-state in two
-places:
+state in two places:
 
-- run tag `pantheon.lifecycle_state`
+- run tag `pantheon.artifact_state`
+- run tag `pantheon.deployment_stage`
 - descriptive aliases in the resulting `experiment_ref`
 
 Alias policy in v1:
 
 - `candidate` -> `["candidate"]`
-- `paper` -> `["paper"]`
-- `live` -> `["live"]`
+- `approved` -> `["approved"]`
 - `retired` -> `["retired"]`
 
 `draft` entries can still be logged as experiments, but they do not produce promoted metadata or
 aliases.
+
+`deployment_stage` values (`none`, `paper`, `canary`, `frozen`, `live`) are mirrored as metadata
+only. They are not promotion aliases and are never used as a replacement for `artifact_state`.
+Any non-`none` deployment stage is valid only for `artifact_state=approved`; invalid combinations
+are rejected before the selected backend records a run.
 
 The returned `promoted_metadata` payload includes `experiment_refs`, so the registry can write the
 final execution-facing metadata envelope back into Object Store without trusting the experiment
@@ -146,7 +156,8 @@ python3 services/registry/experiments/smoke_test.py --backend wandb
 
 ## Live Rollback Rule
 
-`live` entries need richer rollback metadata than the earlier `REG-001` string-only sketch.
+Entries with `deployment_stage=live` need richer rollback metadata than the earlier `REG-001`
+string-only sketch.
 
 Accepted forms:
 

@@ -5,7 +5,7 @@
 **Reviewer**: Claude
 **Scope**: Define activation criteria for Weights & Biases as an alternative experiment tracking backend to MLflow, and record the current defer/reopen truth as a reviewable execution slice
 **Status**: APPROVED gate, DEFER remains in force
-**Last Updated**: 2026-04-21
+**Last Updated**: 2026-04-29
 
 ---
 
@@ -101,7 +101,10 @@ The target W&B mirror must map Pantheon state as follows:
 | `artifact_state=candidate` | candidate alias/tag present |
 | `artifact_state=approved` | approved alias/tag present |
 | `artifact_state=retired` | retired alias/tag present; removed from active promotion aliases |
-| `deployment_stage` | stored as derived metadata/tag only, never used as registry lifecycle replacement |
+| `deployment_stage` | one of `none`, `paper`, `canary`, `frozen`, or `live`; stored as derived metadata/tag only, never used as registry lifecycle replacement |
+
+Non-`none` `deployment_stage` values are valid only when `artifact_state=approved`. The adapter
+must reject invalid combinations before calling `ExperimentBackend.record()`.
 
 ### 2.5 Rollback Enforcement
 
@@ -123,7 +126,8 @@ selectable only for deferred prep. The current state is:
 - `EXPERIMENT_BACKEND` exists and defaults to `"mlflow"`.
 - `EXPERIMENT_BACKEND=wandb` requires `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1`.
 - the prep scaffold only supports offline modes (`offline`, `dryrun`) and does not use the W&B SDK.
-- backend factory wiring exists, but the canonical-state migration and real SDK-backed implementation do not.
+- backend factory wiring exists, and the prep scaffold now mirrors canonical `artifact_state` /
+  `deployment_stage` fields; the real SDK-backed implementation still does not exist.
 
 The expected target shape is:
 
@@ -213,7 +217,7 @@ The only W&B-specific check is: W&B run/artifact exists and is accessible.
 
 **Task**: OSS-NEXT-004
 **Decision date**: 2026-04-17
-**Decision**: **DEFER** — W&B backend parity does not enter the current development wave.
+**Decision**: **DEFER** — SDK-backed or online W&B backend parity does not enter the current activation wave.
 
 ### 7.1 Decision Rationale
 
@@ -224,7 +228,7 @@ All six entry criteria from §1 are unmet as of the decision date:
 | MLflow ≥30 days operational history | **Not met** | MLflow reached `governed` status on 2026-04-15 — fewer than 2 days of operational history as of this decision. Earliest eligible reopen: 2026-05-15. |
 | Explicit operator preference documented | **Not met** | No operator or team has filed a documented request for W&B over MLflow. |
 | `RegistryExperimentAdapter` generalized for configurable backends | **Not met as of 2026-04-17** | Decision date repo state still exposed `PRIMARY_BACKEND = "mlflow"` with no pluggable backend factory. A prep-only generalization scaffold landed later on 2026-04-25, but that did not reopen the gate by itself. |
-| Canonical `artifact_state` / `deployment_stage` migration landed | **Not met** | Experiment bridge still uses legacy `lifecycle_state` / `paper` / `live` aliases in the MLflow adapter path. |
+| Canonical `artifact_state` / `deployment_stage` migration landed | **Prep-only scaffold met; production activation still gated** | Experiment bridge now mirrors canonical `artifact_state` and `deployment_stage`, with legacy `lifecycle_state` accepted only as a compatibility projection. This does not reopen SDK-backed W&B activation. |
 | W&B SDK pin (`wandb>=0.16.0`) | **Not met** | No `wandb` entry in any `requirements.txt`. |
 | Network / infrastructure readiness (`api.wandb.ai`) | **Not verified** | No infrastructure review has been recorded. |
 
@@ -239,7 +243,8 @@ The following work from BP5-OSS-004 and OSS-003 remains intact and does not regr
 
 - `EXPERIMENT_BACKEND` env-var selector in `services/registry/experiments/config.py` (default `"mlflow"`, `wandb` available only behind `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` and offline-only mode).
 - `services/registry/experiments/adapter.py` now carries prep-only pluggable backend wiring plus `OfflineWandbPrepBackend` for local dry-run parity checks.
-- `services/registry/experiments/smoke_test.py --backend wandb` now proves offline metadata-shape parity for the deferred-prep lane.
+- `services/registry/experiments/adapter.py` mirrors canonical `artifact_state` and derived `deployment_stage`; legacy `lifecycle_state` is accepted only as `pantheon.compat.lifecycle_state` / `promoted_metadata.compat` during migration.
+- `services/registry/experiments/smoke_test.py --backend wandb` now proves offline metadata-shape parity for the deferred-prep lane using canonical state fields.
 - Activation criteria in this document remain approved and authoritative.
 - `DEFERRED_OSS_ACTIVATION_MAP.md §5` documents the concrete blocking conditions.
 
@@ -261,11 +266,11 @@ When all six re-entry conditions above are met, the gate doc owner (Qwen) should
 1. File a new execution task referencing this section as the authorization gate.
 2. Update this document's status from `DEFER` to `REOPEN`.
 3. Assign the adapter generalization and W&B backend implementation as separate scoped tasks.
-4. Record the operator preference citation in §1.2 of this document before any implementation begins.
+4. Record the operator preference citation in §1.2 of this document before any SDK-backed or online backend implementation begins.
 
 ### 7.5 Execution Slice Closeout (EXEC-OSS-WANDB-001)
 
-`EXEC-OSS-WANDB-001` does **not**, by itself, authorize implementation. It closes the ambiguity about what the next reviewable step actually is. The later 2026-04-25 deferred-prep packet only authorizes repo-local offline scaffold work.
+`EXEC-OSS-WANDB-001` does **not**, by itself, authorize SDK-backed or online implementation. It closes the ambiguity about what the next reviewable step actually is. The later 2026-04-25 deferred-prep packet authorizes repo-local offline scaffold work only.
 
 Current execution-slice conclusion:
 

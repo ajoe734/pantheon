@@ -18,12 +18,19 @@ _LINEAGE_KEYS = (
     "source_dataset_refs",
     "source_strategy_spec_id",
 )
-_PROMOTION_ALIASES = {
+_ARTIFACT_ALIASES = {
     "draft": (),
     "candidate": ("candidate",),
-    "paper": ("paper",),
-    "live": ("live",),
+    "approved": ("approved",),
     "retired": ("retired",),
+}
+_DEPLOYMENT_STAGES = ("none", "paper", "canary", "frozen", "live")
+_LEGACY_LIFECYCLE_PROJECTION = {
+    "draft": ("draft", "none"),
+    "candidate": ("candidate", "none"),
+    "paper": ("approved", "paper"),
+    "live": ("approved", "live"),
+    "retired": ("retired", "none"),
 }
 
 
@@ -267,9 +274,12 @@ class RegistryExperimentAdapter:
 
     def build_record(self, entry: Mapping[str, Any]) -> ExperimentRecord:
         normalized = self._normalize_entry(entry)
-        aliases = _PROMOTION_ALIASES[normalized["lifecycle_state"]]
+        return self._build_record_from_normalized(normalized)
+
+    def _build_record_from_normalized(self, normalized: Mapping[str, Any]) -> ExperimentRecord:
+        aliases = _ARTIFACT_ALIASES[normalized["artifact_state"]]
         experiment_name = f"pantheon/{normalized['artifact_type']}/{normalized['strategy_id']}"
-        run_name = f"{normalized['version']}:{normalized['lifecycle_state']}"
+        run_name = f"{normalized['version']}:{normalized['artifact_state']}:{normalized['deployment_stage']}"
         tags = self._build_tags(normalized, aliases)
         artifacts = {
             "registry_entry.json": normalized,
@@ -287,10 +297,12 @@ class RegistryExperimentAdapter:
         )
 
     def sync_registry_entry(self, entry: Mapping[str, Any]) -> ExperimentSyncResult:
-        record = self.build_record(entry)
+        normalized = self._normalize_entry(entry)
+        self._validate_promoted_metadata_inputs(normalized)
+        record = self._build_record_from_normalized(normalized)
         experiment_ref = self.backend.record(record)
         promoted_metadata = self._build_promoted_metadata(
-            self._normalize_entry(entry),
+            normalized,
             experiment_ref=experiment_ref,
         )
         return ExperimentSyncResult(
@@ -302,9 +314,36 @@ class RegistryExperimentAdapter:
     def _normalize_entry(self, entry: Mapping[str, Any]) -> dict[str, Any]:
         normalized = copy.deepcopy(dict(entry))
         self._validate_required_fields(normalized)
-        lifecycle_state = normalized["lifecycle_state"]
-        if lifecycle_state not in _PROMOTION_ALIASES:
-            raise ExperimentSyncError(f"Unsupported lifecycle_state for LP-003 sync: {lifecycle_state}")
+        if "artifact_state" not in normalized:
+            lifecycle_state = normalized.get("lifecycle_state")
+            if lifecycle_state not in _LEGACY_LIFECYCLE_PROJECTION:
+                raise ExperimentSyncError(
+                    "Registry entry must include canonical artifact_state or a supported legacy lifecycle_state."
+                )
+            artifact_state, deployment_stage = _LEGACY_LIFECYCLE_PROJECTION[lifecycle_state]
+            normalized["artifact_state"] = artifact_state
+            normalized.setdefault("deployment_stage", deployment_stage)
+            normalized["legacy_lifecycle_state"] = lifecycle_state
+        else:
+            normalized["artifact_state"] = str(normalized["artifact_state"]).strip().lower()
+            normalized["deployment_stage"] = str(normalized.get("deployment_stage") or "none").strip().lower()
+            if "lifecycle_state" in normalized:
+                normalized["legacy_lifecycle_state"] = normalized.pop("lifecycle_state")
+
+        artifact_state = normalized["artifact_state"]
+        if artifact_state not in _ARTIFACT_ALIASES:
+            raise ExperimentSyncError(f"Unsupported artifact_state for LP-003 sync: {artifact_state}")
+        deployment_stage = normalized["deployment_stage"]
+        if deployment_stage not in _DEPLOYMENT_STAGES:
+            raise ExperimentSyncError(
+                f"Unsupported deployment_stage for LP-003 sync: {deployment_stage}. "
+                f"Supported stages: {_DEPLOYMENT_STAGES}."
+            )
+        if deployment_stage != "none" and artifact_state != "approved":
+            raise ExperimentSyncError(
+                "deployment_stage may be non-none only when artifact_state=approved. "
+                f"Got artifact_state={artifact_state!r}, deployment_stage={deployment_stage!r}."
+            )
         lineage = normalized.get("lineage")
         if not isinstance(lineage, Mapping):
             raise ExperimentSyncError("Registry entry must include a lineage object.")
@@ -321,7 +360,6 @@ class RegistryExperimentAdapter:
             "artifact_type",
             "strategy_id",
             "version",
-            "lifecycle_state",
             "lineage",
             "storage_ref",
             "checksum",
@@ -338,7 +376,8 @@ class RegistryExperimentAdapter:
             "pantheon.strategy_id": entry["strategy_id"],
             "pantheon.version": entry["version"],
             "pantheon.artifact_type": entry["artifact_type"],
-            "pantheon.lifecycle_state": entry["lifecycle_state"],
+            "pantheon.artifact_state": entry["artifact_state"],
+            "pantheon.deployment_stage": entry["deployment_stage"],
             "pantheon.checksum": entry["checksum"],
             "pantheon.storage_backend": storage_ref["backend"],
             "pantheon.storage_path": storage_ref["path"],
@@ -352,6 +391,8 @@ class RegistryExperimentAdapter:
         if self.backend.backend_name == "wandb":
             base_tags["pantheon.wandb.prep_only"] = True
             base_tags["pantheon.wandb.mode"] = getattr(self.backend, "mode", "offline")
+        if entry.get("legacy_lifecycle_state"):
+            base_tags["pantheon.compat.lifecycle_state"] = entry["legacy_lifecycle_state"]
 
         optional_fields = {
             "pantheon.producer_run_id": entry.get("producer_run_id"),
@@ -376,7 +417,9 @@ class RegistryExperimentAdapter:
             "strategy_id": entry["strategy_id"],
             "artifact_type": entry["artifact_type"],
             "version": entry["version"],
-            "promotion_state": entry["lifecycle_state"],
+            "artifact_state": entry["artifact_state"],
+            "deployment_stage": entry["deployment_stage"],
+            "promotion_state": entry["artifact_state"],
             "checksum": entry["checksum"],
             "storage_ref": copy.deepcopy(entry["storage_ref"]),
             "execution_projection": {
@@ -391,32 +434,27 @@ class RegistryExperimentAdapter:
         entry: Mapping[str, Any],
         experiment_ref: ExperimentRef,
     ) -> dict[str, Any] | None:
-        state = entry["lifecycle_state"]
-        if state == "draft":
+        self._validate_promoted_metadata_inputs(entry)
+        artifact_state = entry["artifact_state"]
+        deployment_stage = entry["deployment_stage"]
+        if artifact_state == "draft":
             return None
-
-        lineage = dict(entry["lineage"])
-        has_source_reference = bool(
-            lineage.get("source_run_ids")
-            or lineage.get("source_strategy_spec_id")
-            or lineage.get("source_dataset_refs")
-        )
-        if not has_source_reference:
-            raise ExperimentSyncError(
-                f"{state} entries need lineage that points to a run, dataset, or strategy spec before MLflow sync."
-            )
 
         metadata = {
             "registry_id": entry["registry_id"],
             "strategy_id": entry["strategy_id"],
             "version": entry["version"],
             "artifact_type": entry["artifact_type"],
-            "promotion_state": state,
+            "artifact_state": artifact_state,
+            "deployment_stage": deployment_stage,
+            "promotion_state": artifact_state,
             "checksum": entry["checksum"],
             "lineage": copy.deepcopy(entry["lineage"]),
             "created_at": utc_now(),
             "experiment_refs": [experiment_ref.to_metadata_ref()],
         }
+        if entry.get("legacy_lifecycle_state"):
+            metadata["compat"] = {"legacy_lifecycle_state": entry["legacy_lifecycle_state"]}
 
         if entry.get("promoted_at"):
             metadata["approved_at"] = entry["promoted_at"]
@@ -426,12 +464,31 @@ class RegistryExperimentAdapter:
         rollback = self._build_rollback(entry)
         if rollback is not None:
             metadata["rollback"] = rollback
-        if state == "live" and rollback is None:
-            raise ExperimentSyncError(
-                "Live entries need metadata.rollback or metadata.rollback_target_registry_id plus rollback_target."
-            )
 
         return metadata
+
+    def _validate_promoted_metadata_inputs(self, entry: Mapping[str, Any]) -> None:
+        artifact_state = entry["artifact_state"]
+        if artifact_state == "draft":
+            return
+
+        lineage = dict(entry["lineage"])
+        has_source_reference = bool(
+            lineage.get("source_run_ids")
+            or lineage.get("source_strategy_spec_id")
+            or lineage.get("source_dataset_refs")
+        )
+        if not has_source_reference:
+            raise ExperimentSyncError(
+                f"{artifact_state} entries need lineage that points to a run, dataset, or strategy spec before experiment sync."
+            )
+
+        rollback = self._build_rollback(entry)
+        if entry["deployment_stage"] == "live" and rollback is None:
+            raise ExperimentSyncError(
+                "Entries with deployment_stage=live need metadata.rollback or "
+                "metadata.rollback_target_registry_id plus rollback_target."
+            )
 
     def _build_rollback(self, entry: Mapping[str, Any]) -> dict[str, Any] | None:
         metadata = entry.get("metadata")

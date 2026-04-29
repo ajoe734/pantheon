@@ -38,7 +38,8 @@ def main() -> None:
         "artifact_type": "model_artifact",
         "strategy_id": "mean-reversion",
         "version": "2.0.0",
-        "lifecycle_state": "live",
+        "artifact_state": "approved",
+        "deployment_stage": "live",
         "lineage": {
             "parent_registry_ids": ["reg-mean-reversion-1.9.0"],
             "source_run_ids": ["train-2026-04-06-001"],
@@ -67,8 +68,10 @@ def main() -> None:
     if backend is not None:
         recorded_run = backend.runs[result.experiment_ref.run_id]
         assert recorded_run["tags"]["pantheon.registry_id"] == "reg-mean-reversion-2.0.0"
-        assert recorded_run["tags"]["pantheon.lifecycle_state"] == "live"
-        assert recorded_run["aliases"] == ["live"]
+        assert recorded_run["tags"]["pantheon.artifact_state"] == "approved"
+        assert recorded_run["tags"]["pantheon.deployment_stage"] == "live"
+        assert "pantheon.lifecycle_state" not in recorded_run["tags"]
+        assert recorded_run["aliases"] == ["approved"]
         assert recorded_run["artifacts"]["artifact_handoff.json"]["storage_ref"]["path"].endswith("/artifact.bin")
         if args.backend == "wandb":
             assert recorded_run["mode"] == "offline"
@@ -78,6 +81,8 @@ def main() -> None:
             assert recorded_run["tags"]["pantheon.experiment_backend"] == "mlflow"
 
     expected_backend = "wandb" if args.backend == "wandb" else "mlflow"
+    assert result.promoted_metadata["artifact_state"] == "approved"
+    assert result.promoted_metadata["deployment_stage"] == "live"
     assert result.promoted_metadata["experiment_refs"][0]["backend"] == expected_backend
     assert result.promoted_metadata["rollback"]["target_version"] == "1.9.0"
 

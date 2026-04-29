@@ -58,7 +58,7 @@ runtime paths, canonical writes, and networked backend operation remain gated.
 
 | Framework | Role in Research Plane | Integration Status | Production-Path Tier | Current Owner | Example Strategy Family | Missing Proof to Advance |
 |---|---|---|---|---|---|---|
-| **MLflow** | Primary experiment registry backend; stores run metadata, artifact references, and model lineage | `governed` | **Production Research Path** | Codex | All research families (cross-cutting) | Follow-on backend-generalization step before enabling W&B parity |
+| **MLflow** | Primary experiment registry backend; stores run metadata, artifact references, and model lineage | `governed` | **Production Research Path** | Codex | All research families (cross-cutting) | Keep canonical `artifact_state` / `deployment_stage` bridge behavior refreshed while W&B stays deferred |
 | **DSPy** | Persona policy optimization; prompt/weight optimization for persona decision modules | `governed` | **Production Research Path** | Codex | Persona policy optimization | Keep smoke and deny-regression evidence refreshed when the pin or backend changes |
 | **imitation** | Behavior cloning; supervised imitation learning from trader trajectory data | `governed` | **Production Research Path** | Codex | Trader behavior cloning | Keep BC-only scope and smoke evidence refreshed when the pin or backend changes |
 | **OpenClaw** | Experiment orchestration / runtime coordination; upstream runtime wrapping local workflows | `governed` | **Activation-Ready** | Codex | All research families (orchestration layer) | Adopt the governed gateway path in the repo-authoritative runtime surfaces and keep live smoke evidence refreshed when the pin changes |
@@ -67,7 +67,7 @@ runtime paths, canonical writes, and networked backend operation remain gated.
 | **FinRL** | Simplified single-agent RL portfolio management; pre-configured trading environments | `criteria-defined` | **Activation-Ready** | Copilot | Single-agent RL trading | Dormant adapter, worker, and explicit-gate smoke path exist under `services/research/finrl`; active RL lane reopens only after Qlib alpha is approved and stable for **3 months**, then proves the first governed single-agent production path |
 | **RLlib** | Multi-agent / scalable RL policy training; PPO/SAC via Ray | `version-pinned` | **Activation-Ready** | Copilot | Multi-agent portfolio optimization | Dormant train/eval adapter, worker, and explicit-gate smoke path exist under `services/research/rllib`; governed train/eval activation stays behind the RL gate and the FinRL first-lane proof |
 | **Ray Tune** | Hyperparameter search over RL/learning experiments; PBT/grid/Bayesian search | `version-pinned` | **Activation-Ready** | Copilot | RL hyperparameter optimization | Dormant search-output adapter, worker, and explicit-gate smoke path exist under `services/research/rllib`; governed activation remains coupled to the RLlib follow-on lane after the FinRL first-lane proof |
-| **W&B** | Optional alternative experiment registry backend to MLflow; SaaS metrics visualization | `criteria-defined` | **Activation-Ready** | Qwen | All research families (optional) | Offline/prep-only adapter generalization may proceed fail-closed; SDK-backed or networked backend activation requires MLflow ≥30-day history (earliest 2026-05-15), documented operator preference, canonical state migration, SDK pin, and infrastructure readiness |
+| **W&B** | Optional alternative experiment registry backend to MLflow; SaaS metrics visualization | `criteria-defined` | **Activation-Ready** | Qwen | All research families (optional) | Offline/prep-only adapter scaffold is fail-closed and canonical-state aligned; SDK-backed or networked backend activation still requires MLflow ≥30-day history (earliest 2026-05-15), documented operator preference, SDK pin, and infrastructure readiness |
 | **vectorbt** | Backtesting and portfolio optimization prototyping; fast vectorized backtest engine | `governed` | **Production Research Path** | Codex2 | Rapid strategy prototyping | Keep stub smoke, worker entrypoint, and governance evidence refreshed when the pin or adapter changes |
 | **statsmodels** | Econometrics and regime analysis; cointegration, VAR, ARIMA, regime-switching models | `governed` | **Production Research Path** | Codex2 | Regime inference / macro research | Keep smoke evidence, worker entrypoint, and governance docs refreshed when the pin or adapter changes |
 | **QuantLib** | Derivatives pricing and risk; options pricing, fixed income analytics, Greeks | `governed` | **Production Research Path** | Codex | Derivatives strategy research | Keep smoke, worker entrypoint, and evidence pack refreshed when the pin or backend changes |
@@ -99,7 +99,7 @@ Research Intake
 The always-on governed backbone is anchored by DSPy, imitation, and MLflow, which feed into the canonical artifact/registry path via:
 
 - `artifact_state`: `draft` → `candidate` → `approved`
-- `deployment_summary.current_stage`: `none` → `paper` → `canary` → `live`
+- `deployment_summary.current_stage`: `none` → `paper` → `canary` → `frozen` → `live`
 - Governed by: `REG-001`, `REG-003`, `EX-001`
 
 Additional governed production-path backends already available today:
