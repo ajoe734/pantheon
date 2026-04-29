@@ -1,5 +1,6 @@
 import unittest
 import uuid
+from datetime import datetime, timezone
 
 from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
@@ -75,7 +76,10 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             "signal_id": "signal-001",
             "version": "1.0",
             "strategy_id": "strategy-paper",
-            "timestamp": "2026-04-18T12:00:00Z",
+            "timestamp": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "symbol": "AAPL.US",
             "action": "BUY",
             "direction": "LONG",
