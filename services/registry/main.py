@@ -23,7 +23,11 @@ from __future__ import annotations
 
 import os
 
+from services.foundation.health import register_fastapi_health_routes
+
 from .service import app
+
+register_fastapi_health_routes(app, "registry")
 
 
 @app.get("/__health__")

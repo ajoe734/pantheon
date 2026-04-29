@@ -17,10 +17,12 @@ from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from services.foundation.health import register_fastapi_health_routes
 
 app = FastAPI(title="Pantheon Evaluation Service", version="0.1.0")
 
 _store: Dict[str, Any] = {}
+register_fastapi_health_routes(app, "evaluation", metrics=lambda: {"stored_results": len(_store)})
 
 
 @app.get("/__health__")

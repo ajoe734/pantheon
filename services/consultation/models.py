@@ -274,6 +274,19 @@ class CreateGateHandoffRequest(BaseModel):
     initiated_by: Optional[ActorRef] = None
 
 
+class CancelConsultRequestRequest(BaseModel):
+    actor_ref: ActorRef
+    canceled_at: Optional[str] = None
+    trace_id: Optional[str] = None
+
+
+class RecordSponsorDecisionRequest(BaseModel):
+    sponsor_decision: str
+    rationale_ref: str
+    actor_id: str
+    recorded_at: Optional[str] = None
+
+
 class AttachEvidenceRequest(BaseModel):
     evidence_ref: EvidenceRef
     attached_by: ActorRef

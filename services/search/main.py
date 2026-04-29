@@ -9,7 +9,14 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from services.knowledge.evidence import EvidenceBundle, EvidenceItem, InMemoryEvidenceRepository, KnowledgeObject
+from services.foundation.health import register_fastapi_health_routes
+from services.knowledge.evidence import (
+    EvidenceBundle,
+    EvidenceItem,
+    InMemoryEvidenceRepository,
+    JsonlEvidenceRepository,
+    KnowledgeObject,
+)
 from services.knowledge.evidence.models import EvidenceValidationError
 from services.source_ingestion.connectors import SourceRecord
 
@@ -27,6 +34,12 @@ def _resolve_data_dir() -> Path:
 
 DATA_DIR = _resolve_data_dir()
 INDEX_STORE_PATH = Path(os.getenv("SEARCH_INDEX_STORE_PATH", str(DATA_DIR / "search-index.jsonl")))
+EVIDENCE_STORE_PATH = Path(
+    os.getenv(
+        "SEARCH_EVIDENCE_STORE_PATH",
+        os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(DATA_DIR / "source_evidence.jsonl")),
+    )
+)
 
 
 class SearchDocumentBody(BaseModel):
@@ -187,25 +200,95 @@ def _repository_from_documents(documents: list[SearchDocumentBody]) -> InMemoryE
     return repository
 
 
-def create_app(index_store_path: Path | None = None) -> FastAPI:
+def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str | None]:
+    watermarks: dict[str, str | None] = {}
+    for source in repository.list_source_records():
+        source_type = source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type)
+        created_at = str(source.created_at or "")
+        if source_type not in watermarks or created_at > str(watermarks[source_type] or ""):
+            watermarks[source_type] = created_at or None
+    return watermarks
+
+
+def create_app(index_store_path: Path | None = None, evidence_store_path: Path | None = None) -> FastAPI:
     app = FastAPI(title="Pantheon Search Service", version="0.1.0")
     store = JsonlSearchIndexStore(index_store_path or INDEX_STORE_PATH)
+    durable_repository = JsonlEvidenceRepository(evidence_store_path or EVIDENCE_STORE_PATH)
+    register_fastapi_health_routes(
+        app,
+        "pantheon-search",
+        metrics=lambda: {
+            "snapshot_count": len(store.list_snapshots()),
+            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+        },
+        details=lambda: {
+            "index_store_path": str(store.path),
+            "evidence_store_path": str(durable_repository.path),
+        },
+    )
 
     @app.get("/health")
     def health() -> dict[str, Any]:
         store.reload()
+        durable_repository.reload()
         return {
             "status": "ok",
             "service": "pantheon-search",
             "index_store_path": str(store.path),
+            "evidence_store_path": str(durable_repository.path),
             "snapshot_count": len(store.list_snapshots()),
+            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
         }
+
+    @app.post("/api/search/index/reload")
+    def reload_index() -> dict[str, Any]:
+        try:
+            durable_repository.reload()
+            adapter = KeywordIndexAdapter(
+                durable_repository,
+                source_watermarks=_source_watermarks(durable_repository),
+                adapter_state="durable",
+            )
+            return {
+                "index": adapter.snapshot().to_dict(),
+                "evidence_store_path": str(durable_repository.path),
+                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            }
+        except EvidenceValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/search/index/status")
+    def index_status() -> dict[str, Any]:
+        try:
+            durable_repository.reload()
+            adapter = KeywordIndexAdapter(
+                durable_repository,
+                source_watermarks=_source_watermarks(durable_repository),
+                adapter_state="durable",
+            )
+            return {
+                "index": adapter.snapshot().to_dict(),
+                "evidence_store_path": str(durable_repository.path),
+                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            }
+        except EvidenceValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/search/query")
     def query_search(body: SearchQueryBody) -> dict[str, Any]:
         try:
-            repository = _repository_from_documents(body.documents)
-            index_adapter = KeywordIndexAdapter(repository)
+            if body.documents:
+                repository = _repository_from_documents(body.documents)
+                adapter_state = "request_documents_compat"
+            else:
+                durable_repository.reload()
+                repository = durable_repository
+                adapter_state = "durable"
+            index_adapter = KeywordIndexAdapter(
+                repository,
+                source_watermarks=_source_watermarks(repository),
+                adapter_state=adapter_state,
+            )
             request = SearchRequest(
                 request_id=body.request_id,
                 query=body.query,

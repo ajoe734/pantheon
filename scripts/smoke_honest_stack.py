@@ -29,8 +29,14 @@ MEMORY_URL = os.getenv("MEMORY_URL", "http://127.0.0.1:8086")
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://127.0.0.1:8087")
 OPTIMIZER_URL = os.getenv("OPTIMIZER_URL", "http://127.0.0.1:8088")
 PROMOTION_URL = os.getenv("PROMOTION_URL", "http://127.0.0.1:8089")
+CONSULTATION_URL = os.getenv("CONSULTATION_URL", "http://127.0.0.1:8096")
+SOURCE_INGEST_URL = os.getenv("SOURCE_INGEST_URL", "http://127.0.0.1:8097")
 SEARCH_URL = os.getenv("SEARCH_URL", "http://127.0.0.1:8098")
+TRAINING_SESSION_URL = os.getenv("TRAINING_SESSION_URL", "http://127.0.0.1:8099")
 POLICY_LEARNING_URL = os.getenv("POLICY_LEARNING_URL", "http://127.0.0.1:8100")
+RESEARCH_ORCHESTRATOR_URL = os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://127.0.0.1:8101")
+RECONCILIATION_DRIFT_URL = os.getenv("RECONCILIATION_DRIFT_URL", "http://127.0.0.1:8102")
+RESEARCH_WORKER_GATEWAY_URL = os.getenv("RESEARCH_WORKER_GATEWAY_URL", "http://127.0.0.1:8103")
 
 OPERATOR_TOKEN = "Bearer smoke-operator:operator"
 APPROVER_TOKEN = "Bearer smoke-approver:approver"
@@ -106,26 +112,32 @@ def main() -> int:
     incident_id = f"inc-smoke-{suffix}"
     postmortem_id = f"pm-smoke-{suffix}"
 
-    _wait_for_health("runtime-manager", f"{RUNTIME_MANAGER_URL}/__health__")
-    _wait_for_health("governance", f"{GOVERNANCE_URL}/health")
-    _wait_for_health("telemetry", f"{TELEMETRY_URL}/__health__")
-    _wait_for_health("incidents", f"{INCIDENTS_URL}/__health__")
-    _wait_for_health("postmortems", f"{POSTMORTEMS_URL}/__health__")
-    _wait_for_health("capital", f"{CAPITAL_URL}/health")
-    _wait_for_health("deployment", f"{DEPLOYMENT_URL}/health")
-    _wait_for_health("evolution", f"{EVOLUTION_URL}/health")
-    _wait_for_health("lineage-read", f"{LINEAGE_READ_URL}/__health__")
-    _wait_for_health("operator-bff", f"{BFF_URL}/health")
-    _wait_for_health("persona", f"{PERSONA_URL}/health")
-    _wait_for_health("router", f"{ROUTER_URL}/health")
-    _wait_for_health("evaluation", f"{EVALUATION_URL}/__health__")
-    _wait_for_health("feedback", f"{FEEDBACK_URL}/__health__")
-    _wait_for_health("memory", f"{MEMORY_URL}/__health__")
-    _wait_for_health("registry", f"{REGISTRY_URL}/__health__")
-    _wait_for_health("optimizer-svc", f"{OPTIMIZER_URL}/__health__")
-    _wait_for_health("promotion", f"{PROMOTION_URL}/__health__")
-    _wait_for_health("search-svc", f"{SEARCH_URL}/health")
-    _wait_for_health("policy-learning-svc", f"{POLICY_LEARNING_URL}/health")
+    _wait_for_health("runtime-manager", f"{RUNTIME_MANAGER_URL}/readyz")
+    _wait_for_health("governance", f"{GOVERNANCE_URL}/readyz")
+    _wait_for_health("telemetry", f"{TELEMETRY_URL}/readyz")
+    _wait_for_health("incidents", f"{INCIDENTS_URL}/readyz")
+    _wait_for_health("postmortems", f"{POSTMORTEMS_URL}/readyz")
+    _wait_for_health("capital", f"{CAPITAL_URL}/readyz")
+    _wait_for_health("deployment", f"{DEPLOYMENT_URL}/readyz")
+    _wait_for_health("evolution", f"{EVOLUTION_URL}/readyz")
+    _wait_for_health("lineage-read", f"{LINEAGE_READ_URL}/readyz")
+    _wait_for_health("operator-bff", f"{BFF_URL}/readyz")
+    _wait_for_health("persona", f"{PERSONA_URL}/readyz")
+    _wait_for_health("router", f"{ROUTER_URL}/readyz")
+    _wait_for_health("evaluation", f"{EVALUATION_URL}/readyz")
+    _wait_for_health("feedback", f"{FEEDBACK_URL}/readyz")
+    _wait_for_health("memory", f"{MEMORY_URL}/readyz")
+    _wait_for_health("registry", f"{REGISTRY_URL}/readyz")
+    _wait_for_health("optimizer-svc", f"{OPTIMIZER_URL}/readyz")
+    _wait_for_health("promotion", f"{PROMOTION_URL}/readyz")
+    _wait_for_health("consultation-svc", f"{CONSULTATION_URL}/readyz")
+    _wait_for_health("source-ingest", f"{SOURCE_INGEST_URL}/readyz")
+    _wait_for_health("search-svc", f"{SEARCH_URL}/readyz")
+    _wait_for_health("training-session-svc", f"{TRAINING_SESSION_URL}/readyz")
+    _wait_for_health("policy-learning-svc", f"{POLICY_LEARNING_URL}/readyz")
+    _wait_for_health("research-orchestrator-svc", f"{RESEARCH_ORCHESTRATOR_URL}/readyz")
+    _wait_for_health("reconciliation-drift-svc", f"{RECONCILIATION_DRIFT_URL}/readyz")
+    _wait_for_health("research-worker-gateway-svc", f"{RESEARCH_WORKER_GATEWAY_URL}/readyz")
 
     status, matrix = _request_json("GET", f"{GOVERNANCE_URL}/api/governance/write-authority")
     if status != 200 or "matrix" not in (matrix or {}):
@@ -181,6 +193,39 @@ def main() -> int:
         raise RuntimeError(f"telemetry ingest failed: {status} {telemetry_result}")
     print("ok  telemetry accepted an event linked to the runtime binding")
 
+    status, drift_eval = _request_json(
+        "POST",
+        f"{RECONCILIATION_DRIFT_URL}/api/reconciliation-drift/evaluations",
+        body={
+            "binding_id": binding["binding_id"],
+            "runtime_id": "runtime-smoke",
+            "baseline_metrics": {"pnl": 1.0},
+            "telemetry_events": [telemetry_event],
+            "lineage_projection": {
+                "target_id": binding["binding_id"],
+                "derived_only": True,
+            },
+            "runtime_evidence": {
+                "binding_id": binding["binding_id"],
+                "runtime_id": "runtime-smoke",
+                "status": binding.get("status", "active"),
+            },
+            "evidence_refs": [
+                {"type": "telemetry_event", "id": telemetry_event["event_id"]},
+                {"type": "runtime_binding", "id": binding["binding_id"]},
+            ],
+        },
+    )
+    if status != 201 or drift_eval.get("source_contract", {}).get("derived_only") is not True:
+        raise RuntimeError(f"reconciliation-drift evaluation failed: {status} {drift_eval}")
+    status, drift_summary = _request_json(
+        "GET",
+        f"{RECONCILIATION_DRIFT_URL}/api/reconciliation-drift/summary?{urllib.parse.urlencode({'binding_id': binding['binding_id']})}",
+    )
+    if status != 200 or drift_summary.get("emergency_control_chain_affected") is not False:
+        raise RuntimeError(f"reconciliation-drift summary failed: {status} {drift_summary}")
+    print("ok  reconciliation-drift-svc built a derived drift read model outside the emergency control chain")
+
     incident_body = {
         "incident_id": incident_id,
         "title": "Smoke incident",
@@ -231,6 +276,180 @@ def main() -> int:
         raise RuntimeError(f"postmortem creation failed: {status} {postmortem}")
     print("ok  postmortem evidence service created a linked postmortem")
 
+    consult_body = {
+        "from_persona_id": "persona-alpha",
+        "target_type": "persona",
+        "target_ref": "persona-beta",
+        "task": "Smoke-check consultation service boundary through the BFF.",
+        "context_refs": [{"type": "deployment_plan", "id": plan_id}],
+        "priority": "normal",
+        "consultation_type": "risk_review",
+    }
+    status, consult_request = _request_json(
+        "POST",
+        f"{BFF_URL}/api/v1/consult/requests",
+        body=consult_body,
+        headers={"Authorization": OPERATOR_TOKEN},
+    )
+    if status != 200 or not consult_request or "request_id" not in consult_request:
+        raise RuntimeError(f"BFF consultation request creation failed: {status} {consult_request}")
+    status, service_request = _request_json(
+        "GET",
+        f"{CONSULTATION_URL}/api/consult/requests/{consult_request['request_id']}",
+    )
+    if status != 200 or service_request.get("request_id") != consult_request["request_id"]:
+        raise RuntimeError(f"consultation-svc did not persist BFF request: {status} {service_request}")
+    print("ok  consultation-svc persisted a BFF-created consult request")
+
+    source_connector_body = {
+        "connector": {
+            "connector_id": "conn-smoke-notes",
+            "source_type": "internal_note",
+            "provider": "Pantheon smoke",
+            "license_scope": "internal",
+        },
+        "fetch": {
+            "mode": "static_records",
+            "next_watermark": future_timestamp,
+            "records": [
+                {
+                    "source_id": f"src-smoke-note-{suffix}",
+                    "title": "Compose smoke note",
+                    "content_ref": f"memory://compose-smoke/{suffix}",
+                    "metadata": {
+                        "body": "Compose smoke source evidence should be durable for momentum volatility search.",
+                        "access_scope": ["operator", "research"],
+                        "keywords": ["compose", "smoke", "momentum", "volatility"],
+                    },
+                },
+                {
+                    "source_id": f"src-smoke-private-note-{suffix}",
+                    "title": "Compose private smoke note",
+                    "content_ref": f"memory://compose-smoke/private/{suffix}",
+                    "metadata": {
+                        "body": "Momentum volatility evidence that should be filtered before ranking.",
+                        "access_scope": ["risk-committee"],
+                        "keywords": ["momentum", "volatility"],
+                    },
+                }
+            ],
+        },
+    }
+    status, configured_source = _request_json(
+        "POST",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
+        body=source_connector_body,
+    )
+    if status != 201 or configured_source.get("connector", {}).get("connector_id") != "conn-smoke-notes":
+        raise RuntimeError(f"source-ingest connector configuration failed: {status} {configured_source}")
+    source_ingest_body = {
+        "connector_id": "conn-smoke-notes",
+        "trace_id": f"trace-source-ingest-smoke-{suffix}",
+        "trigger_type": "compose_smoke",
+    }
+    status, ingest_result = _request_json(
+        "POST",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/jobs",
+        body=source_ingest_body,
+    )
+    if status != 201 or ingest_result.get("run", {}).get("status") != "completed":
+        raise RuntimeError(f"source-ingest job trigger failed: {status} {ingest_result}")
+    run_id = ingest_result["run"]["ingest_run_id"]
+    status, replayed_run = _request_json("GET", f"{SOURCE_INGEST_URL}/api/source-ingest/jobs/{run_id}")
+    if status != 200 or replayed_run.get("run", {}).get("ingest_run_id") != run_id:
+        raise RuntimeError(f"source-ingest did not replay run status: {status} {replayed_run}")
+    status, replayed_watermark = _request_json(
+        "GET",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/watermarks/conn-smoke-notes",
+    )
+    if status != 200 or replayed_watermark.get("watermark", {}).get("last_ingest_run_id") != run_id:
+        raise RuntimeError(f"source-ingest did not replay watermark: {status} {replayed_watermark}")
+    evidence_refs = ingest_result.get("evidence_refs") or {}
+    evidence_bundle_id = evidence_refs.get("evidence_bundle_id")
+    smoke_knowledge_object_id = (evidence_refs.get("knowledge_object_ids") or [""])[0]
+    if not evidence_bundle_id:
+        raise RuntimeError(f"source-ingest did not return evidence refs: {ingest_result}")
+    if not smoke_knowledge_object_id:
+        raise RuntimeError(f"source-ingest did not return knowledge object refs: {ingest_result}")
+    status, source_record = _request_json(
+        "GET",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/source-records/src-smoke-note-{suffix}",
+    )
+    if status != 200 or source_record.get("source_record", {}).get("source_id") != f"src-smoke-note-{suffix}":
+        raise RuntimeError(f"source-ingest did not replay source record ref: {status} {source_record}")
+    status, evidence_bundle = _request_json(
+        "GET",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/evidence/bundles/{evidence_bundle_id}",
+    )
+    if status != 200 or evidence_bundle.get("bundle", {}).get("evidence_bundle_id") != evidence_bundle_id:
+        raise RuntimeError(f"source-ingest did not replay evidence bundle ref: {status} {evidence_bundle}")
+    print("ok  source-ingest autonomously fetched and persisted source/evidence refs")
+
+    replay_connector_body = {
+        "connector": {
+            "connector_id": "conn-smoke-replay-notes",
+            "source_type": "internal_note",
+            "provider": "Pantheon smoke replay",
+            "license_scope": "internal",
+        },
+        "fetch": {
+            "mode": "static_records",
+            "next_watermark": future_timestamp,
+            "fail_until_attempt": 2,
+            "failure_reason": "smoke replay fixture unavailable",
+            "records": [
+                {
+                    "source_id": f"src-smoke-replayed-note-{suffix}",
+                    "title": "Compose smoke replay note",
+                    "content_ref": f"memory://compose-smoke/replay/{suffix}",
+                }
+            ],
+        },
+    }
+    status, configured_replay_source = _request_json(
+        "POST",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
+        body=replay_connector_body,
+    )
+    if status != 201 or configured_replay_source.get("connector", {}).get("connector_id") != "conn-smoke-replay-notes":
+        raise RuntimeError(f"source-ingest replay connector configuration failed: {status} {configured_replay_source}")
+    status, failed_ingest = _request_json(
+        "POST",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/jobs",
+        body={
+            "connector_id": "conn-smoke-replay-notes",
+            "trace_id": f"trace-source-ingest-replay-smoke-{suffix}",
+            "trigger_type": "compose_smoke_failure",
+        },
+    )
+    if status != 201 or failed_ingest.get("run", {}).get("status") != "failed":
+        raise RuntimeError(f"source-ingest did not route configured failure to DLQ: {status} {failed_ingest}")
+    dlq_entry_id = failed_ingest.get("dlq_entries", [{}])[0].get("entry_id")
+    if not dlq_entry_id:
+        raise RuntimeError(f"source-ingest configured failure did not return DLQ entry: {failed_ingest}")
+    status, replay_result = _request_json(
+        "POST",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/dlq/replay",
+        body={
+            "tag": "retry_exhausted",
+            "entry_ids": [dlq_entry_id],
+            "reason": "compose smoke replay after configured recovery",
+        },
+    )
+    if status != 200 or replay_result.get("summary", {}).get("applied") != 1:
+        raise RuntimeError(f"source-ingest DLQ replay failed: {status} {replay_result}")
+    status, replayed_source_record = _request_json(
+        "GET",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/source-records/src-smoke-replayed-note-{suffix}",
+    )
+    if status != 200 or replayed_source_record.get("source_record", {}).get("source_id") != f"src-smoke-replayed-note-{suffix}":
+        raise RuntimeError(f"source-ingest did not persist replayed source record: {status} {replayed_source_record}")
+    print("ok  source-ingest replayed a configured failure from DLQ")
+
+    status, search_index = _request_json("POST", f"{SEARCH_URL}/api/search/index/reload")
+    if status != 200 or search_index.get("indexed_object_count", 0) < 2:
+        raise RuntimeError(f"search-svc did not load persisted source evidence index: {status} {search_index}")
+
     search_body = {
         "request_id": f"search-smoke-{suffix}",
         "trace_id": f"trace-search-smoke-{suffix}",
@@ -246,28 +465,9 @@ def main() -> int:
             "access_scopes": ["operator", "research"],
             "license_scopes": ["internal"],
         },
-        "documents": [
-            {
-                "result_id": f"search-doc-{suffix}",
-                "match_type": "ticket",
-                "title": "Search smoke note",
-                "excerpt": "Momentum volatility evidence should survive governed search.",
-                "content_ref": f"/research/tickets/search-doc-{suffix}",
-                "relevance_score": 0.8,
-            },
-            {
-                "result_id": f"search-private-{suffix}",
-                "match_type": "ticket",
-                "title": "Private search smoke note",
-                "excerpt": "Momentum volatility evidence that should be filtered.",
-                "content_ref": f"/research/tickets/search-private-{suffix}",
-                "access_scope": ["risk-committee"],
-                "relevance_score": 0.99,
-            },
-        ],
     }
     status, search_result = _request_json("POST", f"{SEARCH_URL}/api/search/query", body=search_body)
-    if status != 200 or [item.get("result_id") for item in search_result.get("results", [])] != [f"search-doc-{suffix}"]:
+    if status != 200 or [item.get("result_id") for item in search_result.get("results", [])] != [smoke_knowledge_object_id]:
         raise RuntimeError(f"search-svc governed query failed: {status} {search_result}")
     status, search_snapshot = _request_json(
         "GET",
@@ -277,13 +477,38 @@ def main() -> int:
         raise RuntimeError(f"search-svc did not replay index snapshot: {status} {search_snapshot}")
     print("ok  search-svc applied governed filters and replayed search refs")
 
+    trainer_body = {
+        "persona_id": "persona-alpha",
+        "objective": "Smoke-check append-only teaching and preview replay boundary.",
+        "context_refs": [{"type": "deployment_plan", "id": plan_id}],
+        "actor_id": "smoke-operator",
+    }
+    status, trainer_session = _request_json("POST", f"{TRAINING_SESSION_URL}/api/training/sessions", body=trainer_body)
+    if status != 201 or not trainer_session.get("session_id"):
+        raise RuntimeError(f"training-session session creation failed: {status} {trainer_session}")
+    trainer_session_id = trainer_session["session_id"]
+    status, event_result = _request_json(
+        "POST",
+        f"{TRAINING_SESSION_URL}/api/training/sessions/{trainer_session_id}/events",
+        body={"actor": "operator", "event_type": "message", "message_body": "Tighten risk response."},
+    )
+    if status != 201 or event_result.get("event", {}).get("sequence_number") != 1:
+        raise RuntimeError(f"training-session event append failed: {status} {event_result}")
+    status, preview = _request_json(
+        "POST",
+        f"{TRAINING_SESSION_URL}/api/training/sessions/{trainer_session_id}/preview",
+        body={"mode": "refresh"},
+    )
+    if status != 201 or preview.get("session_id") != trainer_session_id:
+        raise RuntimeError(f"training-session preview refresh failed: {status} {preview}")
+    print("ok  training-session-svc persisted a session event and preview")
 
     policy_job_body = {
         "policy_id": "persona-alpha-routing",
         "objective": "Smoke-check non-production policy-learning lifecycle.",
         "adapter": "stub",
         "requested_mode": "stub",
-        "source_refs": [{"type": "deployment_plan", "id": plan_id}],
+        "source_refs": [{"type": "training_session", "id": trainer_session_id}],
         "actor_id": "smoke-operator",
     }
     status, policy_job = _request_json("POST", f"{POLICY_LEARNING_URL}/api/policy-learning/jobs", body=policy_job_body)
@@ -303,6 +528,48 @@ def main() -> int:
     if status != 201 or production_rejection.get("rejection", {}).get("reason") != "production_adapter_disabled":
         raise RuntimeError(f"policy-learning production rejection failed: {status} {production_rejection}")
     print("ok  policy-learning-svc persisted stub lifecycle and rejected production adapter")
+
+    status, research_task = _request_json(
+        "POST",
+        f"{RESEARCH_ORCHESTRATOR_URL}/api/research-orchestrator/tasks",
+        body={
+            "title": "Compose smoke research task",
+            "objective": "Verify research orchestration lifecycle and handoff boundary.",
+            "source_refs": [{"type": "search_snapshot", "id": search_body["request_id"]}],
+            "actor_id": "smoke-operator",
+        },
+    )
+    if status != 201 or not research_task.get("task_id"):
+        raise RuntimeError(f"research-orchestrator task creation failed: {status} {research_task}")
+    status, research_run = _request_json(
+        "POST",
+        f"{RESEARCH_ORCHESTRATOR_URL}/api/research-orchestrator/tasks/{research_task['task_id']}/runs",
+        body={"adapter": "stub", "requested_mode": "stub", "dispatch_mode": "stub", "actor_id": "smoke-operator"},
+    )
+    if status != 201 or research_run.get("status") != "queued":
+        raise RuntimeError(f"research-orchestrator stub dispatch failed: {status} {research_run}")
+    status, research_artifact = _request_json(
+        "POST",
+        f"{RESEARCH_ORCHESTRATOR_URL}/api/research-orchestrator/runs/{research_run['run_id']}/artifacts",
+        body={
+            "artifact_type": "strategy_spec",
+            "artifact_family": "research_signal",
+            "title": "Compose smoke research artifact",
+            "storage_ref": f"memory://research-orchestrator/{suffix}/strategy-spec",
+            "checksum": "sha256:compose-smoke",
+            "actor_id": "smoke-operator",
+        },
+    )
+    if status != 201 or research_artifact.get("artifact_state") != "draft":
+        raise RuntimeError(f"research-orchestrator artifact handoff failed: {status} {research_artifact}")
+    status, research_rejection = _request_json(
+        "POST",
+        f"{RESEARCH_ORCHESTRATOR_URL}/api/research-orchestrator/tasks/{research_task['task_id']}/runs",
+        body={"adapter": "qlib", "requested_mode": "production", "dispatch_mode": "stub", "actor_id": "smoke-operator"},
+    )
+    if status != 201 or research_rejection.get("rejection", {}).get("reason") != "production_adapter_disabled":
+        raise RuntimeError(f"research-orchestrator production rejection failed: {status} {research_rejection}")
+    print("ok  research-orchestrator-svc persisted lifecycle/handoff and rejected production adapter")
 
     status, guidance = _request_json(
         "GET",

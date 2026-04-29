@@ -20,6 +20,7 @@ from services.consultation.models import (
     GateHandoffStatus,
     MemoStatus,
 )
+from services.consultation.client import ConsultationClientError, ConsultationServiceClient
 from services.consultation.store import ConsultationStore
 
 
@@ -718,6 +719,22 @@ class ServiceBackedReadAdapter:
         "lineage_edges": {
             "base_env": ("PANTHEON_LINEAGE_READ_URL", "PANTHEON_LINEAGE_API_URL"),
             "list_path": "/api/v1/lineage",
+        },
+        "teaching_sessions": {
+            "base_env": ("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL"),
+            "list_path": "/api/training/sessions",
+        },
+        "trainer_controls": {
+            "base_env": ("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL"),
+            "list_path": "/api/training/controls",
+        },
+        "trainer_previews": {
+            "base_env": ("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL"),
+            "list_path": "/api/training/previews",
+        },
+        "trainer_replays": {
+            "base_env": ("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL"),
+            "list_path": "/api/training/replays",
         },
     }
 
@@ -4654,8 +4671,12 @@ class ReadSurfaceStore:
             snapshot_path=self._path,
             allow_snapshot_fallback=self._allow_local_snapshot_fallback,
         )
+        self._consultation_client_instance: Optional[ConsultationServiceClient] = None
         self._last_governed_search_refs: Dict[str, Dict[str, Any]] = {}
         self._load_or_seed()
+
+    def _training_session_base_url(self) -> Optional[str]:
+        return _base_url_from_env(("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL"))
 
     def _consultation_data_dir(self) -> Optional[Path]:
         for env_name in _CONSULTATION_DATA_DIR_ENVS:
@@ -4670,8 +4691,19 @@ class ReadSurfaceStore:
             return None
         return ConsultationStore(str(data_dir))
 
+    def _consultation_client(self) -> Optional[ConsultationServiceClient]:
+        if not ConsultationServiceClient.configured():
+            return None
+        if self._consultation_client_instance is None:
+            self._consultation_client_instance = ConsultationServiceClient(
+                timeout_seconds=_service_timeout_seconds(),
+            )
+        return self._consultation_client_instance
+
     def _consultation_service_dataset_available(self, dataset: str) -> bool:
-        return dataset in _CONSULTATION_SERVICE_DATASETS and self._consultation_data_dir() is not None
+        return dataset in _CONSULTATION_SERVICE_DATASETS and (
+            self._consultation_client() is not None or self._consultation_data_dir() is not None
+        )
 
     @staticmethod
     def _service_context_refs_to_bff(req: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -4746,15 +4778,17 @@ class ReadSurfaceStore:
             "link": f"/evidence/{ref_id}",
         }
 
-    def _project_service_session_records(self, store: ConsultationStore) -> List[Dict[str, Any]]:
+    def _project_service_session_records_from_data(
+        self,
+        request_records: List[Dict[str, Any]],
+        handoff_records: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         sessions: Dict[str, Dict[str, Any]] = {}
         handoffs_by_request: Dict[str, List[Dict[str, Any]]] = {}
-        for handoff in store.list_handoffs():
-            data = _model_to_data(handoff)
-            handoffs_by_request.setdefault(str(data.get("request_id") or ""), []).append(data)
+        for handoff in handoff_records:
+            handoffs_by_request.setdefault(str(handoff.get("request_id") or ""), []).append(handoff)
 
-        for request in store.list_requests():
-            req = _model_to_data(request)
+        for req in request_records:
             metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
             consult = dict(metadata.get("consultation") or {})
             request_id = str(req.get("request_id") or "")
@@ -4860,6 +4894,12 @@ class ReadSurfaceStore:
 
         return list(sessions.values())
 
+    def _project_service_session_records(self, store: ConsultationStore) -> List[Dict[str, Any]]:
+        return self._project_service_session_records_from_data(
+            [_model_to_data(request) for request in store.list_requests()],
+            [_model_to_data(handoff) for handoff in store.list_handoffs()],
+        )
+
     @staticmethod
     def _project_service_transcript_record(transcript: Dict[str, Any]) -> Dict[str, Any]:
         transcript_id = str(transcript.get("transcript_id") or f"tr-{transcript.get('session_id')}")
@@ -4903,12 +4943,26 @@ class ReadSurfaceStore:
             "events": events,
         }
 
-    def _project_service_memo_record(self, memo: Dict[str, Any]) -> Dict[str, Any]:
+    def _project_service_memo_record(
+        self,
+        memo: Dict[str, Any],
+        request_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         memo_id = str(memo.get("memo_id") or "")
         request_id = str(memo.get("request_id") or "")
-        request = None
-        store = self._consultation_store()
-        if store is not None and request_id:
+        request = (request_lookup or {}).get(request_id)
+        if request is None:
+            client = self._consultation_client()
+            if client is not None and request_id:
+                try:
+                    request = client.get_request(request_id)
+                except ConsultationClientError:
+                    request = None
+        if request is None:
+            store = self._consultation_store()
+        else:
+            store = None
+        if request is None and store is not None and request_id:
             found = store.get_request(request_id)
             request = _model_to_data(found) if found else None
         request_metadata = request.get("metadata") if isinstance((request or {}).get("metadata"), dict) else {}
@@ -4973,6 +5027,37 @@ class ReadSurfaceStore:
         }
 
     def _consultation_service_records(self, dataset: str) -> Optional[List[Dict[str, Any]]]:
+        client = self._consultation_client()
+        if client is not None:
+            try:
+                if dataset == "consult_requests":
+                    return [
+                        self._project_service_request_record(request)
+                        for request in client.list_requests()
+                    ]
+                if dataset == "consultation_sessions":
+                    return self._project_service_session_records_from_data(
+                        client.list_requests(),
+                        client.list_handoffs(),
+                    )
+                if dataset == "consult_transcripts":
+                    return [
+                        self._project_service_transcript_record(transcript)
+                        for transcript in client.list_transcripts()
+                    ]
+                if dataset == "consult_memos":
+                    requests = {
+                        str(request.get("request_id") or ""): request
+                        for request in client.list_requests()
+                        if isinstance(request, dict)
+                    }
+                    return [
+                        self._project_service_memo_record(memo, requests)
+                        for memo in client.list_memos()
+                    ]
+            except ConsultationClientError:
+                return None
+
         store = self._consultation_store()
         if store is None:
             return None
@@ -5354,7 +5439,11 @@ class ReadSurfaceStore:
         include_local_fallback: bool = True,
     ) -> str:
         if self._consultation_service_dataset_available(dataset):
-            return "consultation_service"
+            service_records = self._consultation_service_records(dataset)
+            if service_records is not None:
+                return "consultation_service_client" if self._consultation_client() is not None else "consultation_service_store"
+            if not include_local_fallback:
+                return "missing"
         if dataset == "approval_queue_items":
             approval_source = self.dataset_source(
                 "approval_decisions",
@@ -8150,48 +8239,15 @@ class ReadSurfaceStore:
         date_range: Optional[str],
         eligible_documents: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        documents: List[Dict[str, Any]] = []
-        for document in eligible_documents:
-            result_id = str(document.get("result_id") or "").strip()
-            if not result_id:
-                continue
-            document_match_type = str(document.get("match_type") or "document").strip().lower()
-            links = document.get("links") if isinstance(document.get("links"), dict) else {}
-            result_detail = str(
-                links.get("result_detail")
-                or (
-                    f"/research/tickets/{result_id}"
-                    if document_match_type == "ticket"
-                    else f"/research/{document_match_type}s/{result_id}"
-                )
-            )
-            documents.append(
-                {
-                    **json.loads(json.dumps(document)),
-                    "result_id": result_id,
-                    "match_type": document_match_type,
-                    "source_type": "internal_note",
-                    "content_ref": result_detail,
-                    "citation_label": f"{document_match_type}:{result_id}",
-                    "evidence_bundle_id": f"evbundle-rw02-{result_id}",
-                    "evidence_item_id": f"evi-rw02-{result_id}",
-                    "license_scope": "internal",
-                    "access_scope": ["operator", "research"],
-                    "environment_scope": ["paper"],
-                    "keywords": [document_match_type, str(document.get("linked_ticket_status") or "")],
-                    "relevance_score": float(document.get("relevance_score") or 0.0),
-                }
-            )
         return {
             "request_id": "rw02-bff-search",
             "trace_id": "trace-rw02-bff-search",
             "query": query,
-            "documents": documents,
             "persona_id": "operator-workbench",
             "workspace_id": "research-workbench",
             "source_types": ["internal_note"],
             "environment": "paper",
-            "top_k": max(len(documents), 1),
+            "top_k": max(len(eligible_documents), 1),
             "require_citations": True,
             "filters_applied": {
                 "match_type": match_type,
@@ -9265,6 +9321,23 @@ class ReadSurfaceStore:
         actor_id: str,
         created_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        base_url = self._training_session_base_url()
+        if base_url:
+            available, payload = _http_json_post(
+                base_url,
+                "/api/training/sessions",
+                body={
+                    "persona_id": persona_id,
+                    "objective": objective,
+                    "context_refs": context_refs,
+                    "actor_id": actor_id,
+                    "created_at": created_at,
+                },
+            )
+            if not available or not isinstance(payload, dict):
+                return None
+            return self._project_trainer_session_detail(payload)
+
         service_store_path = self._service._resolve_path("teaching_sessions")
         persist_service_store = service_store_path is not None
         teaching_sessions: Optional[Dict[str, Dict[str, Any]]]
@@ -9328,6 +9401,28 @@ class ReadSurfaceStore:
         actor_id: str,
         accepted_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        base_url = self._training_session_base_url()
+        if base_url:
+            available, payload = _http_json_post(
+                base_url,
+                f"/api/training/sessions/{session_id}/events",
+                body={
+                    "actor": "operator",
+                    "event_type": "message",
+                    "message_body": message_body,
+                    "emitted_at": accepted_at,
+                },
+            )
+            if not available or not isinstance(payload, dict) or not isinstance(payload.get("session"), dict):
+                return None
+            projected = self._project_trainer_session_detail(payload["session"])
+            event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+            return {
+                "accepted_at": payload.get("accepted_at") or accepted_at or _utc_now_rfc3339(),
+                "event": self._project_teaching_event(session_id, event),
+                "session": projected,
+            }
+
         service_store_path = self._service._resolve_path("teaching_sessions")
         persist_service_store = service_store_path is not None
         teaching_sessions: Optional[Dict[str, Dict[str, Any]]]
@@ -9700,6 +9795,23 @@ class ReadSurfaceStore:
         session_status: Optional[str],
         refreshed_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        base_url = self._training_session_base_url()
+        if base_url:
+            timestamp = refreshed_at or _utc_now_rfc3339()
+            available, payload = _http_json_post(
+                base_url,
+                f"/api/training/sessions/{session_id}/preview",
+                body={"mode": "refresh", "refreshed_at": refreshed_at},
+            )
+            if not available or not isinstance(payload, dict):
+                return None
+            return self._project_trainer_preview_payload(
+                payload,
+                session_status=session_status,
+                dataset_source=self.dataset_source("trainer_previews"),
+                snapshot_at=timestamp,
+            )
+
         mutable = self._mutable_trainer_preview_records()
         if mutable is None:
             return None
@@ -10249,6 +10361,22 @@ class ReadSurfaceStore:
         actor_id: str,
         recorded_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        client = self._consultation_client()
+        if client is not None:
+            try:
+                client.record_sponsor_decision(
+                    committee_id,
+                    sponsor_decision=sponsor_decision,
+                    rationale_ref=rationale_ref,
+                    actor_id=actor_id,
+                    recorded_at=recorded_at or _utc_now_rfc3339(),
+                )
+            except ConsultationClientError as exc:
+                if exc.status_code in {404, 409}:
+                    return None
+                raise
+            return self.get_committee(committee_id)
+
         store = self._consultation_store()
         if store is not None:
             matched_request: Optional[ConsultRequest] = None
@@ -10579,6 +10707,48 @@ class ReadSurfaceStore:
         actor_id: str,
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
+        client = self._consultation_client()
+        if client is not None:
+            timestamp = created_at or _utc_now_rfc3339()
+            serialized_context_refs = [
+                f"{item['type']}:{item['id']}"
+                for item in context_refs
+                if isinstance(item, dict) and item.get("type") and item.get("id")
+            ]
+            service_request = client.create_request(
+                {
+                    "request_type": _BFF_TO_SERVICE_REQUEST_TYPE.get(
+                        consultation_type,
+                        ConsultRequestType.STRATEGY_REVIEW,
+                    ).value,
+                    "requested_by": {"actor_type": "operator", "actor_id": actor_id},
+                    "from_persona_id": from_persona_id,
+                    "target_type": target_type,
+                    "target_id": target_ref,
+                    "task": task,
+                    "consultation_type": consultation_type,
+                    "context_refs": serialized_context_refs,
+                    "priority": _BFF_TO_SERVICE_PRIORITY.get(priority, ConsultPriority.NORMAL).value,
+                    "status": ConsultRequestStatus.DRAFT.value,
+                    "linked_session_id": None,
+                    "request_to_session_status": "pending_session",
+                    "completed_at": None,
+                    "canceled_at": None,
+                    "session_handoff_note": "Request accepted; session creation is pending Persona Plane assignment.",
+                    "metadata": {
+                        "bff_context_refs": context_refs,
+                        "bff_priority": priority,
+                        "task": task,
+                        "consultation_type": consultation_type,
+                    },
+                    "trace_id": f"trace-cr-{uuid.uuid4().hex[:12]}",
+                    "created_at": timestamp,
+                }
+            )
+            return self._project_consult_request_detail(
+                self._project_service_request_record(service_request)
+            )
+
         store = self._consultation_store()
         if store is not None:
             timestamp = created_at or _utc_now_rfc3339()
@@ -10825,6 +10995,24 @@ class ReadSurfaceStore:
         actor_id: str,
         canceled_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        client = self._consultation_client()
+        if client is not None:
+            try:
+                request = client.cancel_request(
+                    request_id,
+                    actor_id=actor_id,
+                    canceled_at=canceled_at or _utc_now_rfc3339(),
+                )
+            except ConsultationClientError as exc:
+                if exc.status_code in {404, 409}:
+                    return None
+                raise
+            if request is None:
+                return None
+            return self._project_consult_request_detail(
+                self._project_service_request_record(request)
+            )
+
         store = self._consultation_store()
         if store is not None:
             request = store.get_request(request_id)
@@ -11073,6 +11261,56 @@ class ReadSurfaceStore:
         patched_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = patched_at or _utc_now_rfc3339()
+        base_url = self._training_session_base_url()
+        if base_url:
+            available, payload = _http_json_post(
+                base_url,
+                f"/api/training/sessions/{session_id}/controls",
+                body={"patches": patches, "patched_at": patched_at},
+            )
+            if not available or not isinstance(payload, dict):
+                return None
+            controls = list(payload.get("controls") or payload.get("current_controls") or [])
+            if payload.get("status") == "rejected":
+                return {
+                    "session_id": session_id,
+                    "status": "rejected",
+                    "error_code": "CONTROL_PATCH_VALIDATION_FAILED",
+                    "message": "Patch contains invalid control updates.",
+                    "field_errors": list(payload.get("field_errors") or []),
+                    "rejected_changes": [],
+                    "current_controls": controls,
+                    "allowedActions": {"canPatchControls": True},
+                    "meta": {
+                        "snapshot_at": now,
+                        "staleness": self._tw02_control_staleness("ok", now),
+                        "surfaces": {"trainer_controls": {"state": "ok"}},
+                    },
+                }
+            updated_controls_diff = [
+                {
+                    "field": row.get("parameter_key"),
+                    "before": row.get("previous_value"),
+                    "after": row.get("new_value"),
+                    "validation_status": "accepted",
+                }
+                for row in list(payload.get("patch_delta") or [])
+                if isinstance(row, dict)
+            ]
+            return {
+                "session_id": session_id,
+                "status": "accepted",
+                "message": "Patch applied successfully.",
+                "warnings": [],
+                "diff": {"updated_controls": updated_controls_diff},
+                "current_controls": controls,
+                "allowedActions": {"canPatchControls": True},
+                "meta": {
+                    "snapshot_at": now,
+                    "staleness": self._tw02_control_staleness("ok", now),
+                    "surfaces": {"trainer_controls": {"state": "ok"}},
+                },
+            }
 
         service_store_path = self._service._resolve_path("trainer_controls")
         persist_service_store = service_store_path is not None
@@ -11534,6 +11772,39 @@ class ReadSurfaceStore:
         actor_id: str,
         committed_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        base_url = self._training_session_base_url()
+        if base_url:
+            available, payload = _http_json_post(
+                base_url,
+                f"/api/training/replays/{session_id}/commit",
+                body={
+                    "expected_candidate_snapshot_at": expected_candidate_snapshot_at,
+                    "note": note,
+                    "actor_id": actor_id,
+                    "decided_at": committed_at,
+                },
+            )
+            if not available or not isinstance(payload, dict):
+                return None
+            surface_state = self._tw04_replay_surface_state(
+                has_data=True,
+                dataset_source=self.dataset_source("trainer_replays"),
+            )
+            projected = self._project_trainer_replay_detail(payload, surface_state=surface_state)
+            resolution = projected["replay_resolution"]
+            events = projected.get("events") or []
+            return {
+                "session_id": session_id,
+                "status": projected.get("status"),
+                "replay_resolution": resolution,
+                "artifacts": projected.get("artifacts"),
+                "committed_at": resolution.get("decision_at"),
+                "committed_by": resolution.get("decision_by"),
+                "event": events[-1] if events else None,
+                "allowedActions": projected.get("allowedActions"),
+                "meta": projected.get("meta"),
+            }
+
         mutable = self._mutable_tw04_replay_records()
         if mutable is None:
             return None
@@ -11629,6 +11900,39 @@ class ReadSurfaceStore:
         actor_id: str,
         discarded_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        base_url = self._training_session_base_url()
+        if base_url:
+            available, payload = _http_json_post(
+                base_url,
+                f"/api/training/replays/{session_id}/discard",
+                body={
+                    "expected_candidate_snapshot_at": expected_candidate_snapshot_at,
+                    "note": note,
+                    "actor_id": actor_id,
+                    "decided_at": discarded_at,
+                },
+            )
+            if not available or not isinstance(payload, dict):
+                return None
+            surface_state = self._tw04_replay_surface_state(
+                has_data=True,
+                dataset_source=self.dataset_source("trainer_replays"),
+            )
+            projected = self._project_trainer_replay_detail(payload, surface_state=surface_state)
+            resolution = projected["replay_resolution"]
+            events = projected.get("events") or []
+            return {
+                "session_id": session_id,
+                "status": projected.get("status"),
+                "replay_resolution": resolution,
+                "artifacts": projected.get("artifacts"),
+                "discarded_at": resolution.get("decision_at"),
+                "discarded_by": resolution.get("decision_by"),
+                "event": events[-1] if events else None,
+                "allowedActions": projected.get("allowedActions"),
+                "meta": projected.get("meta"),
+            }
+
         mutable = self._mutable_tw04_replay_records()
         if mutable is None:
             return None

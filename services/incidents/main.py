@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from services.foundation.health import register_fastapi_health_routes
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer from sibling services/incident/ directory
@@ -141,6 +142,12 @@ app = FastAPI(
         "All runtime, governance, and evolution flows cite this service "
         "as the single incident evidence surface."
     ),
+)
+register_fastapi_health_routes(
+    app,
+    "incidents",
+    metrics=lambda: {"incident_count": len(store.list_incidents())},
+    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH)},
 )
 
 # ---------------------------------------------------------------------------

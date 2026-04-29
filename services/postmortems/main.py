@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from services.foundation.health import register_fastapi_health_routes
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer
@@ -152,6 +153,13 @@ app = FastAPI(
         "postmortem evidence surface.  Referential integrity against "
         "IncidentCase is enforced at write time."
     ),
+)
+register_fastapi_health_routes(
+    app,
+    "postmortems",
+    dependencies=lambda: {"incidents": {"status": "ok", "store_path": str(STORE_PATH)}},
+    metrics=lambda: {"postmortem_count": len(store.list_postmortems())},
+    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH)},
 )
 
 # ---------------------------------------------------------------------------

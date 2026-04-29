@@ -26,6 +26,7 @@ from services.consultation.models import (
     GateHandoffStatus,
     MemoStatus,
 )
+from services.consultation.client import ConsultationClientError, ConsultationServiceClient
 from services.consultation.store import ConsultationStore
 from services.runtime_auth_inbound import (
     AuthError,
@@ -290,6 +291,22 @@ def _record_service_committee_sponsor_decision(
     actor_id: str,
     recorded_at: str,
 ) -> dict | None:
+    if ConsultationServiceClient.configured():
+        try:
+            return ConsultationServiceClient().record_sponsor_decision(
+                committee_id,
+                sponsor_decision=sponsor_decision,
+                rationale_ref=rationale_ref,
+                actor_id=actor_id,
+                recorded_at=recorded_at,
+            )
+        except ConsultationClientError as exc:
+            if exc.status_code == 404:
+                raise KeyError(committee_id) from exc
+            if exc.status_code == 409:
+                raise ValueError(str(exc)) from exc
+            raise
+
     data_dir = _consultation_data_dir()
     if data_dir is None:
         return None
@@ -742,6 +759,20 @@ def record_committee_sponsor_decision(committee_id):
                 "message": f"Committee {committee_id} was not found in the consultation authority store",
             }
         }), 404
+    except ValueError as exc:
+        return jsonify({
+            "error": {
+                "code": "COMMITTEE_HANDOFF_UNAVAILABLE",
+                "message": str(exc),
+            }
+        }), 409
+    except ConsultationClientError as exc:
+        return jsonify({
+            "error": {
+                "code": "CONSULTATION_API_UNAVAILABLE",
+                "message": str(exc),
+            }
+        }), 503
 
     record = {
         "command_id": command_id,

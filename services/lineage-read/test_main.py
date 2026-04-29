@@ -11,6 +11,8 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 
+from services.telemetry.lineage_read import LineageReadService
+
 
 def _load_module(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -29,6 +31,105 @@ def _load_module(name: str, path: Path):
 _MODULE_DIR = Path(__file__).resolve().parent
 lineage_main = _load_module("lineage_read_main_test_module", _MODULE_DIR / "main.py")
 _ORIGINAL_STORE_PATH = lineage_main.STORE_PATH
+_ORIGINAL_LINEAGE_SERVICE = lineage_main._lineage_service
+
+_LINEAGE_CORPUS = {
+    "metadata": {
+        "task_id": "LINEAGE-READ-HTTP-TEST",
+        "projection_updated_at": "2026-04-28T00:00:00Z",
+    },
+    "node_sets": {
+        "source_records": [
+            {"source_id": "src-http-1", "created_at": "2026-04-28T00:00:00Z"}
+        ],
+        "strategy_specs": [
+            {
+                "strategy_id": "strategy-http-1",
+                "source_id": "src-http-1",
+                "created_at": "2026-04-28T00:01:00Z",
+            }
+        ],
+        "experiment_runs": [
+            {
+                "run_id": "run-http-1",
+                "strategy_id": "strategy-http-1",
+                "created_at": "2026-04-28T00:02:00Z",
+            }
+        ],
+        "candidate_artifacts": [
+            {
+                "artifact_id": "artifact-http-1",
+                "artifact_version": "1.0.0",
+                "run_id": "run-http-1",
+                "created_at": "2026-04-28T00:03:00Z",
+            }
+        ],
+        "approval_decisions": [
+            {
+                "decision_id": "approval-http-1",
+                "target_id": "artifact-http-1",
+                "decision_state": "approved",
+                "created_at": "2026-04-28T00:04:00Z",
+            }
+        ],
+        "capital_pools": [
+            {
+                "pool_id": "pool-http-1",
+                "single_runtime_enforced": True,
+                "created_at": "2026-04-28T00:05:00Z",
+            }
+        ],
+        "persona_capital_bindings": [
+            {
+                "binding_id": "pcb-http-1",
+                "capital_pool_id": "pool-http-1",
+                "created_at": "2026-04-28T00:06:00Z",
+            }
+        ],
+        "deployment_plans": [
+            {
+                "plan_id": "plan-http-1",
+                "approval_decision_id": "approval-http-1",
+                "artifact_id": "artifact-http-1",
+                "artifact_version": "1.0.0",
+                "capital_pool_id": "pool-http-1",
+                "binding_id": "pcb-http-1",
+                "created_at": "2026-04-28T00:07:00Z",
+            }
+        ],
+        "runtime_bindings": [
+            {
+                "binding_id": "rb-http-1",
+                "runtime_id": "runtime-http-1",
+                "capital_pool_id": "pool-http-1",
+                "artifact_id": "artifact-http-1",
+                "artifact_version": "1.0.0",
+                "plan_id": "plan-http-1",
+                "persona_capital_binding_id": "pcb-http-1",
+                "status": "active",
+                "effective_at": "2026-04-28T00:08:00Z",
+            }
+        ],
+        "telemetry_events": [
+            {
+                "event_id": "evt-http-1",
+                "event_type": "pnl_snapshot",
+                "binding_id": "rb-http-1",
+                "runtime_id": "runtime-http-1",
+                "capital_pool_id": "pool-http-1",
+                "artifact_id": "artifact-http-1",
+                "artifact_version": "1.0.0",
+                "plan_id": "plan-http-1",
+                "persona_capital_binding_id": "pcb-http-1",
+                "trace_id": "trace-http-1",
+                "strategy_id": "strategy-http-1",
+                "event_produced_at": "2026-04-28T00:09:00Z",
+            }
+        ],
+    },
+    "query_families": [],
+    "benchmark_cases": [],
+}
 
 
 def _record(record_id: str, **overrides) -> dict:
@@ -53,17 +154,50 @@ class TestLineageReadService(unittest.TestCase):
         self._tempdir = tempfile.TemporaryDirectory()
         self.store_path = Path(self._tempdir.name) / "lineage.json"
         lineage_main.STORE_PATH = self.store_path
+        service = LineageReadService()
+        service.load_corpus(_LINEAGE_CORPUS)
+        lineage_main._lineage_service = service
+        lineage_main._lineage_load_error = None
         self.client = TestClient(lineage_main.app)
 
     def tearDown(self) -> None:
         lineage_main.STORE_PATH = _ORIGINAL_STORE_PATH
+        lineage_main._lineage_service = _ORIGINAL_LINEAGE_SERVICE
         self._tempdir.cleanup()
 
     def test_health(self) -> None:
         response = self.client.get("/__health__")
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"status": "ok"})
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(response.json()["service"], "lineage-read")
+        self.assertIs(response.json()["lineage_model_loaded"], True)
+
+    def test_runtime_binding_projection_route_uses_lin002_engine(self) -> None:
+        response = self.client.get("/api/v1/lineage/runtime-bindings/rb-http-1/projection")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["target_type"], "runtime_binding")
+        self.assertEqual(payload["target_id"], "rb-http-1")
+        self.assertIs(payload["derived_only"], True)
+        self.assertEqual(payload["binding_status"], "active")
+
+    def test_telemetry_event_trace_route_uses_lin002_engine(self) -> None:
+        response = self.client.get("/api/v1/lineage/events/evt-http-1/trace")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["target_type"], "telemetry_event")
+        self.assertEqual(payload["target_id"], "evt-http-1")
+        self.assertEqual(payload["event_type"], "pnl_snapshot")
+        self.assertIn("trace-http-1", payload["refs"]["trace_ids"])
+
+    def test_missing_lineage_projection_returns_404(self) -> None:
+        response = self.client.get("/api/v1/lineage/events/missing-event/trace")
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "LINEAGE_TARGET_NOT_FOUND")
 
     def test_create_lineage_persists_and_can_be_fetched(self) -> None:
         payload = {

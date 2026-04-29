@@ -78,6 +78,53 @@ services:
       timeout: 5s
       retries: 5
 
+  consultation-svc:
+    build:
+      context: .
+      dockerfile: services/consultation/Dockerfile
+    environment:
+      PORT: "8096"
+      CONSULTATION_DATA_DIR: /data/consultation
+    volumes:
+      - consultation-data:/data/consultation
+    ports:
+      - "${CONSULTATION_PORT:-18096}:8096"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  source-ingest:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    environment:
+      PORT: "8097"
+      SOURCE_INGEST_DATA_DIR: /data/source-ingest
+      SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
+      SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
+    volumes:
+      - source-ingest-data:/data/source-ingest
+    ports:
+      - "${SOURCE_INGEST_PORT:-18097}:8097"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8097'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   search-svc:
     build:
       context: .
@@ -86,21 +133,44 @@ services:
       PORT: "8098"
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
+      SEARCH_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
     volumes:
       - search-data:/data/search
+      - source-ingest-data:/data/source-ingest:ro
     ports:
       - "${SEARCH_PORT:-18098}:8098"
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8098'); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=5).read()\"",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8098'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
         ]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 5s
 
+  training-session-svc:
+    build:
+      context: .
+      dockerfile: services/training-session/Dockerfile
+    environment:
+      PORT: "8099"
+      TRAINING_SESSION_DATA_DIR: /data/training-session
+    volumes:
+      - training-session-data:/data/training-session
+    ports:
+      - "${TRAINING_SESSION_PORT:-18099}:8099"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8099'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   policy-learning-svc:
     build:
@@ -118,7 +188,31 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8100'); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=5).read()\"",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8100'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  research-orchestrator-svc:
+    build:
+      context: .
+      dockerfile: services/research/Dockerfile
+    environment:
+      PORT: "8101"
+      RESEARCH_ORCHESTRATOR_DATA_DIR: /data/research-orchestrator
+      RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS: ${RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS:-8}
+      RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS: "false"
+    volumes:
+      - research-orchestrator-data:/data/research-orchestrator
+    ports:
+      - "${RESEARCH_ORCHESTRATOR_PORT:-18101}:8101"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8101'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
         ]
       interval: 10s
       timeout: 5s
@@ -153,7 +247,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:18789/healthz').then((r)=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:18789/readyz').then((r)=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s
@@ -168,7 +262,7 @@ services:
       PORT: "8081"
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
       PANTHEON_COMMAND_STATE_FILE: /data/runtime/internal_api_commands.json
-      PANTHEON_RUNTIME_CONSULTATION_DATA_DIR: /data/runtime/consultation
+      PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       # ApproveDeployment routes to the deployment service plan-status API.
       # Governance ApprovalDecision lookups use a separate approval-service URL
       # for audit cross-references; the runtime-manager itself does not write
@@ -177,6 +271,9 @@ services:
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
     volumes:
       - runtime-data:/data/runtime
+    depends_on:
+      consultation-svc:
+        condition: service_healthy
     # Note: deployment/governance are not declared as `depends_on` because
     # runtime-manager's primary contract (runtime CRUD, kill-switch) does not
     # require them at boot. ApproveDeployment requests fail cleanly with
@@ -184,7 +281,7 @@ services:
     ports:
       - "18081:8081"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -213,7 +310,7 @@ services:
     ports:
       - "18082:8082"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -242,7 +339,7 @@ services:
     ports:
       - "18083:8083"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -274,7 +371,7 @@ services:
     ports:
       - "18090:8090"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -306,7 +403,7 @@ services:
     ports:
       - "18091:8091"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -332,7 +429,9 @@ services:
       PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
+      PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
@@ -341,7 +440,11 @@ services:
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro
     depends_on:
+      consultation-svc:
+        condition: service_healthy
       search-svc:
+        condition: service_healthy
+      training-session-svc:
         condition: service_healthy
       governance:
         condition: service_healthy
@@ -368,7 +471,7 @@ services:
     ports:
       - "18001:8001"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -396,7 +499,7 @@ services:
     ports:
       - "18002:8002"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -419,7 +522,7 @@ services:
     ports:
       - "18003:8001"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -445,7 +548,7 @@ services:
     ports:
       - "18084:8084"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -463,7 +566,7 @@ services:
     ports:
       - "18085:8085"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -489,7 +592,7 @@ services:
     ports:
       - "18086:8086"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -517,7 +620,7 @@ services:
     ports:
       - "18087:8087"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -543,7 +646,7 @@ services:
     ports:
       - "18088:8088"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -561,7 +664,7 @@ services:
     ports:
       - "18089:8089"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -579,7 +682,7 @@ services:
     ports:
       - "18092:8092"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -601,7 +704,7 @@ services:
     ports:
       - "18095:8095"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -626,7 +729,7 @@ services:
     ports:
       - "18093:8093"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -644,7 +747,68 @@ services:
     ports:
       - "18094:8094"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  reconciliation-drift-svc:
+    build:
+      context: .
+      dockerfile: services/reconciliation-drift/Dockerfile
+    environment:
+      PORT: "8102"
+      RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_EVOLUTION_API_URL: http://evolution:8093
+    volumes:
+      - reconciliation-drift-data:/data/reconciliation-drift
+    depends_on:
+      telemetry:
+        condition: service_healthy
+      lineage-read:
+        condition: service_healthy
+      runtime-manager:
+        condition: service_healthy
+    ports:
+      - "${RECONCILIATION_DRIFT_PORT:-18102}:8102"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8102'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  research-worker-gateway-svc:
+    build:
+      context: .
+      dockerfile: services/research-worker-gateway/Dockerfile
+    environment:
+      PORT: "8103"
+      RESEARCH_WORKER_GATEWAY_DATA_DIR: /data/research-worker-gateway
+      RESEARCH_WORKER_GATEWAY_MAX_ACTIVE_JOBS: ${RESEARCH_WORKER_GATEWAY_MAX_ACTIVE_JOBS:-4}
+      RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS: "false"
+      RESEARCH_ORCHESTRATOR_URL: http://research-orchestrator-svc:8101
+    volumes:
+      - research-worker-gateway-data:/data/research-worker-gateway
+    depends_on:
+      research-orchestrator-svc:
+        condition: service_healthy
+    ports:
+      - "${RESEARCH_WORKER_GATEWAY_PORT:-18103}:8103"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8103'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -674,12 +838,30 @@ services:
       REGISTRY_URL: http://registry:8087
       OPTIMIZER_URL: http://optimizer-svc:8088
       PROMOTION_URL: http://promotion:8089
+      CONSULTATION_URL: http://consultation-svc:8096
+      SOURCE_INGEST_URL: http://source-ingest:8097
       SEARCH_URL: http://search-svc:8098
+      TRAINING_SESSION_URL: http://training-session-svc:8099
       POLICY_LEARNING_URL: http://policy-learning-svc:8100
+      RESEARCH_ORCHESTRATOR_URL: http://research-orchestrator-svc:8101
+      RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
+      RESEARCH_WORKER_GATEWAY_URL: http://research-worker-gateway-svc:8103
     depends_on:
+      consultation-svc:
+        condition: service_healthy
+      source-ingest:
+        condition: service_healthy
       search-svc:
         condition: service_healthy
+      training-session-svc:
+        condition: service_healthy
       policy-learning-svc:
+        condition: service_healthy
+      research-orchestrator-svc:
+        condition: service_healthy
+      reconciliation-drift-svc:
+        condition: service_healthy
+      research-worker-gateway-svc:
         condition: service_healthy
       governance:
         condition: service_healthy
@@ -722,6 +904,7 @@ services:
 volumes:
   bff-data:
   capital-data:
+  consultation-data:
   evolution-data:
   feedback-data:
   governance-data:
@@ -732,7 +915,12 @@ volumes:
   policy-learning-data:
   postgres-data:
   promotion-data:
+  reconciliation-drift-data:
+  research-orchestrator-data:
+  research-worker-gateway-data:
   runtime-data:
   search-data:
+  training-session-data:
+  source-ingest-data:
   lineage-data:
   telemetry-data:

@@ -138,6 +138,21 @@ class SourceConnector:
             "metadata": dict(self.metadata),
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "SourceConnector":
+        return cls(
+            connector_id=str(data["connector_id"]),
+            source_type=str(data["source_type"]),
+            provider=str(data["provider"]),
+            license_scope=str(data["license_scope"]),
+            auth_type=str(data.get("auth_type", AuthType.NONE.value)),
+            secret_ref_id=data.get("secret_ref_id"),
+            supported_modes=list(data.get("supported_modes") or (ConnectorMode.BATCH.value,)),
+            status=str(data.get("status", ConnectorStatus.ENABLED.value)),
+            rate_limit_policy_ref=data.get("rate_limit_policy_ref"),
+            metadata=dict(data.get("metadata", {})),
+        )
+
 
 @dataclass(frozen=True)
 class SourceRecord:

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from services.foundation.health import register_fastapi_health_routes
 
 _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance"
 if str(_CP_GOV) not in sys.path:
@@ -378,6 +379,15 @@ app = FastAPI(
         "consumers use its governed read paths."
     ),
 )
+register_fastapi_health_routes(
+    app,
+    "pantheon-capital",
+    metrics=lambda: {
+        "capital_pool_count": len(get_capital_service().list_pools()),
+        "binding_count": len(get_capital_service().list_bindings()),
+    },
+    details=lambda: {"data_dir": str(DATA_DIR)},
+)
 
 
 def get_capital_service() -> CapitalBoundaryService:
@@ -564,4 +574,3 @@ def audit(
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok", "service": "pantheon-capital"}
-

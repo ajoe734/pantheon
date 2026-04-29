@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from services.foundation.health import register_fastapi_health_routes
 
 # ---------------------------------------------------------------------------
 # Platform objects — resolve relative to repo layout
@@ -110,6 +111,12 @@ app = FastAPI(
         "Promotion, deployment, and evolution flows reference this service "
         "instead of local fallbacks."
     ),
+)
+register_fastapi_health_routes(
+    app,
+    "governance",
+    metrics=lambda: {"approval_count": len(store.list_all())},
+    details=lambda: {"data_dir": DATA_DIR, "store_path": STORE_PATH},
 )
 
 # ---------------------------------------------------------------------------

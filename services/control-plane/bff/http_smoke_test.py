@@ -33,6 +33,7 @@ class TestOperatorBFFHttpSmoke(unittest.TestCase):
             env = os.environ.copy()
             env["BFF_DATA_DIR"] = temp_dir
             env["BFF_READ_SURFACE_STATE"] = "fresh"
+            env["PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK"] = "true"
 
             command = [
                 sys.executable,

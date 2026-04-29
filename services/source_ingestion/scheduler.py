@@ -195,6 +195,11 @@ class IngestionScheduler:
             try:
                 fetched = fetch_batch(starting_watermark.value if starting_watermark else None)
                 batch = fetched if isinstance(fetched, IngestBatch) else IngestBatch(records=tuple(fetched))
+                for record in batch.records:
+                    if record.connector_id != connector_id:
+                        raise SourceEvidenceError("fetched record connector_id must match job connector")
+                    if record.source_type != connector.source_type:
+                        raise SourceEvidenceError("fetched record source_type must match job connector")
                 run.raw_count = len(batch.records)
                 run.normalized_count = sum(1 for record in batch.records if not record.is_rejected)
                 run.rejected_count = sum(1 for record in batch.records if record.is_rejected)

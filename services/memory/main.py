@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 
+from services.foundation.health import register_fastapi_health_routes
+
 from .institutional_memory_store import (
     InstitutionalMemoryEntry,
     InstitutionalMemoryError,
@@ -14,6 +16,7 @@ from .institutional_memory_store import (
 )
 
 app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
+register_fastapi_health_routes(app, "memory", details=lambda: {"store_path": str(_store_path())})
 
 
 def _store_path() -> Path:

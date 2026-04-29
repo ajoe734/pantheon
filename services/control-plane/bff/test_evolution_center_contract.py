@@ -36,7 +36,7 @@ def _seeded_client():
 def test_evolution_decisions_list_contract():
     with _seeded_client() as client:
         resp = client.get(
-            "/api/v1/evolution-decisions?page_token=0&page_size=1",
+            "/api/v1/evolution-decisions?page_token=0&page_size=20",
             headers={"Authorization": AUTH},
         )
         assert resp.status_code == 200

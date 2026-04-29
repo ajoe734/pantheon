@@ -39,6 +39,7 @@ from services.foundation import (  # noqa: E402
     TraceContext,
     foundation_id,
 )
+from services.foundation.health import register_fastapi_health_routes  # noqa: E402
 
 from models import (
     ApproveMutationCommandPayload,
@@ -115,6 +116,25 @@ if _cors_origins:
 
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 os.makedirs(BFF_DATA_DIR, exist_ok=True)
+register_fastapi_health_routes(
+    app,
+    "operator-bff",
+    dependencies=lambda: {
+        "runtime_manager": {
+            "status": "ok" if os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
+        },
+        "governance": {
+            "status": "ok" if os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "").strip(),
+        },
+        "deployment": {
+            "status": "ok" if os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip(),
+        },
+    },
+    details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
+)
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 read_store = ReadSurfaceStore(
     os.path.join(BFF_DATA_DIR, "read_surfaces.json"),

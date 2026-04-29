@@ -428,6 +428,7 @@ services:
     environment:
       PORT: "8094"
       LINEAGE_DATA_DIR: /data/lineage
+      LINEAGE_READ_CORPUS_PATH: /workspace/services/registry/lineage/lin001a_benchmark_corpus.json
     volumes:
       - lineage-data:/data/lineage
     ports:

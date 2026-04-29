@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from services.foundation.health import register_fastapi_health_routes
 from store import PolicyLearningStore
 
 
@@ -73,6 +74,15 @@ class RejectBody(BaseModel):
 
 app = FastAPI(title="Pantheon Policy Learning Service", version="0.1.0")
 store = PolicyLearningStore(_data_dir())
+register_fastapi_health_routes(
+    app,
+    "policy-learning",
+    metrics=lambda: {"job_count": len(store.list_jobs())},
+    details=lambda: {
+        "data_dir": _data_dir(),
+        "production_adapters_enabled": _production_adapters_allowed(),
+    },
+)
 
 
 @app.get("/health")

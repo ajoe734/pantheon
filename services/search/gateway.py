@@ -135,7 +135,7 @@ class SearchGateway:
                         }
                     ],
                     answer_context=knowledge_object.text,
-                    citations=list(bundle.citation_refs),
+                    citations=[evidence_item.citation_label],
                     filters_applied=filters_applied,
                     rejected_items_count=rejected,
                     relevance_score=match.score,

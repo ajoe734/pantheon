@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 # Ensure runtime-manager modules are importable
 RM_DIR = os.path.join(os.path.dirname(__file__), "..", "execution", "runtime-manager")
@@ -482,8 +483,10 @@ class TestProtectedInternalAPIConsultationServiceBoundary(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.prev_command_state_file = internal_api._COMMAND_STATE_FILE
         self.prev_runtime_consultation_dir = os.environ.get("PANTHEON_RUNTIME_CONSULTATION_DATA_DIR")
+        self.prev_consultation_api_url = os.environ.get("PANTHEON_CONSULTATION_API_URL")
         internal_api._COMMAND_STATE_FILE = os.path.join(self.tmpdir.name, "commands.json")
         os.environ["PANTHEON_RUNTIME_CONSULTATION_DATA_DIR"] = self.tmpdir.name
+        os.environ.pop("PANTHEON_CONSULTATION_API_URL", None)
         self.client = internal_api.app.test_client()
         self._seed_service_committee()
 
@@ -493,6 +496,10 @@ class TestProtectedInternalAPIConsultationServiceBoundary(unittest.TestCase):
             os.environ.pop("PANTHEON_RUNTIME_CONSULTATION_DATA_DIR", None)
         else:
             os.environ["PANTHEON_RUNTIME_CONSULTATION_DATA_DIR"] = self.prev_runtime_consultation_dir
+        if self.prev_consultation_api_url is None:
+            os.environ.pop("PANTHEON_CONSULTATION_API_URL", None)
+        else:
+            os.environ["PANTHEON_CONSULTATION_API_URL"] = self.prev_consultation_api_url
         self.tmpdir.cleanup()
 
     @staticmethod
@@ -646,6 +653,76 @@ class TestProtectedInternalAPIConsultationServiceBoundary(unittest.TestCase):
         self.assertEqual(len(commands), 1)
         command = next(iter(commands.values()))
         self.assertEqual(command["result"]["service_handoff"]["handoff_id"], handoff["handoff_id"])
+
+    def test_sponsor_decision_route_uses_consultation_http_client_when_configured(self):
+        calls = []
+
+        class FakeConsultationClient:
+            @classmethod
+            def configured(cls):
+                return True
+
+            def record_sponsor_decision(
+                self,
+                committee_id,
+                *,
+                sponsor_decision,
+                rationale_ref,
+                actor_id,
+                recorded_at=None,
+            ):
+                calls.append((committee_id, sponsor_decision, rationale_ref, actor_id, recorded_at))
+                return {
+                    "committee_id": committee_id,
+                    "committee_ref": committee_id,
+                    "linked_request_id": "cr-http-internal-001",
+                    "linked_session_id": "cs-http-internal-001",
+                    "sponsor_decision": sponsor_decision,
+                    "sponsor_decided_at": recorded_at,
+                    "sponsor_decided_by": actor_id,
+                    "consensus_state": "reached",
+                    "rationale_ref": rationale_ref,
+                    "outcome": sponsor_decision,
+                    "service_handoff": {
+                        "handoff_id": "gh-http-internal-001",
+                        "target_gate": f"committee_sponsor_decision:{committee_id}",
+                        "evidence_refs": ["ev-http-001"],
+                        "audit_refs": ["aud-http-001"],
+                        "status": "sent",
+                    },
+                }
+
+        with mock.patch.dict(
+            os.environ,
+            {"PANTHEON_CONSULTATION_API_URL": "http://consultation-svc:8096"},
+            clear=False,
+        ):
+            with mock.patch.object(internal_api, "ConsultationServiceClient", FakeConsultationClient):
+                response = self.client.post(
+                    "/api/internal/v1/consultations/committees/committee-http-001/sponsor-decision",
+                    headers=self._headers(),
+                    json={
+                        "sponsor_decision": "conditional",
+                        "rationale_ref": "workspace://committee-rationales/http/final",
+                        "recorded_at": "2026-04-20T07:15:00Z",
+                    },
+                )
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 202, response.get_data(as_text=True))
+        self.assertEqual(payload["service_handoff"]["handoff_id"], "gh-http-internal-001")
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "committee-http-001",
+                    "conditional",
+                    "workspace://committee-rationales/http/final",
+                    "runtime-operator",
+                    "2026-04-20T07:15:00Z",
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":

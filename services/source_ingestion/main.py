@@ -1,23 +1,28 @@
 """Deployable source-ingest service boundary.
 
-The service intentionally keeps external fetching out of process for this
-first deployable slice. Callers submit a bounded batch of already-fetched
-records; the wrapper applies the governed ingest lifecycle, persisted
-watermarks, DLQ routing, and audit replay contract from the source_ingestion
-library.
+The service supports both the initial bounded already-fetched record wrapper
+and the baseline autonomous path: callers can persist a connector fetch
+configuration, then trigger an ingest run by connector id. The wrapper applies
+the governed ingest lifecycle, persisted watermarks, durable source/evidence
+refs, DLQ routing, and audit replay contract from the source_ingestion library.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from services.foundation import DeadLetterQueue
+from services.foundation import ActorRef, ActorType, DeadLetterQueue, DeadLetterReplayProcessor, SchemaRegistry
+from services.foundation.health import register_fastapi_health_routes
+from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, JsonlEvidenceRepository
+from services.knowledge.evidence.models import EvidenceValidationError
 
 from .connectors import (
     AuthType,
@@ -29,6 +34,7 @@ from .connectors import (
     SourceRecordStatus,
     SourceType,
 )
+from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore
 from .ingest_manager import IngestManager
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 
@@ -41,6 +47,8 @@ def _resolve_data_dir() -> Path:
 
 DATA_DIR = _resolve_data_dir()
 SCHEDULE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_STORE_PATH", str(DATA_DIR / "ingest_schedule.jsonl")))
+CONNECTOR_STORE_PATH = Path(os.getenv("SOURCE_INGEST_CONNECTOR_STORE_PATH", str(DATA_DIR / "connector_config.jsonl")))
+SOURCE_EVIDENCE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(DATA_DIR / "source_evidence.jsonl")))
 DLQ_STORE_PATH = Path(os.getenv("SOURCE_INGEST_DLQ_PATH", str(DATA_DIR / "source_ingest_dlq.jsonl")))
 AUDIT_STORE_PATH = Path(os.getenv("SOURCE_INGEST_AUDIT_PATH", str(DATA_DIR / "source_ingest_audit.jsonl")))
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
@@ -48,9 +56,32 @@ MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 manager = IngestManager()
 store = JsonlIngestScheduleStore(SCHEDULE_STORE_PATH)
+connector_store = JsonlConfiguredConnectorStore(CONNECTOR_STORE_PATH)
+configured_fetcher = ConfiguredConnectorFetcher(connector_store)
+evidence_repository = JsonlEvidenceRepository(SOURCE_EVIDENCE_STORE_PATH)
+evidence_builder = EvidenceBundleBuilder(evidence_repository)
 dead_letter_queue = DeadLetterQueue(DLQ_STORE_PATH)
 dead_letter_queue.load_from_spill()
 scheduler = IngestionScheduler(manager=manager, store=store, dead_letter_queue=dead_letter_queue)
+replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
+register_fastapi_health_routes(
+    app,
+    "pantheon-source-ingest",
+    metrics=lambda: {
+        "run_count": len(store.list_runs()),
+        "connector_count": len(connector_store.list_configs()),
+        "source_record_count": len(evidence_repository.list_source_records()),
+        "evidence_item_count": len(evidence_repository.list_evidence_items()),
+        "dlq_count": len(dead_letter_queue.entries()),
+    },
+    details=lambda: {
+        "store_path": str(SCHEDULE_STORE_PATH),
+        "connector_store_path": str(CONNECTOR_STORE_PATH),
+        "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
+        "dlq_path": str(DLQ_STORE_PATH),
+        "audit_path": str(AUDIT_STORE_PATH),
+    },
+)
 
 
 class ConnectorBody(BaseModel):
@@ -103,12 +134,72 @@ class SourceRecordBody(BaseModel):
         )
 
 
-class TriggerIngestJobRequest(BaseModel):
+class ConfiguredFetchRecordBody(BaseModel):
+    source_id: str
+    title: str
+    content_ref: str
+    connector_id: str | None = None
+    source_type: SourceType | None = None
+    status: SourceRecordStatus = SourceRecordStatus.NORMALIZED
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str = ""
+    created_at: str | None = None
+
+    def to_config(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "source_id": self.source_id,
+            "title": self.title,
+            "content_ref": self.content_ref,
+            "status": self.status.value,
+            "metadata": self.metadata,
+            "trace_id": self.trace_id,
+        }
+        if self.connector_id:
+            payload["connector_id"] = self.connector_id
+        if self.source_type:
+            payload["source_type"] = self.source_type.value
+        if self.created_at:
+            payload["created_at"] = self.created_at
+        return payload
+
+
+class ConfiguredFetchBody(BaseModel):
+    mode: Literal["static_records"] = "static_records"
+    records: list[ConfiguredFetchRecordBody] = Field(default_factory=list)
+    next_watermark: str | None = None
+    fail_until_attempt: int = 0
+    failure_reason: str = "configured connector fetch failed"
+
+    def to_config(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "records": [record.to_config() for record in self.records],
+            "next_watermark": self.next_watermark,
+            "fail_until_attempt": self.fail_until_attempt,
+            "failure_reason": self.failure_reason,
+        }
+
+
+class ConfigureConnectorRequest(BaseModel):
     connector: ConnectorBody
+    fetch: ConfiguredFetchBody
+
+
+class TriggerIngestJobRequest(BaseModel):
+    connector: ConnectorBody | None = None
+    connector_id: str | None = None
     trace_id: str
     trigger_type: str = "manual"
     records: list[SourceRecordBody] = Field(default_factory=list)
     next_watermark: str | None = None
+    fetch: ConfiguredFetchBody | None = None
+
+
+class ReplayDlqRequest(BaseModel):
+    tag: str = "retry_exhausted"
+    entry_ids: list[str] = Field(default_factory=list)
+    reason: str = "operator-approved source ingest DLQ replay"
+    actor_id: str = "source-ingest-operator"
 
 
 def _register_or_validate_connector(connector: SourceConnector) -> SourceConnector:
@@ -118,6 +209,50 @@ def _register_or_validate_connector(connector: SourceConnector) -> SourceConnect
     if existing.to_dict() != connector.to_dict():
         raise SourceEvidenceError(f"Connector already registered with different contract: {connector.connector_id}")
     return existing
+
+
+def _assert_fetch_within_limit(fetch: ConfiguredFetchBody) -> None:
+    if len(fetch.records) > MAX_RECORDS_PER_JOB:
+        raise HTTPException(status_code=413, detail=f"fetch.records exceeds SOURCE_INGEST_MAX_RECORDS={MAX_RECORDS_PER_JOB}")
+
+
+def _configure_connector(request: ConfigureConnectorRequest) -> dict[str, Any]:
+    _assert_fetch_within_limit(request.fetch)
+    connector = _register_or_validate_connector(request.connector.to_domain())
+    config = connector_store.upsert_config(connector, request.fetch.to_config())
+    return {
+        "connector": config.connector.to_dict(),
+        "fetch": dict(config.fetch),
+        "state": connector_store.get_fetch_state(connector.connector_id),
+        "updated_at": config.updated_at,
+    }
+
+
+def _connector_for_job(request: TriggerIngestJobRequest) -> SourceConnector:
+    if request.connector is not None:
+        connector = _register_or_validate_connector(request.connector.to_domain())
+        if request.connector_id and request.connector_id != connector.connector_id:
+            raise SourceEvidenceError("connector_id must match connector.connector_id")
+        if request.fetch is not None:
+            _assert_fetch_within_limit(request.fetch)
+            connector_store.upsert_config(connector, request.fetch.to_config())
+        return connector
+
+    connector_id = str(request.connector_id or "").strip()
+    if not connector_id:
+        raise SourceEvidenceError("connector or connector_id is required")
+    config = connector_store.get_config(connector_id)
+    if config is None:
+        raise SourceEvidenceError(f"Connector fetch is not configured: {connector_id}")
+    return _register_or_validate_connector(config.connector)
+
+
+def _inline_fetch(records: tuple[SourceRecord, ...], next_watermark: str | None):
+    return lambda _watermark: IngestBatch(records=records, next_watermark=next_watermark)
+
+
+def _configured_fetch(connector_id: str):
+    return lambda watermark: configured_fetcher.fetch_batch(connector_id, watermark)
 
 
 def _append_audit_actions(actions: tuple[Any, ...]) -> None:
@@ -139,14 +274,150 @@ def _load_audit_actions() -> list[dict[str, Any]]:
     return actions
 
 
-def _result_payload(result: Any) -> dict[str, Any]:
+def _stable_ref(prefix: str, value: str) -> str:
+    digest = sha256(value.encode("utf-8")).hexdigest()[:12]
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").lower()[:48]
+    return f"{prefix}-{slug}-{digest}" if slug else f"{prefix}-{digest}"
+
+
+def _list_metadata(value: Any, default: list[str]) -> list[str]:
+    if isinstance(value, list):
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        return normalized or default
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return default
+
+
+def _evidence_item_for_record(record: SourceRecord, run: Any) -> EvidenceItem:
+    metadata = dict(record.metadata)
+    item_id = str(metadata.get("evidence_item_id") or _stable_ref("evi", record.source_id))
+    body = str(metadata.get("body") or metadata.get("excerpt") or record.title)
+    citation_label = str(metadata.get("citation_label") or record.title or record.source_id)
+    trace_refs = []
+    for trace_ref in (record.trace_id, run.trace_id):
+        if trace_ref and trace_ref not in trace_refs:
+            trace_refs.append(trace_ref)
+    return EvidenceItem(
+        evidence_item_id=item_id,
+        source_id=record.source_id,
+        item_type=str(metadata.get("evidence_item_type") or "source_record"),
+        content_ref=record.content_ref,
+        citation_label=citation_label,
+        body=body,
+        event_time=metadata.get("event_time"),
+        available_time=metadata.get("available_time"),
+        confidence=float(metadata.get("confidence", 1.0)),
+        access_scope=_list_metadata(metadata.get("access_scope"), ["public"]),
+        trace_refs=trace_refs,
+        metadata={**metadata, "source_ingest_run_id": run.ingest_run_id},
+    )
+
+
+def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
+    source_records = [record for record in result.records if not record.is_rejected]
+    if not source_records:
+        return {
+            "source_ids": [],
+            "evidence_item_ids": [],
+            "evidence_bundle_id": None,
+            "knowledge_object_ids": [],
+        }
+
+    evidence_items = [_evidence_item_for_record(record, result.run) for record in source_records]
+    bundle = evidence_builder.build_bundle(
+        source_records=source_records,
+        evidence_items=evidence_items,
+        summary=f"Source ingest run {result.run.ingest_run_id} persisted {len(source_records)} source record(s).",
+        created_by="source-ingest",
+        evidence_bundle_id=_stable_ref("evbundle", result.run.ingest_run_id),
+        metadata={
+            "connector_id": result.run.connector_id,
+            "ingest_run_id": result.run.ingest_run_id,
+            "trigger_type": result.run.trigger_type,
+        },
+    )
+    knowledge_object_ids: list[str] = []
+    for record, item in zip(source_records, evidence_items, strict=True):
+        metadata = dict(record.metadata)
+        knowledge_object = evidence_builder.build_knowledge_object(
+            knowledge_object_id=str(metadata.get("knowledge_object_id") or _stable_ref("ko", record.source_id)),
+            source_record=record,
+            evidence_item=item,
+            evidence_bundle=bundle,
+            title=record.title,
+            text=item.body,
+            access_scope=item.access_scope,
+            keywords=_list_metadata(metadata.get("keywords"), []),
+            metadata={
+                "connector_id": record.connector_id,
+                "ingest_run_id": result.run.ingest_run_id,
+                "content_ref": record.content_ref,
+            },
+        )
+        knowledge_object_ids.append(knowledge_object.knowledge_object_id)
+    return {
+        "source_ids": [record.source_id for record in source_records],
+        "evidence_item_ids": [item.evidence_item_id for item in evidence_items],
+        "evidence_bundle_id": bundle.evidence_bundle_id,
+        "knowledge_object_ids": knowledge_object_ids,
+    }
+
+
+def _result_payload(result: Any, evidence_refs: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "run": result.run.to_dict(),
         "watermark": result.watermark.to_dict() if result.watermark else None,
         "records": [record.to_dict() for record in result.records],
+        "evidence_refs": evidence_refs
+        or {
+            "source_ids": [],
+            "evidence_item_ids": [],
+            "evidence_bundle_id": None,
+            "knowledge_object_ids": [],
+        },
         "dlq_entries": [entry.to_dict() for entry in result.dlq_entries],
         "audit_actions": [action.to_dict() for action in result.audit_actions],
     }
+
+
+def _run_job(
+    *,
+    connector: SourceConnector,
+    trace_id: str,
+    trigger_type: str,
+    fetch_batch: Any,
+) -> tuple[Any, dict[str, Any]]:
+    result = scheduler.run_once(
+        connector_id=connector.connector_id,
+        trace_id=trace_id,
+        trigger_type=trigger_type,
+        fetch_batch=fetch_batch,
+    )
+    _append_audit_actions(result.audit_actions)
+    evidence_refs = _persist_source_evidence_refs(result)
+    return result, evidence_refs
+
+
+def _replay_source_event(event: Any) -> str:
+    if event.event_type != "source_ingestion.scheduled_run_failed":
+        raise SourceEvidenceError(f"Unsupported source-ingest DLQ replay event: {event.event_type}")
+    connector_id = str(event.payload.get("connector_id") or "").strip()
+    if not connector_id:
+        raise SourceEvidenceError("DLQ replay event is missing connector_id")
+    config = connector_store.get_config(connector_id)
+    if config is None:
+        raise SourceEvidenceError(f"Connector fetch is not configured: {connector_id}")
+    connector = _register_or_validate_connector(config.connector)
+    result, _evidence_refs = _run_job(
+        connector=connector,
+        trace_id=event.trace_id,
+        trigger_type="dlq_replay",
+        fetch_batch=_configured_fetch(connector.connector_id),
+    )
+    if result.run.status.value != "completed":
+        raise SourceEvidenceError(f"DLQ replay did not complete ingest run: {result.run.status.value}")
+    return f"source_ingest_run:{result.run.ingest_run_id}"
 
 
 @app.get("/health")
@@ -155,10 +426,51 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "service": "pantheon-source-ingest",
         "store_path": str(SCHEDULE_STORE_PATH),
+        "connector_store_path": str(CONNECTOR_STORE_PATH),
+        "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
         "run_count": len(store.list_runs()),
+        "connector_count": len(connector_store.list_configs()),
+        "source_record_count": len(evidence_repository.list_source_records()),
+        "evidence_item_count": len(evidence_repository.list_evidence_items()),
         "dlq_count": len(dead_letter_queue.entries()),
+    }
+
+
+@app.post("/api/source-ingest/connectors", status_code=201)
+def configure_connector(request: ConfigureConnectorRequest) -> dict[str, Any]:
+    try:
+        return _configure_connector(request)
+    except SourceEvidenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/connectors")
+def list_connectors() -> dict[str, Any]:
+    return {
+        "connectors": [
+            {
+                "connector": config.connector.to_dict(),
+                "fetch": dict(config.fetch),
+                "state": connector_store.get_fetch_state(config.connector.connector_id),
+                "updated_at": config.updated_at,
+            }
+            for config in connector_store.list_configs()
+        ]
+    }
+
+
+@app.get("/api/source-ingest/connectors/{connector_id}")
+def get_connector(connector_id: str) -> dict[str, Any]:
+    config = connector_store.get_config(connector_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="connector config not found")
+    return {
+        "connector": config.connector.to_dict(),
+        "fetch": dict(config.fetch),
+        "state": connector_store.get_fetch_state(connector_id),
+        "updated_at": config.updated_at,
     }
 
 
@@ -168,22 +480,25 @@ def trigger_job(request: TriggerIngestJobRequest) -> dict[str, Any]:
         raise HTTPException(status_code=413, detail=f"records exceeds SOURCE_INGEST_MAX_RECORDS={MAX_RECORDS_PER_JOB}")
 
     try:
-        connector = _register_or_validate_connector(request.connector.to_domain())
-        records = tuple(record.to_domain() for record in request.records)
-        for record in records:
-            if record.connector_id != connector.connector_id:
-                raise SourceEvidenceError("record connector_id must match job connector")
-            if record.source_type != connector.source_type:
-                raise SourceEvidenceError("record source_type must match job connector")
-        result = scheduler.run_once(
-            connector_id=connector.connector_id,
+        connector = _connector_for_job(request)
+        if request.records:
+            records = tuple(record.to_domain() for record in request.records)
+            for record in records:
+                if record.connector_id != connector.connector_id:
+                    raise SourceEvidenceError("record connector_id must match job connector")
+                if record.source_type != connector.source_type:
+                    raise SourceEvidenceError("record source_type must match job connector")
+            fetch_batch = _inline_fetch(records, request.next_watermark)
+        else:
+            fetch_batch = _configured_fetch(connector.connector_id)
+        result, evidence_refs = _run_job(
+            connector=connector,
             trace_id=request.trace_id,
             trigger_type=request.trigger_type,
-            fetch_batch=lambda _watermark: IngestBatch(records=records, next_watermark=request.next_watermark),
+            fetch_batch=fetch_batch,
         )
-        _append_audit_actions(result.audit_actions)
-        return _result_payload(result)
-    except SourceEvidenceError as exc:
+        return _result_payload(result, evidence_refs)
+    except (EvidenceValidationError, SourceEvidenceError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -208,11 +523,82 @@ def get_watermark(connector_id: str) -> dict[str, Any]:
     return {"watermark": watermark.to_dict()}
 
 
+@app.get("/api/source-ingest/source-records")
+def list_source_records() -> dict[str, Any]:
+    return {"source_records": [record.to_dict() for record in evidence_repository.list_source_records()]}
+
+
+@app.get("/api/source-ingest/source-records/{source_id}")
+def get_source_record(source_id: str) -> dict[str, Any]:
+    source = evidence_repository.get_source_record(source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="source record not found")
+    return {"source_record": source.to_dict()}
+
+
+@app.get("/api/source-ingest/evidence/items")
+def list_evidence_items() -> dict[str, Any]:
+    return {"items": [item.to_dict() for item in evidence_repository.list_evidence_items()]}
+
+
+@app.get("/api/source-ingest/evidence/items/{evidence_item_id}")
+def get_evidence_item(evidence_item_id: str) -> dict[str, Any]:
+    item = evidence_repository.get_evidence_item(evidence_item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="evidence item not found")
+    return {"item": item.to_dict()}
+
+
+@app.get("/api/source-ingest/evidence/bundles")
+def list_evidence_bundles() -> dict[str, Any]:
+    return {"bundles": [bundle.to_dict() for bundle in evidence_repository.list_bundles()]}
+
+
+@app.get("/api/source-ingest/evidence/bundles/{evidence_bundle_id}")
+def get_evidence_bundle(evidence_bundle_id: str) -> dict[str, Any]:
+    bundle = evidence_repository.get_bundle(evidence_bundle_id)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="evidence bundle not found")
+    return {"bundle": bundle.to_dict()}
+
+
+@app.get("/api/source-ingest/evidence/knowledge-objects")
+def list_knowledge_objects() -> dict[str, Any]:
+    return {"knowledge_objects": [item.to_dict() for item in evidence_repository.list_knowledge_objects()]}
+
+
+@app.get("/api/source-ingest/evidence/knowledge-objects/{knowledge_object_id}")
+def get_knowledge_object(knowledge_object_id: str) -> dict[str, Any]:
+    knowledge_object = evidence_repository.get_knowledge_object(knowledge_object_id)
+    if knowledge_object is None:
+        raise HTTPException(status_code=404, detail="knowledge object not found")
+    return {"knowledge_object": knowledge_object.to_dict()}
+
+
 @app.get("/api/source-ingest/dlq")
 def list_dlq(
     status: Literal["pending", "replayed", "duplicate_skipped", "replay_failed", "schema_rejected"] | None = None,
 ) -> dict[str, Any]:
     return {"entries": [entry.to_dict() for entry in dead_letter_queue.entries(status=status)]}
+
+
+@app.post("/api/source-ingest/dlq/replay")
+def replay_dlq(request: ReplayDlqRequest) -> dict[str, Any]:
+    entries = dead_letter_queue.pending_entries(tag_filter=request.tag or None)
+    if request.entry_ids:
+        requested = set(request.entry_ids)
+        entries = [entry for entry in entries if entry.entry_id in requested]
+    actor_ref = ActorRef(ActorType.SERVICE, request.actor_id, roles=("source_ingest_replay",))
+    replay_result = replay_processor.replay(
+        entries,
+        actor_ref=actor_ref,
+        environment=scheduler.environment,
+        reason=request.reason,
+        queue=dead_letter_queue,
+        apply_fn=_replay_source_event,
+    )
+    _append_audit_actions(tuple(result.audit_action for result in replay_result.results))
+    return replay_result.to_dict()
 
 
 @app.get("/api/source-ingest/audit")

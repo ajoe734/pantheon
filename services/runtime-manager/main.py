@@ -123,12 +123,33 @@ _REPO_ROOT_FOR_AUTH = str(Path(__file__).resolve().parent.parent.parent)
 if _REPO_ROOT_FOR_AUTH not in sys.path:
     sys.path.insert(0, _REPO_ROOT_FOR_AUTH)
 from services.runtime_auth_inbound import require_authn  # noqa: E402
+from services.foundation.health import register_flask_health_routes  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # App and service bootstrap
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
+register_flask_health_routes(
+    app,
+    "runtime-manager",
+    dependencies=lambda: {
+        "consultation": {
+            "status": "ok" if os.getenv("PANTHEON_CONSULTATION_API_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_CONSULTATION_API_URL", "").strip(),
+        },
+        "deployment": {
+            "status": "ok" if os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip(),
+        },
+        "governance_approval": {
+            "status": "ok" if os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "").strip(),
+        },
+    },
+    metrics=lambda: {"binding_count": len(_get_service().list_all())},
+    details=lambda: {"store_path": _STORE_PATH_ENV, "single_runtime_enforced": _SINGLE_RUNTIME_ENFORCED},
+)
 
 _STORE_PATH_ENV = os.getenv(
     "PANTHEON_RUNTIME_BINDING_STORE_PATH",

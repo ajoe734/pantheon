@@ -17,6 +17,7 @@ from .command_recovery import (
 from .dead_letter import DeadLetterEntry, DeadLetterQueue, DeadLetterStatus
 from .envelopes import CommandEnvelope, ErrorEnvelope, ErrorKind, TraceContext
 from .exceptions import FoundationValidationError
+from .health import health_payload, metrics_payload, readiness_status_code
 from .idempotency import IdempotencyRecord, IdempotencyStatus
 from .outbox import (
     EventEnvelope,
@@ -60,6 +61,7 @@ __all__ = [
     "ErrorKind",
     "EventEnvelope",
     "FoundationValidationError",
+    "health_payload",
     "IdempotentReplayLedger",
     "IdempotencyRecord",
     "IdempotencyStatus",
@@ -84,6 +86,8 @@ __all__ = [
     "idempotency_record_from_entry",
     "is_recoverable_inflight_status",
     "load_command_recovery_entries",
+    "metrics_payload",
+    "readiness_status_code",
     "sha256_checksum",
     "utc_now",
 ]

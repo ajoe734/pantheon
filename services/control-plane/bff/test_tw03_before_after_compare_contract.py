@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -83,11 +84,12 @@ def test_tw03_get_preview_returns_backend_owned_compare_payload() -> None:
 
 def test_tw03_pending_preview_supports_eval_lookup_and_polling_contract() -> None:
     with _seeded_client() as client:
-        response = client.get(
-            "/api/v1/trainer/sessions/trn-20260419-001/preview",
-            params={"eval_id": "teval-20260419-015"},
-            headers={"Authorization": OPERATOR_AUTH},
-        )
+        with mock.patch.object(bff_main, "utc_now", return_value="2026-04-20T19:50:00Z"):
+            response = client.get(
+                "/api/v1/trainer/sessions/trn-20260419-001/preview",
+                params={"eval_id": "teval-20260419-015"},
+                headers={"Authorization": OPERATOR_AUTH},
+            )
         assert response.status_code == 200, response.text
 
         payload = response.json()

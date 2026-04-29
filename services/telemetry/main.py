@@ -116,11 +116,13 @@ import types
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, jsonify, request
 
 from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
 from .lineage_read import LineageReadService
+from services.foundation.health import register_flask_health_routes
 from services.runtime_auth import resolve_runtime_manager_auth
 
 log = logging.getLogger(__name__)
@@ -337,6 +339,34 @@ def _get_lineage_service() -> LineageReadService:
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
+
+
+def _telemetry_metrics() -> dict[str, Any]:
+    try:
+        stats = _get_service().stats()
+    except Exception:
+        return {"service_started": 0}
+    service_stats = stats.get("service", {}) if isinstance(stats, dict) else {}
+    return {
+        "service_started": 1 if service_stats.get("started") else 0,
+        "accepted_count": stats.get("accepted_count", 0) if isinstance(stats, dict) else 0,
+        "rejected_count": stats.get("rejected_count", 0) if isinstance(stats, dict) else 0,
+    }
+
+
+register_flask_health_routes(
+    app,
+    "telemetry-ingest",
+    dependencies=lambda: {
+        "runtime_manager": {
+            "status": "ok" if os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
+        },
+        "lineage_read": {"status": "ok" if _lineage_svc is not None else "degraded"},
+    },
+    metrics=_telemetry_metrics,
+    details=lambda: {"storage_dir": os.getenv("TELEMETRY_STORAGE_DIR", _DEFAULT_STORAGE_DIR)},
+)
 
 
 def _lineage_query_response(query_family: str, **params):

@@ -25,7 +25,7 @@ def test_rw02_search_uses_explicit_search_service_url_for_normal_path() -> None:
             "access_scopes": ["operator", "research"],
             "license_scopes": ["internal"],
         }
-        assert body["documents"]
+        assert "documents" not in body
         return True, {
             "request_id": body["request_id"],
             "trace_id": body["trace_id"],

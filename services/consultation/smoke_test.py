@@ -52,6 +52,125 @@ class ConsultationSmokeTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok", "service": "consultation"})
 
+    def test_cancel_and_collection_endpoints_persist(self):
+        request_payload = {
+            "request_type": "strategy_review",
+            "requested_by": {"actor_type": "operator", "actor_id": "operator-1"},
+            "target_type": "strategy",
+            "target_id": "strat-cancel-001",
+            "task": "Cancel-path smoke request",
+            "trace_id": "trace-cancel-001",
+        }
+        response = self.client.post("/api/consult/requests", json=request_payload)
+        self.assertEqual(response.status_code, 201)
+        request_id = response.json()["request_id"]
+
+        list_response = self.client.get("/api/consult/requests")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertIn(request_id, [item["request_id"] for item in list_response.json()])
+
+        cancel_response = self.client.post(
+            f"/api/consult/requests/{request_id}/cancel",
+            json={
+                "actor_ref": {"actor_type": "operator", "actor_id": "operator-1"},
+                "canceled_at": "2026-04-20T08:00:00Z",
+            },
+        )
+        self.assertEqual(cancel_response.status_code, 200)
+        self.assertEqual(cancel_response.json()["status"], "cancelled")
+        self.assertEqual(cancel_response.json()["request_to_session_status"], "canceled_before_session")
+
+        replayed = ConsultationStore(self.test_dir.name)
+        replayed_request = replayed.get_request(request_id)
+        self.assertEqual(replayed_request.status, ConsultRequestStatus.CANCELLED)
+        self.assertIn(
+            "request_cancelled",
+            [event.action for event in replayed.list_audit_for_request(request_id)],
+        )
+
+    def test_sponsor_decision_endpoint_creates_persistent_handoff(self):
+        request_payload = {
+            "request_type": "execution_risk",
+            "requested_by": {"actor_type": "operator", "actor_id": "operator-committee"},
+            "from_persona_id": "persona-alpha",
+            "target_type": "deployment_plan",
+            "target_id": "plan-committee-001",
+            "task": "Sponsor handoff smoke request",
+            "consultation_type": "risk_review",
+            "evidence_refs": ["ev-committee-001"],
+            "linked_session_id": "cs-committee-001",
+            "request_to_session_status": "session_running",
+            "metadata": {
+                "consultation": {
+                    "requester_session_id": "cs-committee-001",
+                    "committee_session_ids": ["cm-committee-001"],
+                    "committee_ref": "committee-smoke-001",
+                    "quorum_state": "quorum_met",
+                    "consensus_state": "sponsor_required",
+                    "sponsor_session_id": "cm-committee-001",
+                    "synthesis_summary": {"outcome": "pending", "evidence_refs": ["ev-committee-001"]},
+                    "evidence_refs": [{"id": "ev-committee-001"}],
+                    "committee_participants": [
+                        {
+                            "session_id": "cm-committee-001",
+                            "persona_id": "p-compliance-sponsor",
+                            "role": "sponsor",
+                            "status": "active",
+                        }
+                    ],
+                }
+            },
+            "trace_id": "trace-committee-001",
+        }
+        response = self.client.post("/api/consult/requests", json=request_payload)
+        self.assertEqual(response.status_code, 201)
+        request_id = response.json()["request_id"]
+
+        memo_response = self.client.post(
+            "/api/consult/memos",
+            json={
+                "request_id": request_id,
+                "memo_type": "redteam_report",
+                "author_type": "persona",
+                "author_ref": "p-risk-analyst",
+                "summary": "Sponsor decision can proceed.",
+                "findings": [
+                    {
+                        "severity": "medium",
+                        "category": "execution",
+                        "claim": "Evidence supports conditional approval.",
+                        "evidence_refs": ["ev-committee-001"],
+                        "recommendation": "approve with sponsor conditions",
+                    }
+                ],
+                "recommendation": "approve_with_conditions",
+                "trace_id": "trace-committee-001",
+            },
+        )
+        self.assertEqual(memo_response.status_code, 201)
+        memo_id = memo_response.json()["memo_id"]
+        self.assertEqual(self.client.post(f"/api/consult/memos/{memo_id}/publish").status_code, 200)
+
+        response = self.client.post(
+            "/api/consult/committees/committee-smoke-001/sponsor-decision",
+            json={
+                "sponsor_decision": "conditional",
+                "rationale_ref": "workspace://committee-rationales/smoke",
+                "actor_id": "operator-committee",
+                "recorded_at": "2026-04-20T08:05:00Z",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["sponsor_decision"], "conditional")
+        self.assertEqual(payload["service_handoff"]["target_gate"], "committee_sponsor_decision:committee-smoke-001")
+        self.assertEqual(payload["service_handoff"]["evidence_refs"], ["ev-committee-001"])
+
+        replayed = ConsultationStore(self.test_dir.name)
+        handoffs = replayed.list_handoffs_for_request(request_id)
+        self.assertEqual(len(handoffs), 1)
+        self.assertEqual(handoffs[0].memo_ids, [memo_id])
+
     def test_consultation_lifecycle_with_audit_and_handoff(self):
         # 1. Create a request
         request_payload = {

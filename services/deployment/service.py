@@ -45,6 +45,7 @@ from services.foundation import (  # noqa: E402
     TraceContext,
     foundation_id,
 )
+from services.foundation.health import register_fastapi_health_routes  # noqa: E402
 
 from deployment_plan import (  # type: ignore
     DeploymentPlan,
@@ -894,6 +895,16 @@ app = FastAPI(
     title="Pantheon Deployment Service",
     description="DeploymentPlan and DEP-002 deployment saga API per BP5-SVC-004/BP5-SVC-005",
     version="0.2.0",
+)
+register_fastapi_health_routes(
+    app,
+    "pantheon-deployment",
+    dependencies=lambda: {"governance_store": {"status": "ok", "path": str(DATA_DIR)}},
+    metrics=lambda: {
+        "plan_count": len(store.list_all()),
+        "saga_count": len(saga_store.list_all()),
+    },
+    details=lambda: {"data_dir": str(DATA_DIR)},
 )
 
 

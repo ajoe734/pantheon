@@ -16,10 +16,12 @@ import uuid
 from typing import Any, Dict, List
 
 from fastapi import FastAPI
+from services.foundation.health import register_fastapi_health_routes
 
 app = FastAPI(title="Pantheon Feedback Service", version="0.1.0")
 
 _events: List[Dict[str, Any]] = []
+register_fastapi_health_routes(app, "feedback", metrics=lambda: {"event_count": len(_events)})
 
 
 @app.get("/__health__")

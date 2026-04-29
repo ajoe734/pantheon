@@ -25,6 +25,10 @@ class IngestManager:
         self._connectors[connector.connector_id] = connector
         return connector
 
+    def upsert_connector(self, connector: SourceConnector) -> SourceConnector:
+        self._connectors[connector.connector_id] = connector
+        return connector
+
     def get_connector(self, connector_id: str) -> SourceConnector | None:
         return self._connectors.get(connector_id)
 

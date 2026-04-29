@@ -91,6 +91,7 @@ class EvidenceBundleBuilder:
         title: str,
         text: str,
         source_type: str | None = None,
+        access_scope: Iterable[str] | None = None,
         keywords: Iterable[str] = (),
         metadata: dict | None = None,
     ) -> KnowledgeObject:
@@ -103,7 +104,7 @@ class EvidenceBundleBuilder:
             text=text,
             source_type=source_type or source_record.source_type.value,
             license_scope=evidence_bundle.license_scope,
-            access_scope=evidence_bundle.access_scope,
+            access_scope=list(access_scope) if access_scope is not None else evidence_bundle.access_scope,
             keywords=list(keywords),
             metadata=metadata or {},
         )

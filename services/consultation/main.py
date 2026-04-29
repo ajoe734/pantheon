@@ -5,11 +5,13 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
+from services.foundation.health import register_fastapi_health_routes
 
 from .models import (
     ActorRef,
     AssignParticipantRequest,
     AttachEvidenceRequest,
+    CancelConsultRequestRequest,
     ConsultAuditEvent,
     ConsultEvidenceAttachment,
     ConsultGateHandoff,
@@ -22,8 +24,10 @@ from .models import (
     CreateGateHandoffRequest,
     MemoStatus,
     PostTranscriptEventRequest,
+    RecordSponsorDecisionRequest,
     SubmitMemoRequest,
     TranscriptEvent,
+    GateHandoffStatus,
     utc_now,
 )
 from .store import ConsultationStore
@@ -33,6 +37,7 @@ app = FastAPI(title="Pantheon Consultation Service", version="0.1.0")
 
 DATA_DIR = os.getenv("CONSULTATION_DATA_DIR", "/tmp/pantheon/consultation")
 store = ConsultationStore(DATA_DIR)
+register_fastapi_health_routes(app, "consultation", details=lambda: {"data_dir": DATA_DIR})
 
 CONSULTATION_SERVICE_ACTOR = ActorRef(
     actor_type="service",
@@ -147,6 +152,31 @@ def submit_request(request_id: str) -> ConsultRequest:
         request_id=request_id,
         actor_ref=request.requested_by,
         trace_id=request.trace_id,
+        before_state=before_state,
+        after_state=request.status.value,
+    )
+    return request
+
+
+@app.post("/api/consult/requests/{request_id}/cancel", response_model=ConsultRequest)
+def cancel_request(request_id: str, req: CancelConsultRequestRequest) -> ConsultRequest:
+    request = _get_request_or_404(request_id)
+    if request.linked_session_id:
+        raise HTTPException(status_code=409, detail="Cannot cancel a request with a linked session")
+    if request.status in {ConsultRequestStatus.PUBLISHED, ConsultRequestStatus.CANCELLED}:
+        raise HTTPException(status_code=409, detail=f"Cannot cancel request in {request.status.value} state")
+
+    before_state = request.status.value
+    request.status = ConsultRequestStatus.CANCELLED
+    request.canceled_at = req.canceled_at or utc_now()
+    request.request_to_session_status = "canceled_before_session"
+    request.session_handoff_note = "Request canceled by operator."
+    store.put_request(request)
+    _emit_audit(
+        action="request_cancelled",
+        request_id=request_id,
+        actor_ref=req.actor_ref,
+        trace_id=req.trace_id or request.trace_id,
         before_state=before_state,
         after_state=request.status.value,
     )
@@ -304,6 +334,19 @@ def post_event(request_id: str, req: PostTranscriptEventRequest) -> TranscriptEv
 # --- Memos ---
 
 
+@app.get("/api/consult/memos", response_model=List[ConsultMemo])
+def list_memos(
+    request_id: Optional[str] = None,
+    status: Optional[MemoStatus] = None,
+) -> List[ConsultMemo]:
+    memos = store.list_memos()
+    if request_id:
+        memos = [memo for memo in memos if memo.request_id == request_id]
+    if status:
+        memos = [memo for memo in memos if memo.status == status]
+    return memos
+
+
 @app.post("/api/consult/memos", response_model=ConsultMemo, status_code=201)
 def submit_memo(req: SubmitMemoRequest) -> ConsultMemo:
     request = _get_request_or_404(req.request_id)
@@ -385,6 +428,18 @@ def list_memos_for_target(target_type: str, target_id: str) -> List[ConsultMemo]
 # --- Governance Gate Handoffs ---
 
 
+@app.get("/api/consult/transcripts", response_model=List[ConsultTranscript])
+def list_transcripts() -> List[ConsultTranscript]:
+    return store.list_transcripts()
+
+
+@app.get("/api/consult/handoffs", response_model=List[ConsultGateHandoff])
+def list_handoffs(request_id: Optional[str] = None) -> List[ConsultGateHandoff]:
+    if request_id:
+        return store.list_handoffs_for_request(request_id)
+    return store.list_handoffs()
+
+
 @app.post("/api/consult/handoffs", response_model=ConsultGateHandoff, status_code=201)
 def create_handoff(req: CreateGateHandoffRequest) -> ConsultGateHandoff:
     request = _get_request_or_404(req.request_id)
@@ -446,3 +501,124 @@ def get_handoff(handoff_id: str) -> ConsultGateHandoff:
 def list_handoffs_for_request(request_id: str) -> List[ConsultGateHandoff]:
     _get_request_or_404(request_id)
     return store.list_handoffs_for_request(request_id)
+
+
+@app.post("/api/consult/committees/{committee_id}/sponsor-decision")
+def record_committee_sponsor_decision(
+    committee_id: str,
+    req: RecordSponsorDecisionRequest,
+) -> Dict[str, Any]:
+    sponsor_decision = req.sponsor_decision.strip().lower()
+    if sponsor_decision not in {"approved", "rejected", "conditional"}:
+        raise HTTPException(
+            status_code=400,
+            detail="sponsor_decision must be one of approved, rejected, or conditional",
+        )
+    rationale_ref = req.rationale_ref.strip()
+    if not rationale_ref:
+        raise HTTPException(status_code=400, detail="rationale_ref must be a non-empty string")
+
+    matched_request: Optional[ConsultRequest] = None
+    matched_consult: Dict[str, Any] = {}
+    for request_record in store.list_requests():
+        request_data = _request_dict(request_record)
+        metadata = request_data.get("metadata") if isinstance(request_data.get("metadata"), dict) else {}
+        consult = metadata.get("consultation") if isinstance(metadata.get("consultation"), dict) else {}
+        if str(consult.get("committee_ref") or "").strip() == committee_id:
+            matched_request = request_record
+            matched_consult = dict(consult)
+            break
+    if matched_request is None:
+        raise HTTPException(status_code=404, detail="Committee not found")
+
+    memos = [
+        memo
+        for memo in store.list_memos_for_request(matched_request.request_id)
+        if memo.status == MemoStatus.PUBLISHED
+    ]
+    if not memos:
+        raise HTTPException(
+            status_code=409,
+            detail="Committee has no published consultation memo for gate handoff",
+        )
+
+    recorded_at = req.recorded_at or utc_now()
+    matched_consult["sponsor_decision"] = sponsor_decision
+    matched_consult["sponsor_decided_at"] = recorded_at
+    matched_consult["sponsor_decided_by"] = req.actor_id
+    matched_consult["consensus_state"] = "reached"
+    matched_consult["outcome"] = sponsor_decision
+    synthesis_summary = dict(matched_consult.get("synthesis_summary") or {})
+    synthesis_summary["outcome"] = sponsor_decision
+    synthesis_summary["rationale_ref"] = rationale_ref
+    matched_consult["synthesis_summary"] = synthesis_summary
+    matched_consult["rationale_ref"] = rationale_ref
+
+    evidence_refs: List[str] = []
+    for ref_id in matched_request.evidence_refs:
+        if str(ref_id or "").strip() and str(ref_id) not in evidence_refs:
+            evidence_refs.append(str(ref_id))
+    for attachment in store.list_evidence_for_request(matched_request.request_id):
+        ref_id = str(attachment.evidence_ref.id or "").strip()
+        if ref_id and ref_id not in evidence_refs:
+            evidence_refs.append(ref_id)
+    for item in matched_consult.get("evidence_refs") or []:
+        ref_id = str(item.get("id") if isinstance(item, dict) else item or "").strip()
+        if ref_id and ref_id not in evidence_refs:
+            evidence_refs.append(ref_id)
+
+    audit_refs = [event.audit_id for event in store.list_audit_for_request(matched_request.request_id)]
+    handoff = ConsultGateHandoff(
+        handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
+        request_id=matched_request.request_id,
+        target_gate=f"committee_sponsor_decision:{committee_id}",
+        memo_ids=[memo.memo_id for memo in memos],
+        evidence_refs=evidence_refs,
+        audit_refs=audit_refs,
+        trace_id=matched_request.trace_id,
+        status=GateHandoffStatus.SENT,
+        sent_at=recorded_at,
+    )
+    store.put_handoff(handoff)
+    audit = _emit_audit(
+        action="gate_handoff_created",
+        request_id=matched_request.request_id,
+        actor_ref=ActorRef(actor_type="operator", actor_id=req.actor_id),
+        service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+        trace_id=matched_request.trace_id,
+        after_state=handoff.handoff_id,
+    )
+    handoff.audit_refs.append(audit.audit_id)
+    store.put_handoff(handoff)
+
+    metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
+    metadata["consultation"] = matched_consult
+    metadata["service_handoff"] = {
+        "handoff_id": handoff.handoff_id,
+        "target_gate": handoff.target_gate,
+        "evidence_refs": list(handoff.evidence_refs),
+        "audit_refs": list(handoff.audit_refs),
+        "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+    }
+    matched_request.metadata = metadata
+    store.put_request(matched_request)
+
+    return {
+        "committee_id": committee_id,
+        "committee_ref": matched_consult.get("committee_ref") or committee_id,
+        "linked_request_id": matched_request.request_id,
+        "linked_session_id": matched_request.linked_session_id or matched_consult.get("requester_session_id"),
+        "sponsor_decision": matched_consult.get("sponsor_decision"),
+        "sponsor_decided_at": matched_consult.get("sponsor_decided_at"),
+        "sponsor_decided_by": matched_consult.get("sponsor_decided_by"),
+        "consensus_state": matched_consult.get("consensus_state"),
+        "rationale_ref": (matched_consult.get("synthesis_summary") or {}).get("rationale_ref"),
+        "outcome": (matched_consult.get("synthesis_summary") or {}).get("outcome"),
+        "service_handoff": {
+            "handoff_id": handoff.handoff_id,
+            "target_gate": handoff.target_gate,
+            "evidence_refs": list(handoff.evidence_refs),
+            "audit_refs": list(handoff.audit_refs),
+            "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+        },
+    }

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from services.foundation.health import register_fastapi_health_routes
 
 # ---------------------------------------------------------------------------
 # Path bootstrap — platform objects live in control-plane/governance
@@ -119,6 +120,15 @@ incident_store = IncidentStore(
 )
 controller = EvolutionController()
 evaluator = ThresholdEvaluator()
+register_fastapi_health_routes(
+    app,
+    "evolution",
+    metrics=lambda: {"decision_count": len(store.list_all())},
+    details=lambda: {
+        "evolution_data_dir": EVOLUTION_DATA_DIR,
+        "incident_data_dir": INCIDENT_DATA_DIR,
+    },
+)
 
 
 # ---------------------------------------------------------------------------

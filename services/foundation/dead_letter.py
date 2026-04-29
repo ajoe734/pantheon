@@ -179,14 +179,18 @@ class DeadLetterQueue:
     def load_from_spill(self) -> int:
         if not self._spill_path or not self._spill_path.exists():
             return 0
-        loaded: list[DeadLetterEntry] = []
+        loaded_by_id: dict[str, DeadLetterEntry] = {}
+        order: list[str] = []
         with self._spill_path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
                 if line:
-                    loaded.append(DeadLetterEntry.from_dict(json.loads(line)))
-        self._entries = loaded
-        return len(loaded)
+                    entry = DeadLetterEntry.from_dict(json.loads(line))
+                    if entry.entry_id not in loaded_by_id:
+                        order.append(entry.entry_id)
+                    loaded_by_id[entry.entry_id] = entry
+        self._entries = [loaded_by_id[entry_id] for entry_id in order]
+        return len(self._entries)
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from services.foundation.health import register_fastapi_health_routes
+
 # Ensure the service directory is on the path when run via uvicorn from repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -36,6 +38,11 @@ app = FastAPI(title="Pantheon Optimizer Service", version="0.2.0")
 # In-memory stores (v1: no persistence layer).
 _policies: Dict[str, Union[AllocationPolicyArtifact, CommitteeReferral]] = {}
 _logs: Dict[str, ConflictResolutionLog] = {}
+register_fastapi_health_routes(
+    app,
+    "optimizer-svc",
+    metrics=lambda: {"policy_count": len(_policies), "log_count": len(_logs)},
+)
 
 
 # ---------------------------------------------------------------------------

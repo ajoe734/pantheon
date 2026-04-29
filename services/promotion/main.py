@@ -12,6 +12,8 @@ from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from services.foundation.health import register_fastapi_health_routes
+
 ROOT = Path(__file__).resolve().parents[2]
 GOVERNANCE_DIR = ROOT / "services" / "control-plane" / "governance"
 if str(GOVERNANCE_DIR) not in sys.path:
@@ -220,6 +222,15 @@ def _validated_approval_decision(
 def create_app() -> FastAPI:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     app = FastAPI(title="Pantheon Promotion Service", version="0.1.0")
+    register_fastapi_health_routes(
+        app,
+        "promotion-svc",
+        metrics=lambda: {
+            "approval_count": len(approval_store.list_all()),
+            "deployment_count": len(deployment_store.list_all()),
+        },
+        details=lambda: {"port": PORT, "data_dir": str(DATA_DIR)},
+    )
 
     @app.get("/__health__")
     async def health() -> dict[str, Any]:
