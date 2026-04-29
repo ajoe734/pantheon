@@ -276,8 +276,8 @@ For deferred backends, the UI should display:
 |---|---|---|
 | research-worker-gateway | `http://research-worker-gateway-svc:8103` | `RESEARCH_WORKER_GATEWAY_URL` |
 | research-orchestrator | `http://research-orchestrator-svc:8101` | `RESEARCH_ORCHESTRATOR_URL` |
-| policy-learning | `http://policy-learning-svc:8102` | `POLICY_LEARNING_URL` |
-| openclaw-gateway-adapter | `http://openclaw-gateway-adapter-svc:8104` | `OPENCLAW_GATEWAY_ADAPTER_URL` |
+| policy-learning | `http://policy-learning-svc:8100` | `POLICY_LEARNING_URL` |
+| openclaw-gateway-adapter | `http://openclaw-gateway-adapter:8104` | `OPENCLAW_GATEWAY_ADAPTER_URL` |
 
 *Port assignments are from the individual service configs; verify against compose definitions before wiring the BFF.*
 
