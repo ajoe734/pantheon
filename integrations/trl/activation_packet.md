@@ -24,9 +24,11 @@ gates, not missing repo-local adapter code.
 
 Current row status remains `smoke-tested`.
 
-Repo-local truth as of 2026-04-24:
+Repo-local truth as of 2026-04-29:
 
 - the governed TRL adapter exists at `services/learning/trl/adapter/trl_adapter.py`
+- the non-writing pre-activation preflight scaffold exists at
+  `services/learning/trl/preflight.py`
 - the default smoke path still passes via `python3 services/learning/trl/smoke_test.py`
 - unit coverage still passes via
   `python3 -m unittest discover -s services/learning/trl -p 'test_*.py'`
@@ -78,6 +80,11 @@ following evidence to the execution/review lane:
    - exact consuming contract or worker path
    - why that consumer is ready to ingest a `preference_model`
 
+The owner should run `run_trl_preflight()` from `services/learning/trl/preflight.py`
+against the evidence bundle before invoking `TRLDPOBackend`. The preflight only
+reports gate state; it does not import the DPO adapter and does not write registry,
+governance, or canonical collaboration state.
+
 The governed output target remains unchanged:
 
 - workflow entrypoint: `run_trl_dpo_workflow()`
@@ -89,7 +96,7 @@ The governed output target remains unchanged:
 
 ## 5. Verification Snapshot
 
-Revalidated in this session on 2026-04-24:
+Revalidated in this session on 2026-04-29:
 
 1. `python3 services/learning/trl/smoke_test.py`
    - Result: passed
@@ -97,7 +104,7 @@ Revalidated in this session on 2026-04-24:
    - Output confirms `artifact_state=draft`, `deployment_stage=none`, and
      governed storage under `learning/trl/`
 2. `python3 -m unittest discover -s services/learning/trl -p 'test_*.py'`
-   - Result: 16 tests passed
+   - Result: 29 tests passed
 
 These checks prove the adapter is still runnable and governance-safe. They do
 not satisfy the runtime activation thresholds by themselves.

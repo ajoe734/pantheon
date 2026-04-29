@@ -123,7 +123,7 @@ That proof exists because:
 - the adapter path is real code, not a placeholder contract
 - the service has a dedicated dependency file (`requirements.txt`) with pinned version
 - the repo ships an executable smoke test with synthetic FB-002 events
-- unit tests (16 tests) validate governed filtering, pair construction, and packaging
+- unit tests (29 tests) validate governed filtering, pair construction, packaging, and preflight gates
 - registry output uses canonical `artifact_state` + `deployment_summary.current_stage`
 - governance boundary (`direct_live_influence=false`, `execution_stage=none`) is asserted
 

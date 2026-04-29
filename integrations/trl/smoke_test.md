@@ -87,7 +87,7 @@ Unit coverage result on 2026-04-17:
 
 ```
 python3 -m unittest discover -s services/learning/trl -p 'test_*.py'
-Ran 16 tests in 0.004s
+Ran 29 tests in 0.006s
 OK
 ```
 
@@ -99,7 +99,7 @@ Treat the TRL row as smoke-proven when:
 - the workflow emits a `registry_id` and governed storage path under `learning/trl/`
 - `artifact_state=draft` and `deployment_stage=none` are confirmed
 - `direct_live_influence=false` is confirmed
-- unit coverage still passes (16 tests)
+- unit coverage still passes (29 tests)
 
 ## 7. Production Activation Gap
 
