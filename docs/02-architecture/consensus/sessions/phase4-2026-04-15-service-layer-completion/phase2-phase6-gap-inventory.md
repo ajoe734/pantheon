@@ -13,7 +13,11 @@ This inventory separates two ideas that are easy to mix together:
 2. `delivery complete`
    This means the phase is actually deployable, service-backed, UI-backed, and integrated enough that downstream work no longer depends on hidden placeholders, snapshot fallbacks, or deferred adapters.
 
-For phases 2 through 6, the repo is much closer to the first condition than the second.
+For phases 2 through 6, the repo has moved materially since the original 2026-04-15 inventory. Read this file in three bands:
+
+- `current code truth`: service wrappers, Dockerfiles, default compose wiring, health checks, and smoke coverage that exist now
+- `current execution tasks`: narrow hardening work already assigned in `ai-status.json`
+- `future-deferred`: product-scope or governance-gated work that must not be treated as current implementation scope
 
 ## 2. Source Set
 
@@ -26,35 +30,39 @@ For phases 2 through 6, the repo is much closer to the first condition than the 
 - `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md`
 - `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/codex-readout.md`
 - `OSS_INTEGRATION_CHECKLIST.md`
-- `current-work.md`
+- `ai-status.json` for active task ownership and lifecycle only
+- `docker-compose.yml`
+- `scripts/smoke_honest_stack.py`
 - `services/control-plane/bff/read_store.py`
 - `services/control-plane/bff/command_executor.py`
-- `find services -maxdepth 3 -name Dockerfile | sort`
+- `services/source_ingestion/configured.py`
+- `services/search/main.py`
+- `services/openclaw-gateway-adapter/main.py`
 
 ## 3. Executive Summary
 
-All canonical roadmap tasks for phases 2 through 6 already have archived `done` records. That does not mean phases 2 through 6 are operationally complete.
+All canonical roadmap tasks for phases 2 through 6 already have archived `done` records. The current single-VM service baseline is also much more complete than the original planning inventory: root compose now contains the control/evidence/surface services, consultation/source/search, safe research/learning boundary wrappers, and the Pantheon-owned OpenClaw gateway adapter facade.
 
-The residual gaps cluster into four cross-phase buckets:
+The remaining work now clusters into four different buckets:
 
-1. `service exposure and deployability`
-   The domain models and policies exist, but several phase 2-4 capabilities are still not exposed as deployable HTTP services with Dockerfiles, health checks, compose wiring, and stable port/env contracts.
+1. `current code truth`
+   The default stack is deployable as a single-VM test stack with Dockerfiles, health checks, durable volumes, and smoke wiring. This includes `policy-learning-svc`, `research-orchestrator-svc`, and `research-worker-gateway-svc`, but only as safe service-boundary wrappers with production adapters disabled.
 2. `command-plane convergence`
-   Runtime and evolution semantics are documented, but the live operator command path is still split between internal APIs and local BFF placeholders.
-3. `surface and packet coverage`
-   APP-002-backed surfaces are strongly packetized, but large parts of the Persona, Research, Knowledge, Trainer, Consultation, Governance, and Evolution workbenches remain partial or entirely unpacketized.
-4. `OSS criteria vs real integration`
-   Phase 6 did a strong job of selecting, pinning, and defining criteria, but several upstream components are still only `criteria-defined`, `version-pinned`, or `adapter-started`.
+   Runtime/evolution command convergence, data ownership migration, and BFF read-path hardening remain separate execution concerns; they are no longer missing-Dockerfile problems.
+3. `current hardening tasks`
+   Source ingest external fetch is not a production crawler today. The active `SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE` task owns bounded allowlisted HTTP/file feed support. The active `SVC-SEARCH-DURABLE-COMPAT-QUARANTINE` task owns request-document compatibility quarantine.
+4. `future-deferred activation`
+   BFF HA, OpenClaw paper/live broker sessions, OpenClaw runtime execution, research/learning production adapters, `web`, `cron`, and broader upstream OSS activation remain future-deferred unless explicitly reopened.
 
 ## 4. Phase Snapshot Table
 
 | Phase | Canonical task baseline | Current call |
 |---|---|---|
-| Phase 2 | `CAP-001`, `RUN-001`, `EX-002`, `CAP-002` archived `done` | semantics complete; serviceization and command convergence still incomplete |
-| Phase 3 | `TEL-001`, `TEL-002`, `LIN-001`, `LIN-002`, `INC-001` archived `done` | schemas and service classes complete; deployable service plane still incomplete |
-| Phase 4 | `EVO-003`, `EVO-004`, `EVO-005` archived `done` | governance and fast-path rules complete; evolution command/API boundary still incomplete |
-| Phase 5 | `PER-001`, `APP-001`, `APP-002` archived `done` | contract and packet baseline complete; BFF rewiring and workbench expansion still incomplete |
-| Phase 6 | `OSS-001`, `OSS-002`, `OSS-003` archived `done` | governance and criteria complete; real upstream integration still partial |
+| Phase 2 | `CAP-001`, `RUN-001`, `EX-002`, `CAP-002` archived `done` | semantics and default service exposure mostly complete; command convergence and Postgres ownership migration continue |
+| Phase 3 | `TEL-001`, `TEL-002`, `LIN-001`, `LIN-002`, `INC-001` archived `done` | evidence services are in default compose; remaining work is hardening, migration, and workbench coverage |
+| Phase 4 | `EVO-003`, `EVO-004`, `EVO-005` archived `done` | governance and fast-path rules complete; evolution command/action convergence and packets remain |
+| Phase 5 | `PER-001`, `APP-001`, `APP-002` archived `done` | contract and packet baseline complete; read-path hardening, product workbenches, and frontend closure remain |
+| Phase 6 | `OSS-001`, `OSS-002`, `OSS-003` archived `done` | safe facades and criteria exist; production adapter/runtime activation remains deferred |
 
 ## 5. Phase-by-Phase Residual Gaps
 
@@ -75,15 +83,15 @@ What is already solid:
 
 Residual gaps:
 
-1. `runtime-control` is still not packaged as the stable deployable service layer that downstream surfaces can rely on in a single-VM stack.
-2. Governance/runtime domain objects are not yet exposed through a stable service API family that the BFF can consume without snapshot fallbacks.
-3. The evolution command boundary is still split. In `services/control-plane/bff/command_executor.py`, `ApproveEvolutionDecision` and `ExecuteEvolutionAction` still record local placeholder results instead of dispatching to real internal API endpoints.
-4. The shared service baseline for ports, env vars, volumes, health checks, and compose profiles is not locked yet; the active phase4 session exists largely because this layer remains open.
+1. `runtime-manager`, `governance`, `deployment`, `capital`, and related services are now packaged in the default stack. The remaining risk is not service exposure; it is command/API convergence and durable store ownership.
+2. Governance/runtime domain objects are exposed through service APIs in the single-VM baseline, but Postgres ownership migration and cross-service read/write hardening remain active production-readiness work.
+3. The evolution command boundary still needs convergence where BFF/runtime/evolution actions cross service boundaries.
+4. The shared service baseline for ports, env vars, volumes, health checks, and compose profiles is locked by `starter-draft.md` and root compose; do not cite the earlier unlocked-baseline gap as current truth.
 
 Why these still count as phase-2 gaps:
 
 - phase 2 semantics were completed as contracts and models
-- phase 2 delivery is still incomplete at the service boundary that phase 3-5 surfaces need to consume
+- phase 2 delivery risk now sits in command convergence, data ownership, and production hardening rather than absent compose packaging
 
 ### Phase 3: Telemetry, Lineage, and Incident Backbone
 
@@ -103,14 +111,14 @@ What is already solid:
 
 Residual gaps:
 
-1. `telemetry-ingest` and `lineage-read` still need first-class HTTP entrypoints, Dockerfiles, health endpoints, storage mounts, and compose wiring in the actual service stack.
+1. `telemetry`, `lineage-read`, `incidents`, and `postmortems` are first-class default compose services with Dockerfiles, health checks, storage mounts, and smoke wiring.
 2. The operator-side incident, alert, and evidence drilldowns are still only partially covered by APP-002 packets and sidecars; the full operator and governance workbench shells remain incomplete.
-3. Even where service classes exist, the deployable stack still lacks the packaging layer needed to prove that telemetry and lineage are available as stable network services in the single-VM target.
+3. The remaining delivery risk is hardening, data ownership migration, and proof depth, not proving that telemetry and lineage can exist as network services.
 
 Repo evidence:
 
-- `find services -maxdepth 3 -name Dockerfile | sort` shows no Dockerfiles for BFF, feedback, runtime-manager, or telemetry service wrappers.
-- The active phase4 Codex readout explicitly treats telemetry ingest and lineage read as reusable classes that still need HTTP wrapping and packaging.
+- Root compose builds `services/telemetry/Dockerfile`, `services/lineage-read/Dockerfile`, `services/incidents/Dockerfile`, and `services/postmortems/Dockerfile` and waits on their `/readyz` health checks.
+- The earlier "need HTTP wrapping and packaging" note is historical 2026-04-15 planning evidence, not the current implementation contract.
 
 ### Phase 4: Evolution Governance
 
@@ -128,14 +136,14 @@ What is already solid:
 
 Residual gaps:
 
-1. The live command path is not fully converged: evolution approvals and actions still do not flow through a real internal API endpoint.
-2. The service boundary between `runtime-control` and a future `governance-api` remains open in the current phase4 planning session.
+1. The live command path still needs convergence across BFF, runtime-manager, governance, and evolution service boundaries.
+2. The default stack now includes `evolution`, `governance`, and `runtime-manager`; the remaining split is behavioral ownership and cross-service command semantics, not whether the services exist.
 3. The Evolution Workbench is only partially packetized: `post-incident`, `evolution center`, and `lineage view` exist, but `inspiration` and `mutation review` remain missing packet families.
 
 Repo evidence:
 
-- `services/control-plane/bff/command_executor.py` still treats evolution actions as local placeholders.
-- `starter-draft.md` lists the runtime-control vs governance-api split as an open disagreement.
+- `services/control-plane/bff/command_executor.py` remains the place to inspect runtime/evolution command dispatch behavior.
+- `starter-draft.md` now treats the service wrapper baseline as code truth and separates behavioral command convergence from missing-service claims.
 - `pantheon-console-workbench-backlog.md` explicitly marks inspiration and mutation review as still missing for the Evolution Workbench.
 
 ### Phase 5: Persona and Application Surfaces
@@ -154,15 +162,15 @@ What is already solid:
 
 Residual gaps:
 
-1. The BFF still reads from canonical snapshots and then falls back to seeded defaults when those files are absent. That means phase 5 surfaces are not yet honestly service-backed.
-2. The BFF and trader-feedback services are still not packaged into the deployable service stack; there is still no BFF Dockerfile in the repo.
+1. `operator-bff`, `persona`, `router`, and `feedback` are packaged in the default stack. The root compose wires BFF to downstream network services and sets local snapshot fallback off for the default stack.
+2. BFF read-path hardening remains live production-readiness work: downstream degradation, auth, query contracts, and service-backed surfaces still need focused tests and frontend closure.
 3. The phase3 workbench backlog shows that only the APP-002-backed slice is strongly packetized. Large parts of the Operator, Governance, Evolution, Persona, Research, Knowledge, Trainer, and Consultation workbenches still have missing packet families or missing backend routes.
-4. The Lovable loop is active but incomplete. `current-work.md` currently shows `11` Lovable-ready packets, `9` still waiting for Lovable/front-end, `0` returned `ui-done`, and `2` returned `frontend feedback`.
+4. The Lovable loop is a coordination state, not product truth. Use generated status files for current counts and use this inventory only for architectural gap boundaries.
 
 Repo evidence:
 
-- `services/control-plane/bff/read_store.py` explicitly says the BFF prefers canonical snapshots and otherwise falls back to local seed data.
-- `find services -maxdepth 3 -name Dockerfile | sort` shows no BFF Dockerfile.
+- Root compose builds `services/control-plane/bff/Dockerfile` and `services/control-plane/feedback/Dockerfile`, wires service URLs, and depends on service health checks.
+- `services/control-plane/bff/read_store.py` remains relevant for fallback behavior, but root compose disables local snapshot fallback in the default profile.
 - `pantheon-console-workbench-backlog.md` marks Research, Knowledge, Trainer, and Consultation as not Lovable-ready and still missing full packet families and backed BFF routes.
 
 ### Phase 6: OSS Integration Hardening
@@ -181,16 +189,16 @@ What is already solid:
 
 Residual gaps:
 
-1. `OpenClaw` is only `adapter-started`; the real gateway adapter, runtime dependency path, and pinned-image smoke test still need to happen.
-2. `DSPy`, `imitation`, and `MLflow` are smoke-tested, but the checklist still calls out missing canonical `integration.md` and `governance.md` normalization work.
-3. `TRL`, `Qlib`, `FinRL`, `RLlib`, and `W&B` are still criteria-only or pinned-only, not integrated.
-4. `Ray Tune` is version-pinned but still lacks its adapter path and smoke test.
+1. `openclaw-gateway-adapter` is now a default Pantheon-owned facade around the optional upstream `openclaw-gateway` container. It proves health/capability/degraded semantics, not upstream session execution.
+2. OpenClaw session creation remains explicitly deferred: `POST /api/openclaw-adapter/sessions` returns non-retryable `CAPABILITY_DENIED`, and root compose keeps broker/paper activation flags false.
+3. `DSPy`, `imitation`, and `MLflow` are smoke-tested, but the checklist still calls out missing canonical `integration.md` and `governance.md` normalization work.
+4. `TRL`, `Qlib`, `FinRL`, `RLlib`, `Ray Tune`, and `W&B` remain deferred/criteria-gated unless a separate activation task changes their status.
 
 Repo evidence:
 
 - `OSS_INTEGRATION_CHECKLIST.md` explicitly says "Do not treat a component as integrated just because we wrote contracts around it."
-- Current checklist states:
-  - `OpenClaw = adapter-started`
+- Current checklist/status interpretation:
+  - `OpenClaw = facade boundary active; runtime/paper/live execution deferred`
   - `DSPy = smoke-tested`
   - `TRL = criteria-defined`
   - `Qlib = criteria-defined`
@@ -201,24 +209,24 @@ Repo evidence:
   - `MLflow = smoke-tested`
   - `W&B = criteria-defined`
 
-## 6. Cross-Phase Priority Order
+## 6. Current Priority Order
 
-If we want the next wave to reduce the largest real delivery risk instead of just closing more documents, the next order should be:
+The old cross-phase order closed the missing service-wrapper baseline. The current order should reduce remaining production-readiness risk:
 
-1. `SVC-BASELINE`
-   Lock ports, env vars, volumes, health checks, and compose profile boundaries.
-2. `SVC-RUNTIME-CONTROL`
-   Package the command plane that phase 2 and phase 4 already assume exists.
-3. `SVC-GOVERNANCE-API`
-   Expose approval, deployment, binding, and evolution objects as service-backed APIs.
-4. `SVC-EVIDENCE`
-   Wrap telemetry ingest and lineage read as real services.
-5. `SVC-SURFACES`
-   Rewire BFF away from snapshot/default mode, package BFF and feedback, and make phase 5 surfaces honest.
-6. `Phase 5 workbench expansion`
-   Packetize the backlog that phase3 identified but only partially covered.
-7. `Phase 6 real integrations`
-   Move OpenClaw and the deferred OSS stack from criteria to executable adapters and smoke tests.
+1. `SVC-DOCS-FUTURE-STATE-TRUTH-SYNC`
+   Keep planning docs aligned with code truth, active tasks, and future-deferred boundaries.
+2. `SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE`
+   Add bounded allowlisted HTTP/file feed support without claiming arbitrary crawling or live web scraping.
+3. `SVC-SEARCH-DURABLE-COMPAT-QUARANTINE`
+   Keep durable evidence/index search as the normal path and isolate request-document mode behind explicit compatibility paths.
+4. `SVC-DATA-OWNERSHIP-MIGRATION-MAP`
+   Map JSONL service stores to Postgres ownership migration slices before store pilots.
+5. BFF security/read-path hardening
+   Complete optional OIDC/JWKS validation and keep degraded downstream semantics explicit.
+6. Workbench/front-end closure
+   Packetize missing surfaces and close Lovable/front-end feedback loops.
+7. Future activation lanes
+   Reopen OpenClaw runtime/paper/live execution, research/learning production adapters, BFF HA, `web`, or `cron` only through explicit governance-scoped tasks.
 
 ## 7. SVC-SERVICE-DISPOSITION Addendum (2026-04-28, historical; updated 2026-04-29; pipeline updated 2026-04-29)
 
@@ -229,8 +237,8 @@ After `SVC-CONSULTATION-SERVICE-ACTIVATION`, `SVC-SOURCE-INGEST-SERVICE`, `SVC-S
 | Component | Current evidence | Disposition for default single-VM compose |
 |---|---|---|
 | `consultation-svc` | `docker-compose.yml` builds `services/consultation/Dockerfile`, sets `PORT=8096`, mounts `consultation-data`, maps `${CONSULTATION_PORT:-18096}:8096`, and checks `/readyz`. `services/consultation/main.py` also exposes `/health` and consultation APIs under `/api/consult/...`. `runtime-manager` and `operator-bff` point at `PANTHEON_CONSULTATION_API_URL=http://consultation-svc:8096`. | Activated in the default single-VM stack as an explicit HTTP service dependency. |
-| `source-ingest` | `docker-compose.yml` builds `services/source_ingestion/Dockerfile`, sets `PORT=8097`, mounts `source-ingest-data`, maps `${SOURCE_INGEST_PORT:-18097}:8097`, and checks `/readyz`. `services/source_ingestion/main.py` exposes `/health`, `POST /api/source-ingest/connectors` (persist connector fetch config), `GET /api/source-ingest/connectors/{connector_id}`, `POST /api/source-ingest/jobs` (trigger by `connector_id` for configured autonomous fetch, or with inline records), watermark, DLQ inspection, `POST /api/source-ingest/dlq/replay` (operator-approved DLQ replay), source record and evidence bundle read endpoints, and audit endpoints. The smoke stack configures a connector, triggers a job by `connector_id` alone, verifies DLQ routing on configured failure, and replays from DLQ. | Activated in the default single-VM stack as the configured autonomous ingest pipeline. Connector fetch configurations are persisted; jobs triggered by `connector_id` alone use stored config for autonomous fetching. The service applies governed ingest lifecycle, watermark advancement, DLQ routing on failure, and operator-approved DLQ replay. Source records, evidence items, bundles, and knowledge objects are durably persisted. The "already-fetched-only" and "autonomous later" characterizations are no longer accurate. |
-| `search-svc` | `docker-compose.yml` builds `services/search/Dockerfile`, sets `PORT=8098`, mounts `search-data`, maps `${SEARCH_PORT:-18098}:8098`, and checks `/readyz`. `services/search/main.py` exposes `/health`, `POST /api/search/index/reload` (rebuild durable JSONL index from evidence store), `GET /api/search/index/status`, `POST /api/search/query` (durable no-doc path or request-document compat path), and `GET /api/search/snapshots/{request_id}`. `operator-bff` points at `PANTHEON_SEARCH_API_URL=http://search-svc:8098`. | Activated in the default single-VM stack as the governed search HTTP service with durable evidence/index path. When no request documents are supplied, the service queries the durable JSONL evidence index seeded by `source-ingest` (adapter_state `durable`). When request documents are supplied, it builds an in-memory index (adapter_state `request_documents_compat`) for backward compatibility. The smoke stack exercises the no-doc durable path. |
+| `source-ingest` | `docker-compose.yml` builds `services/source_ingestion/Dockerfile`, sets `PORT=8097`, mounts `source-ingest-data`, maps `${SOURCE_INGEST_PORT:-18097}:8097`, and checks `/readyz`. `services/source_ingestion/main.py` exposes `/health`, connector config, job trigger, watermark, DLQ inspection/replay, source record, evidence bundle, and audit endpoints. `services/source_ingestion/configured.py` accepts configured `static_records` and bounded `external_feed` fetch modes. The smoke stack configures an allowlisted HTTP feed connector, triggers a job by `connector_id` alone, verifies DLQ routing on configured failure, and replays from DLQ. | Activated in the default single-VM stack as governed source ingest with inline records, configured static-record replay, and bounded allowlisted HTTP/file JSON feeds. It applies the governed ingest lifecycle, watermark advancement, DLQ routing, and operator-approved replay. It is not a production crawler and does not claim arbitrary external web scraping. |
+| `search-svc` | `docker-compose.yml` builds `services/search/Dockerfile`, sets `PORT=8098`, mounts `search-data`, maps `${SEARCH_PORT:-18098}:8098`, and checks `/readyz`. `services/search/main.py` exposes `/health`, `POST /api/search/index/reload`, `GET /api/search/index/status`, `POST /api/search/query`, explicit `POST /api/search/query/request-documents-compat`, and `GET /api/search/snapshots/{request_id}`. `operator-bff` points at `PANTHEON_SEARCH_API_URL=http://search-svc:8098`. | Activated in the default single-VM stack as the governed search HTTP service with durable evidence/index path. No-document queries use the durable JSONL evidence index seeded by `source-ingest` (`adapter_state=durable`). Request-document mode is compatibility-only and must be explicitly allowed by the compat flag or compat route; `SVC-SEARCH-DURABLE-COMPAT-QUARANTINE` owns this quarantine boundary. |
 
 The old SVC-SURFACES negative boundary must no longer be used to omit these services from compose or describe them as missing wrappers. Normal-path dependencies are now explicit network dependencies and must keep the degraded/unavailable semantics from `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` when a downstream service is unhealthy.
 
@@ -240,23 +248,21 @@ The BFF multi-replica/load-balancer topology remains separately deferred as a 20
 
 The repo has already completed most of the `semantic baseline` for phases 2 through 6.
 
-What is still missing is the `operational baseline`:
+What remains is not a generic missing-wrapper baseline. The current split is:
 
-- deployable service wrappers
-- real command-plane convergence
-- BFF rewiring away from snapshots/defaults
-- complete workbench packet families and front-end closure
-- real upstream adapter execution beyond criteria and checklists
+- `code truth`: the root single-VM stack has deployable wrappers, health checks, volumes, smoke wiring, safe research/learning service boundaries, and an OpenClaw adapter facade
+- `current tasks`: source external fetch baseline, search compatibility quarantine, data ownership migration, BFF auth/read-path hardening, and related production-readiness work
+- `future-deferred`: BFF HA, OpenClaw runtime/paper/live execution, research/learning production adapters, `web`, `cron`, and broader upstream OSS activation
 
-That is why the active planning effort should not treat phase 2-6 as "already finished". The right interpretation is:
+That is why downstream work should not use the old "phase 2-6 are missing deployable services" framing. The right interpretation is:
 
-- `phase 2-4`: contracts mostly done, service exposure still incomplete
-- `phase 5`: packet baseline partly done, product/workbench delivery still incomplete
-- `phase 6`: governance criteria done, executable integrations still incomplete
+- `phase 2-4`: contracts and default service exposure mostly done; command convergence and data ownership remain
+- `phase 5`: packet baseline and BFF packaging exist; product/workbench delivery and frontend closure remain
+- `phase 6`: safe facades and criteria exist; production adapter/runtime activation remains deferred
 
 ## 9. SVC-BASELINE Closure Note
 
-Updated: 2026-04-28
+Updated: 2026-04-29
 
 The `SVC-BASELINE` execution slice has locked the single-VM baseline contract in `starter-draft.md` under `SVC-BASELINE locked contract (2026-04-28)`.
 
@@ -274,7 +280,7 @@ The earlier evidence notes about missing Dockerfiles and an unlocked compose bas
 
 ## 10. SVC-COMPOSE Closure Note
 
-Updated: 2026-04-28
+Updated: 2026-04-29
 
 The `SVC-COMPOSE` execution slice assembles the root `docker-compose.yml` as the current single-VM test stack.
 
@@ -282,14 +288,15 @@ Default profile contents:
 
 - local infrastructure: `postgres`, `minio`, `minio-init`, `nats`, and `signal-store`
 - control/evidence services: `runtime-manager`, `governance`, `deployment`, `capital`, `evolution`, `telemetry`, `lineage-read`, `incidents`, and `postmortems`
-- activated consultation/source/search services: `consultation-svc`, `source-ingest`, and `search-svc`
-- OpenClaw boundary facade: `openclaw-gateway-adapter`
+- activated consultation/source/search/training services: `consultation-svc`, `source-ingest`, `search-svc`, and `training-session-svc`
+- safe research/learning service boundaries: `policy-learning-svc`, `research-orchestrator-svc`, and `research-worker-gateway-svc`
+- reconciliation and OpenClaw boundary facades: `reconciliation-drift-svc` and `openclaw-gateway-adapter`
 - operator/application surfaces: `operator-bff`, `persona`, `router`, and `feedback`
 - supporting service shells already in the baseline: `evaluation`, `memory`, `registry`, `optimizer-svc`, and `promotion`
 
 Optional profile contents:
 
-- `openclaw-gateway` remains under the `openclaw` profile and proves only upstream gateway reachability for this wave.
+- `openclaw-gateway` remains under the `openclaw` profile and proves only upstream gateway reachability; it does not activate OpenClaw runtime sessions, broker execution, or paper/live adapters.
 - `smoke-stack` remains under the `smoke` profile and runs `scripts/smoke_honest_stack.py` after the default stack is healthy.
 
 Repeatable verification commands:
@@ -301,9 +308,9 @@ docker compose --profile smoke run --rm smoke-stack
 docker compose down --volumes --remove-orphans
 ```
 
-The smoke path intentionally runs after the default stack is healthy, waits for every default HTTP service health endpoint through the `smoke` profile's dependency graph, then exercises an integration path across runtime deployment, telemetry ingest, incident/postmortem evidence creation, OpenClaw adapter degraded semantics, BFF honest-mode guidance, and BFF SSE replay. It is run as a separate `docker compose run` step because `minio-init` is a successful one-shot initialization service; using `--abort-on-container-exit` on the whole stack would treat that expected exit as a stack stop signal.
+The smoke path intentionally runs after the default stack is healthy, waits for every default HTTP service health endpoint through the `smoke` profile's dependency graph, then exercises an integration path across runtime deployment, telemetry ingest, incident/postmortem evidence creation, source ingest, durable search, policy-learning and research-orchestrator rejection paths, OpenClaw adapter degraded semantics, BFF honest-mode guidance, and BFF SSE replay. It is run as a separate `docker compose run` step because `minio-init` is a successful one-shot initialization service; using `--abort-on-container-exit` on the whole stack would treat that expected exit as a stack stop signal.
 
-The 2026-04-28 `consultation`, `source_ingestion`, and `search` deferral from section 7 is historical. In the current root compose stack, `consultation-svc`, `source-ingest`, and `search-svc` are default services with Dockerfiles, `/readyz` health checks, mounted service-owned volumes, and HTTP entrypoints; downstream docs should cite the 2026-04-29 code-backed state instead of the old omission rationale.
+The 2026-04-28 `consultation`, `source_ingestion`, and `search` deferral from section 7 is historical. In the current root compose stack, `consultation-svc`, `source-ingest`, and `search-svc` are default services with Dockerfiles, `/readyz` health checks, mounted service-owned volumes, and HTTP entrypoints. Downstream docs should cite the 2026-04-29 code-backed state, while still preserving the current limits: source configured fetch supports static-record replay and bounded allowlisted HTTP/file JSON feeds only, and request-document search remains compatibility-only.
 
 ## 11. Research And Learning Boundary Audit
 
@@ -341,3 +348,15 @@ Current code truth:
 Disposition:
 
 This closes the service-boundary gap for a controlled OpenClaw adapter facade only. It must not be cited as evidence that upstream OpenClaw runtime session execution, paper execution, production adapters, broker execution, or EP5 activation is complete.
+
+## 13. Code-Backed References
+
+- `docker-compose.yml:81-220` — consultation, source-ingest, search, training-session, policy-learning, and research-orchestrator default services.
+- `docker-compose.yml:257-278` — OpenClaw adapter facade default service and disabled broker/paper env gates.
+- `docker-compose.yml:280-337` — runtime-manager and governance default services.
+- `docker-compose.yml:720-841` — deployment, evolution, lineage-read, reconciliation-drift, and research-worker-gateway services.
+- `docker-compose.yml:843-927` — smoke profile environment and dependency graph.
+- `services/source_ingestion/configured.py:120-166` — configured fetch accepts `static_records` and bounded allowlisted `external_feed` JSON inputs.
+- `services/search/main.py:278-326` — durable search path and explicit request-document compatibility path.
+- `services/openclaw-gateway-adapter/main.py:180-220` — deferred OpenClaw sessions and `CAPABILITY_DENIED` session creation.
+- `scripts/smoke_honest_stack.py:135-180` and `scripts/smoke_honest_stack.py:381-613` — smoke coverage for OpenClaw degraded semantics, source ingest, search, policy-learning, and research-orchestrator.
