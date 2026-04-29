@@ -20,9 +20,11 @@ from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from services.foundation.health import register_fastapi_health_routes
 from schema_validation import build_trader_feedback_validator
 from store import (
     QueryFilterValidationError,
+    QueryFilters,
     TraderFeedbackStore,
     build_query_filters,
     parse_rfc3339,
@@ -181,6 +183,12 @@ def create_app(store_path: str | Path | None = None) -> FastAPI:
     resolved_store_path = Path(store_path or os.getenv("TRADER_FEEDBACK_STORE_PATH", DEFAULT_STORE_PATH))
     store = TraderFeedbackStore(resolved_store_path)
     app = FastAPI(title="Pantheon Trader Feedback", version="0.1.0")
+    register_fastapi_health_routes(
+        app,
+        "trader-feedback",
+        metrics=lambda: {"feedback_count": len(store.list(QueryFilters()))},
+        details=lambda: {"store_path": str(resolved_store_path)},
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:

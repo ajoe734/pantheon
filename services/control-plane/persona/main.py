@@ -46,6 +46,46 @@ OPENCLAW_GATEWAY_STATE_DIR = os.getenv("OPENCLAW_GATEWAY_STATE_DIR")
 OPENCLAW_AGENT_TIMEOUT_SECONDS = int(os.getenv("OPENCLAW_AGENT_TIMEOUT_SECONDS", "30"))
 OPENCLAW_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OPENCLAW_HEALTH_TIMEOUT_SECONDS", "1.5"))
 
+
+def _standard_health_payload() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "service": "persona-agent",
+        "timestamp": utc_now(),
+        "live": True,
+        "ready": True,
+        "dependencies": {
+            "openclaw_gateway": {
+                "status": "ok",
+                "host": OPENCLAW_GATEWAY_HOST,
+                "port": OPENCLAW_GATEWAY_PORT,
+            }
+        },
+        "metrics": {"service_up": 1},
+        "details": {
+            "llm_backend": LLM_BACKEND,
+            "runtime_backend": "openclaw-gateway",
+            "persona_id": DEFAULT_PERSONA_ID,
+            "agent_id": OPENCLAW_AGENT_ID,
+        },
+    }
+
+
+@app.get("/healthz")
+@app.get("/livez")
+async def standard_health():
+    return _standard_health_payload()
+
+
+@app.get("/readyz")
+async def standard_ready():
+    return _standard_health_payload()
+
+
+@app.get("/metrics")
+async def standard_metrics():
+    return {"service": "persona-agent", "timestamp": utc_now(), "metrics": {"service_up": 1}}
+
 PERSONA_REGISTRY = PersonaRegistry()
 SESSION_STORE = PersonaSessionStore()
 CAPABILITY_SNAPSHOTS: dict[str, CapabilitySnapshot] = {}

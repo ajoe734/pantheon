@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from enum import Enum
 
 import httpx
@@ -36,6 +37,44 @@ PERSONA_URL = os.getenv("PERSONA_URL", "http://localhost:8002")
 # ---------------------------------------------------------------------------
 
 SESSION_TTL_SECONDS = 86_400  # 24h idle timeout; refreshed on each successful /route call
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _standard_health_payload() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "service": "router",
+        "timestamp": _utc_now(),
+        "live": True,
+        "ready": True,
+        "dependencies": {"persona": {"status": "ok" if PERSONA_URL else "degraded", "url": PERSONA_URL}},
+        "metrics": {"service_up": 1},
+        "details": {
+            "persona_url": PERSONA_URL,
+            "session_ttl_seconds": SESSION_TTL_SECONDS,
+            "classification_owner": "persona",
+            "fallback_classifier_mode": "degraded_only",
+        },
+    }
+
+
+@app.get("/healthz")
+@app.get("/livez")
+async def standard_health():
+    return _standard_health_payload()
+
+
+@app.get("/readyz")
+async def standard_ready():
+    return _standard_health_payload()
+
+
+@app.get("/metrics")
+async def standard_metrics():
+    return {"service": "router", "timestamp": _utc_now(), "metrics": {"service_up": 1}}
 
 # Max requests per minute per user (enforced by API gateway in production;
 # documented here as the canonical policy for all implementations)
