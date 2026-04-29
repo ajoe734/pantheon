@@ -3,7 +3,8 @@ FROM python:3.11-slim
 WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace:/workspace/services/optimizer-svc
 
 COPY services/optimizer-svc/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
