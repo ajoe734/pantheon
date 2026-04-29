@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
-from store import TrainingSessionStore
+from store import TrainingSessionStore, build_training_session_store
 
 
 def utc_now() -> str:
@@ -106,7 +106,7 @@ class ReplayDecisionBody(BaseModel):
 
 
 app = FastAPI(title="Pantheon Training Session Service", version="0.1.0")
-store = TrainingSessionStore(_data_dir())
+store = build_training_session_store(_data_dir())
 register_fastapi_health_routes(
     app,
     "training-session",
