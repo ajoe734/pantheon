@@ -30,14 +30,19 @@ from .models import (
     GateHandoffStatus,
     utc_now,
 )
-from .store import ConsultationStore
+from .store import build_consultation_store
 
 
 app = FastAPI(title="Pantheon Consultation Service", version="0.1.0")
 
 DATA_DIR = os.getenv("CONSULTATION_DATA_DIR", "/tmp/pantheon/consultation")
-store = ConsultationStore(DATA_DIR)
-register_fastapi_health_routes(app, "consultation", details=lambda: {"data_dir": DATA_DIR})
+STORE_BACKEND = os.getenv("CONSULTATION_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
+store = build_consultation_store(DATA_DIR)
+register_fastapi_health_routes(
+    app,
+    "consultation",
+    details=lambda: {"data_dir": DATA_DIR, "store_backend": STORE_BACKEND},
+)
 
 CONSULTATION_SERVICE_ACTOR = ActorRef(
     actor_type="service",

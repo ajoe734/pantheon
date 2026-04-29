@@ -27,6 +27,8 @@ def test_root_compose_wires_consultation_service_boundary() -> None:
     assert consultation["build"]["dockerfile"] == "services/consultation/Dockerfile"
     assert consultation_env["PORT"] == "8096"
     assert consultation_env["CONSULTATION_DATA_DIR"] == "/data/consultation"
+    assert consultation_env["CONSULTATION_STORE_BACKEND"] == "${CONSULTATION_STORE_BACKEND:-jsonl}"
+    assert consultation_env["CONSULTATION_STORE_DSN"] == "${CONSULTATION_STORE_DSN:-}"
     assert "consultation-data:/data/consultation" in consultation["volumes"]
     assert "${CONSULTATION_PORT:-18096}:8096" in consultation["ports"]
     healthcheck = " ".join(consultation["healthcheck"]["test"])

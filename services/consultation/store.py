@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
@@ -23,6 +25,14 @@ from .models import (
 
 CONSULT_LIFECYCLE_EVENT_SCHEMA_VERSION = "consult_lifecycle_event.v1"
 CONSULTATION_SERVICE_ACTOR_ID = "consultation-svc"
+_PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _quote_pg(identifier: str) -> str:
+    parts = identifier.split(".")
+    if not parts or any(_PG_IDENTIFIER_RE.fullmatch(part) is None for part in parts):
+        raise ValueError(f"Invalid Postgres identifier: {identifier}")
+    return ".".join(f'"{part}"' for part in parts)
 
 
 def _model_to_data(model: Any) -> Dict[str, Any]:
@@ -407,3 +417,326 @@ class ConsultationStore:
                 if event.request_id == request_id:
                     events.append(event)
         return events
+
+
+class _PostgresOutboxStore:
+    def __init__(self, store: "PostgresConsultationStore") -> None:
+        self._store = store
+
+    def append(self, record: OutboxRecord) -> None:
+        self._store._insert_json_payload(
+            self._store.outbox_table,
+            (
+                "outbox_id",
+                "owner_service",
+                "payload",
+            ),
+            (
+                record.outbox_id,
+                record.owner_service,
+                record.to_dict(),
+            ),
+        )
+
+    def load(self) -> List[OutboxRecord]:
+        rows = self._store._select_payloads(self._store.outbox_table, "append_id")
+        return [OutboxRecord.from_dict(payload) for payload in rows]
+
+
+class PostgresConsultationStore(ConsultationStore):
+    """Postgres-backed consultation store pilot.
+
+    Write owner: consultation-svc. JSONL remains the default store; this
+    implementation is activated only by explicit env through
+    build_consultation_store().
+    """
+
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        lifecycle_table: str = "consult_svc.lifecycle_events",
+        audit_table: str = "consult_svc.audit_events",
+        memo_publications_table: str = "consult_svc.memo_publications",
+        outbox_table: str = "consult_svc.outbox_records",
+        bootstrap: bool = True,
+    ) -> None:
+        if not dsn:
+            raise ValueError("Postgres DSN is required for PostgresConsultationStore")
+        self.dsn = dsn
+        self.lifecycle_table = _quote_pg(lifecycle_table)
+        self.audit_table = _quote_pg(audit_table)
+        self.memo_publications_table = _quote_pg(memo_publications_table)
+        self.outbox_table = _quote_pg(outbox_table)
+        self._tables = [
+            lifecycle_table,
+            audit_table,
+            memo_publications_table,
+            outbox_table,
+        ]
+        self.data_dir = Path(f"postgres:{lifecycle_table}")
+        self.outbox = _PostgresOutboxStore(self)
+        self._requests: Dict[str, ConsultRequest] = {}
+        self._memos: Dict[str, ConsultMemo] = {}
+        self._participants: Dict[str, ConsultParticipant] = {}
+        self._transcripts: Dict[str, ConsultTranscript] = {}
+        self._evidence: Dict[str, ConsultEvidenceAttachment] = {}
+        self._handoffs: Dict[str, ConsultGateHandoff] = {}
+        self._next_sequence_no = 1
+        if bootstrap:
+            self._bootstrap()
+        self.reload()
+
+    def _connect(self):
+        try:
+            import psycopg  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError(
+                "psycopg is required when CONSULTATION_STORE_BACKEND=postgres"
+            ) from exc
+        return psycopg.connect(self.dsn)
+
+    def _bootstrap(self) -> None:
+        schemas = {table.split(".", 1)[0] for table in self._tables if "." in table}
+        with self._connect() as conn:
+            for schema in sorted(schemas):
+                conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_pg(schema)}")
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.lifecycle_table} (
+                    append_id        BIGSERIAL PRIMARY KEY,
+                    event_id         TEXT NOT NULL UNIQUE,
+                    sequence_no      BIGINT NOT NULL,
+                    record_type      TEXT NOT NULL,
+                    record_id        TEXT NOT NULL,
+                    trace_id         TEXT NOT NULL,
+                    payload          JSONB NOT NULL,
+                    event_json       JSONB NOT NULL,
+                    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.audit_table} (
+                    append_id   BIGSERIAL PRIMARY KEY,
+                    audit_id    TEXT NOT NULL UNIQUE,
+                    request_id  TEXT NOT NULL,
+                    payload     JSONB NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.memo_publications_table} (
+                    append_id   BIGSERIAL PRIMARY KEY,
+                    memo_id     TEXT NOT NULL,
+                    request_id  TEXT NOT NULL,
+                    payload     JSONB NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.outbox_table} (
+                    append_id       BIGSERIAL PRIMARY KEY,
+                    outbox_id       TEXT NOT NULL UNIQUE,
+                    owner_service   TEXT NOT NULL,
+                    payload         JSONB NOT NULL,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+
+    def _insert_json_payload(self, table: str, columns: tuple[str, ...], values: tuple[Any, ...]) -> None:
+        placeholders = []
+        params = []
+        for value in values:
+            if isinstance(value, dict):
+                placeholders.append("%s::jsonb")
+                params.append(json.dumps(value, ensure_ascii=True, sort_keys=True))
+            else:
+                placeholders.append("%s")
+                params.append(value)
+        column_sql = ", ".join(_quote_pg(column) for column in columns)
+        placeholder_sql = ", ".join(placeholders)
+        with self._connect() as conn:
+            conn.execute(
+                f"INSERT INTO {table} ({column_sql}) VALUES ({placeholder_sql})",
+                tuple(params),
+            )
+
+    def _select_payloads(self, table: str, order_column: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"SELECT payload FROM {table} ORDER BY {_quote_pg(order_column)} ASC"
+            )
+            rows = cursor.fetchall()
+        payloads: List[Dict[str, Any]] = []
+        for row in rows:
+            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if isinstance(payload, dict):
+                payloads.append(payload)
+        return payloads
+
+    def reload(self) -> None:
+        self._requests.clear()
+        self._memos.clear()
+        self._participants.clear()
+        self._transcripts.clear()
+        self._evidence.clear()
+        self._handoffs.clear()
+        self._next_sequence_no = 1
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"SELECT event_json FROM {self.lifecycle_table} ORDER BY sequence_no ASC, append_id ASC"
+            )
+            rows = cursor.fetchall()
+        for row in rows:
+            event = row[0] if isinstance(row, tuple) else row.get("event_json")
+            if isinstance(event, str):
+                event = json.loads(event)
+            if isinstance(event, dict):
+                self._next_sequence_no = max(
+                    self._next_sequence_no,
+                    int(event.get("sequence_no", 0)) + 1,
+                )
+                self._apply_lifecycle_event(event)
+
+    def _append_lifecycle_event(
+        self,
+        *,
+        record_type: str,
+        record_id: str,
+        trace_id: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        event = {
+            "schema_version": CONSULT_LIFECYCLE_EVENT_SCHEMA_VERSION,
+            "event_id": f"cle-{uuid.uuid4().hex[:12]}",
+            "sequence_no": self._next_sequence_no,
+            "operation": "upsert",
+            "record_type": record_type,
+            "record_id": record_id,
+            "trace_id": trace_id,
+            "producer_service": CONSULTATION_SERVICE_ACTOR_ID,
+            "payload": payload,
+        }
+        self._insert_json_payload(
+            self.lifecycle_table,
+            (
+                "event_id",
+                "sequence_no",
+                "record_type",
+                "record_id",
+                "trace_id",
+                "payload",
+                "event_json",
+            ),
+            (
+                event["event_id"],
+                event["sequence_no"],
+                event["record_type"],
+                event["record_id"],
+                event["trace_id"],
+                event["payload"],
+                event,
+            ),
+        )
+        self._append_outbox_event(event)
+        self._next_sequence_no += 1
+
+    def put_memo(self, memo: ConsultMemo) -> None:
+        existing = self._memos.get(memo.memo_id)
+        if existing and existing.status == MemoStatus.PUBLISHED:
+            if _model_to_data(existing) != _model_to_data(memo):
+                raise ValueError("Published consultation memos are immutable")
+            return
+
+        saved_memo = _model_copy(memo)
+        self._append_lifecycle_event(
+            record_type="memo",
+            record_id=saved_memo.memo_id,
+            trace_id=saved_memo.trace_id,
+            payload=_model_to_data(saved_memo),
+        )
+        self._memos[memo.memo_id] = saved_memo
+
+        if saved_memo.status == MemoStatus.PUBLISHED:
+            self._insert_json_payload(
+                self.memo_publications_table,
+                (
+                    "memo_id",
+                    "request_id",
+                    "payload",
+                ),
+                (
+                    saved_memo.memo_id,
+                    saved_memo.request_id,
+                    {
+                        "memo_id": saved_memo.memo_id,
+                        "request_id": saved_memo.request_id,
+                        "published_at": saved_memo.published_at,
+                        "payload": _model_to_data(saved_memo),
+                    },
+                ),
+            )
+
+    def append_audit(self, event: ConsultAuditEvent) -> None:
+        self._insert_json_payload(
+            self.audit_table,
+            (
+                "audit_id",
+                "request_id",
+                "payload",
+            ),
+            (
+                event.audit_id,
+                event.request_id,
+                _model_to_data(event),
+            ),
+        )
+
+    def list_audit_for_request(self, request_id: str) -> List[ConsultAuditEvent]:
+        events: List[ConsultAuditEvent] = []
+        for payload in self._select_payloads(self.audit_table, "append_id"):
+            event = _model_from_data(ConsultAuditEvent, payload)
+            if event.request_id == request_id:
+                events.append(event)
+        return events
+
+
+def build_consultation_store(data_dir: str) -> ConsultationStore:
+    """Factory: returns JSONL ConsultationStore unless CONSULTATION_STORE_BACKEND=postgres."""
+    backend = os.getenv("CONSULTATION_STORE_BACKEND", "jsonl").strip().lower()
+    if backend in ("", "jsonl"):
+        return ConsultationStore(data_dir)
+    if backend != "postgres":
+        raise ValueError("CONSULTATION_STORE_BACKEND must be jsonl or postgres")
+    dsn = os.getenv("CONSULTATION_STORE_DSN") or os.getenv("DATABASE_URL")
+    if not dsn:
+        raise ValueError(
+            "CONSULTATION_STORE_DSN or DATABASE_URL is required for Postgres consultation store"
+        )
+    bootstrap = (
+        os.getenv("CONSULTATION_STORE_BOOTSTRAP", "1").strip().lower()
+        not in ("0", "false", "no")
+    )
+    return PostgresConsultationStore(
+        dsn=dsn,
+        lifecycle_table=os.getenv(
+            "CONSULTATION_LIFECYCLE_TABLE",
+            "consult_svc.lifecycle_events",
+        ),
+        audit_table=os.getenv("CONSULTATION_AUDIT_TABLE", "consult_svc.audit_events"),
+        memo_publications_table=os.getenv(
+            "CONSULTATION_MEMO_PUBLICATIONS_TABLE",
+            "consult_svc.memo_publications",
+        ),
+        outbox_table=os.getenv("CONSULTATION_OUTBOX_TABLE", "consult_svc.outbox_records"),
+        bootstrap=bootstrap,
+    )

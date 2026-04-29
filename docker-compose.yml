@@ -85,6 +85,10 @@ services:
     environment:
       PORT: "8096"
       CONSULTATION_DATA_DIR: /data/consultation
+      # Postgres store pilot — disabled by default (JSONL is baseline).
+      # Set CONSULTATION_STORE_BACKEND=postgres and add postgres to depends_on to enable.
+      CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
+      CONSULTATION_STORE_DSN: ${CONSULTATION_STORE_DSN:-}
     volumes:
       - consultation-data:/data/consultation
     ports:
