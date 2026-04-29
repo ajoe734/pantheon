@@ -16,10 +16,14 @@ import uuid
 
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from services.foundation.health import health_payload, metrics_payload, readiness_status_code
+
+SERVICE_NAME = "web-channel"
 ROUTER_URL = os.getenv("ROUTER_URL", "http://localhost:8001")
+ROUTER_HEALTH_TIMEOUT_SECONDS = float(os.getenv("ROUTER_HEALTH_TIMEOUT_SECONDS", "2.0"))
 
 app = FastAPI(title="Pantheon Web Channel", version="0.1.0")
 
@@ -41,9 +45,105 @@ class ChatResponse(BaseModel):
     session_status: str | None = None
 
 
+def _router_probe_url(path: str) -> str:
+    return f"{ROUTER_URL.rstrip('/')}{path}"
+
+
+def _health_details() -> dict[str, object]:
+    return {
+        "router_url": ROUTER_URL,
+        "router_probe": "/readyz",
+        "channel": "web",
+        "compose_default": False,
+    }
+
+
+def _router_dependency_from_response(response: httpx.Response, url: str, *, probe: str) -> dict[str, object]:
+    try:
+        body = response.json()
+    except Exception:
+        body = {}
+
+    router_status = str(body.get("status") or "").lower() if isinstance(body, dict) else ""
+    if 200 <= response.status_code < 300:
+        status = "ok" if router_status in {"", "ok"} else "degraded"
+    elif router_status == "degraded":
+        status = "degraded"
+    else:
+        status = "unavailable"
+
+    payload: dict[str, object] = {
+        "status": status,
+        "url": url,
+        "probe": probe,
+        "status_code": response.status_code,
+    }
+    if router_status:
+        payload["router_status"] = router_status
+    if isinstance(body, dict) and body.get("service"):
+        payload["service"] = body["service"]
+    if status != "ok" and not router_status:
+        payload["reason"] = "router_ready_probe_failed"
+    return payload
+
+
+async def _router_dependency() -> dict[str, object]:
+    ready_url = _router_probe_url("/readyz")
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(ready_url, timeout=ROUTER_HEALTH_TIMEOUT_SECONDS)
+        except Exception as exc:
+            return {
+                "status": "unavailable",
+                "url": ready_url,
+                "probe": "/readyz",
+                "reason": str(exc),
+            }
+
+        if response.status_code != 404:
+            return _router_dependency_from_response(response, ready_url, probe="/readyz")
+
+        legacy_url = _router_probe_url("/health")
+        try:
+            legacy_response = await client.get(legacy_url, timeout=ROUTER_HEALTH_TIMEOUT_SECONDS)
+        except Exception as exc:
+            return {
+                "status": "unavailable",
+                "url": legacy_url,
+                "probe": "/health",
+                "reason": str(exc),
+            }
+        return _router_dependency_from_response(legacy_response, legacy_url, probe="/health")
+
+
+async def _health_payload_with_router() -> dict[str, object]:
+    return health_payload(
+        SERVICE_NAME,
+        dependencies={"router": await _router_dependency()},
+        details=_health_details(),
+    )
+
+
+@app.get("/healthz")
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "web-channel"}
+    return await _health_payload_with_router()
+
+
+@app.get("/livez")
+async def livez():
+    return health_payload(SERVICE_NAME, details=_health_details())
+
+
+@app.get("/readyz")
+async def readyz():
+    payload = await _health_payload_with_router()
+    return JSONResponse(payload, status_code=readiness_status_code(payload))
+
+
+@app.get("/metrics")
+async def metrics():
+    return metrics_payload(SERVICE_NAME)
 
 
 @app.post("/chat", response_model=ChatResponse)

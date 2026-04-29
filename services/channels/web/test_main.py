@@ -48,11 +48,24 @@ class _AsyncClientStub:
 
 def test_health_returns_ok() -> None:
     client = TestClient(web_main.app)
+    async_client = _AsyncClientStub(
+        gets={
+            f"{web_main.ROUTER_URL}/readyz": _FakeResponse(
+                body={"status": "ok", "service": "router"}
+            )
+        }
+    )
 
-    response = client.get("/health")
+    with patch.object(web_main.httpx, "AsyncClient", return_value=async_client):
+        response = client.get("/health")
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"status": "ok", "service": "web-channel"}
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["service"] == "web-channel"
+    assert payload["live"] is True
+    assert payload["ready"] is True
+    assert payload["dependencies"]["router"]["status"] == "ok"
 
 
 def test_chat_forwards_session_id_and_returns_router_metadata() -> None:
